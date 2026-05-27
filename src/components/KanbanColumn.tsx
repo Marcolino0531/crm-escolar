@@ -9,6 +9,8 @@ interface KanbanColumnProps {
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
+  onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
+  onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
 }
 
 const KanbanColumn: React.FC<KanbanColumnProps> = ({
@@ -17,9 +19,11 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onRemover,
   onMover,
   onSolicitarVisita,
+  onSolicitarNaoMatricula,
+  onSolicitarMatricula,
 }) => {
   return (
-    <div className="flex flex-col min-w-[280px] w-[280px] lg:w-auto lg:flex-1">
+    <div className="flex flex-col min-w-[220px] w-[220px] lg:w-auto lg:flex-1">
       <div
         className={`flex items-center justify-between px-4 py-3 rounded-t-xl border-t-4 ${coluna.corBorda} ${coluna.corFundo}`}
       >
@@ -72,6 +76,8 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 onRemover={onRemover}
                 onMover={onMover}
                 onSolicitarVisita={onSolicitarVisita}
+                onSolicitarNaoMatricula={onSolicitarNaoMatricula}
+                onSolicitarMatricula={onSolicitarMatricula}
               />
             ))}
             {provided.placeholder}

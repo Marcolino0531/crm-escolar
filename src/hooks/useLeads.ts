@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Lead, ColunaKanban } from '../types';
+import { Lead, ColunaKanban, ItemMatricula } from '../types';
 import { STORAGE_KEY } from '../constants';
 
 function carregarLeads(): Lead[] {
@@ -59,6 +59,32 @@ export function useLeads() {
     []
   );
 
+  const registrarNaoMatricula = useCallback(
+    (leadId: string, motivoPerda: string, observacaoPerda?: string) => {
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId
+            ? { ...lead, coluna: 'nao-matricula' as ColunaKanban, motivoPerda, observacaoPerda }
+            : lead
+        )
+      );
+    },
+    []
+  );
+
+  const registrarMatricula = useCallback(
+    (leadId: string, itensMatricula: ItemMatricula[]) => {
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId
+            ? { ...lead, coluna: 'matricula' as ColunaKanban, itensMatricula }
+            : lead
+        )
+      );
+    },
+    []
+  );
+
   const removerLead = useCallback((leadId: string) => {
     setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   }, []);
@@ -68,5 +94,14 @@ export function useLeads() {
     [leads]
   );
 
-  return { leads, adicionarLead, moverLead, agendarVisita, removerLead, leadsporColuna };
+  return {
+    leads,
+    adicionarLead,
+    moverLead,
+    agendarVisita,
+    registrarNaoMatricula,
+    registrarMatricula,
+    removerLead,
+    leadsporColuna,
+  };
 }

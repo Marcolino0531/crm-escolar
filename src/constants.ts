@@ -33,6 +33,14 @@ export const COLUNAS: ColunaConfig[] = [
     corFundo: 'bg-green-50',
     icone: '✅',
   },
+  {
+    id: 'nao-matricula',
+    titulo: 'Não Matrícula',
+    cor: 'text-red-700',
+    corBorda: 'border-red-400',
+    corFundo: 'bg-red-50',
+    icone: '❌',
+  },
 ];
 
 export const STORAGE_KEY = 'crm-escolar-leads';

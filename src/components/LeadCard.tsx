@@ -9,13 +9,23 @@ interface LeadCardProps {
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
+  onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
+  onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
 }
 
-const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, onSolicitarVisita }) => {
+const LeadCard: React.FC<LeadCardProps> = ({
+  lead,
+  index,
+  onRemover,
+  onMover,
+  onSolicitarVisita,
+  onSolicitarNaoMatricula,
+  onSolicitarMatricula,
+}) => {
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
 
   const formatarData = (data: string) => {
-    if (!data) return '—';
+    if (!data) return '';
     const d = new Date(data + 'T00:00:00');
     return d.toLocaleDateString('pt-BR');
   };
@@ -23,10 +33,31 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, on
   const handleAvancar = () => {
     if (lead.coluna === 'contato-inicial') {
       onSolicitarVisita(lead.id, lead.nomeAluno);
+    } else if (lead.coluna === 'negociacao') {
+      onSolicitarMatricula(lead.id, lead.nomeAluno);
     } else if (colunaAtualIndex < COLUNAS.length - 1) {
-      onMover(lead.id, COLUNAS[colunaAtualIndex + 1].id);
+      const nextCol = COLUNAS[colunaAtualIndex + 1];
+      if (nextCol.id === 'matricula') {
+        onSolicitarMatricula(lead.id, lead.nomeAluno);
+      } else if (nextCol.id === 'nao-matricula') {
+        onSolicitarNaoMatricula(lead.id, lead.nomeAluno);
+      } else {
+        onMover(lead.id, nextCol.id);
+      }
     }
   };
+
+  const handleVoltar = () => {
+    if (colunaAtualIndex > 0) {
+      onMover(lead.id, COLUNAS[colunaAtualIndex - 1].id);
+    }
+  };
+
+  const handleNaoMatricula = () => {
+    onSolicitarNaoMatricula(lead.id, lead.nomeAluno);
+  };
+
+  const isTerminal = lead.coluna === 'matricula' || lead.coluna === 'nao-matricula';
 
   return (
     <Draggable draggableId={lead.id} index={index}>
@@ -41,6 +72,13 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, on
               : 'hover:shadow-md'
           }`}
         >
+          {/* Selo Matriculado */}
+          {lead.coluna === 'matricula' && lead.itensMatricula && (
+            <div className="mb-2 inline-flex items-center gap-1 bg-green-100 border border-green-300 text-green-700 text-xs font-bold px-2.5 py-1 rounded-full">
+              <span>✅</span> Matriculado
+            </div>
+          )}
+
           <div className="flex items-start justify-between mb-2">
             <h3 className="font-semibold text-gray-800 text-sm leading-tight">
               {lead.nomeAluno}
@@ -104,26 +142,79 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, on
             </div>
           )}
 
-          <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
-            {colunaAtualIndex > 0 && (
-              <button
-                onClick={() => onMover(lead.id, COLUNAS[colunaAtualIndex - 1].id)}
-                className="flex-1 text-xs py-1 px-2 rounded-md bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-                title={`Mover para ${COLUNAS[colunaAtualIndex - 1].titulo}`}
-              >
-                ← Voltar
-              </button>
-            )}
-            {colunaAtualIndex < COLUNAS.length - 1 && (
-              <button
-                onClick={handleAvancar}
-                className="flex-1 text-xs py-1 px-2 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors font-medium"
-                title={`Mover para ${COLUNAS[colunaAtualIndex + 1].titulo}`}
-              >
-                Avançar →
-              </button>
-            )}
-          </div>
+          {/* Tag motivo de perda */}
+          {lead.motivoPerda && (
+            <div className="mt-2 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">🚫</span>
+                <span className="text-xs font-medium text-red-700">{lead.motivoPerda}</span>
+              </div>
+              {lead.observacaoPerda && (
+                <p className="text-xs text-red-600 mt-1 italic">{lead.observacaoPerda}</p>
+              )}
+            </div>
+          )}
+
+          {/* Itens de matrícula resumo */}
+          {lead.itensMatricula && lead.itensMatricula.length > 0 && (
+            <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-sm">💰</span>
+                <span className="text-xs font-medium text-green-700">
+                  R$ {lead.itensMatricula
+                    .reduce((sum, item) => sum + (item.valor || 0), 0)
+                    .toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="text-xs text-green-600">
+                {lead.itensMatricula.map((item) => item.tipo).join(', ')}
+              </div>
+            </div>
+          )}
+
+          {!isTerminal && (
+            <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
+              {colunaAtualIndex > 0 && (
+                <button
+                  onClick={handleVoltar}
+                  className="flex-1 text-xs py-1 px-2 rounded-md bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                  title={`Mover para ${COLUNAS[colunaAtualIndex - 1].titulo}`}
+                >
+                  ← Voltar
+                </button>
+              )}
+              {lead.coluna === 'negociacao' ? (
+                <>
+                  <button
+                    onClick={handleAvancar}
+                    className="flex-1 text-xs py-1 px-2 rounded-md bg-green-50 text-green-600 hover:bg-green-100 hover:text-green-700 transition-colors font-medium"
+                    title="Matricular"
+                  >
+                    ✅ Matricular
+                  </button>
+                  <button
+                    onClick={handleNaoMatricula}
+                    className="flex-1 text-xs py-1 px-2 rounded-md bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 transition-colors font-medium"
+                    title="Não Matrícula"
+                  >
+                    ❌ Não Matr.
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={handleAvancar}
+                  className="flex-1 text-xs py-1 px-2 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors font-medium"
+                  title={
+                    colunaAtualIndex < COLUNAS.length - 1
+                      ? `Mover para ${COLUNAS[colunaAtualIndex + 1].titulo}`
+                      : ''
+                  }
+                >
+                  Avançar →
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Draggable>
