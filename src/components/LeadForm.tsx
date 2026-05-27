@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lead } from '../types';
+import { calcularIdadeEscolar } from '../utils/mecCutoff';
 
 interface LeadFormProps {
   onSubmit: (dados: Omit<Lead, 'id' | 'coluna' | 'criadoEm'>) => void;
@@ -9,8 +10,9 @@ interface LeadFormProps {
 const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar }) => {
   const [form, setForm] = useState({
     nomeAluno: '',
-    idade: '',
     dataNascimento: '',
+    idade: '',
+    turma: '',
     nomePaiMae: '',
     telefone: '',
   });
@@ -20,16 +22,42 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar }) => {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleDataNascimentoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const dataNascimento = e.target.value;
+    if (dataNascimento) {
+      const { idade, turma } = calcularIdadeEscolar(dataNascimento);
+      setForm((prev) => ({
+        ...prev,
+        dataNascimento,
+        idade: String(idade),
+        turma,
+      }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        dataNascimento: '',
+        idade: '',
+        turma: '',
+      }));
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.nomeAluno.trim() || !form.nomePaiMae.trim() || !form.telefone.trim()) {
+    if (
+      !form.nomeAluno.trim() ||
+      !form.dataNascimento ||
+      !form.nomePaiMae.trim() ||
+      !form.telefone.trim()
+    ) {
       return;
     }
     onSubmit(form);
     setForm({
       nomeAluno: '',
-      idade: '',
       dataNascimento: '',
+      idade: '',
+      turma: '',
       nomePaiMae: '',
       telefone: '',
     });
@@ -82,32 +110,46 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar }) => {
             />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Data de Nascimento <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              name="dataNascimento"
+              value={form.dataNascimento}
+              onChange={handleDataNascimentoChange}
+              required
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Idade e Turma são calculadas pela Data de Corte do MEC (31/03)
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Idade
+                Idade (em 31/03)
               </label>
               <input
-                type="number"
-                name="idade"
-                value={form.idade}
-                onChange={handleChange}
-                min="0"
-                max="25"
-                placeholder="Ex: 10"
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+                type="text"
+                value={form.idade ? `${form.idade} ${form.idade === '1' ? 'ano' : 'anos'}` : ''}
+                readOnly
+                placeholder="Automático"
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Data de Nascimento
+                Turma
               </label>
               <input
-                type="date"
-                name="dataNascimento"
-                value={form.dataNascimento}
-                onChange={handleChange}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+                type="text"
+                value={form.turma}
+                readOnly
+                placeholder="Automático"
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
               />
             </div>
           </div>

@@ -71,12 +71,18 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, on
             {lead.idade && (
               <div className="flex items-center gap-1.5">
                 <span>🎂</span>
-                <span>{lead.idade} anos</span>
+                <span>{lead.idade} {lead.idade === '1' ? 'ano' : 'anos'}</span>
                 {lead.dataNascimento && (
                   <span className="text-gray-400">
                     · {formatarData(lead.dataNascimento)}
                   </span>
                 )}
+              </div>
+            )}
+            {lead.turma && (
+              <div className="flex items-center gap-1.5">
+                <span>🎓</span>
+                <span className="font-medium text-indigo-600">{lead.turma}</span>
               </div>
             )}
             <div className="flex items-center gap-1.5">

@@ -3,6 +3,7 @@ export interface Lead {
   nomeAluno: string;
   idade: string;
   dataNascimento: string;
+  turma: string;
   nomePaiMae: string;
   telefone: string;
   coluna: ColunaKanban;
