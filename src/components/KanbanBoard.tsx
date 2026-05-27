@@ -113,7 +113,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook }) => {
   return (
     <>
       <DragDropContext onDragEnd={onDragEnd}>
-        <div className="flex gap-4 p-4 sm:p-6 overflow-x-auto min-h-[calc(100vh-4rem)]">
+        <div className="flex gap-4 p-4 sm:p-6 overflow-x-auto h-full">
           {COLUNAS.map((coluna) => (
             <KanbanColumn
               key={coluna.id}

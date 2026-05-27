@@ -1,0 +1,98 @@
+import React from 'react';
+import { BarChart3, Users, Settings, Menu, X } from 'lucide-react';
+
+export type Pagina = 'dashboard' | 'admissoes' | 'configuracoes';
+
+interface SidebarProps {
+  paginaAtiva: Pagina;
+  onNavegar: (pagina: Pagina) => void;
+  aberta: boolean;
+  onToggle: () => void;
+}
+
+const itensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[] = [
+  { id: 'dashboard', titulo: 'Dashboard', icone: BarChart3 },
+  { id: 'admissoes', titulo: 'Admissões', icone: Users },
+  { id: 'configuracoes', titulo: 'Configurações', icone: Settings },
+];
+
+const Sidebar: React.FC<SidebarProps> = ({
+  paginaAtiva,
+  onNavegar,
+  aberta,
+  onToggle,
+}) => {
+  return (
+    <>
+      {/* Botão mobile para abrir sidebar */}
+      <button
+        onClick={onToggle}
+        className="lg:hidden fixed top-4 left-4 z-50 bg-slate-800 text-white p-2 rounded-lg shadow-lg hover:bg-slate-700 transition-colors"
+      >
+        {aberta ? <X size={20} /> : <Menu size={20} />}
+      </button>
+
+      {/* Overlay mobile */}
+      {aberta && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 z-30"
+          onClick={onToggle}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`fixed top-0 left-0 h-screen w-64 bg-slate-900 text-white flex flex-col z-40 transition-transform duration-300 lg:translate-x-0 ${
+          aberta ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        {/* Logo */}
+        <div className="px-6 py-5 border-b border-slate-700/50">
+          <div className="flex items-center gap-3">
+            <div className="bg-indigo-500 rounded-lg p-2">
+              <span className="text-xl">🎓</span>
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight">CRM Escolar</h1>
+              <p className="text-slate-400 text-xs">Gestão de Matrículas</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Navegação */}
+        <nav className="flex-1 px-3 py-4 space-y-1">
+          {itensMenu.map((item) => {
+            const ativo = paginaAtiva === item.id;
+            const Icone = item.icone;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  onNavegar(item.id);
+                  if (window.innerWidth < 1024) onToggle();
+                }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                  ativo
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <Icone size={20} />
+                <span>{item.titulo}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-700/50">
+          <p className="text-slate-500 text-xs text-center">
+            © 2026 CRM Escolar
+          </p>
+        </div>
+      </aside>
+    </>
+  );
+};
+
+export default Sidebar;
