@@ -8,15 +8,24 @@ interface LeadCardProps {
   index: number;
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
+  onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
 }
 
-const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover }) => {
+const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover, onSolicitarVisita }) => {
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
 
   const formatarData = (data: string) => {
     if (!data) return '—';
     const d = new Date(data + 'T00:00:00');
     return d.toLocaleDateString('pt-BR');
+  };
+
+  const handleAvancar = () => {
+    if (lead.coluna === 'contato-inicial') {
+      onSolicitarVisita(lead.id, lead.nomeAluno);
+    } else if (colunaAtualIndex < COLUNAS.length - 1) {
+      onMover(lead.id, COLUNAS[colunaAtualIndex + 1].id);
+    }
   };
 
   return (
@@ -80,6 +89,15 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover }) 
             </div>
           </div>
 
+          {lead.dataVisita && lead.horarioVisita && (
+            <div className="mt-2 flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+              <span className="text-sm">📅</span>
+              <span className="text-xs font-medium text-amber-700">
+                {formatarData(lead.dataVisita)} às {lead.horarioVisita}
+              </span>
+            </div>
+          )}
+
           <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
             {colunaAtualIndex > 0 && (
               <button
@@ -92,7 +110,7 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover }) 
             )}
             {colunaAtualIndex < COLUNAS.length - 1 && (
               <button
-                onClick={() => onMover(lead.id, COLUNAS[colunaAtualIndex + 1].id)}
+                onClick={handleAvancar}
                 className="flex-1 text-xs py-1 px-2 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors font-medium"
                 title={`Mover para ${COLUNAS[colunaAtualIndex + 1].titulo}`}
               >

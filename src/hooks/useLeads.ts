@@ -46,6 +46,19 @@ export function useLeads() {
     []
   );
 
+  const agendarVisita = useCallback(
+    (leadId: string, dataVisita: string, horarioVisita: string) => {
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId
+            ? { ...lead, coluna: 'visita-marcada' as ColunaKanban, dataVisita, horarioVisita }
+            : lead
+        )
+      );
+    },
+    []
+  );
+
   const removerLead = useCallback((leadId: string) => {
     setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   }, []);
@@ -55,5 +68,5 @@ export function useLeads() {
     [leads]
   );
 
-  return { leads, adicionarLead, moverLead, removerLead, leadsporColuna };
+  return { leads, adicionarLead, moverLead, agendarVisita, removerLead, leadsporColuna };
 }

@@ -8,6 +8,7 @@ interface KanbanColumnProps {
   leads: Lead[];
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
+  onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
 }
 
 const KanbanColumn: React.FC<KanbanColumnProps> = ({
@@ -15,6 +16,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
   leads,
   onRemover,
   onMover,
+  onSolicitarVisita,
 }) => {
   return (
     <div className="flex flex-col min-w-[280px] w-[280px] lg:w-auto lg:flex-1">
@@ -69,6 +71,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 index={index}
                 onRemover={onRemover}
                 onMover={onMover}
+                onSolicitarVisita={onSolicitarVisita}
               />
             ))}
             {provided.placeholder}

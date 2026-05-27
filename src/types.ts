@@ -7,6 +7,8 @@ export interface Lead {
   telefone: string;
   coluna: ColunaKanban;
   criadoEm: string;
+  dataVisita?: string;
+  horarioVisita?: string;
 }
 
 export type ColunaKanban =
