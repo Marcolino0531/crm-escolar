@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import { OnboardingAluno } from '../types';
 import { TAREFAS_ONBOARDING } from '../constants';
 import { useOnboarding } from '../hooks/useOnboarding';
-import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, GraduationCap, Phone } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, GraduationCap, Phone, Trash2 } from 'lucide-react';
 
 interface OnboardingBoardProps {
   onboardingHook: ReturnType<typeof useOnboarding>;
 }
 
 const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => {
-  const { alunosPendentes, alunosConcluidos, alternarTarefa, contarTarefas } = onboardingHook;
+  const { alunosPendentes, alunosConcluidos, alternarTarefa, contarTarefas, removerAluno } = onboardingHook;
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [mostrarConcluidos, setMostrarConcluidos] = useState(false);
 
@@ -59,6 +59,18 @@ const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => 
                   Concluído
                 </span>
               )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm('Tem certeza que deseja remover este aluno do onboarding?')) {
+                    removerAluno(aluno.id);
+                  }
+                }}
+                className="flex-shrink-0 p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                title="Remover aluno do onboarding"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
             <div className="flex items-center gap-4 text-xs text-gray-500">
               <span className="flex items-center gap-1">
@@ -151,7 +163,7 @@ const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => 
           </svg>
         </div>
         <div>
-          <h2 className="text-lg font-bold text-gray-800">Início de Cadastro</h2>
+          <h2 className="text-lg font-bold text-gray-800">Onboarding</h2>
           <p className="text-xs text-gray-500">
             {alunosPendentes.length} pendente(s) · {alunosConcluidos.length} concluído(s)
           </p>

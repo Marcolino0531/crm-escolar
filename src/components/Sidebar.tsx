@@ -1,7 +1,8 @@
 import React from 'react';
-import { BarChart3, Users, Settings, Menu, X, ClipboardList, BadgeCheck, Building2 } from 'lucide-react';
+import { BarChart3, Users, Settings, Menu, X, ClipboardList, BadgeCheck, Building2, LogOut } from 'lucide-react';
 import { Unidade } from '../types';
 import { UNIDADES } from '../constants';
+import { useAuth } from '../contexts/AuthContext';
 
 export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'rh' | 'configuracoes';
 
@@ -14,7 +15,7 @@ interface SidebarProps {
   onMudarUnidade: (unidade: Unidade) => void;
 }
 
-const itensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[] = [
+const todosItensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[] = [
   { id: 'dashboard', titulo: 'Dashboard', icone: BarChart3 },
   { id: 'admissoes', titulo: 'Admissões', icone: Users },
   { id: 'onboarding', titulo: 'Onboarding', icone: ClipboardList },
@@ -30,6 +31,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   unidadeSelecionada,
   onMudarUnidade,
 }) => {
+  const { usuario, logout, isAdmin, temPermissao } = useAuth();
+
+  const itensMenu = todosItensMenu.filter((item) => {
+    if (item.id === 'dashboard') return true;
+    if (item.id === 'configuracoes') return isAdmin;
+    if (item.id === 'admissoes') return temPermissao('admissoes');
+    if (item.id === 'onboarding') return temPermissao('onboarding');
+    if (item.id === 'rh') return temPermissao('rh');
+    return true;
+  });
+
   return (
     <>
       {/* Botão mobile para abrir sidebar */}
@@ -61,7 +73,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <span className="text-xl">🎓</span>
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight">CRM Escolar</h1>
+              <h1 className="text-lg font-bold tracking-tight">Schooler Hub</h1>
               <p className="text-slate-400 text-xs">ERP Multi-Unidades</p>
             </div>
           </div>
@@ -111,10 +123,32 @@ const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
+        {/* Usuário logado + Logout */}
+        <div className="px-3 py-3 border-t border-slate-700/50">
+          {usuario && (
+            <div className="flex items-center gap-3 px-3 py-2 mb-2">
+              <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+                {usuario.nome.charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-white truncate">{usuario.nome}</p>
+                <p className="text-xs text-slate-400 truncate">{usuario.email}</p>
+              </div>
+            </div>
+          )}
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-red-400 transition-all"
+          >
+            <LogOut size={18} />
+            <span>Sair</span>
+          </button>
+        </div>
+
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-700/50">
           <p className="text-slate-500 text-xs text-center">
-            © 2026 CRM Escolar
+            © 2026 Schooler Hub
           </p>
         </div>
       </aside>

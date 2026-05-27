@@ -12,12 +12,17 @@ function carregarOnboarding(): OnboardingAluno[] {
         const tarefas = { ...TAREFAS_INICIAIS };
         return { ...a, tarefas, concluido: false };
       }
+      // Migrate old 'inicio-cadastro' key to new task keys
+      if ('inicio-cadastro' in a.tarefas) {
+        delete (a.tarefas as Record<string, boolean>)['inicio-cadastro'];
+      }
       for (const t of TAREFAS_ONBOARDING) {
         if (!(t.id in a.tarefas)) {
           a.tarefas[t.id] = false;
         }
       }
-      return a;
+      const todasConcluidas = TAREFAS_ONBOARDING.every((t) => a.tarefas[t.id]);
+      return { ...a, concluido: todasConcluidas };
     });
   } catch {
     return [];
@@ -93,6 +98,13 @@ export function useOnboarding(unidadeSelecionada: Unidade) {
     [todosAlunos]
   );
 
+  const removerAluno = useCallback(
+    (alunoId: string) => {
+      setTodosAlunos((prev) => prev.filter((a) => a.id !== alunoId));
+    },
+    []
+  );
+
   return {
     alunos,
     alunosPendentes,
@@ -100,5 +112,6 @@ export function useOnboarding(unidadeSelecionada: Unidade) {
     adicionarAluno,
     alternarTarefa,
     contarTarefas,
+    removerAluno,
   };
 }

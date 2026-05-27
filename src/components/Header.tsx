@@ -16,7 +16,7 @@ const Header: React.FC<HeaderProps> = ({ onAbrirFormulario, totalLeads }) => {
             </div>
             <div>
               <h1 className="text-white text-xl font-bold tracking-tight">
-                CRM Escolar
+                Schooler Hub
               </h1>
               <p className="text-indigo-200 text-xs">
                 Gestão de Visitas e Matrículas

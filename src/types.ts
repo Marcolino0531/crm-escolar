@@ -1,3 +1,15 @@
+export type Modulo = 'admissoes' | 'onboarding' | 'rh';
+
+export interface Usuario {
+  id: string;
+  nome: string;
+  email: string;
+  senha: string;
+  perfil: 'admin' | 'funcionario';
+  permissoes: Modulo[];
+  criadoEm: string;
+}
+
 export type Unidade = 'CEC' | 'CEC Baby' | 'Núcleo Belvedere' | 'Núcleo Vale do Sereno';
 
 export interface ItemMatricula {
@@ -43,7 +55,8 @@ export interface ColunaConfig {
 }
 
 export type TarefaOnboardingId =
-  | 'inicio-cadastro'
+  | 'envio-ficha-matricula'
+  | 'ficha-matricula-respondida'
   | 'cadastro-erp'
   | 'envio-contrato'
   | 'assinatura-contrato'
