@@ -10,6 +10,7 @@ import MatriculaModal from './MatriculaModal';
 
 interface KanbanBoardProps {
   leadsHook: ReturnType<typeof useLeads>;
+  onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
 }
 
 interface PendingAction {
@@ -18,7 +19,7 @@ interface PendingAction {
   colunaOrigem: ColunaKanban;
 }
 
-const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook }) => {
+const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook, onMatriculaConfirmada }) => {
   const {
     leads,
     moverLead,
@@ -101,7 +102,11 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook }) => {
 
   const handleConfirmarMatricula = (itens: ItemMatricula[]) => {
     if (pendingMatricula) {
-      registrarMatricula(pendingMatricula.leadId, itens);
+      if (onMatriculaConfirmada) {
+        onMatriculaConfirmada(pendingMatricula.leadId, itens);
+      } else {
+        registrarMatricula(pendingMatricula.leadId, itens);
+      }
       setPendingMatricula(null);
     }
   };

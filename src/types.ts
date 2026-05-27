@@ -38,3 +38,30 @@ export interface ColunaConfig {
   corFundo: string;
   icone: string;
 }
+
+export type ColunaOnboarding =
+  | 'ficha-matricula'
+  | 'assinatura-contrato'
+  | 'cadastro-erp'
+  | 'boas-vindas'
+  | 'concluido';
+
+export interface ColunaOnboardingConfig {
+  id: ColunaOnboarding;
+  titulo: string;
+  cor: string;
+  corBorda: string;
+  corFundo: string;
+  icone: string;
+}
+
+export interface OnboardingAluno {
+  id: string;
+  leadId: string;
+  nomeAluno: string;
+  turma: string;
+  nomePaiMae: string;
+  telefone: string;
+  coluna: ColunaOnboarding;
+  criadoEm: string;
+}

@@ -3,8 +3,11 @@ import Sidebar, { Pagina } from './components/Sidebar';
 import DashboardPage from './components/DashboardPage';
 import ConfiguracoesPage from './components/ConfiguracoesPage';
 import KanbanBoard from './components/KanbanBoard';
+import OnboardingBoard from './components/OnboardingBoard';
 import LeadForm from './components/LeadForm';
 import { useLeads } from './hooks/useLeads';
+import { useOnboarding } from './hooks/useOnboarding';
+import { ItemMatricula } from './types';
 import { Plus } from 'lucide-react';
 
 function App() {
@@ -12,10 +15,27 @@ function App() {
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [formularioAberto, setFormularioAberto] = useState(false);
   const leadsHook = useLeads();
+  const onboardingHook = useOnboarding();
+
+  const handleMatriculaComOnboarding = (leadId: string, itensMatricula: ItemMatricula[]) => {
+    const lead = leadsHook.leads.find((l) => l.id === leadId);
+    leadsHook.registrarMatricula(leadId, itensMatricula);
+
+    if (lead) {
+      onboardingHook.adicionarAluno({
+        leadId: lead.id,
+        nomeAluno: lead.nomeAluno,
+        turma: lead.turma,
+        nomePaiMae: lead.nomePaiMae,
+        telefone: lead.telefone,
+      });
+    }
+  };
 
   const tituloPagina: Record<Pagina, string> = {
     dashboard: 'Dashboard',
     admissoes: 'Admissões',
+    onboarding: 'Onboarding',
     configuracoes: 'Configurações',
   };
 
@@ -42,6 +62,11 @@ function App() {
                 {leadsHook.leads.length} leads
               </span>
             )}
+            {paginaAtiva === 'onboarding' && (
+              <span className="bg-teal-100 text-teal-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+                {onboardingHook.alunos.length} alunos
+              </span>
+            )}
           </div>
 
           {paginaAtiva === 'admissoes' && (
@@ -58,7 +83,13 @@ function App() {
         {/* Área de conteúdo */}
         <main className="flex-1 overflow-auto">
           {paginaAtiva === 'dashboard' && <DashboardPage />}
-          {paginaAtiva === 'admissoes' && <KanbanBoard leadsHook={leadsHook} />}
+          {paginaAtiva === 'admissoes' && (
+            <KanbanBoard
+              leadsHook={leadsHook}
+              onMatriculaConfirmada={handleMatriculaComOnboarding}
+            />
+          )}
+          {paginaAtiva === 'onboarding' && <OnboardingBoard onboardingHook={onboardingHook} />}
           {paginaAtiva === 'configuracoes' && <ConfiguracoesPage />}
         </main>
       </div>

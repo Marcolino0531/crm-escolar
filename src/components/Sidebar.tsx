@@ -1,7 +1,7 @@
 import React from 'react';
-import { BarChart3, Users, Settings, Menu, X } from 'lucide-react';
+import { BarChart3, Users, Settings, Menu, X, ClipboardList } from 'lucide-react';
 
-export type Pagina = 'dashboard' | 'admissoes' | 'configuracoes';
+export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'configuracoes';
 
 interface SidebarProps {
   paginaAtiva: Pagina;
@@ -13,6 +13,7 @@ interface SidebarProps {
 const itensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[] = [
   { id: 'dashboard', titulo: 'Dashboard', icone: BarChart3 },
   { id: 'admissoes', titulo: 'Admissões', icone: Users },
+  { id: 'onboarding', titulo: 'Onboarding', icone: ClipboardList },
   { id: 'configuracoes', titulo: 'Configurações', icone: Settings },
 ];
 
