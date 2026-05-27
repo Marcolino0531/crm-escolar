@@ -18,7 +18,11 @@ const converterParaBR = (dataISO: string): string => {
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { funcionarios, adicionarFuncionario, removerFuncionario, adicionarFerias, removerFerias } = rhHook;
   const [modalAberto, setModalAberto] = useState(false);
-  const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<Funcionario | null>(null);
+  const [funcionarioSelecionadoId, setFuncionarioSelecionadoId] = useState<string | null>(null);
+
+  const funcionarioSelecionado = funcionarioSelecionadoId
+    ? funcionarios.find((f) => f.id === funcionarioSelecionadoId) || null
+    : null;
 
   const handleSalvar = (dados: Omit<Funcionario, 'id' | 'ferias' | 'criadoEm'>) => {
     adicionarFuncionario(dados);
@@ -26,11 +30,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   };
 
   const handleClickFuncionario = (funcionario: Funcionario) => {
-    setFuncionarioSelecionado(funcionario);
+    setFuncionarioSelecionadoId(funcionario.id);
   };
 
   const handleFecharDetalhes = () => {
-    setFuncionarioSelecionado(null);
+    setFuncionarioSelecionadoId(null);
   };
 
   return (
