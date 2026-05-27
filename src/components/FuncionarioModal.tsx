@@ -1,0 +1,414 @@
+import React, { useState } from 'react';
+import { Unidade, Funcionario } from '../types';
+import { UNIDADES } from '../constants';
+
+interface FuncionarioModalProps {
+  unidadeSelecionada: Unidade;
+  funcionarioExistente?: Funcionario;
+  onSalvar: (dados: Omit<Funcionario, 'id' | 'ferias' | 'criadoEm'>) => void;
+  onFechar: () => void;
+  onAdicionarFerias?: (funcionarioId: string, dataInicio: string, dataFim: string) => void;
+  onRemoverFerias?: (funcionarioId: string, feriasId: string) => void;
+}
+
+const aplicarMascaraData = (valor: string) => {
+  const nums = valor.replace(/\D/g, '').slice(0, 8);
+  if (nums.length <= 2) return nums;
+  if (nums.length <= 4) return `${nums.slice(0, 2)}/${nums.slice(2)}`;
+  return `${nums.slice(0, 2)}/${nums.slice(2, 4)}/${nums.slice(4)}`;
+};
+
+const aplicarMascaraHora = (valor: string) => {
+  const nums = valor.replace(/\D/g, '').slice(0, 4);
+  if (nums.length <= 2) return nums;
+  return `${nums.slice(0, 2)}:${nums.slice(2)}`;
+};
+
+const converterParaISO = (dataBR: string): string => {
+  const partes = dataBR.split('/');
+  if (partes.length !== 3 || partes[2].length !== 4) return '';
+  const [dia, mes, ano] = partes;
+  return `${ano}-${mes}-${dia}`;
+};
+
+const converterParaBR = (dataISO: string): string => {
+  if (!dataISO) return '';
+  const partes = dataISO.split('-');
+  if (partes.length !== 3) return '';
+  return `${partes[2]}/${partes[1]}/${partes[0]}`;
+};
+
+const validarData = (dataBR: string): boolean => {
+  if (dataBR.length !== 10) return false;
+  const partes = dataBR.split('/');
+  if (partes.length !== 3) return false;
+  const [dia, mes, ano] = partes.map(Number);
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31 || ano < 1900) return false;
+  const d = new Date(ano, mes - 1, dia);
+  return d.getDate() === dia && d.getMonth() === mes - 1 && d.getFullYear() === ano;
+};
+
+const validarHora = (hora: string): boolean => {
+  if (hora.length !== 5) return false;
+  const partes = hora.split(':');
+  if (partes.length !== 2) return false;
+  const [h, m] = partes.map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+};
+
+const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
+  unidadeSelecionada,
+  funcionarioExistente,
+  onSalvar,
+  onFechar,
+  onAdicionarFerias,
+  onRemoverFerias,
+}) => {
+  const isEdicao = !!funcionarioExistente;
+
+  const [form, setForm] = useState({
+    nomeCompleto: funcionarioExistente?.nomeCompleto || '',
+    cargo: funcionarioExistente?.cargo || '',
+    unidade: funcionarioExistente?.unidade || unidadeSelecionada,
+    dataAdmissaoDisplay: converterParaBR(funcionarioExistente?.dataAdmissao || ''),
+    dataAdmissao: funcionarioExistente?.dataAdmissao || '',
+    dataRescisaoDisplay: converterParaBR(funcionarioExistente?.dataRescisao || ''),
+    dataRescisao: funcionarioExistente?.dataRescisao || '',
+    horarioTrabalhoInicio: funcionarioExistente?.horarioTrabalhoInicio || '',
+    horarioTrabalhoFim: funcionarioExistente?.horarioTrabalhoFim || '',
+    horarioAlmocoInicio: funcionarioExistente?.horarioAlmocoInicio || '',
+    horarioAlmocoFim: funcionarioExistente?.horarioAlmocoFim || '',
+  });
+
+  const [feriasForm, setFeriasForm] = useState({
+    dataInicioDisplay: '',
+    dataInicio: '',
+    dataFimDisplay: '',
+    dataFim: '',
+  });
+  const [mostrarFeriasForm, setMostrarFeriasForm] = useState(false);
+
+  const handleDataChange = (campo: 'dataAdmissao' | 'dataRescisao', valor: string) => {
+    const display = aplicarMascaraData(valor);
+    const displayKey = `${campo}Display` as 'dataAdmissaoDisplay' | 'dataRescisaoDisplay';
+    if (display.length === 10 && validarData(display)) {
+      setForm((prev) => ({ ...prev, [displayKey]: display, [campo]: converterParaISO(display) }));
+    } else {
+      setForm((prev) => ({ ...prev, [displayKey]: display, [campo]: '' }));
+    }
+  };
+
+  const handleHoraChange = (campo: string, valor: string) => {
+    const masked = aplicarMascaraHora(valor);
+    setForm((prev) => ({ ...prev, [campo]: masked }));
+  };
+
+  const handleFeriasDataChange = (campo: 'dataInicio' | 'dataFim', valor: string) => {
+    const display = aplicarMascaraData(valor);
+    const displayKey = `${campo}Display` as 'dataInicioDisplay' | 'dataFimDisplay';
+    if (display.length === 10 && validarData(display)) {
+      setFeriasForm((prev) => ({ ...prev, [displayKey]: display, [campo]: converterParaISO(display) }));
+    } else {
+      setFeriasForm((prev) => ({ ...prev, [displayKey]: display, [campo]: '' }));
+    }
+  };
+
+  const handleAdicionarFerias = () => {
+    if (funcionarioExistente && onAdicionarFerias && feriasForm.dataInicio && feriasForm.dataFim) {
+      onAdicionarFerias(funcionarioExistente.id, feriasForm.dataInicio, feriasForm.dataFim);
+      setFeriasForm({ dataInicioDisplay: '', dataInicio: '', dataFimDisplay: '', dataFim: '' });
+      setMostrarFeriasForm(false);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (
+      !form.nomeCompleto.trim() ||
+      !form.cargo.trim() ||
+      !form.dataAdmissao ||
+      !validarHora(form.horarioTrabalhoInicio) ||
+      !validarHora(form.horarioTrabalhoFim) ||
+      !validarHora(form.horarioAlmocoInicio) ||
+      !validarHora(form.horarioAlmocoFim)
+    ) {
+      return;
+    }
+    onSalvar({
+      nomeCompleto: form.nomeCompleto,
+      cargo: form.cargo,
+      unidade: form.unidade as Unidade,
+      dataAdmissao: form.dataAdmissao,
+      dataRescisao: form.dataRescisao || undefined,
+      horarioTrabalhoInicio: form.horarioTrabalhoInicio,
+      horarioTrabalhoFim: form.horarioTrabalhoFim,
+      horarioAlmocoInicio: form.horarioAlmocoInicio,
+      horarioAlmocoFim: form.horarioAlmocoFim,
+    });
+  };
+
+  const formValido =
+    form.nomeCompleto.trim() &&
+    form.cargo.trim() &&
+    form.dataAdmissao &&
+    validarHora(form.horarioTrabalhoInicio) &&
+    validarHora(form.horarioTrabalhoFim) &&
+    validarHora(form.horarioAlmocoInicio) &&
+    validarHora(form.horarioAlmocoFim);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 sticky top-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">👤</span>
+              <h2 className="text-white text-lg font-bold">
+                {isEdicao ? 'Detalhes do Funcionário' : 'Novo Funcionário'}
+              </h2>
+            </div>
+            <button
+              onClick={onFechar}
+              className="text-white/80 hover:text-white transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nome Completo <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={form.nomeCompleto}
+              onChange={(e) => setForm((prev) => ({ ...prev, nomeCompleto: e.target.value }))}
+              placeholder="Ex: João da Silva"
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Cargo <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.cargo}
+                onChange={(e) => setForm((prev) => ({ ...prev, cargo: e.target.value }))}
+                placeholder="Ex: Professor"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Unidade <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={form.unidade}
+                onChange={(e) => setForm((prev) => ({ ...prev, unidade: e.target.value as Unidade }))}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              >
+                {UNIDADES.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Data de Admissão <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.dataAdmissaoDisplay}
+                onChange={(e) => handleDataChange('dataAdmissao', e.target.value)}
+                placeholder="DD/MM/AAAA"
+                maxLength={10}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Data de Rescisão
+              </label>
+              <input
+                type="text"
+                value={form.dataRescisaoDisplay}
+                onChange={(e) => handleDataChange('dataRescisao', e.target.value)}
+                placeholder="DD/MM/AAAA"
+                maxLength={10}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Horário de Trabalho <span className="text-red-500">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={form.horarioTrabalhoInicio}
+                onChange={(e) => handleHoraChange('horarioTrabalhoInicio', e.target.value)}
+                placeholder="08:00"
+                maxLength={5}
+                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+              <span className="text-gray-500 text-sm">às</span>
+              <input
+                type="text"
+                value={form.horarioTrabalhoFim}
+                onChange={(e) => handleHoraChange('horarioTrabalhoFim', e.target.value)}
+                placeholder="17:00"
+                maxLength={5}
+                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Horário de Almoço <span className="text-red-500">*</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={form.horarioAlmocoInicio}
+                onChange={(e) => handleHoraChange('horarioAlmocoInicio', e.target.value)}
+                placeholder="12:00"
+                maxLength={5}
+                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+              <span className="text-gray-500 text-sm">às</span>
+              <input
+                type="text"
+                value={form.horarioAlmocoFim}
+                onChange={(e) => handleHoraChange('horarioAlmocoFim', e.target.value)}
+                placeholder="13:00"
+                maxLength={5}
+                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Controle de Férias (somente no modo edição) */}
+          {isEdicao && funcionarioExistente && (
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  <span>🏖️</span> Controle de Férias
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setMostrarFeriasForm(!mostrarFeriasForm)}
+                  className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 font-medium transition-colors"
+                >
+                  + Adicionar Férias
+                </button>
+              </div>
+
+              {mostrarFeriasForm && (
+                <div className="bg-emerald-50 rounded-lg p-3 mb-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Data de Início</label>
+                      <input
+                        type="text"
+                        value={feriasForm.dataInicioDisplay}
+                        onChange={(e) => handleFeriasDataChange('dataInicio', e.target.value)}
+                        placeholder="DD/MM/AAAA"
+                        maxLength={10}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Data de Fim</label>
+                      <input
+                        type="text"
+                        value={feriasForm.dataFimDisplay}
+                        onChange={(e) => handleFeriasDataChange('dataFim', e.target.value)}
+                        placeholder="DD/MM/AAAA"
+                        maxLength={10}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMostrarFeriasForm(false)}
+                      className="text-xs px-3 py-1 text-gray-500 hover:text-gray-700"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAdicionarFerias}
+                      disabled={!feriasForm.dataInicio || !feriasForm.dataFim}
+                      className="text-xs px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {funcionarioExistente.ferias.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">Nenhum período de férias registrado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {funcionarioExistente.ferias.map((periodo) => (
+                    <div key={periodo.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="text-sm text-gray-700">
+                        📅 {converterParaBR(periodo.dataInicio)} → {converterParaBR(periodo.dataFim)}
+                      </span>
+                      {onRemoverFerias && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoverFerias(funcionarioExistente.id, periodo.id)}
+                          className="text-red-400 hover:text-red-600 text-xs"
+                        >
+                          Remover
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+            >
+              {isEdicao ? 'Fechar' : 'Cancelar'}
+            </button>
+            {!isEdicao && (
+              <button
+                type="submit"
+                disabled={!formValido}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cadastrar Funcionário
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default FuncionarioModal;
