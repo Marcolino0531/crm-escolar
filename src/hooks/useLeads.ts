@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Lead, ColunaKanban, ItemMatricula } from '../types';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Lead, ColunaKanban, ItemMatricula, Unidade } from '../types';
 import { STORAGE_KEY } from '../constants';
 
 function carregarLeads(): Lead[] {
@@ -15,12 +15,17 @@ function salvarLeads(leads: Lead[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
 }
 
-export function useLeads() {
-  const [leads, setLeads] = useState<Lead[]>(carregarLeads);
+export function useLeads(unidadeSelecionada: Unidade) {
+  const [todosLeads, setTodosLeads] = useState<Lead[]>(carregarLeads);
 
   useEffect(() => {
-    salvarLeads(leads);
-  }, [leads]);
+    salvarLeads(todosLeads);
+  }, [todosLeads]);
+
+  const leads = useMemo(
+    () => todosLeads.filter((lead) => lead.unidade === unidadeSelecionada),
+    [todosLeads, unidadeSelecionada]
+  );
 
   const adicionarLead = useCallback(
     (dados: Omit<Lead, 'id' | 'coluna' | 'criadoEm'>) => {
@@ -30,14 +35,14 @@ export function useLeads() {
         coluna: 'contato-inicial',
         criadoEm: new Date().toISOString(),
       };
-      setLeads((prev) => [...prev, novoLead]);
+      setTodosLeads((prev) => [...prev, novoLead]);
     },
     []
   );
 
   const moverLead = useCallback(
     (leadId: string, novaColuna: ColunaKanban) => {
-      setLeads((prev) =>
+      setTodosLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId ? { ...lead, coluna: novaColuna } : lead
         )
@@ -48,7 +53,7 @@ export function useLeads() {
 
   const agendarVisita = useCallback(
     (leadId: string, dataVisita: string, horarioVisita: string) => {
-      setLeads((prev) =>
+      setTodosLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId
             ? { ...lead, coluna: 'visita-marcada' as ColunaKanban, dataVisita, horarioVisita }
@@ -61,7 +66,7 @@ export function useLeads() {
 
   const registrarNaoMatricula = useCallback(
     (leadId: string, motivoPerda: string, observacaoPerda?: string) => {
-      setLeads((prev) =>
+      setTodosLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId
             ? { ...lead, coluna: 'nao-matricula' as ColunaKanban, motivoPerda, observacaoPerda }
@@ -74,7 +79,7 @@ export function useLeads() {
 
   const registrarMatricula = useCallback(
     (leadId: string, itensMatricula: ItemMatricula[]) => {
-      setLeads((prev) =>
+      setTodosLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId
             ? { ...lead, coluna: 'matricula' as ColunaKanban, itensMatricula }
@@ -86,7 +91,7 @@ export function useLeads() {
   );
 
   const removerLead = useCallback((leadId: string) => {
-    setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
+    setTodosLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   }, []);
 
   const leadsporColuna = useCallback(
@@ -96,6 +101,7 @@ export function useLeads() {
 
   return {
     leads,
+    todosLeads,
     adicionarLead,
     moverLead,
     agendarVisita,

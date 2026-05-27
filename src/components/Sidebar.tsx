@@ -1,19 +1,24 @@
 import React from 'react';
-import { BarChart3, Users, Settings, Menu, X, ClipboardList } from 'lucide-react';
+import { BarChart3, Users, Settings, Menu, X, ClipboardList, BadgeCheck, Building2 } from 'lucide-react';
+import { Unidade } from '../types';
+import { UNIDADES } from '../constants';
 
-export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'configuracoes';
+export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'rh' | 'configuracoes';
 
 interface SidebarProps {
   paginaAtiva: Pagina;
   onNavegar: (pagina: Pagina) => void;
   aberta: boolean;
   onToggle: () => void;
+  unidadeSelecionada: Unidade;
+  onMudarUnidade: (unidade: Unidade) => void;
 }
 
 const itensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[] = [
   { id: 'dashboard', titulo: 'Dashboard', icone: BarChart3 },
   { id: 'admissoes', titulo: 'Admissões', icone: Users },
   { id: 'onboarding', titulo: 'Onboarding', icone: ClipboardList },
+  { id: 'rh', titulo: 'Recursos Humanos', icone: BadgeCheck },
   { id: 'configuracoes', titulo: 'Configurações', icone: Settings },
 ];
 
@@ -22,6 +27,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNavegar,
   aberta,
   onToggle,
+  unidadeSelecionada,
+  onMudarUnidade,
 }) => {
   return (
     <>
@@ -55,9 +62,28 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <div>
               <h1 className="text-lg font-bold tracking-tight">CRM Escolar</h1>
-              <p className="text-slate-400 text-xs">Gestão de Matrículas</p>
+              <p className="text-slate-400 text-xs">ERP Multi-Unidades</p>
             </div>
           </div>
+        </div>
+
+        {/* Seletor de Unidade */}
+        <div className="px-3 py-3 border-b border-slate-700/50">
+          <label className="flex items-center gap-2 text-xs text-slate-400 mb-1.5 px-1">
+            <Building2 size={12} />
+            Unidade
+          </label>
+          <select
+            value={unidadeSelecionada}
+            onChange={(e) => onMudarUnidade(e.target.value as Unidade)}
+            className="w-full bg-slate-800 text-white text-sm rounded-lg px-3 py-2 border border-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer"
+          >
+            {UNIDADES.map((unidade) => (
+              <option key={unidade} value={unidade}>
+                {unidade}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Navegação */}

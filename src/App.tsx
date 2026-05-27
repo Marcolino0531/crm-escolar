@@ -4,18 +4,39 @@ import DashboardPage from './components/DashboardPage';
 import ConfiguracoesPage from './components/ConfiguracoesPage';
 import KanbanBoard from './components/KanbanBoard';
 import OnboardingBoard from './components/OnboardingBoard';
+import RHPage from './components/RHPage';
 import LeadForm from './components/LeadForm';
 import { useLeads } from './hooks/useLeads';
 import { useOnboarding } from './hooks/useOnboarding';
-import { ItemMatricula } from './types';
+import { useRH } from './hooks/useRH';
+import { ItemMatricula, Unidade } from './types';
+import { UNIDADE_SELECIONADA_KEY } from './constants';
 import { Plus } from 'lucide-react';
+
+function carregarUnidadeSalva(): Unidade {
+  try {
+    const salva = localStorage.getItem(UNIDADE_SELECIONADA_KEY);
+    if (salva === 'CEC' || salva === 'CEC Baby' || salva === 'Núcleo Belvedere' || salva === 'Núcleo Vale do Sereno') {
+      return salva;
+    }
+  } catch {}
+  return 'CEC';
+}
 
 function App() {
   const [paginaAtiva, setPaginaAtiva] = useState<Pagina>('admissoes');
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [formularioAberto, setFormularioAberto] = useState(false);
-  const leadsHook = useLeads();
-  const onboardingHook = useOnboarding();
+  const [unidadeSelecionada, setUnidadeSelecionada] = useState<Unidade>(carregarUnidadeSalva);
+
+  const leadsHook = useLeads(unidadeSelecionada);
+  const onboardingHook = useOnboarding(unidadeSelecionada);
+  const rhHook = useRH(unidadeSelecionada);
+
+  const handleMudarUnidade = (unidade: Unidade) => {
+    setUnidadeSelecionada(unidade);
+    localStorage.setItem(UNIDADE_SELECIONADA_KEY, unidade);
+  };
 
   const handleMatriculaComOnboarding = (leadId: string, itensMatricula: ItemMatricula[]) => {
     const lead = leadsHook.leads.find((l) => l.id === leadId);
@@ -28,6 +49,7 @@ function App() {
         turma: lead.turma,
         nomePaiMae: lead.nomePaiMae,
         telefone: lead.telefone,
+        unidade: lead.unidade,
       });
     }
   };
@@ -36,6 +58,7 @@ function App() {
     dashboard: 'Dashboard',
     admissoes: 'Admissões',
     onboarding: 'Onboarding',
+    rh: 'Recursos Humanos',
     configuracoes: 'Configurações',
   };
 
@@ -46,6 +69,8 @@ function App() {
         onNavegar={setPaginaAtiva}
         aberta={sidebarAberta}
         onToggle={() => setSidebarAberta(!sidebarAberta)}
+        unidadeSelecionada={unidadeSelecionada}
+        onMudarUnidade={handleMudarUnidade}
       />
 
       {/* Conteúdo principal */}
@@ -65,6 +90,11 @@ function App() {
             {paginaAtiva === 'onboarding' && (
               <span className="bg-teal-100 text-teal-700 text-xs font-semibold px-2.5 py-1 rounded-full">
                 {onboardingHook.alunos.length} alunos
+              </span>
+            )}
+            {paginaAtiva === 'rh' && (
+              <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+                {rhHook.funcionarios.length} funcionários
               </span>
             )}
           </div>
@@ -90,6 +120,7 @@ function App() {
             />
           )}
           {paginaAtiva === 'onboarding' && <OnboardingBoard onboardingHook={onboardingHook} />}
+          {paginaAtiva === 'rh' && <RHPage rhHook={rhHook} unidadeSelecionada={unidadeSelecionada} />}
           {paginaAtiva === 'configuracoes' && <ConfiguracoesPage />}
         </main>
       </div>
@@ -101,6 +132,7 @@ function App() {
             setFormularioAberto(false);
           }}
           onFechar={() => setFormularioAberto(false)}
+          unidadeSelecionada={unidadeSelecionada}
         />
       )}
     </div>

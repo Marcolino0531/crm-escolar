@@ -1,4 +1,11 @@
-import { ColunaConfig, ColunaOnboardingConfig } from './types';
+import { ColunaConfig, ColunaOnboardingConfig, Unidade } from './types';
+
+export const UNIDADES: Unidade[] = [
+  'CEC',
+  'CEC Baby',
+  'Núcleo Belvedere',
+  'Núcleo Vale do Sereno',
+];
 
 export const COLUNAS: ColunaConfig[] = [
   {
@@ -45,6 +52,8 @@ export const COLUNAS: ColunaConfig[] = [
 
 export const STORAGE_KEY = 'crm-escolar-leads';
 export const ONBOARDING_STORAGE_KEY = 'crm-escolar-onboarding';
+export const RH_STORAGE_KEY = 'crm-escolar-rh';
+export const UNIDADE_SELECIONADA_KEY = 'crm-escolar-unidade';
 
 export const COLUNAS_ONBOARDING: ColunaOnboardingConfig[] = [
   {

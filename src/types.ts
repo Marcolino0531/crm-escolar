@@ -1,3 +1,5 @@
+export type Unidade = 'CEC' | 'CEC Baby' | 'Núcleo Belvedere' | 'Núcleo Vale do Sereno';
+
 export interface ItemMatricula {
   id: string;
   tipo: string;
@@ -14,6 +16,7 @@ export interface Lead {
   turma: string;
   nomePaiMae: string;
   telefone: string;
+  unidade: Unidade;
   coluna: ColunaKanban;
   criadoEm: string;
   dataVisita?: string;
@@ -62,6 +65,28 @@ export interface OnboardingAluno {
   turma: string;
   nomePaiMae: string;
   telefone: string;
+  unidade: Unidade;
   coluna: ColunaOnboarding;
+  criadoEm: string;
+}
+
+export interface PeriodoFerias {
+  id: string;
+  dataInicio: string;
+  dataFim: string;
+}
+
+export interface Funcionario {
+  id: string;
+  nomeCompleto: string;
+  cargo: string;
+  unidade: Unidade;
+  dataAdmissao: string;
+  dataRescisao?: string;
+  horarioTrabalhoInicio: string;
+  horarioTrabalhoFim: string;
+  horarioAlmocoInicio: string;
+  horarioAlmocoFim: string;
+  ferias: PeriodoFerias[];
   criadoEm: string;
 }

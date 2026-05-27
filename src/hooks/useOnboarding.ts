@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { OnboardingAluno, ColunaOnboarding } from '../types';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { OnboardingAluno, ColunaOnboarding, Unidade } from '../types';
 import { ONBOARDING_STORAGE_KEY } from '../constants';
 
 function carregarOnboarding(): OnboardingAluno[] {
@@ -15,16 +15,21 @@ function salvarOnboarding(alunos: OnboardingAluno[]) {
   localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(alunos));
 }
 
-export function useOnboarding() {
-  const [alunos, setAlunos] = useState<OnboardingAluno[]>(carregarOnboarding);
+export function useOnboarding(unidadeSelecionada: Unidade) {
+  const [todosAlunos, setTodosAlunos] = useState<OnboardingAluno[]>(carregarOnboarding);
 
   useEffect(() => {
-    salvarOnboarding(alunos);
-  }, [alunos]);
+    salvarOnboarding(todosAlunos);
+  }, [todosAlunos]);
+
+  const alunos = useMemo(
+    () => todosAlunos.filter((a) => a.unidade === unidadeSelecionada),
+    [todosAlunos, unidadeSelecionada]
+  );
 
   const adicionarAluno = useCallback(
-    (dados: { leadId: string; nomeAluno: string; turma: string; nomePaiMae: string; telefone: string }) => {
-      setAlunos((prev) => {
+    (dados: { leadId: string; nomeAluno: string; turma: string; nomePaiMae: string; telefone: string; unidade: Unidade }) => {
+      setTodosAlunos((prev) => {
         const jaExiste = prev.some((a) => a.leadId === dados.leadId);
         if (jaExiste) return prev;
 
@@ -42,7 +47,7 @@ export function useOnboarding() {
 
   const moverAluno = useCallback(
     (alunoId: string, novaColuna: ColunaOnboarding) => {
-      setAlunos((prev) =>
+      setTodosAlunos((prev) =>
         prev.map((aluno) =>
           aluno.id === alunoId ? { ...aluno, coluna: novaColuna } : aluno
         )

@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { Lead } from '../types';
+import { Lead, Unidade } from '../types';
 import { calcularIdadeEscolar } from '../utils/mecCutoff';
 
 interface LeadFormProps {
   onSubmit: (dados: Omit<Lead, 'id' | 'coluna' | 'criadoEm'>) => void;
   onFechar: () => void;
+  unidadeSelecionada: Unidade;
 }
 
-const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar }) => {
+const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecionada }) => {
   const [form, setForm] = useState({
     nomeAluno: '',
     dataNascimento: '',
@@ -88,6 +89,7 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar }) => {
       turma: form.turma,
       nomePaiMae: form.nomePaiMae,
       telefone: form.telefone,
+      unidade: unidadeSelecionada,
     });
     setForm({
       nomeAluno: '',
