@@ -1,11 +1,24 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { OnboardingAluno, ColunaOnboarding, Unidade } from '../types';
-import { ONBOARDING_STORAGE_KEY } from '../constants';
+import { OnboardingAluno, TarefaOnboardingId, Unidade } from '../types';
+import { ONBOARDING_STORAGE_KEY, TAREFAS_INICIAIS, TAREFAS_ONBOARDING } from '../constants';
 
 function carregarOnboarding(): OnboardingAluno[] {
   try {
     const dados = localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    return dados ? JSON.parse(dados) : [];
+    if (!dados) return [];
+    const parsed = JSON.parse(dados) as OnboardingAluno[];
+    return parsed.map((a) => {
+      if (!a.tarefas) {
+        const tarefas = { ...TAREFAS_INICIAIS };
+        return { ...a, tarefas, concluido: false };
+      }
+      for (const t of TAREFAS_ONBOARDING) {
+        if (!(t.id in a.tarefas)) {
+          a.tarefas[t.id] = false;
+        }
+      }
+      return a;
+    });
   } catch {
     return [];
   }
@@ -27,6 +40,16 @@ export function useOnboarding(unidadeSelecionada: Unidade) {
     [todosAlunos, unidadeSelecionada]
   );
 
+  const alunosPendentes = useMemo(
+    () => alunos.filter((a) => !a.concluido),
+    [alunos]
+  );
+
+  const alunosConcluidos = useMemo(
+    () => alunos.filter((a) => a.concluido),
+    [alunos]
+  );
+
   const adicionarAluno = useCallback(
     (dados: { leadId: string; nomeAluno: string; turma: string; nomePaiMae: string; telefone: string; unidade: Unidade }) => {
       setTodosAlunos((prev) => {
@@ -36,7 +59,8 @@ export function useOnboarding(unidadeSelecionada: Unidade) {
         const novo: OnboardingAluno = {
           ...dados,
           id: crypto.randomUUID(),
-          coluna: 'ficha-matricula',
+          tarefas: { ...TAREFAS_INICIAIS },
+          concluido: false,
           criadoEm: new Date().toISOString(),
         };
         return [...prev, novo];
@@ -45,26 +69,36 @@ export function useOnboarding(unidadeSelecionada: Unidade) {
     []
   );
 
-  const moverAluno = useCallback(
-    (alunoId: string, novaColuna: ColunaOnboarding) => {
+  const alternarTarefa = useCallback(
+    (alunoId: string, tarefaId: TarefaOnboardingId) => {
       setTodosAlunos((prev) =>
-        prev.map((aluno) =>
-          aluno.id === alunoId ? { ...aluno, coluna: novaColuna } : aluno
-        )
+        prev.map((aluno) => {
+          if (aluno.id !== alunoId) return aluno;
+          const novasTarefas = { ...aluno.tarefas, [tarefaId]: !aluno.tarefas[tarefaId] };
+          const todasConcluidas = TAREFAS_ONBOARDING.every((t) => novasTarefas[t.id]);
+          return { ...aluno, tarefas: novasTarefas, concluido: todasConcluidas };
+        })
       );
     },
     []
   );
 
-  const alunosPorColuna = useCallback(
-    (coluna: ColunaOnboarding) => alunos.filter((a) => a.coluna === coluna),
-    [alunos]
+  const contarTarefas = useCallback(
+    (alunoId: string) => {
+      const aluno = todosAlunos.find((a) => a.id === alunoId);
+      if (!aluno) return { concluidas: 0, total: TAREFAS_ONBOARDING.length };
+      const concluidas = TAREFAS_ONBOARDING.filter((t) => aluno.tarefas[t.id]).length;
+      return { concluidas, total: TAREFAS_ONBOARDING.length };
+    },
+    [todosAlunos]
   );
 
   return {
     alunos,
+    alunosPendentes,
+    alunosConcluidos,
     adicionarAluno,
-    moverAluno,
-    alunosPorColuna,
+    alternarTarefa,
+    contarTarefas,
   };
 }

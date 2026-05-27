@@ -42,19 +42,18 @@ export interface ColunaConfig {
   icone: string;
 }
 
-export type ColunaOnboarding =
-  | 'ficha-matricula'
-  | 'assinatura-contrato'
+export type TarefaOnboardingId =
+  | 'inicio-cadastro'
   | 'cadastro-erp'
+  | 'envio-contrato'
+  | 'assinatura-contrato'
   | 'boas-vindas'
-  | 'concluido';
+  | 'grupo-whatsapp'
+  | 'bernoulli-login';
 
-export interface ColunaOnboardingConfig {
-  id: ColunaOnboarding;
+export interface TarefaOnboardingConfig {
+  id: TarefaOnboardingId;
   titulo: string;
-  cor: string;
-  corBorda: string;
-  corFundo: string;
   icone: string;
 }
 
@@ -66,7 +65,8 @@ export interface OnboardingAluno {
   nomePaiMae: string;
   telefone: string;
   unidade: Unidade;
-  coluna: ColunaOnboarding;
+  tarefas: Record<TarefaOnboardingId, boolean>;
+  concluido: boolean;
   criadoEm: string;
 }
 

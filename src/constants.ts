@@ -1,4 +1,4 @@
-import { ColunaConfig, ColunaOnboardingConfig, Unidade } from './types';
+import { ColunaConfig, TarefaOnboardingConfig, Unidade } from './types';
 
 export const UNIDADES: Unidade[] = [
   'CEC',
@@ -55,45 +55,22 @@ export const ONBOARDING_STORAGE_KEY = 'crm-escolar-onboarding';
 export const RH_STORAGE_KEY = 'crm-escolar-rh';
 export const UNIDADE_SELECIONADA_KEY = 'crm-escolar-unidade';
 
-export const COLUNAS_ONBOARDING: ColunaOnboardingConfig[] = [
-  {
-    id: 'ficha-matricula',
-    titulo: 'Ficha de Matrícula',
-    cor: 'text-blue-700',
-    corBorda: 'border-blue-400',
-    corFundo: 'bg-blue-50',
-    icone: '📋',
-  },
-  {
-    id: 'assinatura-contrato',
-    titulo: 'Assinatura de Contrato',
-    cor: 'text-amber-700',
-    corBorda: 'border-amber-400',
-    corFundo: 'bg-amber-50',
-    icone: '✍️',
-  },
-  {
-    id: 'cadastro-erp',
-    titulo: 'Cadastro no Sistema ERP',
-    cor: 'text-purple-700',
-    corBorda: 'border-purple-400',
-    corFundo: 'bg-purple-50',
-    icone: '💻',
-  },
-  {
-    id: 'boas-vindas',
-    titulo: 'Boas-vindas & WhatsApp',
-    cor: 'text-teal-700',
-    corBorda: 'border-teal-400',
-    corFundo: 'bg-teal-50',
-    icone: '👋',
-  },
-  {
-    id: 'concluido',
-    titulo: 'Concluído',
-    cor: 'text-green-700',
-    corBorda: 'border-green-400',
-    corFundo: 'bg-green-50',
-    icone: '✅',
-  },
+export const TAREFAS_ONBOARDING: TarefaOnboardingConfig[] = [
+  { id: 'inicio-cadastro', titulo: 'Início de Cadastro', icone: '📋' },
+  { id: 'cadastro-erp', titulo: 'Cadastro no Sistema ERP', icone: '💻' },
+  { id: 'envio-contrato', titulo: 'Envio do Contrato', icone: '📤' },
+  { id: 'assinatura-contrato', titulo: 'Assinatura do Contrato', icone: '✍️' },
+  { id: 'boas-vindas', titulo: 'Boas-vindas e Informações Básicas', icone: '👋' },
+  { id: 'grupo-whatsapp', titulo: 'Inclusão no Grupo de WhatsApp', icone: '💬' },
+  { id: 'bernoulli-login', titulo: 'Inclusão no Sistema Bernoulli e Envio de Login e Senha para os pais', icone: '🔑' },
 ];
+
+export const TAREFAS_INICIAIS: Record<import('./types').TarefaOnboardingId, boolean> = {
+  'inicio-cadastro': false,
+  'cadastro-erp': false,
+  'envio-contrato': false,
+  'assinatura-contrato': false,
+  'boas-vindas': false,
+  'grupo-whatsapp': false,
+  'bernoulli-login': false,
+};
