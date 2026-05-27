@@ -11,14 +11,56 @@ const VisitaModal: React.FC<VisitaModalProps> = ({
   onConfirmar,
   onCancelar,
 }) => {
-  const [dataVisita, setDataVisita] = useState('');
+  const [dataVisitaDisplay, setDataVisitaDisplay] = useState('');
   const [horarioVisita, setHorarioVisita] = useState('');
+
+  const aplicarMascaraData = (valor: string) => {
+    const nums = valor.replace(/\D/g, '').slice(0, 8);
+    if (nums.length <= 2) return nums;
+    if (nums.length <= 4) return `${nums.slice(0, 2)}/${nums.slice(2)}`;
+    return `${nums.slice(0, 2)}/${nums.slice(2, 4)}/${nums.slice(4)}`;
+  };
+
+  const aplicarMascaraHora = (valor: string) => {
+    const nums = valor.replace(/\D/g, '').slice(0, 4);
+    if (nums.length <= 2) return nums;
+    return `${nums.slice(0, 2)}:${nums.slice(2)}`;
+  };
+
+  const converterParaISO = (dataBR: string): string => {
+    const partes = dataBR.split('/');
+    if (partes.length !== 3 || partes[2].length !== 4) return '';
+    const [dia, mes, ano] = partes;
+    return `${ano}-${mes}-${dia}`;
+  };
+
+  const validarData = (dataBR: string): boolean => {
+    if (dataBR.length !== 10) return false;
+    const partes = dataBR.split('/');
+    if (partes.length !== 3) return false;
+    const [dia, mes, ano] = partes.map(Number);
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31 || ano < 2000) return false;
+    const d = new Date(ano, mes - 1, dia);
+    return d.getDate() === dia && d.getMonth() === mes - 1 && d.getFullYear() === ano;
+  };
+
+  const validarHora = (hora: string): boolean => {
+    if (hora.length !== 5) return false;
+    const partes = hora.split(':');
+    if (partes.length !== 2) return false;
+    const [h, m] = partes.map(Number);
+    return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!dataVisita || !horarioVisita) return;
-    onConfirmar(dataVisita, horarioVisita);
+    if (!validarData(dataVisitaDisplay) || !validarHora(horarioVisita)) return;
+    const dataISO = converterParaISO(dataVisitaDisplay);
+    if (!dataISO) return;
+    onConfirmar(dataISO, horarioVisita);
   };
+
+  const isFormValid = validarData(dataVisitaDisplay) && validarHora(horarioVisita);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -61,10 +103,11 @@ const VisitaModal: React.FC<VisitaModalProps> = ({
               Data da Visita <span className="text-red-500">*</span>
             </label>
             <input
-              type="date"
-              value={dataVisita}
-              onChange={(e) => setDataVisita(e.target.value)}
-              required
+              type="text"
+              value={dataVisitaDisplay}
+              onChange={(e) => setDataVisitaDisplay(aplicarMascaraData(e.target.value))}
+              placeholder="DD/MM/AAAA"
+              maxLength={10}
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-colors text-sm"
             />
           </div>
@@ -74,10 +117,11 @@ const VisitaModal: React.FC<VisitaModalProps> = ({
               Horário da Visita <span className="text-red-500">*</span>
             </label>
             <input
-              type="time"
+              type="text"
               value={horarioVisita}
-              onChange={(e) => setHorarioVisita(e.target.value)}
-              required
+              onChange={(e) => setHorarioVisita(aplicarMascaraHora(e.target.value))}
+              placeholder="HH:MM (24h)"
+              maxLength={5}
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-colors text-sm"
             />
           </div>
@@ -92,7 +136,12 @@ const VisitaModal: React.FC<VisitaModalProps> = ({
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 transition-colors text-sm font-medium shadow-md"
+              disabled={!isFormValid}
+              className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium shadow-md transition-colors ${
+                isFormValid
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
             >
               Confirmar
             </button>
