@@ -56,7 +56,8 @@ export const RH_STORAGE_KEY = 'crm-escolar-rh';
 export const UNIDADE_SELECIONADA_KEY = 'crm-escolar-unidade';
 
 export const TAREFAS_ONBOARDING: TarefaOnboardingConfig[] = [
-  { id: 'inicio-cadastro', titulo: 'Início de Cadastro', icone: '📋' },
+  { id: 'envio-ficha-matricula', titulo: 'Envio da Ficha de Matrícula', icone: '📋' },
+  { id: 'ficha-matricula-respondida', titulo: 'Ficha de Matrícula Respondida', icone: '✅' },
   { id: 'cadastro-erp', titulo: 'Cadastro no Sistema ERP', icone: '💻' },
   { id: 'envio-contrato', titulo: 'Envio do Contrato', icone: '📤' },
   { id: 'assinatura-contrato', titulo: 'Assinatura do Contrato', icone: '✍️' },
@@ -66,7 +67,8 @@ export const TAREFAS_ONBOARDING: TarefaOnboardingConfig[] = [
 ];
 
 export const TAREFAS_INICIAIS: Record<import('./types').TarefaOnboardingId, boolean> = {
-  'inicio-cadastro': false,
+  'envio-ficha-matricula': false,
+  'ficha-matricula-respondida': false,
   'cadastro-erp': false,
   'envio-contrato': false,
   'assinatura-contrato': false,

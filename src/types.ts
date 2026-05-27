@@ -43,7 +43,8 @@ export interface ColunaConfig {
 }
 
 export type TarefaOnboardingId =
-  | 'inicio-cadastro'
+  | 'envio-ficha-matricula'
+  | 'ficha-matricula-respondida'
   | 'cadastro-erp'
   | 'envio-contrato'
   | 'assinatura-contrato'

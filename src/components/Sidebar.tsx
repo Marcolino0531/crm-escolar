@@ -61,7 +61,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <span className="text-xl">🎓</span>
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight">CRM Escolar</h1>
+              <h1 className="text-lg font-bold tracking-tight">Schooler Hub</h1>
               <p className="text-slate-400 text-xs">ERP Multi-Unidades</p>
             </div>
           </div>
@@ -114,7 +114,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-700/50">
           <p className="text-slate-500 text-xs text-center">
-            © 2026 CRM Escolar
+            © 2026 Schooler Hub
           </p>
         </div>
       </aside>
