@@ -1,0 +1,109 @@
+import React from 'react';
+import { Draggable } from '@hello-pangea/dnd';
+import { Lead, ColunaKanban } from '../types';
+import { COLUNAS } from '../constants';
+
+interface LeadCardProps {
+  lead: Lead;
+  index: number;
+  onRemover: (id: string) => void;
+  onMover: (id: string, coluna: ColunaKanban) => void;
+}
+
+const LeadCard: React.FC<LeadCardProps> = ({ lead, index, onRemover, onMover }) => {
+  const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
+
+  const formatarData = (data: string) => {
+    if (!data) return '—';
+    const d = new Date(data + 'T00:00:00');
+    return d.toLocaleDateString('pt-BR');
+  };
+
+  return (
+    <Draggable draggableId={lead.id} index={index}>
+      {(provided, snapshot) => (
+        <div
+          ref={provided.innerRef}
+          {...provided.draggableProps}
+          {...provided.dragHandleProps}
+          className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-3 transition-shadow ${
+            snapshot.isDragging
+              ? 'shadow-xl ring-2 ring-indigo-300 rotate-2'
+              : 'hover:shadow-md'
+          }`}
+        >
+          <div className="flex items-start justify-between mb-2">
+            <h3 className="font-semibold text-gray-800 text-sm leading-tight">
+              {lead.nomeAluno}
+            </h3>
+            <button
+              onClick={() => onRemover(lead.id)}
+              className="text-gray-300 hover:text-red-500 transition-colors ml-2 flex-shrink-0"
+              title="Remover lead"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div className="space-y-1.5 text-xs text-gray-500">
+            {lead.idade && (
+              <div className="flex items-center gap-1.5">
+                <span>🎂</span>
+                <span>{lead.idade} anos</span>
+                {lead.dataNascimento && (
+                  <span className="text-gray-400">
+                    · {formatarData(lead.dataNascimento)}
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="flex items-center gap-1.5">
+              <span>👤</span>
+              <span className="truncate">{lead.nomePaiMae}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span>📱</span>
+              <span>{lead.telefone}</span>
+            </div>
+          </div>
+
+          <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
+            {colunaAtualIndex > 0 && (
+              <button
+                onClick={() => onMover(lead.id, COLUNAS[colunaAtualIndex - 1].id)}
+                className="flex-1 text-xs py-1 px-2 rounded-md bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                title={`Mover para ${COLUNAS[colunaAtualIndex - 1].titulo}`}
+              >
+                ← Voltar
+              </button>
+            )}
+            {colunaAtualIndex < COLUNAS.length - 1 && (
+              <button
+                onClick={() => onMover(lead.id, COLUNAS[colunaAtualIndex + 1].id)}
+                className="flex-1 text-xs py-1 px-2 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors font-medium"
+                title={`Mover para ${COLUNAS[colunaAtualIndex + 1].titulo}`}
+              >
+                Avançar →
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </Draggable>
+  );
+};
+
+export default LeadCard;
