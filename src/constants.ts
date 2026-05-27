@@ -1,4 +1,4 @@
-import { ColunaConfig, TarefaOnboardingConfig, Unidade } from './types';
+import { ColunaConfig, TarefaOnboardingConfig, Unidade, Usuario } from './types';
 
 export const UNIDADES: Unidade[] = [
   'CEC',
@@ -54,6 +54,19 @@ export const STORAGE_KEY = 'crm-escolar-leads';
 export const ONBOARDING_STORAGE_KEY = 'crm-escolar-onboarding';
 export const RH_STORAGE_KEY = 'crm-escolar-rh';
 export const UNIDADE_SELECIONADA_KEY = 'crm-escolar-unidade';
+
+export const AUTH_STORAGE_KEY = 'schooler-hub-auth';
+export const USUARIOS_STORAGE_KEY = 'schooler-hub-usuarios';
+
+export const ADMIN_INICIAL: Usuario = {
+  id: 'admin-master',
+  nome: 'Admin Master',
+  email: 'admin@schoolerhub.com',
+  senha: 'admin123',
+  perfil: 'admin',
+  permissoes: ['admissoes', 'onboarding', 'rh'],
+  criadoEm: new Date().toISOString(),
+};
 
 export const TAREFAS_ONBOARDING: TarefaOnboardingConfig[] = [
   { id: 'envio-ficha-matricula', titulo: 'Envio da Ficha de Matrícula', icone: '📋' },

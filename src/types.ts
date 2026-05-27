@@ -1,3 +1,15 @@
+export type Modulo = 'admissoes' | 'onboarding' | 'rh';
+
+export interface Usuario {
+  id: string;
+  nome: string;
+  email: string;
+  senha: string;
+  perfil: 'admin' | 'funcionario';
+  permissoes: Modulo[];
+  criadoEm: string;
+}
+
 export type Unidade = 'CEC' | 'CEC Baby' | 'Núcleo Belvedere' | 'Núcleo Vale do Sereno';
 
 export interface ItemMatricula {
