@@ -92,6 +92,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   const [form, setForm] = useState({
     nomeCompleto: funcionarioExistente?.nomeCompleto || '',
     cpf: funcionarioExistente?.cpf || '',
+    dataNascimentoDisplay: converterParaBR(funcionarioExistente?.dataNascimento || ''),
+    dataNascimento: funcionarioExistente?.dataNascimento || '',
     genero: funcionarioExistente?.genero || '',
     estadoCivil: funcionarioExistente?.estadoCivil || '',
     cargo: funcionarioExistente?.cargo || '',
@@ -116,9 +118,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   });
   const [mostrarFeriasForm, setMostrarFeriasForm] = useState(false);
 
-  const handleDataChange = (campo: 'dataAdmissao' | 'dataRescisao' | 'dataInicio', valor: string) => {
+  const handleDataChange = (campo: 'dataAdmissao' | 'dataRescisao' | 'dataInicio' | 'dataNascimento', valor: string) => {
     const display = aplicarMascaraData(valor);
-    const displayKey = `${campo}Display` as 'dataAdmissaoDisplay' | 'dataRescisaoDisplay' | 'dataInicioDisplay';
+    const displayKey = `${campo}Display` as 'dataAdmissaoDisplay' | 'dataRescisaoDisplay' | 'dataInicioDisplay' | 'dataNascimentoDisplay';
     if (display.length === 10 && validarData(display)) {
       setForm((prev) => ({ ...prev, [displayKey]: display, [campo]: converterParaISO(display) }));
     } else {
@@ -158,8 +160,11 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     e.preventDefault();
     if (
       !form.nomeCompleto.trim() ||
-      !form.cargo.trim() ||
-      !form.dataAdmissao ||
+      !form.cpf.trim() ||
+      !form.genero ||
+      !form.estadoCivil ||
+      !form.dataNascimento ||
+      !form.dataInicio ||
       !validarHora(form.horarioTrabalhoInicio) ||
       !validarHora(form.horarioTrabalhoFim)
     ) {
@@ -167,13 +172,14 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     }
     onSalvar({
       nomeCompleto: form.nomeCompleto,
-      cpf: form.cpf || undefined,
-      genero: (form.genero as Genero) || undefined,
-      estadoCivil: (form.estadoCivil as EstadoCivil) || undefined,
-      cargo: form.cargo,
+      cpf: form.cpf,
+      dataNascimento: form.dataNascimento,
+      genero: form.genero as Genero,
+      estadoCivil: form.estadoCivil as EstadoCivil,
+      cargo: form.cargo || undefined,
       unidade: form.unidade as Unidade,
-      dataAdmissao: form.dataAdmissao,
-      dataInicio: form.dataInicio || undefined,
+      dataAdmissao: form.dataAdmissao || undefined,
+      dataInicio: form.dataInicio,
       dataRescisao: form.dataRescisao || undefined,
       horarioTrabalhoInicio: form.horarioTrabalhoInicio,
       horarioTrabalhoFim: form.horarioTrabalhoFim,
@@ -184,8 +190,11 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
 
   const formValido =
     form.nomeCompleto.trim() &&
-    form.cargo.trim() &&
-    form.dataAdmissao &&
+    form.cpf.trim() &&
+    form.genero &&
+    form.estadoCivil &&
+    form.dataNascimento &&
+    form.dataInicio &&
     validarHora(form.horarioTrabalhoInicio) &&
     validarHora(form.horarioTrabalhoFim);
 
@@ -232,7 +241,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
           {/* CPF + Cargo */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>CPF</label>
+              <label className={labelClass}>
+                CPF <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={form.cpf}
@@ -243,9 +254,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
               />
             </div>
             <div>
-              <label className={labelClass}>
-                Cargo <span className="text-red-500">*</span>
-              </label>
+              <label className={labelClass}>Cargo</label>
               <input
                 type="text"
                 value={form.cargo}
@@ -259,7 +268,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
           {/* Gênero + Estado Civil */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Gênero</label>
+              <label className={labelClass}>
+                Gênero <span className="text-red-500">*</span>
+              </label>
               <select
                 value={form.genero}
                 onChange={(e) => setForm((prev) => ({ ...prev, genero: e.target.value }))}
@@ -272,7 +283,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
               </select>
             </div>
             <div>
-              <label className={labelClass}>Estado Civil</label>
+              <label className={labelClass}>
+                Estado Civil <span className="text-red-500">*</span>
+              </label>
               <select
                 value={form.estadoCivil}
                 onChange={(e) => setForm((prev) => ({ ...prev, estadoCivil: e.target.value }))}
@@ -302,23 +315,25 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
             </select>
           </div>
 
-          {/* Data de Admissão + Data de Início */}
+          {/* Data de Nascimento + Data de Início */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>
-                Data de Admissão <span className="text-red-500">*</span>
+                Data de Nascimento <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
-                value={form.dataAdmissaoDisplay}
-                onChange={(e) => handleDataChange('dataAdmissao', e.target.value)}
+                value={form.dataNascimentoDisplay}
+                onChange={(e) => handleDataChange('dataNascimento', e.target.value)}
                 placeholder="DD/MM/AAAA"
                 maxLength={10}
                 className={inputClass}
               />
             </div>
             <div>
-              <label className={labelClass}>Data de Início</label>
+              <label className={labelClass}>
+                Data de Início <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={form.dataInicioDisplay}
@@ -330,17 +345,30 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
             </div>
           </div>
 
-          {/* Data de Rescisão - full width */}
-          <div>
-            <label className={labelClass}>Data de Rescisão</label>
-            <input
-              type="text"
-              value={form.dataRescisaoDisplay}
-              onChange={(e) => handleDataChange('dataRescisao', e.target.value)}
-              placeholder="DD/MM/AAAA"
-              maxLength={10}
-              className={inputClass}
-            />
+          {/* Data de Admissão + Data de Rescisão */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Data de Admissão</label>
+              <input
+                type="text"
+                value={form.dataAdmissaoDisplay}
+                onChange={(e) => handleDataChange('dataAdmissao', e.target.value)}
+                placeholder="DD/MM/AAAA"
+                maxLength={10}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Data de Rescisão</label>
+              <input
+                type="text"
+                value={form.dataRescisaoDisplay}
+                onChange={(e) => handleDataChange('dataRescisao', e.target.value)}
+                placeholder="DD/MM/AAAA"
+                maxLength={10}
+                className={inputClass}
+              />
+            </div>
           </div>
 
           {/* Horário de Trabalho */}
