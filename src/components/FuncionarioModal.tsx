@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Unidade, Funcionario } from '../types';
+import { Unidade, Funcionario, Genero, EstadoCivil } from '../types';
 import { UNIDADES } from '../constants';
 
 interface FuncionarioModalProps {
@@ -22,6 +22,14 @@ const aplicarMascaraHora = (valor: string) => {
   const nums = valor.replace(/\D/g, '').slice(0, 4);
   if (nums.length <= 2) return nums;
   return `${nums.slice(0, 2)}:${nums.slice(2)}`;
+};
+
+const aplicarMascaraCPF = (valor: string) => {
+  const nums = valor.replace(/\D/g, '').slice(0, 11);
+  if (nums.length <= 3) return nums;
+  if (nums.length <= 6) return `${nums.slice(0, 3)}.${nums.slice(3)}`;
+  if (nums.length <= 9) return `${nums.slice(0, 3)}.${nums.slice(3, 6)}.${nums.slice(6)}`;
+  return `${nums.slice(0, 3)}.${nums.slice(3, 6)}.${nums.slice(6, 9)}-${nums.slice(9)}`;
 };
 
 const converterParaISO = (dataBR: string): string => {
@@ -56,6 +64,21 @@ const validarHora = (hora: string): boolean => {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 };
 
+const GENERO_OPCOES: { valor: Genero; label: string }[] = [
+  { valor: 'feminino', label: 'Feminino' },
+  { valor: 'masculino', label: 'Masculino' },
+  { valor: 'outro', label: 'Outro' },
+  { valor: 'prefiro-nao-informar', label: 'Prefiro não informar' },
+];
+
+const ESTADO_CIVIL_OPCOES: { valor: EstadoCivil; label: string }[] = [
+  { valor: 'solteiro', label: 'Solteiro(a)' },
+  { valor: 'casado', label: 'Casado(a)' },
+  { valor: 'divorciado', label: 'Divorciado(a)' },
+  { valor: 'viuvo', label: 'Viúvo(a)' },
+  { valor: 'outro', label: 'Outro' },
+];
+
 const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   unidadeSelecionada,
   funcionarioExistente,
@@ -68,10 +91,15 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
 
   const [form, setForm] = useState({
     nomeCompleto: funcionarioExistente?.nomeCompleto || '',
+    cpf: funcionarioExistente?.cpf || '',
+    genero: funcionarioExistente?.genero || '',
+    estadoCivil: funcionarioExistente?.estadoCivil || '',
     cargo: funcionarioExistente?.cargo || '',
     unidade: funcionarioExistente?.unidade || unidadeSelecionada,
     dataAdmissaoDisplay: converterParaBR(funcionarioExistente?.dataAdmissao || ''),
     dataAdmissao: funcionarioExistente?.dataAdmissao || '',
+    dataInicioDisplay: converterParaBR(funcionarioExistente?.dataInicio || ''),
+    dataInicio: funcionarioExistente?.dataInicio || '',
     dataRescisaoDisplay: converterParaBR(funcionarioExistente?.dataRescisao || ''),
     dataRescisao: funcionarioExistente?.dataRescisao || '',
     horarioTrabalhoInicio: funcionarioExistente?.horarioTrabalhoInicio || '',
@@ -88,9 +116,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   });
   const [mostrarFeriasForm, setMostrarFeriasForm] = useState(false);
 
-  const handleDataChange = (campo: 'dataAdmissao' | 'dataRescisao', valor: string) => {
+  const handleDataChange = (campo: 'dataAdmissao' | 'dataRescisao' | 'dataInicio', valor: string) => {
     const display = aplicarMascaraData(valor);
-    const displayKey = `${campo}Display` as 'dataAdmissaoDisplay' | 'dataRescisaoDisplay';
+    const displayKey = `${campo}Display` as 'dataAdmissaoDisplay' | 'dataRescisaoDisplay' | 'dataInicioDisplay';
     if (display.length === 10 && validarData(display)) {
       setForm((prev) => ({ ...prev, [displayKey]: display, [campo]: converterParaISO(display) }));
     } else {
@@ -101,6 +129,11 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   const handleHoraChange = (campo: string, valor: string) => {
     const masked = aplicarMascaraHora(valor);
     setForm((prev) => ({ ...prev, [campo]: masked }));
+  };
+
+  const handleCPFChange = (valor: string) => {
+    const masked = aplicarMascaraCPF(valor);
+    setForm((prev) => ({ ...prev, cpf: masked }));
   };
 
   const handleFeriasDataChange = (campo: 'dataInicio' | 'dataFim', valor: string) => {
@@ -128,22 +161,24 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       !form.cargo.trim() ||
       !form.dataAdmissao ||
       !validarHora(form.horarioTrabalhoInicio) ||
-      !validarHora(form.horarioTrabalhoFim) ||
-      !validarHora(form.horarioAlmocoInicio) ||
-      !validarHora(form.horarioAlmocoFim)
+      !validarHora(form.horarioTrabalhoFim)
     ) {
       return;
     }
     onSalvar({
       nomeCompleto: form.nomeCompleto,
+      cpf: form.cpf || undefined,
+      genero: (form.genero as Genero) || undefined,
+      estadoCivil: (form.estadoCivil as EstadoCivil) || undefined,
       cargo: form.cargo,
       unidade: form.unidade as Unidade,
       dataAdmissao: form.dataAdmissao,
+      dataInicio: form.dataInicio || undefined,
       dataRescisao: form.dataRescisao || undefined,
       horarioTrabalhoInicio: form.horarioTrabalhoInicio,
       horarioTrabalhoFim: form.horarioTrabalhoFim,
-      horarioAlmocoInicio: form.horarioAlmocoInicio,
-      horarioAlmocoFim: form.horarioAlmocoFim,
+      horarioAlmocoInicio: form.horarioAlmocoInicio || undefined,
+      horarioAlmocoFim: form.horarioAlmocoFim || undefined,
     });
   };
 
@@ -152,14 +187,15 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     form.cargo.trim() &&
     form.dataAdmissao &&
     validarHora(form.horarioTrabalhoInicio) &&
-    validarHora(form.horarioTrabalhoFim) &&
-    validarHora(form.horarioAlmocoInicio) &&
-    validarHora(form.horarioAlmocoFim);
+    validarHora(form.horarioTrabalhoFim);
+
+  const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm';
+  const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 sticky top-0">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 sticky top-0 z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-2xl">👤</span>
@@ -179,8 +215,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Nome Completo - full width */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className={labelClass}>
               Nome Completo <span className="text-red-500">*</span>
             </label>
             <input
@@ -188,13 +225,25 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
               value={form.nomeCompleto}
               onChange={(e) => setForm((prev) => ({ ...prev, nomeCompleto: e.target.value }))}
               placeholder="Ex: João da Silva"
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+              className={inputClass}
             />
           </div>
 
+          {/* CPF + Cargo */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className={labelClass}>CPF</label>
+              <input
+                type="text"
+                value={form.cpf}
+                onChange={(e) => handleCPFChange(e.target.value)}
+                placeholder="000.000.000-00"
+                maxLength={14}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>
                 Cargo <span className="text-red-500">*</span>
               </label>
               <input
@@ -202,28 +251,61 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 value={form.cargo}
                 onChange={(e) => setForm((prev) => ({ ...prev, cargo: e.target.value }))}
                 placeholder="Ex: Professor"
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={inputClass}
               />
             </div>
+          </div>
+
+          {/* Gênero + Estado Civil */}
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Unidade <span className="text-red-500">*</span>
-              </label>
+              <label className={labelClass}>Gênero</label>
               <select
-                value={form.unidade}
-                onChange={(e) => setForm((prev) => ({ ...prev, unidade: e.target.value as Unidade }))}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                value={form.genero}
+                onChange={(e) => setForm((prev) => ({ ...prev, genero: e.target.value }))}
+                className={inputClass}
               >
-                {UNIDADES.map((u) => (
-                  <option key={u} value={u}>{u}</option>
+                <option value="">Selecione...</option>
+                {GENERO_OPCOES.map((op) => (
+                  <option key={op.valor} value={op.valor}>{op.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Estado Civil</label>
+              <select
+                value={form.estadoCivil}
+                onChange={(e) => setForm((prev) => ({ ...prev, estadoCivil: e.target.value }))}
+                className={inputClass}
+              >
+                <option value="">Selecione...</option>
+                {ESTADO_CIVIL_OPCOES.map((op) => (
+                  <option key={op.valor} value={op.valor}>{op.label}</option>
                 ))}
               </select>
             </div>
           </div>
 
+          {/* Unidade - full width */}
+          <div>
+            <label className={labelClass}>
+              Unidade <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={form.unidade}
+              onChange={(e) => setForm((prev) => ({ ...prev, unidade: e.target.value as Unidade }))}
+              className={inputClass}
+            >
+              {UNIDADES.map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Data de Admissão + Data de Início */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className={labelClass}>
                 Data de Admissão <span className="text-red-500">*</span>
               </label>
               <input
@@ -232,26 +314,38 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 onChange={(e) => handleDataChange('dataAdmissao', e.target.value)}
                 placeholder="DD/MM/AAAA"
                 maxLength={10}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={inputClass}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Data de Rescisão
-              </label>
+              <label className={labelClass}>Data de Início</label>
               <input
                 type="text"
-                value={form.dataRescisaoDisplay}
-                onChange={(e) => handleDataChange('dataRescisao', e.target.value)}
+                value={form.dataInicioDisplay}
+                onChange={(e) => handleDataChange('dataInicio', e.target.value)}
                 placeholder="DD/MM/AAAA"
                 maxLength={10}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={inputClass}
               />
             </div>
           </div>
 
+          {/* Data de Rescisão - full width */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className={labelClass}>Data de Rescisão</label>
+            <input
+              type="text"
+              value={form.dataRescisaoDisplay}
+              onChange={(e) => handleDataChange('dataRescisao', e.target.value)}
+              placeholder="DD/MM/AAAA"
+              maxLength={10}
+              className={inputClass}
+            />
+          </div>
+
+          {/* Horário de Trabalho */}
+          <div>
+            <label className={labelClass}>
               Horário de Trabalho <span className="text-red-500">*</span>
             </label>
             <div className="flex items-center gap-2">
@@ -261,7 +355,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 onChange={(e) => handleHoraChange('horarioTrabalhoInicio', e.target.value)}
                 placeholder="08:00"
                 maxLength={5}
-                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={`flex-1 ${inputClass}`}
               />
               <span className="text-gray-500 text-sm">às</span>
               <input
@@ -270,15 +364,14 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 onChange={(e) => handleHoraChange('horarioTrabalhoFim', e.target.value)}
                 placeholder="17:00"
                 maxLength={5}
-                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={`flex-1 ${inputClass}`}
               />
             </div>
           </div>
 
+          {/* Horário de Almoço (OPTIONAL - no asterisk) */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Horário de Almoço <span className="text-red-500">*</span>
-            </label>
+            <label className={labelClass}>Horário de Almoço</label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -286,7 +379,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 onChange={(e) => handleHoraChange('horarioAlmocoInicio', e.target.value)}
                 placeholder="12:00"
                 maxLength={5}
-                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={`flex-1 ${inputClass}`}
               />
               <span className="text-gray-500 text-sm">às</span>
               <input
@@ -295,7 +388,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 onChange={(e) => handleHoraChange('horarioAlmocoFim', e.target.value)}
                 placeholder="13:00"
                 maxLength={5}
-                className="flex-1 px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                className={`flex-1 ${inputClass}`}
               />
             </div>
           </div>
