@@ -96,11 +96,12 @@ export interface Funcionario {
   id: string;
   nomeCompleto: string;
   cpf?: string;
+  dataNascimento?: string;
   genero?: Genero;
   estadoCivil?: EstadoCivil;
-  cargo: string;
+  cargo?: string;
   unidade: Unidade;
-  dataAdmissao: string;
+  dataAdmissao?: string;
   dataInicio?: string;
   dataRescisao?: string;
   horarioTrabalhoInicio: string;

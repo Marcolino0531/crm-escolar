@@ -45,11 +45,12 @@ interface ColunaExport {
 const COLUNAS_EXPORT: ColunaExport[] = [
   { id: 'nomeCompleto', label: 'Nome', getValue: (f) => f.nomeCompleto },
   { id: 'cpf', label: 'CPF', getValue: (f) => f.cpf || '' },
-  { id: 'cargo', label: 'Cargo', getValue: (f) => f.cargo },
+  { id: 'dataNascimento', label: 'Data de Nascimento', getValue: (f) => converterParaBR(f.dataNascimento || '') },
+  { id: 'cargo', label: 'Cargo', getValue: (f) => f.cargo || '' },
   { id: 'genero', label: 'Gênero', getValue: (f) => generoLabel(f.genero) },
   { id: 'estadoCivil', label: 'Estado Civil', getValue: (f) => estadoCivilLabel(f.estadoCivil) },
   { id: 'unidade', label: 'Unidade', getValue: (f) => f.unidade },
-  { id: 'dataAdmissao', label: 'Data de Admissão', getValue: (f) => converterParaBR(f.dataAdmissao) },
+  { id: 'dataAdmissao', label: 'Data de Admissão', getValue: (f) => converterParaBR(f.dataAdmissao || '') },
   { id: 'dataInicio', label: 'Data de Início', getValue: (f) => converterParaBR(f.dataInicio || '') },
   { id: 'dataRescisao', label: 'Data de Rescisão', getValue: (f) => converterParaBR(f.dataRescisao || '') },
   { id: 'horarioTrabalho', label: 'Horário de Trabalho', getValue: (f) => `${f.horarioTrabalhoInicio} às ${f.horarioTrabalhoFim}` },
@@ -191,8 +192,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{func.cpf || '—'}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{func.cargo}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{converterParaBR(func.dataAdmissao)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{func.cargo || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{converterParaBR(func.dataAdmissao || '')}</td>
                     <td className="px-4 py-3 text-sm text-gray-600">
                       {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
                     </td>
