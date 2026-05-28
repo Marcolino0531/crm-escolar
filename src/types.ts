@@ -89,17 +89,24 @@ export interface PeriodoFerias {
   dataFim: string;
 }
 
+export type Genero = 'feminino' | 'masculino' | 'outro' | 'prefiro-nao-informar';
+export type EstadoCivil = 'solteiro' | 'casado' | 'divorciado' | 'viuvo' | 'outro';
+
 export interface Funcionario {
   id: string;
   nomeCompleto: string;
+  cpf?: string;
+  genero?: Genero;
+  estadoCivil?: EstadoCivil;
   cargo: string;
   unidade: Unidade;
   dataAdmissao: string;
+  dataInicio?: string;
   dataRescisao?: string;
   horarioTrabalhoInicio: string;
   horarioTrabalhoFim: string;
-  horarioAlmocoInicio: string;
-  horarioAlmocoFim: string;
+  horarioAlmocoInicio?: string;
+  horarioAlmocoFim?: string;
   ferias: PeriodoFerias[];
   criadoEm: string;
 }
