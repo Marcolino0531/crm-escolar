@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
-import { ColunaKanban, ItemMatricula } from '../types';
+import { ColunaKanban, ItemMatricula, Lead } from '../types';
 import { COLUNAS } from '../constants';
 import { useLeads } from '../hooks/useLeads';
 import KanbanColumn from './KanbanColumn';
@@ -11,6 +11,7 @@ import MatriculaModal from './MatriculaModal';
 interface KanbanBoardProps {
   leadsHook: ReturnType<typeof useLeads>;
   onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
+  onEditar: (lead: Lead) => void;
 }
 
 interface PendingAction {
@@ -19,7 +20,7 @@ interface PendingAction {
   colunaOrigem: ColunaKanban;
 }
 
-const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook, onMatriculaConfirmada }) => {
+const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook, onMatriculaConfirmada, onEditar }) => {
   const {
     leads,
     moverLead,
@@ -129,6 +130,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ leadsHook, onMatriculaConfirm
               onSolicitarVisita={handleSolicitarVisita}
               onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
               onSolicitarMatricula={handleSolicitarMatricula}
+              onEditar={onEditar}
             />
           ))}
         </div>

@@ -28,6 +28,7 @@ export interface Lead {
   turma: string;
   nomePaiMae: string;
   telefone: string;
+  origem: string;
   unidade: Unidade;
   coluna: ColunaKanban;
   criadoEm: string;

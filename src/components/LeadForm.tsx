@@ -1,14 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Lead, Unidade } from '../types';
 import { calcularIdadeEscolar } from '../utils/mecCutoff';
+import { ORIGENS_PREDEFINIDAS, ORIGENS_STORAGE_KEY } from '../constants';
 
 interface LeadFormProps {
   onSubmit: (dados: Omit<Lead, 'id' | 'coluna' | 'criadoEm'>) => void;
   onFechar: () => void;
   unidadeSelecionada: Unidade;
+  leadParaEditar?: Lead | null;
+  onEditar?: (leadId: string, dados: Partial<Omit<Lead, 'id' | 'coluna' | 'criadoEm'>>) => void;
 }
 
-const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecionada }) => {
+function carregarOrigensCustom(): string[] {
+  try {
+    const dados = localStorage.getItem(ORIGENS_STORAGE_KEY);
+    return dados ? JSON.parse(dados) : [];
+  } catch {
+    return [];
+  }
+}
+
+function salvarOrigensCustom(origens: string[]) {
+  localStorage.setItem(ORIGENS_STORAGE_KEY, JSON.stringify(origens));
+}
+
+function converterISOparaBR(dataISO: string): string {
+  if (!dataISO) return '';
+  const partes = dataISO.split('-');
+  if (partes.length !== 3) return '';
+  return `${partes[2]}/${partes[1]}/${partes[0]}`;
+}
+
+const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecionada, leadParaEditar, onEditar }) => {
+  const isEditMode = !!leadParaEditar;
+
   const [form, setForm] = useState({
     nomeAluno: '',
     dataNascimento: '',
@@ -17,7 +42,42 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
     turma: '',
     nomePaiMae: '',
     telefone: '',
+    origem: '',
   });
+
+  const [origensCustom, setOrigensCustom] = useState<string[]>(carregarOrigensCustom);
+  const [origemInputValue, setOrigemInputValue] = useState('');
+  const [origemDropdownOpen, setOrigemDropdownOpen] = useState(false);
+  const origemRef = useRef<HTMLDivElement>(null);
+
+  const todasOrigens = [...ORIGENS_PREDEFINIDAS, ...origensCustom.filter((o) => !ORIGENS_PREDEFINIDAS.includes(o))];
+
+  useEffect(() => {
+    if (leadParaEditar) {
+      const displayDate = converterISOparaBR(leadParaEditar.dataNascimento);
+      setForm({
+        nomeAluno: leadParaEditar.nomeAluno,
+        dataNascimento: leadParaEditar.dataNascimento,
+        dataNascimentoDisplay: displayDate,
+        idade: leadParaEditar.idade,
+        turma: leadParaEditar.turma,
+        nomePaiMae: leadParaEditar.nomePaiMae,
+        telefone: leadParaEditar.telefone,
+        origem: leadParaEditar.origem || '',
+      });
+      setOrigemInputValue(leadParaEditar.origem || '');
+    }
+  }, [leadParaEditar]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (origemRef.current && !origemRef.current.contains(event.target as Node)) {
+        setOrigemDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const aplicarMascaraData = (valor: string) => {
     const nums = valor.replace(/\D/g, '').slice(0, 8);
@@ -72,35 +132,92 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
     }
   };
 
+  const handleOrigemSelect = (valor: string) => {
+    setForm((prev) => ({ ...prev, origem: valor }));
+    setOrigemInputValue(valor);
+    setOrigemDropdownOpen(false);
+  };
+
+  const handleOrigemInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setOrigemInputValue(value);
+    setForm((prev) => ({ ...prev, origem: value }));
+    setOrigemDropdownOpen(true);
+  };
+
+  const filteredOrigens = todasOrigens.filter((o) =>
+    o.toLowerCase().includes(origemInputValue.toLowerCase())
+  );
+
+  const showCreateOption =
+    origemInputValue.trim() !== '' &&
+    !todasOrigens.some((o) => o.toLowerCase() === origemInputValue.trim().toLowerCase());
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !form.nomeAluno.trim() ||
       !form.dataNascimento ||
       !form.nomePaiMae.trim() ||
-      !form.telefone.trim()
+      !form.telefone.trim() ||
+      !form.origem.trim()
     ) {
       return;
     }
-    onSubmit({
-      nomeAluno: form.nomeAluno,
-      dataNascimento: form.dataNascimento,
-      idade: form.idade,
-      turma: form.turma,
-      nomePaiMae: form.nomePaiMae,
-      telefone: form.telefone,
-      unidade: unidadeSelecionada,
-    });
-    setForm({
-      nomeAluno: '',
-      dataNascimento: '',
-      dataNascimentoDisplay: '',
-      idade: '',
-      turma: '',
-      nomePaiMae: '',
-      telefone: '',
-    });
+
+    // Save custom origin if new
+    const origemTrimmed = form.origem.trim();
+    if (!todasOrigens.some((o) => o.toLowerCase() === origemTrimmed.toLowerCase())) {
+      const novasCustom = [...origensCustom, origemTrimmed];
+      setOrigensCustom(novasCustom);
+      salvarOrigensCustom(novasCustom);
+    }
+
+    if (isEditMode && leadParaEditar && onEditar) {
+      onEditar(leadParaEditar.id, {
+        nomeAluno: form.nomeAluno,
+        dataNascimento: form.dataNascimento,
+        idade: form.idade,
+        turma: form.turma,
+        nomePaiMae: form.nomePaiMae,
+        telefone: form.telefone,
+        origem: origemTrimmed,
+        unidade: unidadeSelecionada,
+      });
+    } else {
+      onSubmit({
+        nomeAluno: form.nomeAluno,
+        dataNascimento: form.dataNascimento,
+        idade: form.idade,
+        turma: form.turma,
+        nomePaiMae: form.nomePaiMae,
+        telefone: form.telefone,
+        origem: origemTrimmed,
+        unidade: unidadeSelecionada,
+      });
+    }
+
+    if (!isEditMode) {
+      setForm({
+        nomeAluno: '',
+        dataNascimento: '',
+        dataNascimentoDisplay: '',
+        idade: '',
+        turma: '',
+        nomePaiMae: '',
+        telefone: '',
+        origem: '',
+      });
+      setOrigemInputValue('');
+    }
   };
+
+  const formValido =
+    form.nomeAluno.trim() &&
+    form.dataNascimento &&
+    form.nomePaiMae.trim() &&
+    form.telefone.trim() &&
+    form.origem.trim();
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -108,8 +225,10 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-2xl">📝</span>
-              <h2 className="text-white text-lg font-bold">Novo Lead</h2>
+              <span className="text-2xl">{isEditMode ? '✏️' : '📝'}</span>
+              <h2 className="text-white text-lg font-bold">
+                {isEditMode ? 'Editar Lead' : 'Novo Lead'}
+              </h2>
             </div>
             <button
               onClick={onFechar}
@@ -223,6 +342,46 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
             />
           </div>
 
+          {/* Origem — Creatable Select */}
+          <div ref={origemRef} className="relative">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Como conheceu o colégio? (Origem) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={origemInputValue}
+              onChange={handleOrigemInputChange}
+              onFocus={() => setOrigemDropdownOpen(true)}
+              placeholder="Selecione ou digite uma nova origem..."
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+            />
+            {origemDropdownOpen && (filteredOrigens.length > 0 || showCreateOption) && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                {filteredOrigens.map((origem) => (
+                  <button
+                    key={origem}
+                    type="button"
+                    onClick={() => handleOrigemSelect(origem)}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
+                      form.origem === origem ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-700'
+                    }`}
+                  >
+                    {origem}
+                  </button>
+                ))}
+                {showCreateOption && (
+                  <button
+                    type="button"
+                    onClick={() => handleOrigemSelect(origemInputValue.trim())}
+                    className="w-full text-left px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors font-medium border-t border-gray-100"
+                  >
+                    + Criar &quot;{origemInputValue.trim()}&quot;
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button
               type="button"
@@ -233,9 +392,10 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-colors text-sm font-medium shadow-md"
+              disabled={!formValido}
+              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-colors text-sm font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Cadastrar Lead
+              {isEditMode ? 'Salvar Alterações' : 'Cadastrar Lead'}
             </button>
           </div>
         </form>

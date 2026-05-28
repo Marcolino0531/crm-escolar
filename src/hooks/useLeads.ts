@@ -90,6 +90,17 @@ export function useLeads(unidadeSelecionada: Unidade) {
     []
   );
 
+  const editarLead = useCallback(
+    (leadId: string, dados: Partial<Omit<Lead, 'id' | 'coluna' | 'criadoEm'>>) => {
+      setTodosLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId ? { ...lead, ...dados } : lead
+        )
+      );
+    },
+    []
+  );
+
   const removerLead = useCallback((leadId: string) => {
     setTodosLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   }, []);
@@ -103,6 +114,7 @@ export function useLeads(unidadeSelecionada: Unidade) {
     leads,
     todosLeads,
     adicionarLead,
+    editarLead,
     moverLead,
     agendarVisita,
     registrarNaoMatricula,
