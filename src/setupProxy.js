@@ -99,6 +99,13 @@ function isInDateRange(vencimento, dtInicio, dtFim) {
 
 const BATCH_SIZE = 50;
 
+function extractBolsaPercent(bolsaAssociada) {
+  if (!bolsaAssociada) return 0;
+  const match = bolsaAssociada.match(/(\d+)[,.]?(\d*)%/);
+  if (!match) return 0;
+  return parseFloat(`${match[1]}.${match[2] || '0'}`);
+}
+
 module.exports = function (app) {
   // Original single-method proxy (kept for backwards compat)
   app.post('/api/sponte', (req, res) => {
@@ -198,8 +205,8 @@ module.exports = function (app) {
 
         const parcelaNodes = parseXmlList(parcelasXml, 'wsParcela');
 
-        // Step 2: Filter by date range and build pendencias
-        const todasPendencias = [];
+        // Step 2: Filter by date range and collect raw parcelas
+        const parcelasRaw = [];
         const alunosComPendencia = new Set();
 
         for (const parcela of parcelaNodes) {
@@ -221,27 +228,27 @@ module.exports = function (app) {
           if (!alunoId || alunoId === '0') continue;
 
           alunosComPendencia.add(alunoId);
-          todasPendencias.push({
+          parcelasRaw.push({
             alunoId,
             nomeAluno: parseXmlValue(parcela, 'Sacado') || '-',
-            nomeResponsavel: '-',
-            telefone: '-',
-            parcela: parseXmlValue(parcela, 'NumeroParcela') || '1',
             vencimento,
             valor: valorParcela,
             valorPago,
             saldo,
             status: situacao,
+            numeroBoleto: parseXmlValue(parcela, 'NumeroBoleto'),
+            categoria: parseXmlValue(parcela, 'Categoria'),
+            bolsaAssociada: parseXmlValue(parcela, 'BolsaAssociada'),
           });
         }
 
-        console.log('[Sponte-Batch] Filtered:', todasPendencias.length, 'parcelas for', alunosComPendencia.size, 'debtors (from', parcelaNodes.length, 'total open parcels)');
+        console.log('[Sponte-Batch] Filtered:', parcelasRaw.length, 'parcelas for', alunosComPendencia.size, 'debtors (from', parcelaNodes.length, 'total open parcels)');
 
-        if (todasPendencias.length === 0) {
+        if (parcelasRaw.length === 0) {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           res.json({
             pendencias: [],
-            meta: { totalAlunos: 0, alunosComPendencia: 0, totalParcelas: 0, tempoSegundos: parseFloat(elapsed), dataInicio, dataFim },
+            meta: { totalAlunos: 0, alunosComPendencia: 0, totalParcelas: 0, totalBoletos: 0, tempoSegundos: parseFloat(elapsed), dataInicio, dataFim },
           });
           return;
         }
@@ -291,27 +298,61 @@ module.exports = function (app) {
           }
         }
 
-        // Step 4: Enrich pendencias with student names + responsavel
-        for (const p of todasPendencias) {
-          if (alunoNomeMap[p.alunoId]) {
-            p.nomeAluno = alunoNomeMap[p.alunoId];
+        // Step 4: Group parcelas by NumeroBoleto (or AlunoID+Vencimento)
+        const groups = {};
+        for (const p of parcelasRaw) {
+          const key = (p.numeroBoleto && p.numeroBoleto !== '0')
+            ? `bol_${p.numeroBoleto}`
+            : `${p.alunoId}_${p.vencimento}`;
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(p);
+        }
+
+        // Step 5: Enrich + build grouped pendencias
+        const pendenciasAgrupadas = [];
+        for (const [groupKey, items] of Object.entries(groups)) {
+          const first = items[0];
+          const valorTotalBoleto = items.reduce((sum, it) => sum + it.saldo, 0);
+          const categorias = [...new Set(items.map(it => it.categoria).filter(Boolean))];
+
+          let maxBolsaPct = 0;
+          for (const it of items) {
+            const pct = extractBolsaPercent(it.bolsaAssociada);
+            if (pct > maxBolsaPct) maxBolsaPct = pct;
           }
-          const resp = responsaveisMap[p.alunoId];
-          if (resp) {
-            p.nomeResponsavel = resp.nome;
-            p.telefone = resp.celular;
-          }
+
+          const valorComDesconto = maxBolsaPct > 0
+            ? Math.round(valorTotalBoleto * (1 - maxBolsaPct / 100) * 100) / 100
+            : valorTotalBoleto;
+
+          const nomeAluno = alunoNomeMap[first.alunoId] || first.nomeAluno;
+          const resp = responsaveisMap[first.alunoId];
+
+          pendenciasAgrupadas.push({
+            groupKey,
+            alunoId: first.alunoId,
+            nomeAluno,
+            nomeResponsavel: resp ? resp.nome : '-',
+            telefone: resp ? resp.celular : '-',
+            vencimento: first.vencimento,
+            valorTotalBoleto,
+            valorComDesconto,
+            descontoBolsa: maxBolsaPct,
+            categorias,
+            qtdParcelas: items.length,
+          });
         }
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Pendencias:', todasPendencias.length, '| Debtors:', debtorIds.length);
+        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Raw parcelas:', parcelasRaw.length, '| Grouped boletos:', pendenciasAgrupadas.length, '| Debtors:', debtorIds.length);
 
         res.json({
-          pendencias: todasPendencias,
+          pendencias: pendenciasAgrupadas,
           meta: {
             totalAlunos: debtorIds.length,
             alunosComPendencia: alunosComPendencia.size,
-            totalParcelas: todasPendencias.length,
+            totalParcelas: parcelasRaw.length,
+            totalBoletos: pendenciasAgrupadas.length,
             tempoSegundos: parseFloat(elapsed),
             dataInicio,
             dataFim,

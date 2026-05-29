@@ -3,22 +3,24 @@ import { Unidade } from '../types';
 import { RefreshCw, MessageCircle, AlertTriangle, Search, ChevronDown, ChevronUp, PartyPopper, SearchX, Users, FileText, Calendar, Clock } from 'lucide-react';
 
 interface PendenciaFinanceira {
+  groupKey: string;
   alunoId: string;
   nomeAluno: string;
   nomeResponsavel: string;
   telefone: string;
-  parcela: string;
   vencimento: string;
-  valor: number;
-  valorPago: number;
-  saldo: number;
-  status: string;
+  valorTotalBoleto: number;
+  valorComDesconto: number;
+  descontoBolsa: number;
+  categorias: string[];
+  qtdParcelas: number;
 }
 
 interface BatchMeta {
   totalAlunos: number;
   alunosComPendencia: number;
   totalParcelas: number;
+  totalBoletos: number;
   tempoSegundos: number;
   dataInicio: string;
   dataFim: string;
@@ -39,9 +41,9 @@ function formatarTelefoneWhatsApp(telefone: string): string {
   return `55${nums}`;
 }
 
-function gerarLinkWhatsApp(telefone: string, nomeAluno: string, valor: number): string {
+function gerarLinkWhatsApp(telefone: string, nomeAluno: string, valorTotal: number): string {
   const numero = formatarTelefoneWhatsApp(telefone);
-  const valorFormatado = formatarMoeda(valor);
+  const valorFormatado = formatarMoeda(valorTotal);
   const mensagem = encodeURIComponent(
     `Olá, aqui é do setor financeiro do colégio. Notamos uma pendência referente ao aluno ${nomeAluno} no valor de ${valorFormatado}. Como podemos ajudar?`
   );
@@ -98,7 +100,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
   const [filtro, setFiltro] = useState('');
   const [meta, setMeta] = useState<BatchMeta | null>(null);
   const [ordenacao, setOrdenacao] = useState<{ campo: keyof PendenciaFinanceira; direcao: 'asc' | 'desc' }>({
-    campo: 'saldo',
+    campo: 'valorTotalBoleto',
     direcao: 'desc',
   });
 
@@ -211,7 +213,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
       return String(valA).localeCompare(String(valB)) * dir;
     });
 
-  const totalPendente = pendenciasFiltradas.reduce((sum, p) => sum + p.saldo, 0);
+  const totalPendente = pendenciasFiltradas.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
   const SortIcon = ({ campo }: { campo: keyof PendenciaFinanceira }) => {
@@ -257,8 +259,13 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
               <FileText size={24} className="text-blue-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Parcelas em Aberto</p>
-              <p className="text-xl font-bold text-blue-600">{pendenciasFiltradas.length}</p>
+              <p className="text-sm text-gray-500">Boletos em Aberto</p>
+              <p className="text-xl font-bold text-blue-600">
+                {pendenciasFiltradas.length}
+                {meta && meta.totalParcelas > pendenciasFiltradas.length && (
+                  <span className="text-xs font-normal text-gray-400 ml-1">({meta.totalParcelas} parcelas)</span>
+                )}
+              </p>
             </div>
           </div>
         </div>
@@ -434,11 +441,11 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
                   </div>
                 </th>
                 <th
-                  onClick={() => toggleOrdenacao('saldo')}
+                  onClick={() => toggleOrdenacao('valorTotalBoleto')}
                   className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 >
                   <div className="flex items-center gap-1">
-                    Valor Pendente <SortIcon campo="saldo" />
+                    Valor Pendente <SortIcon campo="valorTotalBoleto" />
                   </div>
                 </th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -483,10 +490,13 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
                 </tr>
               ) : (
                 pendenciasFiltradas.map((p, idx) => (
-                  <tr key={`${p.alunoId}-${p.parcela}-${idx}`} className="hover:bg-gray-50 transition-colors">
+                  <tr key={`${p.groupKey}-${idx}`} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <p className="text-sm font-medium text-gray-900">{p.nomeAluno}</p>
-                      <p className="text-xs text-gray-400">Parcela {p.parcela}</p>
+                      <p className="text-xs text-gray-400">
+                        {p.categorias.length > 0 ? p.categorias.join(', ') : 'Parcela'}
+                        {p.qtdParcelas > 1 && <span className="text-indigo-500 ml-1">({p.qtdParcelas} itens)</span>}
+                      </p>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">{p.nomeResponsavel}</td>
                     <td className="px-4 py-3 text-sm text-gray-700 font-mono">{p.telefone}</td>
@@ -494,12 +504,17 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
                       <span className="text-sm text-gray-700">{formatarData(p.vencimento)}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-sm font-bold text-red-600">{formatarMoeda(p.saldo)}</span>
+                      <span className="text-sm font-bold text-red-600">{formatarMoeda(p.valorTotalBoleto)}</span>
+                      {p.descontoBolsa > 0 && (
+                        <p className="text-xs text-green-600 mt-0.5">
+                          ou {formatarMoeda(p.valorComDesconto)} c/ desc. {p.descontoBolsa}%
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
                       {p.telefone && p.telefone !== '-' ? (
                         <a
-                          href={gerarLinkWhatsApp(p.telefone, p.nomeAluno, p.saldo)}
+                          href={gerarLinkWhatsApp(p.telefone, p.nomeAluno, p.valorTotalBoleto)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shadow-sm"
@@ -521,7 +536,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
         {pendenciasFiltradas.length > 0 && (
           <div className="bg-gray-50 border-t border-gray-200 px-4 py-3 flex items-center justify-between">
             <span className="text-sm text-gray-500">
-              {pendenciasFiltradas.length} parcela{pendenciasFiltradas.length !== 1 ? 's' : ''} pendente{pendenciasFiltradas.length !== 1 ? 's' : ''}
+              {pendenciasFiltradas.length} boleto{pendenciasFiltradas.length !== 1 ? 's' : ''} pendente{pendenciasFiltradas.length !== 1 ? 's' : ''}
             </span>
             <span className="text-sm font-bold text-red-600">
               Total: {formatarMoeda(totalPendente)}
