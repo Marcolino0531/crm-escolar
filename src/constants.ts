@@ -73,7 +73,7 @@ export const ADMIN_INICIAL: Usuario = {
   email: 'admin@schoolerhub.com',
   senha: 'admin123',
   perfil: 'admin',
-  permissoes: ['admissoes', 'onboarding', 'rh'],
+  permissoes: ['admissoes', 'onboarding', 'rh', 'financeiro'],
   criadoEm: new Date().toISOString(),
 };
 

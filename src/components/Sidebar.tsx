@@ -1,10 +1,10 @@
 import React from 'react';
-import { BarChart3, Users, Settings, Menu, X, ClipboardList, BadgeCheck, Building2, LogOut } from 'lucide-react';
+import { BarChart3, Users, Settings, Menu, X, ClipboardList, BadgeCheck, Building2, LogOut, DollarSign } from 'lucide-react';
 import { Unidade } from '../types';
 import { UNIDADES } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
 
-export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'rh' | 'configuracoes';
+export type Pagina = 'dashboard' | 'admissoes' | 'onboarding' | 'rh' | 'financeiro' | 'configuracoes';
 
 interface SidebarProps {
   paginaAtiva: Pagina;
@@ -20,6 +20,7 @@ const todosItensMenu: { id: Pagina; titulo: string; icone: React.ElementType }[]
   { id: 'admissoes', titulo: 'Admissões', icone: Users },
   { id: 'onboarding', titulo: 'Onboarding', icone: ClipboardList },
   { id: 'rh', titulo: 'Recursos Humanos', icone: BadgeCheck },
+  { id: 'financeiro', titulo: 'Financeiro', icone: DollarSign },
   { id: 'configuracoes', titulo: 'Configurações', icone: Settings },
 ];
 
@@ -39,6 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (item.id === 'admissoes') return temPermissao('admissoes');
     if (item.id === 'onboarding') return temPermissao('onboarding');
     if (item.id === 'rh') return temPermissao('rh');
+    if (item.id === 'financeiro') return temPermissao('financeiro');
     return true;
   });
 
