@@ -18,14 +18,6 @@ function buildSoapEnvelope(method: string, extraParams: string, codigoCliente: s
 </soap:Envelope>`;
 }
 
-function extractFault(xml: string): string | null {
-  const faultStringMatch = xml.match(/<faultstring>([^<]*)<\/faultstring>/i);
-  if (faultStringMatch) return faultStringMatch[1];
-  const faultMatch = xml.match(/<faultcode>([^<]*)<\/faultcode>/i);
-  if (faultMatch) return `Fault: ${faultMatch[1]}`;
-  return null;
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -60,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const soapBody = buildSoapEnvelope(method, extraParams, codigoCliente, token);
 
-  console.log('[Sponte] Request:', { method, sParametrosBusca });
+  console.log('[Sponte] Request:', { method, sParametrosBusca, codigoCliente: codigoCliente ? '***' : 'MISSING', token: token ? '***' : 'MISSING' });
 
   try {
     const response = await fetch(SPONTE_URL, {
@@ -74,18 +66,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const xml = await response.text();
 
-    console.log('[Sponte] Status:', response.status, '| Response length:', xml.length);
+    console.log('[Sponte] HTTP Status:', response.status, '| Response length:', xml.length);
 
-    const fault = extractFault(xml);
-    if (fault) {
-      console.error('[Sponte] SOAP Fault:', fault);
-      return res.status(200).json({ xml, status: response.status, fault });
+    if (!response.ok) {
+      console.error('[Sponte] HTTP error. Status:', response.status, '| Raw response (first 500 chars):', xml.substring(0, 500));
+      return res.status(502).json({
+        error: `Sponte retornou HTTP ${response.status}. Verifique as credenciais e o endpoint.`,
+        detail: xml.substring(0, 500),
+      });
+    }
+
+    const faultCode = xml.match(/<faultcode>([^<]*)<\/faultcode>/i)?.[1] || null;
+    const faultString = xml.match(/<faultstring>([^<]*)<\/faultstring>/i)?.[1] || null;
+
+    if (faultCode || faultString) {
+      console.error('[Sponte] SOAP Fault detected:', { faultCode, faultString });
+      console.error('[Sponte] Raw SOAP fault response (first 1000 chars):', xml.substring(0, 1000));
+      return res.status(200).json({
+        xml,
+        status: response.status,
+        fault: faultString || `Fault: ${faultCode}`,
+        faultCode,
+        faultString,
+      });
     }
 
     return res.status(200).json({ xml, status: response.status });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Sponte] Network error:', message);
-    return res.status(500).json({ error: message });
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error('[Sponte] Network/fetch error:', {
+      message,
+      stack,
+      name: error instanceof Error ? error.name : typeof error,
+      url: SPONTE_URL,
+      method,
+    });
+    return res.status(500).json({
+      error: `Erro de conexão com o Sponte: ${message}`,
+      detail: stack,
+    });
   }
 }

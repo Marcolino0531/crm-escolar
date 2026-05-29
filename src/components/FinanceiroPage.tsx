@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Unidade } from '../types';
-import { RefreshCw, MessageCircle, AlertTriangle, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, MessageCircle, AlertTriangle, Search, ChevronDown, ChevronUp, PartyPopper, SearchX, Users, FileText } from 'lucide-react';
 
 interface PendenciaFinanceira {
   alunoId: string;
@@ -72,7 +72,8 @@ async function callSponteProxy(
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error || `Proxy error: ${response.status}`);
+    const detail = errData.detail ? ` Detalhe: ${errData.detail}` : '';
+    throw new Error(errData.error ? `${errData.error}${detail}` : `Proxy error: ${response.status}`);
   }
 
   const data = await response.json();
@@ -318,7 +319,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
           <div className="flex items-center gap-3">
             <div className="bg-amber-100 rounded-lg p-2.5">
-              <span className="text-xl">&#128104;&#8205;&#128105;&#8205;&#128103;</span>
+              <Users size={24} className="text-amber-600" />
             </div>
             <div>
               <p className="text-sm text-gray-500">Inadimplentes</p>
@@ -331,7 +332,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
           <div className="flex items-center gap-3">
             <div className="bg-blue-100 rounded-lg p-2.5">
-              <span className="text-xl">&#128196;</span>
+              <FileText size={24} className="text-blue-600" />
             </div>
             <div>
               <p className="text-sm text-gray-500">Parcelas em Aberto</p>
@@ -444,9 +445,13 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
                 <tr>
                   <td colSpan={6} className="px-4 py-12 text-center">
                     <div className="flex flex-col items-center gap-2">
-                      <span className="text-4xl">
-                        {erro ? '&#9888;&#65039;' : '&#127881;'}
-                      </span>
+                      {erro ? (
+                        <AlertTriangle size={40} className="text-amber-400" />
+                      ) : filtro ? (
+                        <SearchX size={40} className="text-gray-300" />
+                      ) : (
+                        <PartyPopper size={40} className="text-green-400" />
+                      )}
                       <p className="text-gray-500 text-sm font-medium">
                         {erro
                           ? 'Não foi possível carregar os dados'
@@ -454,6 +459,9 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
                           ? 'Nenhum resultado encontrado para o filtro'
                           : 'Nenhuma pendência financeira em 2026'}
                       </p>
+                      {erro && (
+                        <p className="text-red-500 text-xs mt-1 max-w-md text-center">{erro}</p>
+                      )}
                     </div>
                   </td>
                 </tr>
