@@ -11,7 +11,7 @@ import LeadForm from './components/LeadForm';
 import { useLeads } from './hooks/useLeads';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useRH } from './hooks/useRH';
-import { ItemMatricula, Unidade } from './types';
+import { ItemMatricula, Lead, Unidade } from './types';
 import { UNIDADE_SELECIONADA_KEY } from './constants';
 import { Plus } from 'lucide-react';
 
@@ -45,6 +45,7 @@ function AppContent() {
   const [paginaAtiva, setPaginaAtiva] = useState<Pagina>('dashboard');
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [formularioAberto, setFormularioAberto] = useState(false);
+  const [leadEditando, setLeadEditando] = useState<Lead | null>(null);
   const [unidadeSelecionada, setUnidadeSelecionada] = useState<Unidade>(carregarUnidadeSalva);
 
   const leadsHook = useLeads(unidadeSelecionada);
@@ -106,7 +107,7 @@ function AppContent() {
         return <DashboardPage />;
       case 'admissoes':
         return temPermissao('admissoes') ? (
-          <KanbanBoard leadsHook={leadsHook} onMatriculaConfirmada={handleMatriculaComOnboarding} />
+          <KanbanBoard leadsHook={leadsHook} onMatriculaConfirmada={handleMatriculaComOnboarding} onEditar={(lead) => setLeadEditando(lead)} />
         ) : (
           <AcessoNegado />
         );
@@ -180,14 +181,22 @@ function AppContent() {
         </main>
       </div>
 
-      {formularioAberto && (
+      {(formularioAberto || leadEditando) && (
         <LeadForm
           onSubmit={(dados) => {
             leadsHook.adicionarLead(dados);
             setFormularioAberto(false);
           }}
-          onFechar={() => setFormularioAberto(false)}
+          onFechar={() => {
+            setFormularioAberto(false);
+            setLeadEditando(null);
+          }}
           unidadeSelecionada={unidadeSelecionada}
+          leadParaEditar={leadEditando}
+          onEditar={(leadId, dados) => {
+            leadsHook.editarLead(leadId, dados);
+            setLeadEditando(null);
+          }}
         />
       )}
     </div>

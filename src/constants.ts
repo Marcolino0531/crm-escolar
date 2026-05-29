@@ -55,6 +55,15 @@ export const ONBOARDING_STORAGE_KEY = 'crm-escolar-onboarding';
 export const RH_STORAGE_KEY = 'crm-escolar-rh';
 export const UNIDADE_SELECIONADA_KEY = 'crm-escolar-unidade';
 
+export const ORIGENS_STORAGE_KEY = 'crm-escolar-origens-custom';
+
+export const ORIGENS_PREDEFINIDAS = [
+  'Instagram',
+  'Site',
+  'Indicação',
+  'Passou na porta',
+];
+
 export const AUTH_STORAGE_KEY = 'schooler-hub-auth';
 export const USUARIOS_STORAGE_KEY = 'schooler-hub-usuarios';
 
