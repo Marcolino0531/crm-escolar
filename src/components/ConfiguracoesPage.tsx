@@ -7,6 +7,7 @@ const MODULOS_DISPONIVEIS: { id: Modulo; titulo: string }[] = [
   { id: 'admissoes', titulo: 'Admissões' },
   { id: 'onboarding', titulo: 'Onboarding' },
   { id: 'rh', titulo: 'Recursos Humanos' },
+  { id: 'financeiro', titulo: 'Financeiro' },
 ];
 
 const ConfiguracoesPage: React.FC = () => {

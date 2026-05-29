@@ -7,6 +7,7 @@ import ConfiguracoesPage from './components/ConfiguracoesPage';
 import KanbanBoard from './components/KanbanBoard';
 import OnboardingBoard from './components/OnboardingBoard';
 import RHPage from './components/RHPage';
+import FinanceiroPage from './components/FinanceiroPage';
 import LeadForm from './components/LeadForm';
 import { useLeads } from './hooks/useLeads';
 import { useOnboarding } from './hooks/useOnboarding';
@@ -66,6 +67,9 @@ function AppContent() {
     if (paginaAtiva === 'rh' && !temPermissao('rh')) {
       setPaginaAtiva('dashboard');
     }
+    if (paginaAtiva === 'financeiro' && !temPermissao('financeiro')) {
+      setPaginaAtiva('dashboard');
+    }
   }, [usuario, paginaAtiva, isAdmin, temPermissao]);
 
   if (!usuario) {
@@ -98,6 +102,7 @@ function AppContent() {
     admissoes: 'Admissões',
     onboarding: 'Onboarding',
     rh: 'Recursos Humanos',
+    financeiro: 'Financeiro',
     configuracoes: 'Configurações',
   };
 
@@ -120,6 +125,12 @@ function AppContent() {
       case 'rh':
         return temPermissao('rh') ? (
           <RHPage rhHook={rhHook} unidadeSelecionada={unidadeSelecionada} />
+        ) : (
+          <AcessoNegado />
+        );
+      case 'financeiro':
+        return temPermissao('financeiro') ? (
+          <FinanceiroPage unidadeSelecionada={unidadeSelecionada} />
         ) : (
           <AcessoNegado />
         );

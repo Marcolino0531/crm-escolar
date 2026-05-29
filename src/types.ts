@@ -1,4 +1,4 @@
-export type Modulo = 'admissoes' | 'onboarding' | 'rh';
+export type Modulo = 'admissoes' | 'onboarding' | 'rh' | 'financeiro';
 
 export interface Usuario {
   id: string;
