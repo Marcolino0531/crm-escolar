@@ -81,13 +81,6 @@ async function callSponteProxy(
   return { xml: data.xml || '' };
 }
 
-function parseRetornoOperacao(xml: string): string | null {
-  const retorno = parseXmlValue(xml, 'RetornoOperacao');
-  if (!retorno) return null;
-  if (retorno.startsWith('01 -')) return null;
-  return retorno;
-}
-
 function parseBrDecimal(value: string): number {
   if (!value) return 0;
   return parseFloat(value.replace(/\./g, '').replace(',', '.')) || 0;
