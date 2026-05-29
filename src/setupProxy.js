@@ -97,7 +97,7 @@ function isInDateRange(vencimento, dtInicio, dtFim) {
   return dt >= dtInicio && dt <= dtFim;
 }
 
-const BATCH_SIZE = 15;
+const BATCH_SIZE = 50;
 
 module.exports = function (app) {
   // Original single-method proxy (kept for backwards compat)
@@ -163,7 +163,7 @@ module.exports = function (app) {
     });
   });
 
-  // Batch endpoint — fetches all financial data for a date range in one call
+  // Batch endpoint — Query Inversion: fetch debts first, then student data
   app.post('/api/sponte-batch', (req, res) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -180,126 +180,122 @@ module.exports = function (app) {
         const dtFim = new Date(dataFim);
         dtFim.setHours(23, 59, 59, 999);
 
-        console.log('[Sponte-Batch] Starting:', { dataInicio, dataFim });
+        console.log('[Sponte-Batch] Query Inversion — fetching debts first:', { dataInicio, dataFim });
         const startTime = Date.now();
 
-        // Step 1: Get all students
-        const alunosXml = await callSponte('GetAlunos', 'Nome=');
+        // Step 1: Fetch ALL open parcels in ONE call (Query Inversion)
+        const parcelasXml = await callSponte('GetParcelas', 'Situacao=Aberta');
 
-        const fault = extractFault(alunosXml);
+        const fault = extractFault(parcelasXml);
         if (fault) {
-          console.error('[Sponte-Batch] GetAlunos fault:', fault);
+          console.error('[Sponte-Batch] GetParcelas fault:', fault);
           res.json({ pendencias: [], error: fault });
           return;
         }
 
-        const alunoNodes = parseXmlList(alunosXml, 'wsAluno');
-        const alunos = alunoNodes
-          .filter((node) => parseXmlValue(node, 'RetornoOperacao').startsWith('01'))
-          .map((node) => ({
-            id: parseXmlValue(node, 'AlunoID'),
-            nome: parseXmlValue(node, 'Nome'),
-          }))
-          .filter((a) => a.id && a.id !== '0');
+        const t1 = Date.now();
+        console.log('[Sponte-Batch] GetParcelas completed in', ((t1 - startTime) / 1000).toFixed(1), 's');
 
-        console.log('[Sponte-Batch] Found', alunos.length, 'students');
+        const parcelaNodes = parseXmlList(parcelasXml, 'wsParcela');
 
-        if (alunos.length === 0) {
-          res.json({ pendencias: [], error: 'Nenhum aluno encontrado no Sponte.' });
-          return;
-        }
-
-        // Step 2: Fetch financeiro in parallel batches
+        // Step 2: Filter by date range and build pendencias
         const todasPendencias = [];
         const alunosComPendencia = new Set();
 
-        for (let i = 0; i < alunos.length; i += BATCH_SIZE) {
-          const batch = alunos.slice(i, i + BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map(async (aluno) => {
-              const finXml = await callSponte('GetFinanceiro', `AlunoID=${aluno.id}`);
-              return { aluno, finXml };
-            })
-          );
+        for (const parcela of parcelaNodes) {
+          const retorno = parseXmlValue(parcela, 'RetornoOperacao');
+          if (!retorno.startsWith('01')) continue;
 
-          for (const result of results) {
-            if (result.status !== 'fulfilled') continue;
-            const { aluno, finXml } = result.value;
+          const situacao = parseXmlValue(parcela, 'SituacaoParcela');
+          if (situacao === 'Quitada' || situacao === 'Cancelada') continue;
 
-            const finRecords = parseXmlList(finXml, 'wsFinanceiro');
-            for (const finRecord of finRecords) {
-              const retorno = parseXmlValue(finRecord, 'RetornoOperacao');
-              if (!retorno.startsWith('01')) continue;
+          const vencimento = parseXmlValue(parcela, 'Vencimento');
+          if (!isInDateRange(vencimento, dtInicio, dtFim)) continue;
 
-              const alunoInfoNodes = parseXmlList(finRecord, 'wsInfoAluno');
-              const nomeAluno = alunoInfoNodes.length > 0
-                ? parseXmlValue(alunoInfoNodes[0], 'Nome')
-                : aluno.nome;
+          const valorParcela = parseBrDecimal(parseXmlValue(parcela, 'ValorParcela'));
+          const valorPago = parseBrDecimal(parseXmlValue(parcela, 'ValorPago'));
+          const saldo = valorParcela - valorPago;
+          if (saldo <= 0) continue;
 
-              const parcelas = parseXmlList(finRecord, 'wsParcela');
-              for (const parcela of parcelas) {
-                const situacao = parseXmlValue(parcela, 'SituacaoParcela');
-                if (situacao === 'Quitada' || situacao === 'Cancelada') continue;
+          const alunoId = parseXmlValue(parcela, 'AlunoID');
+          if (!alunoId || alunoId === '0') continue;
 
-                const vencimento = parseXmlValue(parcela, 'Vencimento');
-                if (!isInDateRange(vencimento, dtInicio, dtFim)) continue;
-
-                const valorParcela = parseBrDecimal(parseXmlValue(parcela, 'ValorParcela'));
-                const valorPago = parseBrDecimal(parseXmlValue(parcela, 'ValorPago'));
-                const saldo = valorParcela - valorPago;
-                if (saldo <= 0) continue;
-
-                alunosComPendencia.add(aluno.id);
-                todasPendencias.push({
-                  alunoId: aluno.id,
-                  nomeAluno,
-                  nomeResponsavel: '-',
-                  telefone: '-',
-                  parcela: parseXmlValue(parcela, 'NumeroParcela') || '1',
-                  vencimento,
-                  valor: valorParcela,
-                  valorPago,
-                  saldo,
-                  status: situacao,
-                });
-              }
-            }
-          }
+          alunosComPendencia.add(alunoId);
+          todasPendencias.push({
+            alunoId,
+            nomeAluno: parseXmlValue(parcela, 'Sacado') || '-',
+            nomeResponsavel: '-',
+            telefone: '-',
+            parcela: parseXmlValue(parcela, 'NumeroParcela') || '1',
+            vencimento,
+            valor: valorParcela,
+            valorPago,
+            saldo,
+            status: situacao,
+          });
         }
 
-        console.log('[Sponte-Batch] Found', todasPendencias.length, 'pending for', alunosComPendencia.size, 'students');
+        console.log('[Sponte-Batch] Filtered:', todasPendencias.length, 'parcelas for', alunosComPendencia.size, 'debtors (from', parcelaNodes.length, 'total open parcels)');
 
-        // Step 3: Fetch responsavel for students with pending items
-        const alunoIds = Array.from(alunosComPendencia);
+        if (todasPendencias.length === 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          res.json({
+            pendencias: [],
+            meta: { totalAlunos: 0, alunosComPendencia: 0, totalParcelas: 0, tempoSegundos: parseFloat(elapsed), dataInicio, dataFim },
+          });
+          return;
+        }
+
+        // Step 3: Fetch student names + responsavel ONLY for debtors
+        const debtorIds = Array.from(alunosComPendencia);
+        const alunoNomeMap = {};
         const responsaveisMap = {};
 
-        for (let i = 0; i < alunoIds.length; i += BATCH_SIZE) {
-          const batch = alunoIds.slice(i, i + BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map(async (alunoId) => {
-              const respXml = await callSponte('GetResponsavelFinanceiro', `AlunoID=${alunoId}`);
-              return { alunoId, respXml };
-            })
-          );
+        for (let i = 0; i < debtorIds.length; i += BATCH_SIZE) {
+          const batch = debtorIds.slice(i, i + BATCH_SIZE);
 
-          for (const result of results) {
+          const [alunoResults, respResults] = await Promise.all([
+            Promise.allSettled(
+              batch.map(async (id) => {
+                const xml = await callSponte('GetAlunos', `AlunoID=${id}`);
+                return { id, xml };
+              })
+            ),
+            Promise.allSettled(
+              batch.map(async (id) => {
+                const xml = await callSponte('GetResponsavelFinanceiro', `AlunoID=${id}`);
+                return { id, xml };
+              })
+            ),
+          ]);
+
+          for (const result of alunoResults) {
             if (result.status !== 'fulfilled') continue;
-            const { alunoId, respXml } = result.value;
-            const respNodes = parseXmlList(respXml, 'wsResponsavel');
-            if (respNodes.length > 0) {
-              const respRetorno = parseXmlValue(respNodes[0], 'RetornoOperacao');
-              if (respRetorno.startsWith('01')) {
-                responsaveisMap[alunoId] = {
-                  nome: parseXmlValue(respNodes[0], 'Nome'),
-                  celular: parseXmlValue(respNodes[0], 'Celular') || parseXmlValue(respNodes[0], 'Telefone'),
-                };
-              }
+            const { id, xml } = result.value;
+            const nodes = parseXmlList(xml, 'wsAluno');
+            if (nodes.length > 0 && parseXmlValue(nodes[0], 'RetornoOperacao').startsWith('01')) {
+              alunoNomeMap[id] = parseXmlValue(nodes[0], 'Nome');
+            }
+          }
+
+          for (const result of respResults) {
+            if (result.status !== 'fulfilled') continue;
+            const { id, xml } = result.value;
+            const nodes = parseXmlList(xml, 'wsResponsavel');
+            if (nodes.length > 0 && parseXmlValue(nodes[0], 'RetornoOperacao').startsWith('01')) {
+              responsaveisMap[id] = {
+                nome: parseXmlValue(nodes[0], 'Nome'),
+                celular: parseXmlValue(nodes[0], 'Celular') || parseXmlValue(nodes[0], 'Telefone'),
+              };
             }
           }
         }
 
-        // Step 4: Enrich with responsavel data
+        // Step 4: Enrich pendencias with student names + responsavel
         for (const p of todasPendencias) {
+          if (alunoNomeMap[p.alunoId]) {
+            p.nomeAluno = alunoNomeMap[p.alunoId];
+          }
           const resp = responsaveisMap[p.alunoId];
           if (resp) {
             p.nomeResponsavel = resp.nome;
@@ -308,12 +304,12 @@ module.exports = function (app) {
         }
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Pendencias:', todasPendencias.length);
+        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Pendencias:', todasPendencias.length, '| Debtors:', debtorIds.length);
 
         res.json({
           pendencias: todasPendencias,
           meta: {
-            totalAlunos: alunos.length,
+            totalAlunos: debtorIds.length,
             alunosComPendencia: alunosComPendencia.size,
             totalParcelas: todasPendencias.length,
             tempoSegundos: parseFloat(elapsed),
