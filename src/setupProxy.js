@@ -3,8 +3,8 @@ const https = require('https');
 const SPONTE_HOSTNAME = 'api.sponteeducacional.net.br';
 const SPONTE_PATH = '/WSAPIEdu.asmx';
 const SPONTE_NS = 'http://api.sponteeducacional.net.br/';
-const CODIGO_CLIENTE = 23568;
-const TOKEN = 'IRAuaZf735NX';
+const CODIGO_CLIENTE = process.env.SPONTE_CODIGO_CLIENTE || '23568';
+const TOKEN = process.env.SPONTE_TOKEN || 'IRAuaZf735NX';
 
 function buildSoapEnvelope(method, extraParams) {
   return `<?xml version="1.0" encoding="utf-8"?>

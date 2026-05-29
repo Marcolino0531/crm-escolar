@@ -2,18 +2,16 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const SPONTE_URL = 'https://api.sponteeducacional.net.br/WSAPIEdu.asmx';
 const SPONTE_NS = 'http://api.sponteeducacional.net.br/';
-const CODIGO_CLIENTE = 23568;
-const TOKEN = 'IRAuaZf735NX';
 
-function buildSoapEnvelope(method: string, extraParams: string): string {
+function buildSoapEnvelope(method: string, extraParams: string, codigoCliente: string, token: string): string {
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
     <${method} xmlns="${SPONTE_NS}">
-      <nCodigoCliente>${CODIGO_CLIENTE}</nCodigoCliente>
-      <sToken>${TOKEN}</sToken>
+      <nCodigoCliente>${codigoCliente}</nCodigoCliente>
+      <sToken>${token}</sToken>
       ${extraParams}
     </${method}>
   </soap:Body>
@@ -41,6 +39,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const codigoCliente = process.env.SPONTE_CODIGO_CLIENTE;
+  const token = process.env.SPONTE_TOKEN;
+
+  if (!codigoCliente || !token) {
+    return res.status(500).json({
+      error: 'Chaves da API do Sponte não configuradas no servidor. Configure as variáveis SPONTE_CODIGO_CLIENTE e SPONTE_TOKEN.',
+    });
+  }
+
   const { method, sParametrosBusca } = req.body;
 
   if (!method) {
@@ -51,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? `<sParametrosBusca>${sParametrosBusca}</sParametrosBusca>`
     : '';
 
-  const soapBody = buildSoapEnvelope(method, extraParams);
+  const soapBody = buildSoapEnvelope(method, extraParams, codigoCliente, token);
 
   console.log('[Sponte] Request:', { method, sParametrosBusca });
 
