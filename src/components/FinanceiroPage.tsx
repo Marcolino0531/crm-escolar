@@ -116,94 +116,116 @@ function formatarData(data: string): string {
   return data;
 }
 
+async function fetchAlunos(): Promise<{ id: string; nome: string }[]> {
+  const { xml, fault } = await callSponteProxy('GetAlunos', 'Nome=');
+  if (fault) throw new Error(`SOAP Fault: ${fault}`);
+
+  const alunoNodes = parseXmlList(xml, 'wsAluno');
+  return alunoNodes
+    .filter((node) => {
+      const ret = parseXmlValue(node, 'RetornoOperacao');
+      return ret.startsWith('01');
+    })
+    .map((node) => ({
+      id: parseXmlValue(node, 'AlunoID'),
+      nome: parseXmlValue(node, 'Nome'),
+    }))
+    .filter((a) => a.id && a.id !== '0');
+}
+
 async function fetchFinanceiroData(): Promise<{
   pendencias: PendenciaFinanceira[];
   erroApi?: string;
 }> {
-  const { xml: finXml, fault: finFault } = await callSponteProxy('GetFinanceiro', 'SituacaoParcela=Aberto');
-
-  if (finFault) {
-    return { pendencias: [], erroApi: `SOAP Fault: ${finFault}` };
+  let alunos: { id: string; nome: string }[];
+  try {
+    alunos = await fetchAlunos();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+    return { pendencias: [], erroApi: msg };
   }
 
-  const retornoErro = parseRetornoOperacao(finXml);
-  if (retornoErro) {
-    return { pendencias: [], erroApi: `Sponte: ${retornoErro}` };
-  }
-
-  const finRecords = parseXmlList(finXml, 'wsFinanceiro');
-  if (finRecords.length === 0) {
-    return { pendencias: [] };
+  if (alunos.length === 0) {
+    return { pendencias: [], erroApi: 'Nenhum aluno encontrado no Sponte.' };
   }
 
   const responsaveisCache: Record<string, { nome: string; celular: string }> = {};
-
   const todasPendencias: PendenciaFinanceira[] = [];
 
-  for (const finRecord of finRecords) {
-    const retorno = parseXmlValue(finRecord, 'RetornoOperacao');
-    if (!retorno.startsWith('01')) continue;
+  for (const aluno of alunos) {
+    try {
+      const { xml: finXml, fault: finFault } = await callSponteProxy(
+        'GetFinanceiro',
+        `AlunoID=${aluno.id}`
+      );
 
-    const alunoNodes = parseXmlList(finRecord, 'wsInfoAluno');
-    const nomeAluno = alunoNodes.length > 0 ? parseXmlValue(alunoNodes[0], 'Nome') : '';
-    const alunoId = alunoNodes.length > 0 ? parseXmlValue(alunoNodes[0], 'AlunoID') : '';
+      if (finFault) continue;
 
-    const parcelas = parseXmlList(finRecord, 'wsParcela');
+      const finRecords = parseXmlList(finXml, 'wsFinanceiro');
 
-    for (const parcela of parcelas) {
-      const situacao = parseXmlValue(parcela, 'SituacaoParcela');
-      if (situacao === 'Quitada' || situacao === 'Cancelada') continue;
+      for (const finRecord of finRecords) {
+        const retorno = parseXmlValue(finRecord, 'RetornoOperacao');
+        if (!retorno.startsWith('01')) continue;
 
-      const vencimento = parseXmlValue(parcela, 'Vencimento');
-      if (!filtrarAno2026(vencimento)) continue;
+        const alunoNodes = parseXmlList(finRecord, 'wsInfoAluno');
+        const nomeAluno = alunoNodes.length > 0
+          ? parseXmlValue(alunoNodes[0], 'Nome')
+          : aluno.nome;
 
-      const valorParcela = parseBrDecimal(parseXmlValue(parcela, 'ValorParcela'));
-      const valorPago = parseBrDecimal(parseXmlValue(parcela, 'ValorPago'));
-      const saldo = valorParcela - valorPago;
+        const parcelas = parseXmlList(finRecord, 'wsParcela');
 
-      if (saldo <= 0) continue;
+        for (const parcela of parcelas) {
+          const situacao = parseXmlValue(parcela, 'SituacaoParcela');
+          if (situacao === 'Quitada' || situacao === 'Cancelada') continue;
 
-      let respNome = '-';
-      let respCelular = '-';
+          const vencimento = parseXmlValue(parcela, 'Vencimento');
+          if (!filtrarAno2026(vencimento)) continue;
 
-      if (alunoId && !responsaveisCache[alunoId]) {
-        try {
-          const { xml: respXml } = await callSponteProxy(
-            'GetResponsavelFinanceiro',
-            `AlunoID=${alunoId}`
-          );
-          const respNodes = parseXmlList(respXml, 'wsResponsavel');
-          if (respNodes.length > 0) {
-            const respRetorno = parseXmlValue(respNodes[0], 'RetornoOperacao');
-            if (respRetorno.startsWith('01')) {
-              responsaveisCache[alunoId] = {
-                nome: parseXmlValue(respNodes[0], 'Nome'),
-                celular: parseXmlValue(respNodes[0], 'Celular') || parseXmlValue(respNodes[0], 'Telefone'),
-              };
+          const valorParcela = parseBrDecimal(parseXmlValue(parcela, 'ValorParcela'));
+          const valorPago = parseBrDecimal(parseXmlValue(parcela, 'ValorPago'));
+          const saldo = valorParcela - valorPago;
+
+          if (saldo <= 0) continue;
+
+          if (!responsaveisCache[aluno.id]) {
+            try {
+              const { xml: respXml } = await callSponteProxy(
+                'GetResponsavelFinanceiro',
+                `AlunoID=${aluno.id}`
+              );
+              const respNodes = parseXmlList(respXml, 'wsResponsavel');
+              if (respNodes.length > 0) {
+                const respRetorno = parseXmlValue(respNodes[0], 'RetornoOperacao');
+                if (respRetorno.startsWith('01')) {
+                  responsaveisCache[aluno.id] = {
+                    nome: parseXmlValue(respNodes[0], 'Nome'),
+                    celular: parseXmlValue(respNodes[0], 'Celular') || parseXmlValue(respNodes[0], 'Telefone'),
+                  };
+                }
+              }
+            } catch {
+              // Skip individual responsavel errors
             }
           }
-        } catch {
-          // Skip individual responsavel errors
+
+          const resp = responsaveisCache[aluno.id];
+
+          todasPendencias.push({
+            alunoId: aluno.id,
+            nomeAluno,
+            nomeResponsavel: resp?.nome || '-',
+            telefone: resp?.celular || '-',
+            parcela: parseXmlValue(parcela, 'NumeroParcela') || '1',
+            vencimento,
+            valor: valorParcela,
+            valorPago,
+            saldo,
+            status: situacao,
+          });
         }
       }
-
-      if (responsaveisCache[alunoId]) {
-        respNome = responsaveisCache[alunoId].nome || '-';
-        respCelular = responsaveisCache[alunoId].celular || '-';
-      }
-
-      todasPendencias.push({
-        alunoId,
-        nomeAluno,
-        nomeResponsavel: respNome,
-        telefone: respCelular,
-        parcela: parseXmlValue(parcela, 'NumeroParcela') || '1',
-        vencimento,
-        valor: valorParcela,
-        valorPago,
-        saldo,
-        status: situacao,
-      });
+    } catch {
+      // Skip individual student errors
     }
   }
 
