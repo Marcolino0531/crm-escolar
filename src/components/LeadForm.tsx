@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { Lead, Unidade } from '../types';
 import { calcularIdadeEscolar } from '../utils/mecCutoff';
 import { ORIGENS_PREDEFINIDAS, ORIGENS_STORAGE_KEY } from '../constants';
@@ -49,6 +50,19 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
   const [origemInputValue, setOrigemInputValue] = useState('');
   const [origemDropdownOpen, setOrigemDropdownOpen] = useState(false);
   const origemRef = useRef<HTMLDivElement>(null);
+  const origemInputRef = useRef<HTMLInputElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateDropdownPosition = useCallback(() => {
+    if (origemInputRef.current) {
+      const rect = origemInputRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+  }, []);
 
   const todasOrigens = [...ORIGENS_PREDEFINIDAS, ...origensCustom.filter((o) => !ORIGENS_PREDEFINIDAS.includes(o))];
 
@@ -71,13 +85,28 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (origemRef.current && !origemRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (origemRef.current && !origemRef.current.contains(target)) {
+        const portalDropdown = document.getElementById('origem-dropdown-portal');
+        if (portalDropdown && portalDropdown.contains(target)) return;
         setOrigemDropdownOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (origemDropdownOpen) {
+      updateDropdownPosition();
+      window.addEventListener('scroll', updateDropdownPosition, true);
+      window.addEventListener('resize', updateDropdownPosition);
+      return () => {
+        window.removeEventListener('scroll', updateDropdownPosition, true);
+        window.removeEventListener('resize', updateDropdownPosition);
+      };
+    }
+  }, [origemDropdownOpen, updateDropdownPosition]);
 
   const aplicarMascaraData = (valor: string) => {
     const nums = valor.replace(/\D/g, '').slice(0, 8);
@@ -221,7 +250,8 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
+        <div className="rounded-t-2xl overflow-hidden shrink-0">
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -251,8 +281,9 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
             </button>
           </div>
         </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Nome do Aluno <span className="text-red-500">*</span>
@@ -348,38 +379,52 @@ const LeadForm: React.FC<LeadFormProps> = ({ onSubmit, onFechar, unidadeSelecion
               Como conheceu o colégio? (Origem) <span className="text-red-500">*</span>
             </label>
             <input
+              ref={origemInputRef}
               type="text"
               value={origemInputValue}
               onChange={handleOrigemInputChange}
-              onFocus={() => setOrigemDropdownOpen(true)}
+              onFocus={() => { setOrigemDropdownOpen(true); updateDropdownPosition(); }}
               placeholder="Selecione ou digite uma nova origem..."
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
             />
-            {origemDropdownOpen && (filteredOrigens.length > 0 || showCreateOption) && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {filteredOrigens.map((origem) => (
-                  <button
-                    key={origem}
-                    type="button"
-                    onClick={() => handleOrigemSelect(origem)}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
-                      form.origem === origem ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-700'
-                    }`}
-                  >
-                    {origem}
-                  </button>
-                ))}
-                {showCreateOption && (
-                  <button
-                    type="button"
-                    onClick={() => handleOrigemSelect(origemInputValue.trim())}
-                    className="w-full text-left px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors font-medium border-t border-gray-100"
-                  >
-                    + Criar &quot;{origemInputValue.trim()}&quot;
-                  </button>
-                )}
-              </div>
-            )}
+            {origemDropdownOpen && (filteredOrigens.length > 0 || showCreateOption) && dropdownPos &&
+              ReactDOM.createPortal(
+                <div
+                  id="origem-dropdown-portal"
+                  style={{
+                    position: 'fixed',
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    width: dropdownPos.width,
+                    zIndex: 9999,
+                  }}
+                  className="bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto"
+                >
+                  {filteredOrigens.map((origem) => (
+                    <button
+                      key={origem}
+                      type="button"
+                      onClick={() => handleOrigemSelect(origem)}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
+                        form.origem === origem ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-700'
+                      }`}
+                    >
+                      {origem}
+                    </button>
+                  ))}
+                  {showCreateOption && (
+                    <button
+                      type="button"
+                      onClick={() => handleOrigemSelect(origemInputValue.trim())}
+                      className="w-full text-left px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors font-medium border-t border-gray-100"
+                    >
+                      + Criar &quot;{origemInputValue.trim()}&quot;
+                    </button>
+                  )}
+                </div>,
+                document.body
+              )
+            }
           </div>
 
           <div className="flex gap-3 pt-2">
