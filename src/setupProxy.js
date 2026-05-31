@@ -106,6 +106,23 @@ function extractBolsaPercent(bolsaAssociada) {
   return parseFloat(`${match[1]}.${match[2] || '0'}`);
 }
 
+function normalizar(texto) {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+// Classifica a unidade pedagógica do aluno a partir do campo TurmaAtual do Sponte.
+// CEC Baby: Berçário e Maternal. CEC: Período e Ano (1º Período → 9º Ano).
+// Retorna null quando não há turma (ex: alunos inativos com dívidas de acordo).
+function classificarUnidade(turmaAtual) {
+  if (!turmaAtual) return null;
+  const t = normalizar(turmaAtual);
+  if (t.includes('bercario') || t.includes('maternal')) return 'CEC Baby';
+  if (t.includes('periodo') || t.includes('ano')) return 'CEC';
+  return null;
+}
+
+const UNIDADES_SPONTE = ['CEC', 'CEC Baby'];
+
 module.exports = function (app) {
   // Original single-method proxy (kept for backwards compat)
   app.post('/api/sponte', (req, res) => {
@@ -176,10 +193,20 @@ module.exports = function (app) {
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { dataInicio, dataFim } = JSON.parse(body);
+        const { dataInicio, dataFim, unidade } = JSON.parse(body);
 
         if (!dataInicio || !dataFim) {
           res.status(400).json({ error: 'Missing required parameters: dataInicio, dataFim' });
+          return;
+        }
+
+        // Unidades sem integração Sponte ativa (CodigoCliente 23568 atende só CEC e CEC Baby).
+        if (unidade && !UNIDADES_SPONTE.includes(unidade)) {
+          res.json({
+            pendencias: [],
+            indisponivel: true,
+            meta: { totalAlunos: 0, alunosComPendencia: 0, totalParcelas: 0, totalBoletos: 0, tempoSegundos: 0, dataInicio, dataFim },
+          });
           return;
         }
 
@@ -256,6 +283,7 @@ module.exports = function (app) {
         // Step 3: Fetch student names + responsavel ONLY for debtors
         const debtorIds = Array.from(alunosComPendencia);
         const alunoNomeMap = {};
+        const alunoUnidadeMap = {};
         const responsaveisMap = {};
 
         for (let i = 0; i < debtorIds.length; i += BATCH_SIZE) {
@@ -282,6 +310,7 @@ module.exports = function (app) {
             const nodes = parseXmlList(xml, 'wsAluno');
             if (nodes.length > 0 && parseXmlValue(nodes[0], 'RetornoOperacao').startsWith('01')) {
               alunoNomeMap[id] = parseXmlValue(nodes[0], 'Nome');
+              alunoUnidadeMap[id] = classificarUnidade(parseXmlValue(nodes[0], 'TurmaAtual'));
             }
           }
 
@@ -350,16 +379,25 @@ module.exports = function (app) {
           });
         }
 
+        // Step 6: Multi-tenant — filtrar boletos pela unidade selecionada
+        const unidadeFiltrada = (unidade === 'CEC' || unidade === 'CEC Baby') ? unidade : null;
+        const pendenciasFinal = unidadeFiltrada
+          ? pendenciasAgrupadas.filter((p) => alunoUnidadeMap[p.alunoId] === unidadeFiltrada)
+          : pendenciasAgrupadas;
+
+        const parcelasFinal = pendenciasFinal.reduce((sum, p) => sum + p.qtdParcelas, 0);
+        const alunosFinal = new Set(pendenciasFinal.map((p) => p.alunoId)).size;
+
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Raw parcelas:', parcelasRaw.length, '| Grouped boletos:', pendenciasAgrupadas.length, '| Debtors:', debtorIds.length);
+        console.log('[Sponte-Batch] Complete. Time:', elapsed, 's | Unidade:', unidadeFiltrada || 'todas', '| Boletos:', pendenciasFinal.length, '/', pendenciasAgrupadas.length, '| Debtors:', alunosFinal);
 
         res.json({
-          pendencias: pendenciasAgrupadas,
+          pendencias: pendenciasFinal,
           meta: {
-            totalAlunos: debtorIds.length,
-            alunosComPendencia: alunosComPendencia.size,
-            totalParcelas: parcelasRaw.length,
-            totalBoletos: pendenciasAgrupadas.length,
+            totalAlunos: alunosFinal,
+            alunosComPendencia: alunosFinal,
+            totalParcelas: parcelasFinal,
+            totalBoletos: pendenciasFinal.length,
             tempoSegundos: parseFloat(elapsed),
             dataInicio,
             dataFim,
