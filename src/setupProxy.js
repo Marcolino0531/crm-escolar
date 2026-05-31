@@ -316,13 +316,20 @@ module.exports = function (app) {
           const categorias = [...new Set(items.map(it => it.categoria).filter(Boolean))];
 
           let maxBolsaPct = 0;
+          let valorMensalidade = 0;
+          let valorOutros = 0;
           for (const it of items) {
             const pct = extractBolsaPercent(it.bolsaAssociada);
             if (pct > maxBolsaPct) maxBolsaPct = pct;
+            if (it.categoria.toLowerCase() === 'mensalidade') {
+              valorMensalidade += it.saldo;
+            } else {
+              valorOutros += it.saldo;
+            }
           }
 
           const valorComDesconto = maxBolsaPct > 0
-            ? Math.round(valorTotalBoleto * (1 - maxBolsaPct / 100) * 100) / 100
+            ? Math.round((valorMensalidade * (1 - maxBolsaPct / 100) + valorOutros) * 100) / 100
             : valorTotalBoleto;
 
           const nomeAluno = alunoNomeMap[first.alunoId] || first.nomeAluno;
