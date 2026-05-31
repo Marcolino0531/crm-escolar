@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Unidade } from '../types';
-import { RefreshCw, MessageCircle, AlertTriangle, Search, ChevronDown, ChevronUp, PartyPopper, SearchX, Users, FileText, Calendar, Clock } from 'lucide-react';
+import { RefreshCw, MessageCircle, AlertTriangle, Search, ChevronDown, ChevronUp, PartyPopper, SearchX, Users, FileText, Calendar, Clock, Building2, Construction } from 'lucide-react';
 
 interface PendenciaFinanceira {
   groupKey: string;
@@ -29,6 +29,9 @@ interface BatchMeta {
 interface FinanceiroPageProps {
   unidadeSelecionada: Unidade;
 }
+
+// Unidades com integração Sponte ativa (token/código 23568 atende só CEC e CEC Baby).
+const UNIDADES_SPONTE: Unidade[] = ['CEC', 'CEC Baby'];
 
 function formatarMoeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -111,7 +114,18 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
   const [tempInicio, setTempInicio] = useState(defaultRange.inicio);
   const [tempFim, setTempFim] = useState(defaultRange.fim);
 
+  const integracaoDisponivel = UNIDADES_SPONTE.includes(unidadeSelecionada);
+
   const buscarDados = useCallback(async (inicio?: string, fim?: string) => {
+    // Unidades sem integração ativa não disparam chamada ao Sponte.
+    if (!UNIDADES_SPONTE.includes(unidadeSelecionada)) {
+      setPendencias([]);
+      setMeta(null);
+      setErro(null);
+      setCarregando(false);
+      return;
+    }
+
     const di = inicio || dataInicio;
     const df = fim || dataFim;
 
@@ -123,7 +137,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
       const response = await fetch('/api/sponte-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataInicio: di, dataFim: df }),
+        body: JSON.stringify({ dataInicio: di, dataFim: df, unidade: unidadeSelecionada }),
       });
 
       if (!response.ok) {
@@ -149,7 +163,7 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
     } finally {
       setCarregando(false);
     }
-  }, [dataInicio, dataFim]);
+  }, [dataInicio, dataFim, unidadeSelecionada]);
 
   useEffect(() => {
     buscarDados();
@@ -225,6 +239,31 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
     );
   };
 
+  if (!integracaoDisponivel) {
+    return (
+      <div className="p-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12">
+          <div className="flex flex-col items-center text-center gap-4 max-w-md mx-auto">
+            <div className="bg-amber-100 rounded-full p-4">
+              <Construction size={40} className="text-amber-500" />
+            </div>
+            <div className="flex items-center gap-2 text-sm font-medium text-indigo-600">
+              <Building2 size={16} />
+              {unidadeSelecionada}
+            </div>
+            <h2 className="text-xl font-bold text-gray-800">Integração em breve</h2>
+            <p className="text-gray-500">
+              A integração com o Sponte para esta unidade estará disponível em breve.
+            </p>
+            <p className="text-xs text-gray-400">
+              Selecione <strong>CEC</strong> ou <strong>CEC Baby</strong> no menu lateral para visualizar as cobranças ativas.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6">
       {/* Header with stats */}
@@ -274,7 +313,11 @@ const FinanceiroPage: React.FC<FinanceiroPageProps> = ({ unidadeSelecionada }) =
       {/* Period indicator + Date picker */}
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 bg-indigo-600 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+              <Building2 size={12} />
+              {unidadeSelecionada}
+            </span>
             <Calendar size={18} className="text-indigo-600" />
             <span className="text-sm font-semibold text-indigo-800">Período: {periodoLabel}</span>
             {meta && (
