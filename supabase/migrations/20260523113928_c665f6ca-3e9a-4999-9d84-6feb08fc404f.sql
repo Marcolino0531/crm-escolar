@@ -1,0 +1,1 @@
+ALTER TABLE public.revenue_subcategories ADD COLUMN IF NOT EXISTS color text NOT NULL DEFAULT '#3b82f6';

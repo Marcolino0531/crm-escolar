@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/sponte-batch.ts": {
-      "maxDuration": 60
-    }
-  }
-}

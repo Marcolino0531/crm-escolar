@@ -1,0 +1,173 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  Outlet,
+  Link,
+  createRootRouteWithContext,
+  useRouter,
+  HeadContent,
+  Scripts,
+} from "@tanstack/react-router";
+import { LayoutDashboard, Upload, Settings, Wallet, LogOut, FileCheck2, TrendingUp } from "lucide-react";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider, SchoolProvider, useAuth, useRole } from "@/lib/app-context";
+import { LoginScreen } from "@/components/LoginScreen";
+import { SchoolFilter } from "@/components/SchoolFilter";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+
+import appCss from "../styles.css?url";
+
+function NotFoundComponent() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-7xl font-bold text-foreground">404</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Página não encontrada.</p>
+        <Link to="/" className="mt-6 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+          Voltar ao início
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+  console.error(error);
+  const router = useRouter();
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-xl font-semibold">Algo deu errado</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+        <button
+          onClick={() => { router.invalidate(); reset(); }}
+          className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  head: () => ({
+    meta: [
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { title: "School Finance Hub" },
+      { name: "description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
+      { property: "og:title", content: "School Finance Hub" },
+      { name: "twitter:title", content: "School Finance Hub" },
+      { property: "og:description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
+      { name: "twitter:description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png" },
+      { name: "twitter:card", content: "summary_large_image" },
+      { property: "og:type", content: "website" },
+    ],
+    links: [{ rel: "stylesheet", href: appCss }],
+  }),
+  shellComponent: RootShell,
+  component: RootComponent,
+  notFoundComponent: NotFoundComponent,
+  errorComponent: ErrorComponent,
+});
+
+function RootShell({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="pt-BR">
+      <head><HeadContent /></head>
+      <body>{children}<Scripts /></body>
+    </html>
+  );
+}
+
+function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ComponentType<{ className?: string }>; label: string }) {
+  return (
+    <Link
+      to={to}
+      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      activeProps={{ className: "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium bg-primary text-primary-foreground shadow-sm" }}
+      activeOptions={{ exact: to === "/" }}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </Link>
+  );
+}
+
+function RootComponent() {
+  const { queryClient } = Route.useRouteContext();
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <SchoolProvider>
+          <AuthGate />
+          <Toaster richColors position="top-right" />
+        </SchoolProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}
+
+function AuthGate() {
+  const { session, loading } = useAuth();
+  if (loading) {
+    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando…</div>;
+  }
+  if (!session) return <LoginScreen />;
+  return <AppShell />;
+}
+
+function AppShell() {
+  const { isAdmin } = useRole();
+  return (
+    <div className="flex min-h-screen bg-background">
+      <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
+        <div className="mb-8 flex items-center gap-2 px-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Wallet className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold leading-tight">Colégio</div>
+            <div className="text-xs text-muted-foreground">Financeiro</div>
+          </div>
+        </div>
+        <nav className="flex flex-col gap-1">
+          <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
+          {isAdmin && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
+          <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
+          <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
+          {isAdmin && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
+        </nav>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-auto justify-start gap-2 text-sidebar-foreground/70"
+          onClick={() => supabase.auth.signOut()}
+        >
+          <LogOut className="h-4 w-4" /> Sair
+        </Button>
+      </aside>
+      <div className="flex flex-1 flex-col">
+        <header className="md:hidden flex items-center gap-2 border-b border-border bg-card px-4 py-3">
+          <Wallet className="h-5 w-5 text-primary" />
+          <span className="font-semibold">Financeiro Colégio</span>
+          <nav className="ml-auto flex gap-1">
+            <Link to="/" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }} activeOptions={{ exact: true }}>Painel</Link>
+            {isAdmin && <Link to="/upload" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Upload</Link>}
+            <Link to="/conciliacao" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Faturamento</Link>
+            <Link to="/fluxo-futuro" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Futuro</Link>
+            {isAdmin && <Link to="/configuracoes" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Config</Link>}
+            <button onClick={() => supabase.auth.signOut()} className="rounded-md px-2 py-1 text-xs">Sair</button>
+          </nav>
+        </header>
+        <div className="border-b border-border bg-card/50 px-4 py-3 md:px-8">
+          <SchoolFilter />
+        </div>
+        <main className="flex-1 p-4 md:p-8"><Outlet /></main>
+      </div>
+    </div>
+  );
+}
