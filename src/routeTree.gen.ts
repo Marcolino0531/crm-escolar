@@ -10,14 +10,33 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as RhRouteImport } from './routes/rh'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
+import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
 
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RhRoute = RhRouteImport.update({
+  id: '/rh',
+  path: '/rh',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InadimplenciaRoute = InadimplenciaRouteImport.update({
+  id: '/inadimplencia',
+  path: '/inadimplencia',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
@@ -35,6 +54,11 @@ const ConciliacaoRoute = ConciliacaoRouteImport.update({
   path: '/conciliacao',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdmissoesRoute = AdmissoesRouteImport.update({
+  id: '/admissoes',
+  path: '/admissoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -43,50 +67,83 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admissoes': typeof AdmissoesRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
+  '/inadimplencia': typeof InadimplenciaRoute
+  '/onboarding': typeof OnboardingRoute
+  '/rh': typeof RhRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admissoes': typeof AdmissoesRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
+  '/inadimplencia': typeof InadimplenciaRoute
+  '/onboarding': typeof OnboardingRoute
+  '/rh': typeof RhRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admissoes': typeof AdmissoesRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
+  '/inadimplencia': typeof InadimplenciaRoute
+  '/onboarding': typeof OnboardingRoute
+  '/rh': typeof RhRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admissoes'
     | '/conciliacao'
     | '/configuracoes'
     | '/fluxo-futuro'
+    | '/inadimplencia'
+    | '/onboarding'
+    | '/rh'
     | '/upload'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/conciliacao' | '/configuracoes' | '/fluxo-futuro' | '/upload'
+  to:
+    | '/'
+    | '/admissoes'
+    | '/conciliacao'
+    | '/configuracoes'
+    | '/fluxo-futuro'
+    | '/inadimplencia'
+    | '/onboarding'
+    | '/rh'
+    | '/upload'
   id:
     | '__root__'
     | '/'
+    | '/admissoes'
     | '/conciliacao'
     | '/configuracoes'
     | '/fluxo-futuro'
+    | '/inadimplencia'
+    | '/onboarding'
+    | '/rh'
     | '/upload'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdmissoesRoute: typeof AdmissoesRoute
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
+  InadimplenciaRoute: typeof InadimplenciaRoute
+  OnboardingRoute: typeof OnboardingRoute
+  RhRoute: typeof RhRoute
   UploadRoute: typeof UploadRoute
 }
 
@@ -97,6 +154,27 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/upload'
       preLoaderRoute: typeof UploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rh': {
+      id: '/rh'
+      path: '/rh'
+      fullPath: '/rh'
+      preLoaderRoute: typeof RhRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inadimplencia': {
+      id: '/inadimplencia'
+      path: '/inadimplencia'
+      fullPath: '/inadimplencia'
+      preLoaderRoute: typeof InadimplenciaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fluxo-futuro': {
@@ -120,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConciliacaoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admissoes': {
+      id: '/admissoes'
+      path: '/admissoes'
+      fullPath: '/admissoes'
+      preLoaderRoute: typeof AdmissoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -132,9 +217,13 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdmissoesRoute: AdmissoesRoute,
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
+  InadimplenciaRoute: InadimplenciaRoute,
+  OnboardingRoute: OnboardingRoute,
+  RhRoute: RhRoute,
   UploadRoute: UploadRoute,
 }
 export const routeTree = rootRouteImport

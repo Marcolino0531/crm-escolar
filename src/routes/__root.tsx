@@ -7,7 +7,19 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { LayoutDashboard, Upload, Settings, Wallet, LogOut, FileCheck2, TrendingUp } from "lucide-react";
+import {
+  LayoutDashboard,
+  Upload,
+  Settings,
+  Wallet,
+  LogOut,
+  FileCheck2,
+  TrendingUp,
+  KanbanSquare,
+  ClipboardCheck,
+  Users,
+  AlertCircle,
+} from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, useRole } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
@@ -23,7 +35,10 @@ function NotFoundComponent() {
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
         <p className="mt-2 text-sm text-muted-foreground">Página não encontrada.</p>
-        <Link to="/" className="mt-6 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+        <Link
+          to="/"
+          className="mt-6 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
           Voltar ao início
         </Link>
       </div>
@@ -40,7 +55,10 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         <h1 className="text-xl font-semibold">Algo deu errado</h1>
         <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
         <button
-          onClick={() => { router.invalidate(); reset(); }}
+          onClick={() => {
+            router.invalidate();
+            reset();
+          }}
           className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
           Tentar novamente
@@ -56,13 +74,33 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "School Finance Hub" },
-      { name: "description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
+      {
+        name: "description",
+        content:
+          "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio.",
+      },
       { property: "og:title", content: "School Finance Hub" },
       { name: "twitter:title", content: "School Finance Hub" },
-      { property: "og:description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
-      { name: "twitter:description", content: "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png" },
+      {
+        property: "og:description",
+        content:
+          "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio.",
+      },
+      {
+        name: "twitter:description",
+        content:
+          "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png",
+      },
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "website" },
     ],
@@ -77,18 +115,34 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">
-      <head><HeadContent /></head>
-      <body>{children}<Scripts /></body>
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+      </body>
     </html>
   );
 }
 
-function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ComponentType<{ className?: string }>; label: string }) {
+function NavItem({
+  to,
+  icon: Icon,
+  label,
+}: {
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
   return (
     <Link
       to={to}
       className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      activeProps={{ className: "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium bg-primary text-primary-foreground shadow-sm" }}
+      activeProps={{
+        className:
+          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium bg-primary text-primary-foreground shadow-sm",
+      }}
       activeOptions={{ exact: to === "/" }}
     >
       <Icon className="h-4 w-4" />
@@ -114,7 +168,11 @@ function RootComponent() {
 function AuthGate() {
   const { session, loading } = useAuth();
   if (loading) {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Carregando…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Carregando…
+      </div>
+    );
   }
   if (!session) return <LoginScreen />;
   return <AppShell />;
@@ -135,10 +193,20 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
+          <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+            Módulos
+          </div>
+          <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />
+          <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />
+          <NavItem to="/rh" icon={Users} label="Recursos Humanos" />
+          <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+            Financeiro
+          </div>
           <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
           {isAdmin && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
           <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
           <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
+          <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
           {isAdmin && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
         </nav>
         <Button
@@ -155,18 +223,70 @@ function AppShell() {
           <Wallet className="h-5 w-5 text-primary" />
           <span className="font-semibold">Financeiro Colégio</span>
           <nav className="ml-auto flex gap-1">
-            <Link to="/" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }} activeOptions={{ exact: true }}>Painel</Link>
-            {isAdmin && <Link to="/upload" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Upload</Link>}
-            <Link to="/conciliacao" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Faturamento</Link>
-            <Link to="/fluxo-futuro" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Futuro</Link>
-            {isAdmin && <Link to="/configuracoes" className="rounded-md px-2 py-1 text-xs" activeProps={{ className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground" }}>Config</Link>}
-            <button onClick={() => supabase.auth.signOut()} className="rounded-md px-2 py-1 text-xs">Sair</button>
+            <Link
+              to="/"
+              className="rounded-md px-2 py-1 text-xs"
+              activeProps={{
+                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+              }}
+              activeOptions={{ exact: true }}
+            >
+              Painel
+            </Link>
+            {isAdmin && (
+              <Link
+                to="/upload"
+                className="rounded-md px-2 py-1 text-xs"
+                activeProps={{
+                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+                }}
+              >
+                Upload
+              </Link>
+            )}
+            <Link
+              to="/conciliacao"
+              className="rounded-md px-2 py-1 text-xs"
+              activeProps={{
+                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+              }}
+            >
+              Faturamento
+            </Link>
+            <Link
+              to="/fluxo-futuro"
+              className="rounded-md px-2 py-1 text-xs"
+              activeProps={{
+                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+              }}
+            >
+              Futuro
+            </Link>
+            {isAdmin && (
+              <Link
+                to="/configuracoes"
+                className="rounded-md px-2 py-1 text-xs"
+                activeProps={{
+                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+                }}
+              >
+                Config
+              </Link>
+            )}
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="rounded-md px-2 py-1 text-xs"
+            >
+              Sair
+            </button>
           </nav>
         </header>
         <div className="border-b border-border bg-card/50 px-4 py-3 md:px-8">
           <SchoolFilter />
         </div>
-        <main className="flex-1 p-4 md:p-8"><Outlet /></main>
+        <main className="flex-1 p-4 md:p-8">
+          <Outlet />
+        </main>
       </div>
     </div>
   );
