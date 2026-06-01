@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { OnboardingAluno } from "@/lib/crm/types";
 import { TAREFAS_ONBOARDING } from "@/lib/crm/constants";
 import { useOnboarding } from "@/lib/crm/hooks";
+import { useRole } from "@/lib/app-context";
 import {
   ChevronDown,
   ChevronRight,
@@ -18,6 +19,7 @@ interface OnboardingBoardProps {
 }
 
 const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => {
+  const { isAdmin } = useRole();
   const { alunosPendentes, alunosConcluidos, alternarTarefa, contarTarefas, removerAluno } =
     onboardingHook;
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
@@ -67,18 +69,22 @@ const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => 
                   Concluído
                 </span>
               )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (window.confirm("Tem certeza que deseja remover este aluno do onboarding?")) {
-                    removerAluno(aluno.id);
-                  }
-                }}
-                className="flex-shrink-0 p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                title="Remover aluno do onboarding"
-              >
-                <Trash2 size={14} />
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (
+                      window.confirm("Tem certeza que deseja remover este aluno do onboarding?")
+                    ) {
+                      removerAluno(aluno.id);
+                    }
+                  }}
+                  className="flex-shrink-0 p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                  title="Remover aluno do onboarding"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-4 text-xs text-gray-500">
               <span className="flex items-center gap-1">
@@ -123,14 +129,17 @@ const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => 
                 return (
                   <label
                     key={tarefa.id}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
-                      marcada ? "bg-green-50 hover:bg-green-100" : "hover:bg-gray-50"
-                    }`}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                      isAdmin ? "cursor-pointer" : "cursor-default"
+                    } ${marcada ? "bg-green-50 hover:bg-green-100" : "hover:bg-gray-50"}`}
                   >
                     <input
                       type="checkbox"
                       checked={marcada}
-                      onChange={() => alternarTarefa(aluno.id, tarefa.id)}
+                      disabled={!isAdmin}
+                      onChange={() => {
+                        if (isAdmin) alternarTarefa(aluno.id, tarefa.id);
+                      }}
                       className="sr-only"
                     />
                     <div className="flex-shrink-0">

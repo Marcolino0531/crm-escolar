@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
+import { useRole } from "@/lib/app-context";
 import FuncionarioModal from "./FuncionarioModal";
 
 interface RHPageProps {
@@ -113,6 +114,7 @@ const downloadCSV = (csv: string, filename: string) => {
 };
 
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
+  const { isAdmin } = useRole();
   const { funcionarios, adicionarFuncionario, removerFuncionario, adicionarFerias, removerFerias } =
     rhHook;
   const [modalAberto, setModalAberto] = useState(false);
@@ -184,13 +186,15 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             </svg>
             Exportar Planilha
           </button>
-          <button
-            onClick={() => setModalAberto(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md"
-          >
-            <span>+</span>
-            Novo Funcionário
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setModalAberto(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md"
+            >
+              <span>+</span>
+              Novo Funcionário
+            </button>
+          )}
         </div>
       </div>
 
@@ -224,9 +228,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Ações
-                  </th>
+                  {isAdmin && (
+                    <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Ações
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -267,19 +273,21 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
-                            removerFuncionario(func.id);
-                          }
-                        }}
-                        className="text-red-400 hover:text-red-600 text-xs font-medium"
-                      >
-                        Remover
-                      </button>
-                    </td>
+                    {isAdmin && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
+                              removerFuncionario(func.id);
+                            }
+                          }}
+                          className="text-red-400 hover:text-red-600 text-xs font-medium"
+                        >
+                          Remover
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -302,8 +310,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           funcionarioExistente={funcionarioSelecionado}
           onSalvar={() => {}}
           onFechar={handleFecharDetalhes}
-          onAdicionarFerias={adicionarFerias}
-          onRemoverFerias={removerFerias}
+          onAdicionarFerias={isAdmin ? adicionarFerias : undefined}
+          onRemoverFerias={isAdmin ? removerFerias : undefined}
+          isAdmin={isAdmin}
         />
       )}
 

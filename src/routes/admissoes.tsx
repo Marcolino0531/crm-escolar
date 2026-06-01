@@ -62,6 +62,7 @@ function AdmissoesPage() {
         leadsHook={leadsHook}
         onMatriculaConfirmada={handleMatriculaComOnboarding}
         onEditar={(lead) => setLeadEditando(lead)}
+        isAdmin={isAdmin}
       />
 
       {(formularioAberto || leadEditando) && (

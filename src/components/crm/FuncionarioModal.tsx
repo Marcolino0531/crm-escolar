@@ -9,6 +9,7 @@ interface FuncionarioModalProps {
   onFechar: () => void;
   onAdicionarFerias?: (funcionarioId: string, dataInicio: string, dataFim: string) => void;
   onRemoverFerias?: (funcionarioId: string, feriasId: string) => void;
+  isAdmin?: boolean;
 }
 
 const aplicarMascaraData = (valor: string) => {
@@ -86,6 +87,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   onFechar,
   onAdicionarFerias,
   onRemoverFerias,
+  isAdmin = true,
 }) => {
   const isEdicao = !!funcionarioExistente;
 
@@ -450,13 +452,15 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
                   <span>🏖️</span> Controle de Férias
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => setMostrarFeriasForm(!mostrarFeriasForm)}
-                  className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 font-medium transition-colors"
-                >
-                  + Adicionar Férias
-                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarFeriasForm(!mostrarFeriasForm)}
+                    className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 font-medium transition-colors"
+                  >
+                    + Adicionar Férias
+                  </button>
+                )}
               </div>
 
               {mostrarFeriasForm && (
@@ -518,7 +522,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                         📅 {converterParaBR(periodo.dataInicio)} →{" "}
                         {converterParaBR(periodo.dataFim)}
                       </span>
-                      {onRemoverFerias && (
+                      {isAdmin && onRemoverFerias && (
                         <button
                           type="button"
                           onClick={() => onRemoverFerias(funcionarioExistente.id, periodo.id)}

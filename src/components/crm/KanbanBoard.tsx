@@ -12,6 +12,7 @@ interface KanbanBoardProps {
   leadsHook: ReturnType<typeof useLeads>;
   onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
   onEditar: (lead: Lead) => void;
+  isAdmin?: boolean;
 }
 
 interface PendingAction {
@@ -24,6 +25,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   leadsHook,
   onMatriculaConfirmada,
   onEditar,
+  isAdmin = false,
 }) => {
   const {
     leads,
@@ -40,6 +42,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [pendingMatricula, setPendingMatricula] = useState<PendingAction | null>(null);
 
   const onDragEnd = (result: DropResult) => {
+    if (!isAdmin) return;
     const { draggableId, destination, source } = result;
     if (!destination) return;
 
@@ -135,6 +138,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
               onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
               onSolicitarMatricula={handleSolicitarMatricula}
               onEditar={onEditar}
+              isAdmin={isAdmin}
             />
           ))}
         </div>
