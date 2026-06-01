@@ -37,6 +37,7 @@ type SchoolCtx = {
 const SchoolContext = createContext<SchoolCtx>({ selected: "all", setSelected: () => {}, schools: [] });
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
   const [selected, setSelected] = useState<SchoolFilter>(() => {
     if (typeof window === "undefined") return "all";
     return localStorage.getItem("school_filter") ?? "all";
@@ -46,7 +47,8 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
   }, [selected]);
 
   const { data: schools = [] } = useQuery({
-    queryKey: ["schools"],
+    queryKey: ["schools", session?.user?.id ?? "anon"],
+    enabled: !!session?.user?.id,
     queryFn: async () => {
       const { data, error } = await supabase.from("schools").select("id, name").order("name");
       if (error) throw error;
