@@ -369,6 +369,179 @@ async function coletarPendencias(
   return { pendencias: pendenciasAgrupadas, alunoUnidadeMap };
 }
 
+// ─── Conciliação de Faturamento ─────────────────────────────────────────────
+// Mesma base (roteamento de credenciais por unidade + Inversão de Busca + filtro
+// de série), mas para parcelas BAIXADAS (quitadas) em uma janela de pagamento.
+// Serve para conciliar automaticamente as linhas "COB COMPE" do extrato: o
+// somatório das parcelas baixadas (por categoria) deve fechar com o valor da
+// linha. O rateio retornado é a composição por categoria (Mensalidade, Almoço,
+// Hora Extra, etc.).
+
+export interface RateioCategoria {
+  categoria: string;
+  valor: number;
+}
+
+export interface ConciliacaoSponteResult {
+  itens: RateioCategoria[];
+  total: number;
+  qtdParcelas: number;
+  qtdBoletos: number;
+  indisponivel?: boolean;
+  error?: string;
+  meta: {
+    dataInicio: string;
+    dataFim: string;
+    tempoSegundos: number;
+  };
+}
+
+interface BaixadaRaw {
+  alunoId: string;
+  categoria: string;
+  valorPago: number;
+  numeroBoleto: string;
+}
+
+interface ColetaBaixadasResult {
+  parcelas: BaixadaRaw[];
+  alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null>;
+  fault?: string;
+}
+
+// Núcleo da conciliação para UM par de credenciais: busca parcelas quitadas,
+// filtra estritamente pelas baixadas com DataPagamento na janela, e enriquece
+// a série (TurmaAtual) apenas dos alunos dessa lista isolada (Inversão de
+// Busca). NÃO aplica filtro de série — quem decide é o chamador (por unidade).
+async function coletarBaixadas(
+  codigoCliente: string,
+  token: string,
+  dtInicio: Date,
+  dtFim: Date,
+): Promise<ColetaBaixadasResult> {
+  // ── Step 1: busca parcelas quitadas em UMA chamada (Inversão de Busca) ──
+  const parcelasXml = await callSponte("GetParcelas", "Situacao=Quitada", codigoCliente, token);
+  const fault = checkFault(parcelasXml);
+  if (fault) return { parcelas: [], alunoUnidadeMap: {}, fault };
+
+  const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
+
+  // ── Step 2: mantém só baixadas (quitadas) com DataPagamento na janela ──
+  const parcelas: BaixadaRaw[] = [];
+  const alunoSet = new Set<string>();
+  for (const parcela of parcelaNodes) {
+    if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
+    if (parseXmlValue(parcela, "SituacaoParcela") !== "Quitada") continue;
+    const dataPagamento = parseXmlValue(parcela, "DataPagamento");
+    if (!isInDateRange(dataPagamento, dtInicio, dtFim)) continue;
+    const valorPago =
+      parseBrDecimal(parseXmlValue(parcela, "ValorPago")) ||
+      parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
+    if (valorPago <= 0) continue;
+    const alunoId = parseXmlValue(parcela, "AlunoID");
+    if (!alunoId || alunoId === "0") continue;
+
+    alunoSet.add(alunoId);
+    parcelas.push({
+      alunoId,
+      categoria: parseXmlValue(parcela, "Categoria") || "Outros",
+      valorPago,
+      numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+    });
+  }
+
+  if (parcelas.length === 0) return { parcelas: [], alunoUnidadeMap: {} };
+
+  // ── Step 3: classifica a série SÓ dos alunos baixados (lista isolada) ──
+  const ids = Array.from(alunoSet);
+  const alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null> = {};
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const batch = ids.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (id) => ({
+        id,
+        xml: await callSponte("GetAlunos", `AlunoID=${id}`, codigoCliente, token),
+      })),
+    );
+    for (const result of results) {
+      if (result.status !== "fulfilled") continue;
+      const { id, xml } = result.value;
+      const nodes = parseXmlList(xml, "wsAluno");
+      if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
+        alunoUnidadeMap[id] = classificarUnidade(parseXmlValue(nodes[0], "TurmaAtual"));
+      }
+    }
+  }
+
+  return { parcelas, alunoUnidadeMap };
+}
+
+const ConciliacaoInputSchema = z.object({
+  dataInicio: z.string().min(8),
+  dataFim: z.string().min(8),
+  unidade: z.string().min(1),
+});
+
+// Conciliação automática via Sponte (parcelas baixadas → rateio por categoria).
+// Roteamento de credenciais e filtro de série IDÊNTICOS à Inadimplência:
+//  - CEC / CEC Baby: token compartilhado, filtra por TurmaAtual (1º–9º / Berç.–Mat.3)
+//  - Núcleo Belvedere: token exclusivo, sem filtro de série
+export const fetchSponteConciliacao = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => ConciliacaoInputSchema.parse(input))
+  .handler(async ({ data }): Promise<ConciliacaoSponteResult> => {
+    const { dataInicio, dataFim, unidade } = data;
+    const meta = { dataInicio, dataFim, tempoSegundos: 0 };
+
+    if (!(unidade in SPONTE_UNIDADES)) {
+      return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, indisponivel: true, meta };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) {
+      throw new Error(`Credenciais da API do Sponte não configuradas para a unidade "${unidade}".`);
+    }
+
+    const dtInicio = new Date(dataInicio);
+    const dtFim = new Date(dataFim);
+    dtFim.setHours(23, 59, 59, 999);
+    const startTime = Date.now();
+
+    const res = await coletarBaixadas(creds.codigoCliente, creds.token, dtInicio, dtFim);
+    if (res.fault) {
+      return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, error: res.fault, meta };
+    }
+
+    // CEC/CEC Baby: filtra por TurmaAtual. Belvedere: processa todos os registros.
+    const filtrarPorTurma = creds.segmentaPorTurma && (unidade === "CEC" || unidade === "CEC Baby");
+    const parcelas = filtrarPorTurma
+      ? res.parcelas.filter((p) => res.alunoUnidadeMap[p.alunoId] === unidade)
+      : res.parcelas;
+
+    // Rateio: agrupa o valor pago por categoria (Mensalidade, Almoço, etc.).
+    const porCategoria = new Map<string, number>();
+    for (const p of parcelas) {
+      porCategoria.set(p.categoria, (porCategoria.get(p.categoria) ?? 0) + p.valorPago);
+    }
+    const itens: RateioCategoria[] = [...porCategoria.entries()]
+      .map(([categoria, valor]) => ({ categoria, valor: Math.round(valor * 100) / 100 }))
+      .sort((a, b) => b.valor - a.valor);
+    const total = Math.round(itens.reduce((s, it) => s + it.valor, 0) * 100) / 100;
+
+    const boletos = new Set(
+      parcelas.map((p) =>
+        p.numeroBoleto && p.numeroBoleto !== "0" ? `bol_${p.numeroBoleto}` : `aluno_${p.alunoId}`,
+      ),
+    );
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    return {
+      itens,
+      total,
+      qtdParcelas: parcelas.length,
+      qtdBoletos: boletos.size,
+      meta: { dataInicio, dataFim, tempoSegundos: parseFloat(elapsed) },
+    };
+  });
+
 const InputSchema = z.object({
   dataInicio: z.string().min(8),
   dataFim: z.string().min(8),
