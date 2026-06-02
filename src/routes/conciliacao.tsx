@@ -15,7 +15,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { useSchool, useRole } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -189,7 +190,8 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
 }
 
 function ConciliacaoPage() {
-  const { isAdmin, loading: roleLoading } = useRole();
+  const { canView, canEdit, loading: roleLoading } = usePermissions();
+  const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
   const fetchConciliacao = useServerFn(fetchSponteConciliacao);
@@ -546,6 +548,8 @@ function ConciliacaoPage() {
   }
 
   if (roleLoading) return null;
+  if (!canView("financeiro"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
 
   return (
     <div className="space-y-6 max-w-7xl">

@@ -11,7 +11,7 @@ import { Upload, CheckCircle2, AlertCircle, FileSpreadsheet, Building2, Trash2, 
 import { toast } from "sonner";
 import { parseCSV, parseExcel, extractTransactions, type ParsedTx } from "@/lib/csv";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
-import { useSchool, useRole } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { CategoryManagerDialog } from "@/components/CategoryManagerDialog";
 
@@ -47,7 +47,8 @@ function dupKey(date: string, amount: number, description: string) {
 }
 
 function UploadPage() {
-  const { isAdmin, loading: roleLoading } = useRole();
+  const { canEdit, loading: roleLoading } = usePermissions();
+  const isAdmin = canEdit("financeiro");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { schools, selected } = useSchool();

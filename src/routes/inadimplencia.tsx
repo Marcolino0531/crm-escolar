@@ -17,13 +17,22 @@ import {
   Building2,
   Construction,
 } from "lucide-react";
-import { useSchool } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 import { fetchSponteInadimplencia, type PendenciaAgrupada } from "@/lib/sponte.functions";
 
 export const Route = createFileRoute("/inadimplencia")({
   head: () => ({ meta: [{ title: "Inadimplência (Sponte) — Schooler Hub" }] }),
-  component: InadimplenciaPage,
+  component: InadimplenciaGate,
 });
+
+function InadimplenciaGate() {
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("financeiro"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
+  return <InadimplenciaPage />;
+}
 
 // Unidades com integração Sponte ativa. CEC/CEC Baby compartilham um token
 // (segmentado por turma); Núcleo Belvedere usa credenciais próprias (sem turmas).

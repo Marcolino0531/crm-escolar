@@ -11,7 +11,8 @@ export function AccessDenied({ message }: { message?: string }) {
           </div>
           <h2 className="text-lg font-semibold">Acesso restrito</h2>
           <p className="text-sm text-muted-foreground">
-            {message ?? "Você tem permissão somente de leitura. Solicite acesso ao administrador para usar esta área."}
+            {message ??
+              "Você tem permissão somente de leitura. Solicite acesso ao administrador para usar esta área."}
           </p>
         </CardContent>
       </Card>
