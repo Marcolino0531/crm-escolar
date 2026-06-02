@@ -77,16 +77,17 @@ function resolverCredenciais(unidade: string): SponteCreds | null {
   };
 }
 
-// Compara a Conta Creditada (ex.: "Caixa - 489426") da parcela com a conta
-// caixa configurada da unidade. Normaliza para dígitos e ignora zeros à
-// esquerda, casando por igualdade ou sufixo (a conta costuma ser o final do
-// rótulo). Retorna true quando bate.
-function contaCaixaBate(contaCreditar: string, contaAlvo: string): boolean {
-  const soDigitos = (s: string) => s.replace(/\D/g, "").replace(/^0+/, "");
-  const a = soDigitos(contaCreditar);
+// Casa o nome da Conta Creditada (ex.: "Caixa - 489426") com a conta-caixa da
+// unidade usando .includes — tanto no texto cru ("011311") quanto só nos
+// dígitos. NÃO removemos zeros à esquerda: a conta do CEC Baby ("011311")
+// precisa casar literalmente.
+function contaCaixaBate(contaTexto: string, contaAlvo: string): boolean {
+  if (!contaTexto || !contaAlvo) return false;
+  if (contaTexto.includes(contaAlvo)) return true;
+  const soDigitos = (s: string) => s.replace(/\D/g, "");
+  const a = soDigitos(contaTexto);
   const b = soDigitos(contaAlvo);
-  if (!b) return false;
-  return a === b || a.endsWith(b);
+  return !!b && a.includes(b);
 }
 
 function buildSoapEnvelope(
@@ -640,10 +641,18 @@ async function coletarBaixadas(
 
       const situacaoRaw = parseXmlValue(parcela, "SituacaoParcela");
       const formaRaw = parseXmlValue(parcela, "FormaCobranca");
-      const contaRaw = parseXmlValue(parcela, "ContaCreditar");
       situacoes.set(situacaoRaw, (situacoes.get(situacaoRaw) ?? 0) + 1);
       formas.set(formaRaw, (formas.get(formaRaw) ?? 0) + 1);
-      contas.set(contaRaw, (contas.get(contaRaw) ?? 0) + 1);
+
+      // CONTA DA BAIXA REAL = ContaCreditada dentro de RateioLancamentos. O
+      // ContaCreditar de topo é só a conta PREVISTA e vem sempre igual (ex.:
+      // "Caixa - 489426"), por isso casava 0 no CEC Baby. Quando não há rateio,
+      // cai para o ContaCreditar de topo.
+      const rateioNodes = parseXmlList(parcela, "wsRateioLancamento");
+      const contasReais = rateioNodes.length
+        ? rateioNodes.map((r) => parseXmlValue(r, "ContaCreditada"))
+        : [parseXmlValue(parcela, "ContaCreditar")];
+      for (const c of contasReais) contas.set(c, (contas.get(c) ?? 0) + 1);
 
       // Situação já garantida pela API (Situacao=1); reforço por segurança.
       if (!SITUACOES_BAIXADA.has(normalizarTexto(situacaoRaw))) continue;
@@ -658,19 +667,29 @@ async function coletarBaixadas(
       if (normalizarTexto(formaRaw) !== FORMA_BANCARIA_NORM) continue;
       diag.comFormaBancaria++;
 
-      // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
-      if (contaCaixa && !contaCaixaBate(contaRaw, contaCaixa)) continue;
+      const categoria = parseXmlValue(parcela, "Categoria") || "Outros";
+      const alunoId = parseXmlValue(parcela, "AlunoID");
+      const numeroBoleto = parseXmlValue(parcela, "NumeroBoleto");
+
+      // Filtro 3 — Conta Creditada específica da unidade. Belvedere (sem conta):
+      // soma o valor pago integral. CEC/CEC Baby: soma só os lançamentos
+      // rateados na conta-caixa da unidade (trata baixas divididas entre contas).
+      let valorNaConta: number;
+      if (!contaCaixa) {
+        valorNaConta = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
+      } else if (rateioNodes.length) {
+        valorNaConta = rateioNodes
+          .filter((r) => contaCaixaBate(parseXmlValue(r, "ContaCreditada"), contaCaixa))
+          .reduce((s, r) => s + parseBrDecimal(parseXmlValue(r, "ValorPagoRateado")), 0);
+      } else {
+        valorNaConta = contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa)
+          ? parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO))
+          : 0;
+      }
+      if (valorNaConta <= 0) continue;
       diag.comContaCorreta++;
 
-      const valorPago = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
-      if (valorPago <= 0) continue;
-
-      parcelas.push({
-        alunoId: parseXmlValue(parcela, "AlunoID"),
-        categoria: parseXmlValue(parcela, "Categoria") || "Outros",
-        valorPago,
-        numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
-      });
+      parcelas.push({ alunoId, categoria, valorPago: valorNaConta, numeroBoleto });
     }
   }
 
