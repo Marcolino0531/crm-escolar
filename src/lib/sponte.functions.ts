@@ -144,6 +144,77 @@ function isInDateRange(vencimento: string, dataInicio: Date, dataFim: Date): boo
   return dt >= dataInicio && dt <= dataFim;
 }
 
+// Remove acentos, baixa caixa e colapsa espaços — para comparar rótulos do
+// Sponte (FormaCobranca, SituacaoParcela) sem depender de acentuação/caixa.
+function normalizarTexto(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+// Converte uma data do Sponte ("DD/MM/YYYY" ou "YYYY-MM-DD[...]") para o
+// formato de calendário "YYYY-MM-DD". É TIMEZONE-SAFE: trabalha só com os
+// componentes da string, sem criar Date (a Vercel roda em UTC e new Date()
+// deslocaria o dia). Retorna null quando não reconhece.
+function paraYMD(dateStr: string): string | null {
+  if (!dateStr) return null;
+  const s = dateStr.trim();
+  if (s.includes("/")) {
+    const [d, m, y] = s.split(" ")[0].split("/");
+    if (!d || !m || !y) return null;
+    return `${y.padStart(4, "0")}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  if (s.includes("-")) return s.slice(0, 10);
+  return null;
+}
+
+// Janela por calendário (strings "YYYY-MM-DD"), comparação lexicográfica —
+// independe de fuso horário do servidor.
+function dataNaJanela(dataSponte: string, inicioYMD: string, fimYMD: string): boolean {
+  const p = paraYMD(dataSponte);
+  if (!p) return false;
+  return p >= inicioYMD && p <= fimYMD;
+}
+
+// Lê o primeiro tag não-vazio dentre vários nomes candidatos (o Sponte varia o
+// nome do campo de data/valor de baixa entre contas).
+function primeiroValor(xmlNode: string, tags: string[]): string {
+  for (const t of tags) {
+    const v = parseXmlValue(xmlNode, t);
+    if (v) return v;
+  }
+  return "";
+}
+
+// Candidatos de nome do campo de DATA DE PAGAMENTO/BAIXA (varia por conta).
+const TAGS_DATA_PAGAMENTO = [
+  "DataPagamento",
+  "DataBaixa",
+  "DataCredito",
+  "DataRecebimento",
+  "DataQuitacao",
+  "DataLiquidacao",
+  "DataPgto",
+];
+// Candidatos de nome do campo de VALOR PAGO/RECEBIDO (cai para ValorParcela).
+const TAGS_VALOR_PAGO = ["ValorPago", "ValorRecebido", "ValorBaixa", "ValorParcela"];
+// Situações que indicam parcela liquidada (normalizadas).
+const SITUACOES_BAIXADA = new Set([
+  "quitada",
+  "quitado",
+  "baixada",
+  "baixado",
+  "paga",
+  "pago",
+  "recebida",
+  "recebido",
+  "liquidada",
+  "liquidado",
+]);
+
 async function callSponte(
   method: string,
   sParametrosBusca: string,
@@ -411,6 +482,21 @@ export interface RateioCategoria {
   valor: number;
 }
 
+// Diagnóstico de produção: quantos registros sobraram após cada filtro e quais
+// rótulos o Sponte realmente retornou. Vai pro frontend (mensagem de erro) e pro
+// console da Vercel para depurar quando a soma não fechar.
+export interface ConciliacaoDiagnostico {
+  totalNos: number;
+  comFormaBancaria: number;
+  comSituacaoBaixada: number;
+  comDataNaJanela: number;
+  comContaCorreta: number;
+  somaEncontrada: number;
+  situacoesVistas: string[];
+  formasVistas: string[];
+  contasVistas: string[];
+}
+
 export interface ConciliacaoSponteResult {
   itens: RateioCategoria[];
   total: number;
@@ -418,6 +504,7 @@ export interface ConciliacaoSponteResult {
   qtdBoletos: number;
   indisponivel?: boolean;
   error?: string;
+  diagnostico?: ConciliacaoDiagnostico;
   meta: {
     dataInicio: string;
     dataFim: string;
@@ -434,66 +521,124 @@ interface BaixadaRaw {
 
 interface ColetaBaixadasResult {
   parcelas: BaixadaRaw[];
+  diagnostico: ConciliacaoDiagnostico;
   fault?: string;
 }
 
 const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
+const FORMA_BANCARIA_NORM = normalizarTexto(FORMA_COBRANCA_BANCARIA);
+
+function topContagem(mapa: Map<string, number>, n = 8): string[] {
+  return [...mapa.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k, v]) => `${k || "(vazio)"}×${v}`);
+}
 
 // Núcleo da conciliação para UM par de credenciais. Aplica os TRÊS filtros
 // rigorosos que reproduzem o relatório do Sponte usado pelo cliente, para o
-// valor fechar exatamente com a linha "COB COMPE" do extrato:
-//   1. Tipo de Recebimento = Cobrança Bancária (exclui PIX/dinheiro/cartão);
-//   2. Situação = Quitada/Baixada;
+// valor fechar com a linha "COB COMPE" do extrato:
+//   1. Forma de Recebimento = Cobrança Bancária (exclui PIX/dinheiro/cartão);
+//   2. Situação = Quitada/Baixada (qualquer rótulo de liquidação);
 //   3. Conta Creditada = a conta caixa da unidade (quando informada).
-// O recorte de data usa a DATA DE PAGAMENTO (não vencimento) dentro da janela.
+// O recorte de data usa a DATA DE PAGAMENTO/BAIXA (não vencimento), comparada
+// por CALENDÁRIO (string YYYY-MM-DD), o que independe do fuso UTC da Vercel.
 //
-// Os parâmetros enviados à API (Situacao;FormaCobranca) reduzem o payload, mas
-// a separação por "&" não é aceita pela API — o separador correto é ";". Como a
-// API não filtra por data nem honra Situacao de forma confiável, os três
-// filtros são reforçados no cliente, que é a fonte da verdade.
+// Robustez: como a sandbox só expõe parcelas pendentes, os nomes dos campos de
+// baixada (data/valor) e os rótulos (situação/forma) são casados por candidatos
+// e normalização, e tudo é instrumentado em `diagnostico` para depurar produção.
+//
+// O separador de parâmetros aceito pela API é ";" (o "&" quebra o XML do
+// envelope). A API não pagina GetParcelas (retorna o lote inteiro numa chamada)
+// nem honra filtro de data/Situacao de forma confiável — por isso os filtros
+// são reforçados no cliente, que é a fonte da verdade.
 async function coletarBaixadas(
   codigoCliente: string,
   token: string,
-  dtInicio: Date,
-  dtFim: Date,
+  inicioYMD: string,
+  fimYMD: string,
   contaCaixa: string | null,
 ): Promise<ColetaBaixadasResult> {
   const params = `Situacao=Quitada;FormaCobranca=${FORMA_COBRANCA_BANCARIA}`;
   const parcelasXml = await callSponte("GetParcelas", params, codigoCliente, token);
+  const retorno = parseXmlValue(parcelasXml, "RetornoOperacao");
   const fault = checkFault(parcelasXml);
-  if (fault) return { parcelas: [], fault };
 
   const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
+
+  // Contadores e amostras de rótulos para diagnóstico.
+  const situacoes = new Map<string, number>();
+  const formas = new Map<string, number>();
+  const contas = new Map<string, number>();
+  const diag: ConciliacaoDiagnostico = {
+    totalNos: parcelaNodes.length,
+    comFormaBancaria: 0,
+    comSituacaoBaixada: 0,
+    comDataNaJanela: 0,
+    comContaCorreta: 0,
+    somaEncontrada: 0,
+    situacoesVistas: [],
+    formasVistas: [],
+    contasVistas: [],
+  };
 
   const parcelas: BaixadaRaw[] = [];
   for (const parcela of parcelaNodes) {
     if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
-    // Filtro 2 — Situação Quitada/Baixada.
-    if (parseXmlValue(parcela, "SituacaoParcela") !== "Quitada") continue;
-    // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
-    if (parseXmlValue(parcela, "FormaCobranca") !== FORMA_COBRANCA_BANCARIA) continue;
-    // Data de Pagamento (D-1 dia útil) dentro da janela — nunca vencimento.
-    const dataPagamento = parseXmlValue(parcela, "DataPagamento");
-    if (!isInDateRange(dataPagamento, dtInicio, dtFim)) continue;
-    // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
-    if (contaCaixa && !contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa))
-      continue;
 
-    const valorPago =
-      parseBrDecimal(parseXmlValue(parcela, "ValorPago")) ||
-      parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
+    const situacaoRaw = parseXmlValue(parcela, "SituacaoParcela");
+    const formaRaw = parseXmlValue(parcela, "FormaCobranca");
+    const contaRaw = parseXmlValue(parcela, "ContaCreditar");
+    situacoes.set(situacaoRaw, (situacoes.get(situacaoRaw) ?? 0) + 1);
+    formas.set(formaRaw, (formas.get(formaRaw) ?? 0) + 1);
+    contas.set(contaRaw, (contas.get(contaRaw) ?? 0) + 1);
+
+    // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
+    if (normalizarTexto(formaRaw) !== FORMA_BANCARIA_NORM) continue;
+    diag.comFormaBancaria++;
+
+    // Filtro 2 — Situação liquidada (Quitada/Baixada/Paga/Recebida/...).
+    if (!SITUACOES_BAIXADA.has(normalizarTexto(situacaoRaw))) continue;
+    diag.comSituacaoBaixada++;
+
+    // Filtro de data — DATA DE PAGAMENTO/BAIXA na janela (calendário, sem fuso).
+    const dataPagamento = primeiroValor(parcela, TAGS_DATA_PAGAMENTO);
+    if (!dataNaJanela(dataPagamento, inicioYMD, fimYMD)) continue;
+    diag.comDataNaJanela++;
+
+    // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
+    if (contaCaixa && !contaCaixaBate(contaRaw, contaCaixa)) continue;
+    diag.comContaCorreta++;
+
+    const valorPago = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
     if (valorPago <= 0) continue;
-    const alunoId = parseXmlValue(parcela, "AlunoID");
 
     parcelas.push({
-      alunoId,
+      alunoId: parseXmlValue(parcela, "AlunoID"),
       categoria: parseXmlValue(parcela, "Categoria") || "Outros",
       valorPago,
       numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
     });
   }
 
-  return { parcelas };
+  diag.somaEncontrada = Math.round(parcelas.reduce((s, p) => s + p.valorPago, 0) * 100) / 100;
+  diag.situacoesVistas = topContagem(situacoes);
+  diag.formasVistas = topContagem(formas);
+  diag.contasVistas = topContagem(contas);
+
+  // Logs de diagnóstico (aparecem no painel da Vercel → Functions → Logs).
+  console.log("[CONC][Sponte] GetParcelas", {
+    url: SPONTE_URL,
+    metodo: "GetParcelas",
+    params,
+    retorno,
+    janela: `${inicioYMD}..${fimYMD}`,
+    contaCaixa: contaCaixa ?? "(sem filtro)",
+  });
+  console.log("[CONC][Sponte] diagnóstico", JSON.stringify(diag));
+
+  if (fault) return { parcelas: [], diagnostico: diag, fault };
+  return { parcelas, diagnostico: diag };
 }
 
 const ConciliacaoInputSchema = z.object({
@@ -523,20 +668,29 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
       throw new Error(`Credenciais da API do Sponte não configuradas para a unidade "${unidade}".`);
     }
 
-    const dtInicio = new Date(dataInicio);
-    const dtFim = new Date(dataFim);
-    dtFim.setHours(23, 59, 59, 999);
+    // Janela tratada como CALENDÁRIO (YYYY-MM-DD), sem criar Date — evita o
+    // deslocamento de dia causado pelo fuso UTC da Vercel.
+    const inicioYMD = paraYMD(dataInicio) ?? dataInicio.slice(0, 10);
+    const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
     const startTime = Date.now();
 
     const res = await coletarBaixadas(
       creds.codigoCliente,
       creds.token,
-      dtInicio,
-      dtFim,
+      inicioYMD,
+      fimYMD,
       creds.contaCaixa,
     );
     if (res.fault) {
-      return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, error: res.fault, meta };
+      return {
+        itens: [],
+        total: 0,
+        qtdParcelas: 0,
+        qtdBoletos: 0,
+        error: res.fault,
+        diagnostico: res.diagnostico,
+        meta,
+      };
     }
 
     // A separação de unidade já foi aplicada pelo filtro de conta caixa em
@@ -565,6 +719,7 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
       total,
       qtdParcelas: parcelas.length,
       qtdBoletos: boletos.size,
+      diagnostico: res.diagnostico,
       meta: { dataInicio, dataFim, tempoSegundos: parseFloat(elapsed) },
     };
   });
