@@ -61,6 +61,11 @@ function previousBusinessDay(isoDate: string): string {
   while (weekday(cur) === 0 || weekday(cur) === 6) cur = addDays(cur, -1);
   return cur;
 }
+// Compara dois valores monetários em CENTAVOS INTEIROS (Math.round), com uma
+// tolerância de poucos centavos, evitando falha por dízimas de ponto flutuante.
+function fechaCentavos(a: number, b: number, tolCentavos = 2): boolean {
+  return Math.abs(Math.round(a * 100) - Math.round(b * 100)) <= tolCentavos;
+}
 
 // Unidades com integração Sponte ativa (mesmo roteamento da Inadimplência).
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
@@ -383,7 +388,7 @@ function ConciliacaoPage() {
       if (parsed.items.length === 0) throw new Error("Nenhuma linha de valor identificada na planilha.");
 
       const diff = Math.abs(parsed.total - Number(expectedTotal));
-      if (diff > 0.01) {
+      if (!fechaCentavos(parsed.total, Number(expectedTotal))) {
         throw new Error(`Valores não batem: planilha soma ${formatBRL(parsed.total)}, mas o extrato registra ${formatBRL(Number(expectedTotal))} (diferença ${formatBRL(diff)}).`);
       }
 
@@ -416,7 +421,7 @@ function ConciliacaoPage() {
       .filter((r) => r.subcategory_id && r.amount > 0);
     if (rows.length === 0) { toast.error("Adicione ao menos uma linha válida."); return; }
     const total = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100;
-    if (Math.abs(total - expected) > 0.01) {
+    if (!fechaCentavos(total, expected)) {
       toast.error(`Soma ${formatBRL(total)} não confere com o total ${formatBRL(expected)}.`);
       return;
     }
@@ -475,20 +480,29 @@ function ConciliacaoPage() {
       let escolhido: ConciliacaoSponteResult | null = null;
       let usado = "";
       const totaisVistos: string[] = [];
+      let ultimoDiag: ConciliacaoSponteResult["diagnostico"] | undefined;
       for (const j of janelas) {
         const r = await fetchConciliacao({ data: { dataInicio: j.inicio, dataFim: j.fim, unidade } });
         if (r.error) throw new Error(r.error);
         if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
-        totaisVistos.push(`${j.rotulo}: ${formatBRL(r.total)}`);
-        if (r.itens.length > 0 && Math.abs(r.total - expectedTotal) < 0.01) {
+        ultimoDiag = r.diagnostico;
+        console.log(`[CONC] janela ${j.rotulo} (${j.inicio}..${j.fim}):`, r);
+        // Mostra o que REALMENTE foi encontrado, não só "R$ 0,00".
+        totaisVistos.push(`${j.rotulo}: ${r.qtdParcelas} reg / ${formatBRL(r.total)}`);
+        if (r.itens.length > 0 && fechaCentavos(r.total, expectedTotal)) {
           escolhido = r;
           usado = j.rotulo;
           break;
         }
       }
       if (!escolhido) {
+        // Diagnóstico: expõe os rótulos reais do Sponte para depurar produção.
+        const d = ultimoDiag;
+        const detalhe = d
+          ? ` Diagnóstico: ${d.totalNos} parcela(s) no lote; ${d.comFormaBancaria} bancária(s), ${d.comSituacaoBaixada} baixada(s), ${d.comDataNaJanela} na data, ${d.comContaCorreta} na conta. Situações: ${d.situacoesVistas.join(", ") || "—"}. Contas: ${d.contasVistas.join(", ") || "—"}.`
+          : "";
         throw new Error(
-          `Nenhuma janela de baixadas fechou com ${formatBRL(expectedTotal)} (${totaisVistos.join(" · ")}). Use o desmembramento manual ou anexe a planilha.`,
+          `Nenhuma janela fechou com ${formatBRL(expectedTotal)} (${totaisVistos.join(" · ")}).${detalhe} Use o desmembramento manual ou anexe a planilha.`,
         );
       }
       const items = escolhido.itens.map((it) => {
@@ -796,7 +810,7 @@ function ConciliacaoPage() {
             const expected = Number(parent.amount);
             const sum = manualRows.reduce((s, r) => s + (parseBRNumber(r.amount) ?? 0), 0);
             const diff = Math.round((expected - sum) * 100) / 100;
-            const ok = Math.abs(diff) < 0.01 && manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
+            const ok = fechaCentavos(sum, expected) && manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
             return (
               <div className="space-y-3">
                 <div className="rounded-md bg-muted p-3 text-sm">
@@ -854,7 +868,7 @@ function ConciliacaoPage() {
                 <div className={`rounded-md border p-3 text-sm flex items-center justify-between ${ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
                   <span>Soma informada: <strong className="font-mono">{formatBRL(sum)}</strong></span>
                   <span>
-                    {Math.abs(diff) < 0.01
+                    {fechaCentavos(sum, expected)
                       ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">Bate com o total</Badge>
                       : <span className="text-amber-700 dark:text-amber-300">Faltam <strong className="font-mono">{formatBRL(diff)}</strong></span>}
                   </span>
