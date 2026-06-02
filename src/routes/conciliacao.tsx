@@ -48,6 +48,19 @@ function addDays(isoDate: string, delta: number) {
   dt.setDate(dt.getDate() + delta);
   return dt.toISOString().slice(0, 10);
 }
+// Dia da semana (0 = domingo, 6 = sábado) a partir de "YYYY-MM-DD".
+function weekday(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1).getDay();
+}
+// "D-1 dia útil": recua a partir da data e ignora sábados/domingos. Assim,
+// segunda-feira retrocede para a sexta anterior (−3 dias corridos); terça a
+// sexta retrocedem 1 dia; e qualquer recuo nunca cai em fim de semana.
+function previousBusinessDay(isoDate: string): string {
+  let cur = addDays(isoDate, -1);
+  while (weekday(cur) === 0 || weekday(cur) === 6) cur = addDays(cur, -1);
+  return cur;
+}
 
 // Unidades com integração Sponte ativa (mesmo roteamento da Inadimplência).
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
@@ -452,10 +465,12 @@ function ConciliacaoPage() {
     setAutoTxId(txId);
     console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
     try {
-      // Janelas tentadas em ordem: o próprio dia da linha, depois D-1.
+      // Janelas tentadas em ordem: o próprio dia da linha, depois o D-1 dia útil
+      // (segunda → sexta anterior; demais → dia anterior; nunca cai em fim de semana).
+      const dPrevUtil = previousBusinessDay(date);
       const janelas = [
         { inicio: date, fim: date, rotulo: "do dia" },
-        { inicio: addDays(date, -1), fim: addDays(date, -1), rotulo: "de D-1" },
+        { inicio: dPrevUtil, fim: dPrevUtil, rotulo: "do dia útil anterior" },
       ];
       let escolhido: ConciliacaoSponteResult | null = null;
       let usado = "";
