@@ -179,6 +179,35 @@ function dataNaJanela(dataSponte: string, inicioYMD: string, fimYMD: string): bo
   return p >= inicioYMD && p <= fimYMD;
 }
 
+// "YYYY-MM-DD" -> "DD/MM/YYYY" (formato que o filtro DataPagamento do Sponte
+// espera no sParametrosBusca). TIMEZONE-SAFE: só manipula a string.
+function ymdParaBr(ymd: string): string {
+  const [y, m, d] = ymd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+// Lista os dias de calendário (YYYY-MM-DD) entre início e fim, inclusive. Usa
+// aritmética em UTC só para o passo de +1 dia (sem deslocamento de fuso) e
+// reformata para string. Limita a 31 dias por segurança.
+function diasNaJanela(inicioYMD: string, fimYMD: string): string[] {
+  const dias: string[] = [];
+  const [yi, mi, di] = inicioYMD.split("-").map(Number);
+  const [yf, mf, df] = fimYMD.split("-").map(Number);
+  let cur = Date.UTC(yi, mi - 1, di);
+  const end = Date.UTC(yf, mf - 1, df);
+  for (let i = 0; cur <= end && i < 31; i++) {
+    const dt = new Date(cur);
+    const ymd = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    dias.push(ymd);
+    cur += 86400000;
+  }
+  return dias;
+}
+
+// Código numérico da situação "Quitada" no filtro Situacao do Sponte
+// (0=Pendente, 1=Quitada). Confirmado contra a API real.
+const SITUACAO_QUITADA = "1";
+
 // Lê o primeiro tag não-vazio dentre vários nomes candidatos (o Sponte varia o
 // nome do campo de data/valor de baixa entre contas).
 function primeiroValor(xmlNode: string, tags: string[]): string {
@@ -548,10 +577,17 @@ function topContagem(mapa: Map<string, number>, n = 8): string[] {
 // baixada (data/valor) e os rótulos (situação/forma) são casados por candidatos
 // e normalização, e tudo é instrumentado em `diagnostico` para depurar produção.
 //
-// O separador de parâmetros aceito pela API é ";" (o "&" quebra o XML do
-// envelope). A API não pagina GetParcelas (retorna o lote inteiro numa chamada)
-// nem honra filtro de data/Situacao de forma confiável — por isso os filtros
-// são reforçados no cliente, que é a fonte da verdade.
+// FILTRO NA ORIGEM (API-side): o GetParcelas, sem filtro válido, devolve um lote
+// truncado (~7000) só de PENDENTES e nunca chega às quitadas — por isso a soma
+// dava R$ 0,00. A chamada agora força os filtros que o Sponte realmente honra:
+//   • Situacao=1  → somente parcelas QUITADAS (0=Pendente, 1=Quitada);
+//   • DataPagamento=DD/MM/YYYY → recorte server-side pela data de PAGAMENTO.
+// Isso reduz o payload para as poucas baixadas do dia (sem truncamento). Como a
+// data de pagamento é um dia específico, varremos cada dia da janela (D-1 dia
+// útil normalmente é 1 dia) e acumulamos. O separador é ";" (o "&" quebra o XML).
+// Os filtros de Forma de Cobrança e Conta Creditada (por unidade) seguem
+// aplicados no cliente, pois não são honrados pela API. Tudo instrumentado em
+// `diagnostico` para depurar produção.
 async function coletarBaixadas(
   codigoCliente: string,
   token: string,
@@ -559,19 +595,12 @@ async function coletarBaixadas(
   fimYMD: string,
   contaCaixa: string | null,
 ): Promise<ColetaBaixadasResult> {
-  const params = `Situacao=Quitada;FormaCobranca=${FORMA_COBRANCA_BANCARIA}`;
-  const parcelasXml = await callSponte("GetParcelas", params, codigoCliente, token);
-  const retorno = parseXmlValue(parcelasXml, "RetornoOperacao");
-  const fault = checkFault(parcelasXml);
-
-  const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
-
   // Contadores e amostras de rótulos para diagnóstico.
   const situacoes = new Map<string, number>();
   const formas = new Map<string, number>();
   const contas = new Map<string, number>();
   const diag: ConciliacaoDiagnostico = {
-    totalNos: parcelaNodes.length,
+    totalNos: 0,
     comFormaBancaria: 0,
     comSituacaoBaixada: 0,
     comDataNaJanela: 0,
@@ -583,42 +612,66 @@ async function coletarBaixadas(
   };
 
   const parcelas: BaixadaRaw[] = [];
-  for (const parcela of parcelaNodes) {
-    if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
+  const dias = diasNaJanela(inicioYMD, fimYMD);
+  let primeiroFault: string | null = null;
 
-    const situacaoRaw = parseXmlValue(parcela, "SituacaoParcela");
-    const formaRaw = parseXmlValue(parcela, "FormaCobranca");
-    const contaRaw = parseXmlValue(parcela, "ContaCreditar");
-    situacoes.set(situacaoRaw, (situacoes.get(situacaoRaw) ?? 0) + 1);
-    formas.set(formaRaw, (formas.get(formaRaw) ?? 0) + 1);
-    contas.set(contaRaw, (contas.get(contaRaw) ?? 0) + 1);
+  for (const diaYMD of dias) {
+    const params = `Situacao=${SITUACAO_QUITADA};DataPagamento=${ymdParaBr(diaYMD)}`;
+    const parcelasXml = await callSponte("GetParcelas", params, codigoCliente, token);
+    const retorno = parseXmlValue(parcelasXml, "RetornoOperacao");
+    const fault = checkFault(parcelasXml);
+    if (fault && !primeiroFault) primeiroFault = fault;
 
-    // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
-    if (normalizarTexto(formaRaw) !== FORMA_BANCARIA_NORM) continue;
-    diag.comFormaBancaria++;
+    const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
+    diag.totalNos += parcelaNodes.length;
 
-    // Filtro 2 — Situação liquidada (Quitada/Baixada/Paga/Recebida/...).
-    if (!SITUACOES_BAIXADA.has(normalizarTexto(situacaoRaw))) continue;
-    diag.comSituacaoBaixada++;
-
-    // Filtro de data — DATA DE PAGAMENTO/BAIXA na janela (calendário, sem fuso).
-    const dataPagamento = primeiroValor(parcela, TAGS_DATA_PAGAMENTO);
-    if (!dataNaJanela(dataPagamento, inicioYMD, fimYMD)) continue;
-    diag.comDataNaJanela++;
-
-    // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
-    if (contaCaixa && !contaCaixaBate(contaRaw, contaCaixa)) continue;
-    diag.comContaCorreta++;
-
-    const valorPago = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
-    if (valorPago <= 0) continue;
-
-    parcelas.push({
-      alunoId: parseXmlValue(parcela, "AlunoID"),
-      categoria: parseXmlValue(parcela, "Categoria") || "Outros",
-      valorPago,
-      numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+    // Logs de diagnóstico por dia (Vercel → Functions → Logs).
+    console.log("[CONC][Sponte] GetParcelas", {
+      url: SPONTE_URL,
+      metodo: "GetParcelas",
+      params,
+      retorno,
+      contaCaixa: contaCaixa ?? "(sem filtro)",
+      nos: parcelaNodes.length,
     });
+
+    for (const parcela of parcelaNodes) {
+      if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
+
+      const situacaoRaw = parseXmlValue(parcela, "SituacaoParcela");
+      const formaRaw = parseXmlValue(parcela, "FormaCobranca");
+      const contaRaw = parseXmlValue(parcela, "ContaCreditar");
+      situacoes.set(situacaoRaw, (situacoes.get(situacaoRaw) ?? 0) + 1);
+      formas.set(formaRaw, (formas.get(formaRaw) ?? 0) + 1);
+      contas.set(contaRaw, (contas.get(contaRaw) ?? 0) + 1);
+
+      // Situação já garantida pela API (Situacao=1); reforço por segurança.
+      if (!SITUACOES_BAIXADA.has(normalizarTexto(situacaoRaw))) continue;
+      diag.comSituacaoBaixada++;
+
+      // Data de pagamento já garantida pela API; reforço por calendário.
+      const dataPagamento = primeiroValor(parcela, TAGS_DATA_PAGAMENTO);
+      if (!dataNaJanela(dataPagamento, inicioYMD, fimYMD)) continue;
+      diag.comDataNaJanela++;
+
+      // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
+      if (normalizarTexto(formaRaw) !== FORMA_BANCARIA_NORM) continue;
+      diag.comFormaBancaria++;
+
+      // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
+      if (contaCaixa && !contaCaixaBate(contaRaw, contaCaixa)) continue;
+      diag.comContaCorreta++;
+
+      const valorPago = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
+      if (valorPago <= 0) continue;
+
+      parcelas.push({
+        alunoId: parseXmlValue(parcela, "AlunoID"),
+        categoria: parseXmlValue(parcela, "Categoria") || "Outros",
+        valorPago,
+        numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+      });
+    }
   }
 
   diag.somaEncontrada = Math.round(parcelas.reduce((s, p) => s + p.valorPago, 0) * 100) / 100;
@@ -626,18 +679,15 @@ async function coletarBaixadas(
   diag.formasVistas = topContagem(formas);
   diag.contasVistas = topContagem(contas);
 
-  // Logs de diagnóstico (aparecem no painel da Vercel → Functions → Logs).
-  console.log("[CONC][Sponte] GetParcelas", {
-    url: SPONTE_URL,
-    metodo: "GetParcelas",
-    params,
-    retorno,
-    janela: `${inicioYMD}..${fimYMD}`,
-    contaCaixa: contaCaixa ?? "(sem filtro)",
-  });
-  console.log("[CONC][Sponte] diagnóstico", JSON.stringify(diag));
+  console.log(
+    "[CONC][Sponte] diagnóstico",
+    JSON.stringify({ janela: `${inicioYMD}..${fimYMD}`, dias, ...diag }),
+  );
 
-  if (fault) return { parcelas: [], diagnostico: diag, fault };
+  // Só propaga fault se nenhuma parcela foi coletada (um dia sem registros não é erro).
+  if (primeiroFault && parcelas.length === 0) {
+    return { parcelas: [], diagnostico: diag, fault: primeiroFault };
+  }
   return { parcelas, diagnostico: diag };
 }
 
