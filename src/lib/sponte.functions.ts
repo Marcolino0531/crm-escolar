@@ -23,19 +23,30 @@ interface UnidadeSponteConfig {
   codigoEnv: string;
   tokenEnv: string;
   segmentaPorTurma: boolean;
+  // Conta Caixa creditada usada na Conciliação de Faturamento para isolar a
+  // unidade (CEC e CEC Baby compartilham o token, mas creditam em contas
+  // distintas). null = sem filtro de conta (Belvedere).
+  contaCaixa: string | null;
 }
 
 const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
-  CEC: { codigoEnv: "SPONTE_CODIGO_CLIENTE", tokenEnv: "SPONTE_TOKEN", segmentaPorTurma: true },
+  CEC: {
+    codigoEnv: "SPONTE_CODIGO_CLIENTE",
+    tokenEnv: "SPONTE_TOKEN",
+    segmentaPorTurma: true,
+    contaCaixa: "489426",
+  },
   "CEC Baby": {
     codigoEnv: "SPONTE_CODIGO_CLIENTE",
     tokenEnv: "SPONTE_TOKEN",
     segmentaPorTurma: true,
+    contaCaixa: "011311",
   },
   "Núcleo Belvedere": {
     codigoEnv: "SPONTE_BELVEDERE_CODIGO_CLIENTE",
     tokenEnv: "SPONTE_BELVEDERE_TOKEN",
     segmentaPorTurma: false,
+    contaCaixa: null,
   },
 };
 
@@ -45,6 +56,7 @@ interface SponteCreds {
   codigoCliente: string;
   token: string;
   segmentaPorTurma: boolean;
+  contaCaixa: string | null;
 }
 
 // Resolve as credenciais Sponte de UMA unidade. Retorna null quando a unidade
@@ -57,7 +69,24 @@ function resolverCredenciais(unidade: string): SponteCreds | null {
   const codigoCliente = process.env[config.codigoEnv];
   const token = process.env[config.tokenEnv];
   if (!codigoCliente || !token) return null;
-  return { codigoCliente, token, segmentaPorTurma: config.segmentaPorTurma };
+  return {
+    codigoCliente,
+    token,
+    segmentaPorTurma: config.segmentaPorTurma,
+    contaCaixa: config.contaCaixa,
+  };
+}
+
+// Compara a Conta Creditada (ex.: "Caixa - 489426") da parcela com a conta
+// caixa configurada da unidade. Normaliza para dígitos e ignora zeros à
+// esquerda, casando por igualdade ou sufixo (a conta costuma ser o final do
+// rótulo). Retorna true quando bate.
+function contaCaixaBate(contaCreditar: string, contaAlvo: string): boolean {
+  const soDigitos = (s: string) => s.replace(/\D/g, "").replace(/^0+/, "");
+  const a = soDigitos(contaCreditar);
+  const b = soDigitos(contaAlvo);
+  if (!b) return false;
+  return a === b || a.endsWith(b);
 }
 
 function buildSoapEnvelope(
@@ -405,43 +434,57 @@ interface BaixadaRaw {
 
 interface ColetaBaixadasResult {
   parcelas: BaixadaRaw[];
-  alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null>;
   fault?: string;
 }
 
-// Núcleo da conciliação para UM par de credenciais: busca parcelas quitadas,
-// filtra estritamente pelas baixadas com DataPagamento na janela, e enriquece
-// a série (TurmaAtual) apenas dos alunos dessa lista isolada (Inversão de
-// Busca). NÃO aplica filtro de série — quem decide é o chamador (por unidade).
+const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
+
+// Núcleo da conciliação para UM par de credenciais. Aplica os TRÊS filtros
+// rigorosos que reproduzem o relatório do Sponte usado pelo cliente, para o
+// valor fechar exatamente com a linha "COB COMPE" do extrato:
+//   1. Tipo de Recebimento = Cobrança Bancária (exclui PIX/dinheiro/cartão);
+//   2. Situação = Quitada/Baixada;
+//   3. Conta Creditada = a conta caixa da unidade (quando informada).
+// O recorte de data usa a DATA DE PAGAMENTO (não vencimento) dentro da janela.
+//
+// Os parâmetros enviados à API (Situacao;FormaCobranca) reduzem o payload, mas
+// a separação por "&" não é aceita pela API — o separador correto é ";". Como a
+// API não filtra por data nem honra Situacao de forma confiável, os três
+// filtros são reforçados no cliente, que é a fonte da verdade.
 async function coletarBaixadas(
   codigoCliente: string,
   token: string,
   dtInicio: Date,
   dtFim: Date,
+  contaCaixa: string | null,
 ): Promise<ColetaBaixadasResult> {
-  // ── Step 1: busca parcelas quitadas em UMA chamada (Inversão de Busca) ──
-  const parcelasXml = await callSponte("GetParcelas", "Situacao=Quitada", codigoCliente, token);
+  const params = `Situacao=Quitada;FormaCobranca=${FORMA_COBRANCA_BANCARIA}`;
+  const parcelasXml = await callSponte("GetParcelas", params, codigoCliente, token);
   const fault = checkFault(parcelasXml);
-  if (fault) return { parcelas: [], alunoUnidadeMap: {}, fault };
+  if (fault) return { parcelas: [], fault };
 
   const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
 
-  // ── Step 2: mantém só baixadas (quitadas) com DataPagamento na janela ──
   const parcelas: BaixadaRaw[] = [];
-  const alunoSet = new Set<string>();
   for (const parcela of parcelaNodes) {
     if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
+    // Filtro 2 — Situação Quitada/Baixada.
     if (parseXmlValue(parcela, "SituacaoParcela") !== "Quitada") continue;
+    // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
+    if (parseXmlValue(parcela, "FormaCobranca") !== FORMA_COBRANCA_BANCARIA) continue;
+    // Data de Pagamento (D-1 dia útil) dentro da janela — nunca vencimento.
     const dataPagamento = parseXmlValue(parcela, "DataPagamento");
     if (!isInDateRange(dataPagamento, dtInicio, dtFim)) continue;
+    // Filtro 3 — Conta Creditada específica da unidade (Belvedere: sem filtro).
+    if (contaCaixa && !contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa))
+      continue;
+
     const valorPago =
       parseBrDecimal(parseXmlValue(parcela, "ValorPago")) ||
       parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
     if (valorPago <= 0) continue;
     const alunoId = parseXmlValue(parcela, "AlunoID");
-    if (!alunoId || alunoId === "0") continue;
 
-    alunoSet.add(alunoId);
     parcelas.push({
       alunoId,
       categoria: parseXmlValue(parcela, "Categoria") || "Outros",
@@ -450,30 +493,7 @@ async function coletarBaixadas(
     });
   }
 
-  if (parcelas.length === 0) return { parcelas: [], alunoUnidadeMap: {} };
-
-  // ── Step 3: classifica a série SÓ dos alunos baixados (lista isolada) ──
-  const ids = Array.from(alunoSet);
-  const alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null> = {};
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const batch = ids.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (id) => ({
-        id,
-        xml: await callSponte("GetAlunos", `AlunoID=${id}`, codigoCliente, token),
-      })),
-    );
-    for (const result of results) {
-      if (result.status !== "fulfilled") continue;
-      const { id, xml } = result.value;
-      const nodes = parseXmlList(xml, "wsAluno");
-      if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
-        alunoUnidadeMap[id] = classificarUnidade(parseXmlValue(nodes[0], "TurmaAtual"));
-      }
-    }
-  }
-
-  return { parcelas, alunoUnidadeMap };
+  return { parcelas };
 }
 
 const ConciliacaoInputSchema = z.object({
@@ -483,9 +503,12 @@ const ConciliacaoInputSchema = z.object({
 });
 
 // Conciliação automática via Sponte (parcelas baixadas → rateio por categoria).
-// Roteamento de credenciais e filtro de série IDÊNTICOS à Inadimplência:
-//  - CEC / CEC Baby: token compartilhado, filtra por TurmaAtual (1º–9º / Berç.–Mat.3)
-//  - Núcleo Belvedere: token exclusivo, sem filtro de série
+// Roteamento de credenciais idêntico à Inadimplência, mas a separação de
+// unidade aqui é pela CONTA CAIXA creditada (como o cliente gera o relatório),
+// não por série:
+//  - CEC: token compartilhado, conta caixa 489426
+//  - CEC Baby: token compartilhado, conta caixa 011311
+//  - Núcleo Belvedere: token exclusivo, sem filtro de conta
 export const fetchSponteConciliacao = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ConciliacaoInputSchema.parse(input))
   .handler(async ({ data }): Promise<ConciliacaoSponteResult> => {
@@ -505,16 +528,20 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
     dtFim.setHours(23, 59, 59, 999);
     const startTime = Date.now();
 
-    const res = await coletarBaixadas(creds.codigoCliente, creds.token, dtInicio, dtFim);
+    const res = await coletarBaixadas(
+      creds.codigoCliente,
+      creds.token,
+      dtInicio,
+      dtFim,
+      creds.contaCaixa,
+    );
     if (res.fault) {
       return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, error: res.fault, meta };
     }
 
-    // CEC/CEC Baby: filtra por TurmaAtual. Belvedere: processa todos os registros.
-    const filtrarPorTurma = creds.segmentaPorTurma && (unidade === "CEC" || unidade === "CEC Baby");
-    const parcelas = filtrarPorTurma
-      ? res.parcelas.filter((p) => res.alunoUnidadeMap[p.alunoId] === unidade)
-      : res.parcelas;
+    // A separação de unidade já foi aplicada pelo filtro de conta caixa em
+    // coletarBaixadas (CEC × CEC Baby por conta; Belvedere sem filtro).
+    const parcelas = res.parcelas;
 
     // Rateio: agrupa o valor pago por categoria (Mensalidade, Almoço, etc.).
     const porCategoria = new Map<string, number>();
