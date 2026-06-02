@@ -183,8 +183,17 @@ function AppShell() {
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
-  const showFinanceiro = canView("financeiro");
-  const canEditFinanceiro = canEdit("financeiro");
+  // Financeiro sub-tabs: each link is gated independently.
+  const showDashboard = canView("financeiro_dashboard");
+  const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
+  const showConciliacao = canView("financeiro_conciliacao");
+  const showFluxo = canView("financeiro_fluxo");
+  const showInadimplencia = canView("financeiro_inadimplencia");
+  // The Financeiro section appears if the umbrella is granted AND at least one
+  // sub-tab is visible.
+  const showFinanceiro =
+    canView("financeiro") &&
+    (showDashboard || showUpload || showConciliacao || showFluxo || showInadimplencia);
   const showConfig = canView("configuracoes");
   return (
     <div className="flex min-h-screen bg-background">
@@ -212,11 +221,15 @@ function AppShell() {
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 Financeiro
               </div>
-              <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
-              {canEditFinanceiro && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
-              <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
-              <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
-              <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
+              {showDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
+              {showUpload && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
+              {showConciliacao && (
+                <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
+              )}
+              {showFluxo && <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />}
+              {showInadimplencia && (
+                <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
+              )}
             </>
           )}
           {showConfig && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
@@ -235,7 +248,7 @@ function AppShell() {
           <Wallet className="h-5 w-5 text-primary" />
           <span className="font-semibold">Financeiro Colégio</span>
           <nav className="ml-auto flex gap-1">
-            {showFinanceiro && (
+            {showFinanceiro && showDashboard && (
               <Link
                 to="/"
                 className="rounded-md px-2 py-1 text-xs"
@@ -247,7 +260,7 @@ function AppShell() {
                 Painel
               </Link>
             )}
-            {showFinanceiro && canEditFinanceiro && (
+            {showFinanceiro && showUpload && (
               <Link
                 to="/upload"
                 className="rounded-md px-2 py-1 text-xs"
@@ -258,7 +271,7 @@ function AppShell() {
                 Upload
               </Link>
             )}
-            {showFinanceiro && (
+            {showFinanceiro && showConciliacao && (
               <Link
                 to="/conciliacao"
                 className="rounded-md px-2 py-1 text-xs"
@@ -269,7 +282,7 @@ function AppShell() {
                 Faturamento
               </Link>
             )}
-            {showFinanceiro && (
+            {showFinanceiro && showFluxo && (
               <Link
                 to="/fluxo-futuro"
                 className="rounded-md px-2 py-1 text-xs"

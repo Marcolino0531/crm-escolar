@@ -548,8 +548,8 @@ function ConciliacaoPage() {
   }
 
   if (roleLoading) return null;
-  if (!canView("financeiro"))
-    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
+  if (!canView("financeiro_conciliacao"))
+    return <AccessDenied message="Você não tem permissão para acessar a Conciliação de Faturamento." />;
 
   return (
     <div className="space-y-6 max-w-7xl">

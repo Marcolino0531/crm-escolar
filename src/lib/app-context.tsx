@@ -136,7 +136,21 @@ export const APP_MODULES = [
   "financeiro",
   "configuracoes",
 ] as const;
-export type AppModule = (typeof APP_MODULES)[number];
+
+// Financeiro is sliced into independently authorizable sub-tabs.
+export const FINANCEIRO_SUBMODULES = [
+  "financeiro_dashboard",
+  "financeiro_upload",
+  "financeiro_conciliacao",
+  "financeiro_fluxo",
+  "financeiro_inadimplencia",
+] as const;
+
+// Every module that can appear in the permission matrix / be persisted.
+export const ALL_MODULES = [...APP_MODULES, ...FINANCEIRO_SUBMODULES] as const;
+
+export type AppModule = (typeof ALL_MODULES)[number];
+export type FinanceiroSubmodule = (typeof FINANCEIRO_SUBMODULES)[number];
 
 export const MODULE_LABELS: Record<AppModule, string> = {
   admissoes: "Admissões",
@@ -144,13 +158,18 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   rh: "Recursos Humanos",
   financeiro: "Financeiro",
   configuracoes: "Configurações",
+  financeiro_dashboard: "Dashboard",
+  financeiro_upload: "Importar Extrato",
+  financeiro_conciliacao: "Conciliação de Faturamento",
+  financeiro_fluxo: "Fluxo Futuro",
+  financeiro_inadimplencia: "Inadimplência",
 };
 
 export type ModulePermission = { view: boolean; edit: boolean };
 export type PermissionMatrix = Record<AppModule, ModulePermission>;
 
 function emptyMatrix(value: boolean): PermissionMatrix {
-  return APP_MODULES.reduce((acc, m) => {
+  return ALL_MODULES.reduce((acc, m) => {
     acc[m] = { view: value, edit: value };
     return acc;
   }, {} as PermissionMatrix);
@@ -178,7 +197,7 @@ export function usePermissions() {
     if (isAdmin) return emptyMatrix(true);
     const matrix = emptyMatrix(false);
     for (const row of data ?? []) {
-      if ((APP_MODULES as readonly string[]).includes(row.module)) {
+      if ((ALL_MODULES as readonly string[]).includes(row.module)) {
         matrix[row.module as AppModule] = {
           view: !!row.can_view || !!row.can_edit,
           edit: !!row.can_edit,
