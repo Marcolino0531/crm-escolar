@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
     });
     supabase.auth.getSession().then(({ data }) => {
@@ -34,7 +36,11 @@ type SchoolCtx = {
   setSelected: (v: SchoolFilter) => void;
   schools: { id: string; name: string }[];
 };
-const SchoolContext = createContext<SchoolCtx>({ selected: "all", setSelected: () => {}, schools: [] });
+const SchoolContext = createContext<SchoolCtx>({
+  selected: "all",
+  setSelected: () => {},
+  schools: [],
+});
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -83,4 +89,74 @@ export function useRole() {
     },
   });
   return { role: (data ?? null) as AppRole | null, loading: isLoading, isAdmin: data === "admin" };
+}
+
+// ---------- Granular module permissions ----------
+export const APP_MODULES = [
+  "admissoes",
+  "onboarding",
+  "rh",
+  "financeiro",
+  "configuracoes",
+] as const;
+export type AppModule = (typeof APP_MODULES)[number];
+
+export const MODULE_LABELS: Record<AppModule, string> = {
+  admissoes: "Admissões",
+  onboarding: "Onboarding",
+  rh: "Recursos Humanos",
+  financeiro: "Financeiro",
+  configuracoes: "Configurações",
+};
+
+export type ModulePermission = { view: boolean; edit: boolean };
+export type PermissionMatrix = Record<AppModule, ModulePermission>;
+
+function emptyMatrix(value: boolean): PermissionMatrix {
+  return APP_MODULES.reduce((acc, m) => {
+    acc[m] = { view: value, edit: value };
+    return acc;
+  }, {} as PermissionMatrix);
+}
+
+export function usePermissions() {
+  const { session } = useAuth();
+  const { isAdmin, loading: roleLoading } = useRole();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["user_permissions", session?.user?.id ?? "anon"],
+    enabled: !!session?.user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("user_permissions" as any)
+        .select("module, can_view, can_edit")
+        .eq("user_id", session!.user.id);
+      // Don't crash the whole app if the table isn't there yet (pre-migration).
+      if (error) return [] as { module: string; can_view: boolean; can_edit: boolean }[];
+      return (data ?? []) as unknown as { module: string; can_view: boolean; can_edit: boolean }[];
+    },
+  });
+
+  const permissions = useMemo<PermissionMatrix>(() => {
+    if (isAdmin) return emptyMatrix(true);
+    const matrix = emptyMatrix(false);
+    for (const row of data ?? []) {
+      if ((APP_MODULES as readonly string[]).includes(row.module)) {
+        matrix[row.module as AppModule] = {
+          view: !!row.can_view || !!row.can_edit,
+          edit: !!row.can_edit,
+        };
+      }
+    }
+    return matrix;
+  }, [data, isAdmin]);
+
+  const loading = roleLoading || isLoading;
+  return {
+    permissions,
+    loading,
+    isAdmin,
+    canView: (m: AppModule) => permissions[m].view,
+    canEdit: (m: AppModule) => permissions[m].edit,
+  };
 }

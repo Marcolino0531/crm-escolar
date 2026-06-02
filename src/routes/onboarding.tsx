@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import OnboardingBoard from "@/components/crm/OnboardingBoard";
 import { useOnboarding } from "@/lib/crm/hooks";
+import { usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({ meta: [{ title: "Onboarding — Schooler Hub" }] }),
@@ -9,6 +11,10 @@ export const Route = createFileRoute("/onboarding")({
 
 function OnboardingPage() {
   const onboardingHook = useOnboarding();
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("onboarding"))
+    return <AccessDenied message="Você não tem permissão para visualizar Onboarding." />;
   return (
     <div className="-m-4 md:-m-8 flex flex-col">
       <header className="flex items-center gap-3 border-b border-border bg-card px-6 py-4">

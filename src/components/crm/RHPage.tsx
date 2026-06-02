@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
-import { useRole } from "@/lib/app-context";
+import { usePermissions } from "@/lib/app-context";
 import FuncionarioModal from "./FuncionarioModal";
 
 interface RHPageProps {
@@ -114,7 +114,8 @@ const downloadCSV = (csv: string, filename: string) => {
 };
 
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
-  const { isAdmin } = useRole();
+  const { canEdit } = usePermissions();
+  const isAdmin = canEdit("rh");
   const { funcionarios, adicionarFuncionario, removerFuncionario, adicionarFerias, removerFerias } =
     rhHook;
   const [modalAberto, setModalAberto] = useState(false);

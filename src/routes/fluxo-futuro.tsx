@@ -6,7 +6,8 @@ import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Repeat, RefreshCw, Bui
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
-import { useSchool, useRole } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,8 +22,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export const Route = createFileRoute("/fluxo-futuro")({
-  component: FluxoFuturoPage,
+  component: FluxoFuturoGate,
 });
+
+function FluxoFuturoGate() {
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("financeiro"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
+  return <FluxoFuturoPage />;
+}
 
 type Forecast = {
   id: string;
@@ -99,7 +108,8 @@ const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
 
 function FluxoFuturoPage() {
   const { selected: schoolId, schools } = useSchool();
-  const { isAdmin } = useRole();
+  const { canEdit } = usePermissions();
+  const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
   const today = new Date();
   const [month, setMonth] = useState(() => monthKey(new Date(today.getFullYear(), today.getMonth(), 1)));

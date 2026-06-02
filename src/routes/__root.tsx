@@ -21,7 +21,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
-import { AuthProvider, SchoolProvider, useAuth, useRole } from "@/lib/app-context";
+import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
 import { supabase } from "@/integrations/supabase/client";
@@ -179,7 +179,13 @@ function AuthGate() {
 }
 
 function AppShell() {
-  const { isAdmin } = useRole();
+  const { canView, canEdit } = usePermissions();
+  const showAdmissoes = canView("admissoes");
+  const showOnboarding = canView("onboarding");
+  const showRh = canView("rh");
+  const showFinanceiro = canView("financeiro");
+  const canEditFinanceiro = canEdit("financeiro");
+  const showConfig = canView("configuracoes");
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
@@ -193,21 +199,27 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-            Módulos
-          </div>
-          <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />
-          <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />
-          <NavItem to="/rh" icon={Users} label="Recursos Humanos" />
-          <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-            Financeiro
-          </div>
-          <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
-          {isAdmin && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
-          <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
-          <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
-          <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
-          {isAdmin && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
+          {(showAdmissoes || showOnboarding || showRh) && (
+            <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+              Módulos
+            </div>
+          )}
+          {showAdmissoes && <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />}
+          {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
+          {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
+          {showFinanceiro && (
+            <>
+              <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+                Financeiro
+              </div>
+              <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
+              {canEditFinanceiro && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
+              <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
+              <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
+              <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
+            </>
+          )}
+          {showConfig && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
         </nav>
         <Button
           variant="ghost"
@@ -223,17 +235,19 @@ function AppShell() {
           <Wallet className="h-5 w-5 text-primary" />
           <span className="font-semibold">Financeiro Colégio</span>
           <nav className="ml-auto flex gap-1">
-            <Link
-              to="/"
-              className="rounded-md px-2 py-1 text-xs"
-              activeProps={{
-                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-              }}
-              activeOptions={{ exact: true }}
-            >
-              Painel
-            </Link>
-            {isAdmin && (
+            {showFinanceiro && (
+              <Link
+                to="/"
+                className="rounded-md px-2 py-1 text-xs"
+                activeProps={{
+                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+                }}
+                activeOptions={{ exact: true }}
+              >
+                Painel
+              </Link>
+            )}
+            {showFinanceiro && canEditFinanceiro && (
               <Link
                 to="/upload"
                 className="rounded-md px-2 py-1 text-xs"
@@ -244,25 +258,29 @@ function AppShell() {
                 Upload
               </Link>
             )}
-            <Link
-              to="/conciliacao"
-              className="rounded-md px-2 py-1 text-xs"
-              activeProps={{
-                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-              }}
-            >
-              Faturamento
-            </Link>
-            <Link
-              to="/fluxo-futuro"
-              className="rounded-md px-2 py-1 text-xs"
-              activeProps={{
-                className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-              }}
-            >
-              Futuro
-            </Link>
-            {isAdmin && (
+            {showFinanceiro && (
+              <Link
+                to="/conciliacao"
+                className="rounded-md px-2 py-1 text-xs"
+                activeProps={{
+                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+                }}
+              >
+                Faturamento
+              </Link>
+            )}
+            {showFinanceiro && (
+              <Link
+                to="/fluxo-futuro"
+                className="rounded-md px-2 py-1 text-xs"
+                activeProps={{
+                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
+                }}
+              >
+                Futuro
+              </Link>
+            )}
+            {showConfig && (
               <Link
                 to="/configuracoes"
                 className="rounded-md px-2 py-1 text-xs"
