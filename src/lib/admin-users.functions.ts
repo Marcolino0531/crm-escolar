@@ -3,7 +3,19 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const APP_MODULES = ["admissoes", "onboarding", "rh", "financeiro", "configuracoes"] as const;
+const APP_MODULES = [
+  "admissoes",
+  "onboarding",
+  "rh",
+  "financeiro",
+  "configuracoes",
+  // Financeiro sub-tabs (granular access)
+  "financeiro_dashboard",
+  "financeiro_upload",
+  "financeiro_conciliacao",
+  "financeiro_fluxo",
+  "financeiro_inadimplencia",
+] as const;
 
 const permissionSchema = z.object({
   module: z.enum(APP_MODULES),

@@ -33,8 +33,8 @@ export const Route = createFileRoute("/")({
 function DashboardGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro"))
-    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
+  if (!canView("financeiro_dashboard"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Dashboard." />;
   return <Dashboard />;
 }
 

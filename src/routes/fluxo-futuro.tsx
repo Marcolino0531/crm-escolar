@@ -28,8 +28,8 @@ export const Route = createFileRoute("/fluxo-futuro")({
 function FluxoFuturoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro"))
-    return <AccessDenied message="Você não tem permissão para visualizar o Financeiro." />;
+  if (!canView("financeiro_fluxo"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Fluxo Futuro." />;
   return <FluxoFuturoPage />;
 }
 

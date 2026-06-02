@@ -47,14 +47,14 @@ function dupKey(date: string, amount: number, description: string) {
 }
 
 function UploadPage() {
-  const { canEdit, loading: roleLoading } = usePermissions();
-  const isAdmin = canEdit("financeiro");
+  const { canView, loading: roleLoading } = usePermissions();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
   const [schoolId, setSchoolId] = useState<string>(() => (selected !== "all" ? selected : ""));
   if (roleLoading) return null;
-  if (!isAdmin) return <AccessDenied />;
+  if (!canView("financeiro_upload"))
+    return <AccessDenied message="Você não tem permissão para Importar Extrato." />;
   const [rows, setRows] = useState<Pending[]>([]);
   const [saving, setSaving] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);

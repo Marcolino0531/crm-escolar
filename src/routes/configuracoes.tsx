@@ -15,6 +15,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Trash2,
   Plus,
   Pencil,
@@ -26,7 +31,15 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { usePermissions, useSchool, APP_MODULES, MODULE_LABELS, type AppModule } from "@/lib/app-context";
+import {
+  usePermissions,
+  useSchool,
+  APP_MODULES,
+  ALL_MODULES,
+  FINANCEIRO_SUBMODULES,
+  MODULE_LABELS,
+  type AppModule,
+} from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -95,20 +108,20 @@ function SettingsPage() {
 type PermState = Record<AppModule, { view: boolean; edit: boolean }>;
 
 function blankPerms(value = false): PermState {
-  return APP_MODULES.reduce((acc, m) => {
+  return ALL_MODULES.reduce((acc, m) => {
     acc[m] = { view: value, edit: value };
     return acc;
   }, {} as PermState);
 }
 
 function permsToArray(p: PermState) {
-  return APP_MODULES.map((m) => ({ module: m, can_view: p[m].view, can_edit: p[m].edit }));
+  return ALL_MODULES.map((m) => ({ module: m, can_view: p[m].view, can_edit: p[m].edit }));
 }
 
 function permsFromUser(u: any): PermState {
   const base = blankPerms(false);
   for (const row of (u?.permissions ?? []) as any[]) {
-    if ((APP_MODULES as readonly string[]).includes(row.module)) {
+    if ((ALL_MODULES as readonly string[]).includes(row.module)) {
       base[row.module as AppModule] = {
         view: !!row.can_view || !!row.can_edit,
         edit: !!row.can_edit,
@@ -116,6 +129,49 @@ function permsFromUser(u: any): PermState {
     }
   }
   return base;
+}
+
+// A single module row with Visualizar / Editar switches.
+function PermRow({
+  module,
+  value,
+  onChange,
+  disabled,
+  indent,
+}: {
+  module: AppModule;
+  value: PermState;
+  onChange: (m: AppModule, key: "view" | "edit", v: boolean) => void;
+  disabled?: boolean;
+  indent?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 ${
+        indent ? "bg-muted/20" : ""
+      }`}
+    >
+      <span className="text-sm font-medium">{MODULE_LABELS[module]}</span>
+      <div className="flex items-center gap-5">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={value[module].view}
+            disabled={disabled}
+            onCheckedChange={(v) => onChange(module, "view", v)}
+          />
+          Visualizar
+        </label>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={value[module].edit}
+            disabled={disabled}
+            onCheckedChange={(v) => onChange(module, "edit", v)}
+          />
+          Editar
+        </label>
+      </div>
+    </div>
+  );
 }
 
 function PermissionMatrix({
@@ -127,34 +183,69 @@ function PermissionMatrix({
   onChange: (m: AppModule, key: "view" | "edit", v: boolean) => void;
   disabled?: boolean;
 }) {
+  const [finOpen, setFinOpen] = useState(false);
+  // Financeiro is rendered as an expandable group with its sub-tabs nested.
+  const topModules = APP_MODULES.filter((m) => m !== "financeiro");
   return (
     <div className="space-y-2">
-      {APP_MODULES.map((m) => (
-        <div
-          key={m}
-          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
-        >
-          <span className="text-sm font-medium">{MODULE_LABELS[m]}</span>
+      {topModules
+        .filter((m) => m !== "configuracoes")
+        .map((m) => (
+          <PermRow key={m} module={m} value={value} onChange={onChange} disabled={disabled} />
+        ))}
+
+      <Collapsible
+        open={finOpen}
+        onOpenChange={setFinOpen}
+        className="rounded-md border border-border"
+      >
+        <div className="flex items-center justify-between gap-3 px-3 py-2">
+          <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium">
+            {finOpen ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            {MODULE_LABELS.financeiro}
+          </CollapsibleTrigger>
           <div className="flex items-center gap-5">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <Switch
-                checked={value[m].view}
+                checked={value.financeiro.view}
                 disabled={disabled}
-                onCheckedChange={(v) => onChange(m, "view", v)}
+                onCheckedChange={(v) => onChange("financeiro", "view", v)}
               />
               Visualizar
             </label>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <Switch
-                checked={value[m].edit}
+                checked={value.financeiro.edit}
                 disabled={disabled}
-                onCheckedChange={(v) => onChange(m, "edit", v)}
+                onCheckedChange={(v) => onChange("financeiro", "edit", v)}
               />
               Editar
             </label>
           </div>
         </div>
-      ))}
+        <CollapsibleContent className="space-y-2 px-3 pb-3">
+          <p className="text-xs text-muted-foreground">
+            Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o
+            módulo Financeiro estiver com <strong>Visualizar</strong> ligado.
+          </p>
+          {FINANCEIRO_SUBMODULES.map((sm) => (
+            <PermRow
+              key={sm}
+              module={sm}
+              value={value}
+              onChange={onChange}
+              disabled={disabled}
+              indent
+            />
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
+
+      <PermRow module="configuracoes" value={value} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
@@ -175,6 +266,32 @@ function applyPermChange(
     if (!v) next[m].edit = false;
   }
   return next;
+}
+
+// Collapsible panel used to keep the long create/edit forms tidy.
+function CollapsibleSection({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="rounded-md border border-border bg-background"
+    >
+      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-muted-foreground">
+        <span>{title}</span>
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="px-3 pb-3">{children}</CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 // Multi-select of the units (schools) a user may access. No selection means the
@@ -356,23 +473,17 @@ function UserManagement() {
             <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
           </div>
 
-          <div>
-            <label className="mb-2 block text-xs font-medium text-muted-foreground">
-              Permissões por módulo
-            </label>
+          <CollapsibleSection title="Permissões por módulo">
             <PermissionMatrix
               value={isAdmin ? blankPerms(true) : perms}
               disabled={isAdmin}
               onChange={(m, key, v) => setPerms((prev) => applyPermChange(prev, m, key, v))}
             />
-          </div>
+          </CollapsibleSection>
 
-          <div>
-            <label className="mb-2 block text-xs font-medium text-muted-foreground">
-              Unidades permitidas
-            </label>
+          <CollapsibleSection title="Unidades permitidas">
             <SchoolSelector schools={schools} value={schoolIds} onChange={setSchoolIds} />
-          </div>
+          </CollapsibleSection>
 
           <div className="flex justify-end">
             <Button onClick={handleCreate} disabled={busy}>
@@ -397,7 +508,11 @@ function UserManagement() {
                 const isAdminUser = u.roles.includes("admin");
                 const editing = editingId === u.id;
                 const viewModules = (u.permissions ?? [])
-                  .filter((p: any) => p.can_view || p.can_edit)
+                  .filter(
+                    (p: any) =>
+                      (p.can_view || p.can_edit) &&
+                      (APP_MODULES as readonly string[]).includes(p.module),
+                  )
                   .map((p: any) => MODULE_LABELS[p.module as AppModule] ?? p.module);
                 return (
                   <div key={u.id} className="p-3">
@@ -460,10 +575,7 @@ function UserManagement() {
                           <span className="text-sm font-medium">Administrador (acesso total)</span>
                           <Switch checked={editIsAdmin} onCheckedChange={setEditIsAdmin} />
                         </div>
-                        <div>
-                          <label className="mb-2 block text-xs font-medium text-muted-foreground">
-                            Permissões por módulo
-                          </label>
+                        <CollapsibleSection title="Permissões por módulo">
                           <PermissionMatrix
                             value={editIsAdmin ? blankPerms(true) : editPerms}
                             disabled={editIsAdmin}
@@ -471,17 +583,14 @@ function UserManagement() {
                               setEditPerms((prev) => applyPermChange(prev, m, key, v))
                             }
                           />
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-xs font-medium text-muted-foreground">
-                            Unidades permitidas
-                          </label>
+                        </CollapsibleSection>
+                        <CollapsibleSection title="Unidades permitidas">
                           <SchoolSelector
                             schools={schools}
                             value={editSchoolIds}
                             onChange={setEditSchoolIds}
                           />
-                        </div>
+                        </CollapsibleSection>
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
                             <X className="h-4 w-4" /> Cancelar
