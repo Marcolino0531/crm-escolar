@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Repeat } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Repeat, RefreshCw, Building2, Construction } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
 import { useSchool, useRole } from "@/lib/app-context";
 import { formatDateBR } from "@/lib/date-utils";
 import { Button } from "@/components/ui/button";
@@ -69,6 +71,31 @@ function dueDateFor(monthIso: string, day: number): string {
   const d = Math.min(day, lastDay);
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
+function ymd(y: number, m: number, d: number): string {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+// Regras do Fluxo Futuro p/ Receitas Previstas:
+// - Mês atual: início = HOJE, fim = último dia do mês (vencidas ficam na Inadimplência).
+// - Outro mês (futuro): início = dia 1, fim = último dia do mês.
+function receitasDateRange(monthIso: string): { inicio: string; fim: string } {
+  const [y, m] = monthIso.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const fim = ymd(y, m, lastDay);
+  const today = new Date();
+  const isCurrent = today.getFullYear() === y && today.getMonth() + 1 === m;
+  const inicio = isCurrent ? ymd(y, m, today.getDate()) : ymd(y, m, 1);
+  return { inicio, fim };
+}
+function fmtVenc(data: string): string {
+  if (!data) return "—";
+  if (data.includes("/")) return data;
+  const [y, m, d] = data.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+// Unidades com integração Sponte ativa. CEC/CEC Baby compartilham um token
+// (segmentado por turma); Núcleo Belvedere usa credenciais próprias (sem turmas).
+const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
 
 function FluxoFuturoPage() {
   const { selected: schoolId, schools } = useSchool();
@@ -167,8 +194,38 @@ function FluxoFuturoPage() {
   });
 
   const totalProjected = forecasts.reduce((s, f) => s + Number(f.projected_amount), 0);
-  const totalPaid = forecasts.filter((f) => f.status === "paid").reduce((s, f) => s + Number(f.projected_amount), 0);
-  const totalPending = totalProjected - totalPaid;
+
+  // ── Receitas Previstas (Sponte) — Inversão de Busca + segmentação por unidade ──
+  const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "";
+  const sponteAtiva = UNIDADES_SPONTE.includes(schoolName);
+  const { inicio: recInicio, fim: recFim } = useMemo(() => receitasDateRange(month), [month]);
+  const fetchReceitas = useServerFn(fetchSponteInadimplencia);
+  const {
+    data: receitasData,
+    isFetching: receitasLoading,
+    error: receitasErr,
+    refetch: refetchReceitas,
+  } = useQuery({
+    queryKey: ["sponte-receitas", schoolId, recInicio, recFim, schoolName],
+    enabled: schoolId !== "all" && sponteAtiva,
+    staleTime: 60_000,
+    queryFn: () =>
+      fetchReceitas({ data: { dataInicio: recInicio, dataFim: recFim, unidade: schoolName } }),
+  });
+  const receitas = useMemo(
+    () =>
+      [...(receitasData?.pendencias ?? [])].sort((a, b) => {
+        const da = a.vencimento ?? "";
+        const db = b.vencimento ?? "";
+        if (da !== db) return da.localeCompare(db);
+        return a.nomeAluno.localeCompare(b.nomeAluno, "pt-BR", { sensitivity: "base" });
+      }),
+    [receitasData],
+  );
+  const receitasErroMsg =
+    receitasData?.error ?? (receitasErr instanceof Error ? receitasErr.message : null);
+  const totalReceitasPrevistas = receitas.reduce((s, r) => s + r.valorComDesconto, 0);
+  const saldoProjetado = totalReceitasPrevistas - totalProjected;
 
   async function togglePaid(f: Forecast, paid: boolean) {
     const { error } = await supabase
@@ -228,8 +285,6 @@ function FluxoFuturoPage() {
     );
   }
 
-  const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "";
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -245,10 +300,90 @@ function FluxoFuturoPage() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total Previsto</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold">{fmtBRL(totalProjected)}</div></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total Pago</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-green-600">{fmtBRL(totalPaid)}</div></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">A Pagar</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-orange-600">{fmtBRL(totalPending)}</div></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total de Receitas Previstas</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-green-600">{sponteAtiva ? fmtBRL(totalReceitasPrevistas) : "—"}</div></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total de Despesas Previstas</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-orange-600">{fmtBRL(totalProjected)}</div></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Saldo Projetado</CardTitle></CardHeader><CardContent><div className={`text-2xl font-bold ${!sponteAtiva ? "" : saldoProjetado >= 0 ? "text-green-600" : "text-red-600"}`}>{sponteAtiva ? fmtBRL(saldoProjetado) : "—"}</div></CardContent></Card>
       </div>
+
+      {/* ── Receitas Previstas (Sponte) — acima das Despesas ── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle>Receitas Previstas Sponte</CardTitle>
+            {sponteAtiva && (
+              <Badge variant="secondary" className="gap-1">
+                <Building2 className="h-3 w-3" /> {schoolName}
+              </Badge>
+            )}
+          </div>
+          {sponteAtiva && (
+            <Button size="sm" variant="outline" onClick={() => refetchReceitas()} disabled={receitasLoading}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${receitasLoading ? "animate-spin" : ""}`} />Atualizar
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {!sponteAtiva ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <Construction className="h-8 w-8 text-amber-500" />
+              <p className="text-sm font-medium">Integração Sponte indisponível para {schoolName || "esta unidade"}.</p>
+              <p className="text-xs text-muted-foreground">Selecione <strong>CEC</strong>, <strong>CEC Baby</strong> ou <strong>Núcleo Belvedere</strong> no topo para ver as receitas previstas.</p>
+            </div>
+          ) : receitasErroMsg ? (
+            <div className="py-8 text-center text-sm text-red-600">Erro ao consultar o Sponte: {receitasErroMsg}</div>
+          ) : receitasLoading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Consultando receitas no Sponte…</div>
+          ) : receitas.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Nenhuma receita prevista (parcela pendente) de {fmtVenc(recInicio)} a {fmtVenc(recFim)}.
+            </div>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Janela {fmtVenc(recInicio)} – {fmtVenc(recFim)} · {receitas.length} boleto(s){receitasData?.meta ? ` · ${receitasData.meta.tempoSegundos}s` : ""}. Desconto de pontualidade aplicado apenas sobre a Mensalidade.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vencimento</TableHead>
+                    <TableHead>Aluno</TableHead>
+                    <TableHead>Responsável</TableHead>
+                    <TableHead>Categoria(s)</TableHead>
+                    <TableHead className="text-right">Valor Bruto</TableHead>
+                    <TableHead className="text-right">Valor Previsto</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {receitas.map((r) => (
+                    <TableRow key={r.groupKey}>
+                      <TableCell className="text-xs">{fmtVenc(r.vencimento)}</TableCell>
+                      <TableCell className="font-medium">{r.nomeAluno}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.nomeResponsavel}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {r.categorias.map((c) => (
+                            <Badge key={c} variant="outline" className="text-xs">{c}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtBRL(r.valorTotalBoleto)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold text-green-600">
+                        {fmtBRL(r.valorComDesconto)}
+                        {r.descontoBolsa > 0 && (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">(-{r.descontoBolsa}%)</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="mt-3 flex justify-end border-t pt-3 text-sm font-semibold">
+                Total de Receitas Previstas:&nbsp;<span className="text-green-600">{fmtBRL(totalReceitasPrevistas)}</span>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

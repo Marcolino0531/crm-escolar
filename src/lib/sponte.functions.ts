@@ -11,8 +11,59 @@ const SPONTE_URL = "https://api.sponteeducacional.net.br/WSAPIEdu.asmx";
 const SPONTE_NS = "http://api.sponteeducacional.net.br/";
 const BATCH_SIZE = 50;
 
-// Unidades com integração Sponte ativa (token/código 23568 atende só CEC e CEC Baby).
-const UNIDADES_SPONTE = ["CEC", "CEC Baby"] as const;
+// Roteador de unidades Sponte. Cada unidade aponta para o par de variáveis de
+// ambiente (código de cliente + token) usado na requisição SOAP, e indica se os
+// resultados devem ser filtrados por TurmaAtual.
+//
+// - CEC e CEC Baby compartilham o MESMO token (atende as duas) e por isso são
+//   segmentadas por TurmaAtual (Berçário/Maternal → CEC Baby; Período/Ano → CEC).
+// - Núcleo Belvedere usa credenciais EXCLUSIVAS e NÃO possui divisão de turmas,
+//   então todo registro retornado por essas credenciais é exibido (sem filtro).
+interface UnidadeSponteConfig {
+  codigoEnv: string;
+  tokenEnv: string;
+  segmentaPorTurma: boolean;
+}
+
+const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
+  CEC: { codigoEnv: "SPONTE_CODIGO_CLIENTE", tokenEnv: "SPONTE_TOKEN", segmentaPorTurma: true },
+  "CEC Baby": {
+    codigoEnv: "SPONTE_CODIGO_CLIENTE",
+    tokenEnv: "SPONTE_TOKEN",
+    segmentaPorTurma: true,
+  },
+  "Núcleo Belvedere": {
+    codigoEnv: "SPONTE_BELVEDERE_CODIGO_CLIENTE",
+    tokenEnv: "SPONTE_BELVEDERE_TOKEN",
+    segmentaPorTurma: false,
+  },
+};
+
+const UNIDADES_SPONTE = Object.keys(SPONTE_UNIDADES);
+
+interface SponteCreds {
+  codigoCliente: string;
+  token: string;
+  segmentaPorTurma: boolean;
+}
+
+// Resolve as credenciais Sponte para a unidade selecionada. Consolidado (sem
+// unidade) usa o token padrão (CEC/CEC Baby) sem filtro de turma, preservando o
+// comportamento anterior. Retorna null para unidades sem integração ativa.
+function resolverCredenciais(unidade: string | null): SponteCreds | null {
+  if (!unidade) {
+    const codigoCliente = process.env.SPONTE_CODIGO_CLIENTE;
+    const token = process.env.SPONTE_TOKEN;
+    if (!codigoCliente || !token) return null;
+    return { codigoCliente, token, segmentaPorTurma: false };
+  }
+  const config = SPONTE_UNIDADES[unidade];
+  if (!config) return null;
+  const codigoCliente = process.env[config.codigoEnv];
+  const token = process.env[config.tokenEnv];
+  if (!codigoCliente || !token) return null;
+  return { codigoCliente, token, segmentaPorTurma: config.segmentaPorTurma };
+}
 
 function buildSoapEnvelope(
   method: string,
@@ -173,13 +224,7 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data }): Promise<SponteBatchResult> => {
     const { dataInicio, dataFim, unidade } = data;
-    const codigoCliente = process.env.SPONTE_CODIGO_CLIENTE;
-    const token = process.env.SPONTE_TOKEN;
-    if (!codigoCliente || !token) {
-      throw new Error(
-        "Chaves da API do Sponte não configuradas no servidor. Configure SPONTE_CODIGO_CLIENTE e SPONTE_TOKEN.",
-      );
-    }
+    const unidadeKey = unidade ?? null;
 
     const emptyMeta = {
       totalAlunos: 0,
@@ -192,9 +237,18 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
     };
 
     // Unidades sem integração Sponte ativa.
-    if (unidade && !UNIDADES_SPONTE.includes(unidade as (typeof UNIDADES_SPONTE)[number])) {
+    if (unidadeKey !== null && !(unidadeKey in SPONTE_UNIDADES)) {
       return { pendencias: [], indisponivel: true, meta: emptyMeta };
     }
+
+    // Roteador de credenciais: cada unidade usa seu próprio token/código.
+    const creds = resolverCredenciais(unidadeKey);
+    if (!creds) {
+      throw new Error(
+        `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey ?? "consolidado"}".`,
+      );
+    }
+    const { codigoCliente, token } = creds;
 
     const dtInicio = new Date(dataInicio);
     const dtFim = new Date(dataFim);
@@ -345,8 +399,11 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       });
     }
 
-    // ── Step 6: Multi-tenant — filtrar boletos pela unidade selecionada ──
-    const unidadeFiltrada = unidade === "CEC" || unidade === "CEC Baby" ? unidade : null;
+    // ── Step 6: Multi-tenant — filtrar boletos por TurmaAtual quando aplicável ──
+    // Belvedere (e o consolidado) não segmentam por turma: exibem todos os
+    // registros retornados pelas credenciais usadas.
+    const unidadeFiltrada =
+      creds.segmentaPorTurma && (unidade === "CEC" || unidade === "CEC Baby") ? unidade : null;
     const pendenciasFinal = unidadeFiltrada
       ? pendenciasAgrupadas.filter((p) => alunoUnidadeMap[p.alunoId] === unidadeFiltrada)
       : pendenciasAgrupadas;
