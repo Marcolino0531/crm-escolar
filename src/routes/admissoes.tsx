@@ -22,6 +22,8 @@ function AdmissoesPage() {
   const [leadEditando, setLeadEditando] = useState<Lead | null>(null);
 
   const unidadeNome = schools.find((s) => s.id === selected)?.name ?? "Todas as unidades";
+  const consolidado = selected === "all";
+  const schoolNameById = Object.fromEntries(schools.map((s) => [s.id, s.name]));
 
   const handleMatriculaComOnboarding = (leadId: string, itensMatricula: ItemMatricula[]) => {
     const lead = leadsHook.leads.find((l) => l.id === leadId);
@@ -63,6 +65,8 @@ function AdmissoesPage() {
         onMatriculaConfirmada={handleMatriculaComOnboarding}
         onEditar={(lead) => setLeadEditando(lead)}
         isAdmin={isAdmin}
+        consolidado={consolidado}
+        schoolNameById={schoolNameById}
       />
 
       {(formularioAberto || leadEditando) && (

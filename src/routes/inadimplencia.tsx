@@ -108,6 +108,7 @@ function InadimplenciaPage() {
   // Mapeia o seletor de Unidade (school_id) para a unidade do Sponte.
   const unidadeNome =
     selected === "all" ? null : (schools.find((s) => s.id === selected)?.name ?? null);
+  const consolidado = unidadeNome === null;
   const integracaoDisponivel = unidadeNome === null || UNIDADES_SPONTE.includes(unidadeNome);
 
   const { data, isFetching, error, refetch } = useQuery({
@@ -449,7 +450,15 @@ function InadimplenciaPage() {
                 pendenciasFiltradas.map((p, idx) => (
                   <tr key={`${p.groupKey}-${idx}`} className="transition-colors hover:bg-muted/40">
                     <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-foreground">{p.nomeAluno}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-foreground">{p.nomeAluno}</p>
+                        {consolidado && p.unidade && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                            <Building2 size={10} />
+                            {p.unidade}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {p.categorias.length > 0 ? p.categorias.join(", ") : "Parcela"}
                         {p.qtdParcelas > 1 && (

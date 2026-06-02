@@ -13,6 +13,8 @@ interface KanbanBoardProps {
   onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
+  consolidado?: boolean;
+  schoolNameById?: Record<string, string>;
 }
 
 interface PendingAction {
@@ -26,6 +28,8 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onMatriculaConfirmada,
   onEditar,
   isAdmin = false,
+  consolidado = false,
+  schoolNameById,
 }) => {
   const {
     leads,
@@ -139,6 +143,8 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
               onSolicitarMatricula={handleSolicitarMatricula}
               onEditar={onEditar}
               isAdmin={isAdmin}
+              consolidado={consolidado}
+              schoolNameById={schoolNameById}
             />
           ))}
         </div>
