@@ -21,6 +21,22 @@ async function assertAdmin(userId: string) {
   if (!isAdmin) throw new Error("Apenas administradores podem executar essa ação.");
 }
 
+// Persist the set of schools (units) a user may access. An empty array clears
+// all restrictions (treated as "all schools" by the client).
+async function persistSchools(userId: string, schoolIds: string[]) {
+  await supabaseAdmin
+    .from("user_schools" as any)
+    .delete()
+    .eq("user_id", userId);
+  const unique = Array.from(new Set(schoolIds));
+  if (unique.length === 0) return;
+  const rows = unique.map((school_id) => ({ user_id: userId, school_id }));
+  const { error } = await supabaseAdmin
+    .from("user_schools" as any)
+    .insert(rows);
+  if (error) throw new Error(error.message);
+}
+
 // Persist the role flag (admin vs viewer) and the per-module permission matrix.
 async function persistAccess(
   userId: string,
@@ -74,12 +90,22 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push({ module: p.module, can_view: p.can_view, can_edit: p.can_edit });
       permMap.set(p.user_id, arr);
     });
+    const { data: userSchools } = await supabaseAdmin
+      .from("user_schools" as any)
+      .select("user_id, school_id");
+    const schoolMap = new Map<string, string[]>();
+    (userSchools ?? []).forEach((s: any) => {
+      const arr = schoolMap.get(s.user_id) ?? [];
+      arr.push(s.school_id);
+      schoolMap.set(s.user_id, arr);
+    });
     return usersResp.users.map((u) => ({
       id: u.id,
       email: u.email ?? "",
       created_at: u.created_at,
       roles: roleMap.get(u.id) ?? [],
       permissions: permMap.get(u.id) ?? [],
+      schoolIds: schoolMap.get(u.id) ?? [],
     }));
   });
 
@@ -92,6 +118,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
         password: z.string().min(6).max(72),
         isAdmin: z.boolean().default(false),
         permissions: z.array(permissionSchema).default([]),
+        schoolIds: z.array(z.string().uuid()).default([]),
       })
       .parse(input),
   )
@@ -106,6 +133,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
     const userId = created.user?.id;
     if (!userId) throw new Error("Falha ao criar usuário.");
     await persistAccess(userId, data.isAdmin, data.permissions);
+    await persistSchools(userId, data.schoolIds);
     return { id: userId, email: data.email };
   });
 
@@ -117,6 +145,10 @@ export const updateUserAccess = createServerFn({ method: "POST" })
         userId: z.string().uuid(),
         isAdmin: z.boolean().default(false),
         permissions: z.array(permissionSchema).default([]),
+        schoolIds: z.array(z.string().uuid()).default([]),
+        email: z.string().trim().email().max(255).optional(),
+        // Empty string means "leave password unchanged".
+        password: z.string().max(72).optional(),
       })
       .parse(input),
   )
@@ -125,7 +157,23 @@ export const updateUserAccess = createServerFn({ method: "POST" })
     if (data.userId === context.userId && !data.isAdmin) {
       throw new Error("Você não pode remover o próprio acesso de administrador.");
     }
+
+    // Update auth credentials (email / password) via the Supabase admin API.
+    const attrs: { email?: string; password?: string } = {};
+    if (data.email) attrs.email = data.email;
+    if (data.password && data.password.length > 0) {
+      if (data.password.length < 6) {
+        throw new Error("A senha deve ter pelo menos 6 caracteres.");
+      }
+      attrs.password = data.password;
+    }
+    if (Object.keys(attrs).length > 0) {
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(data.userId, attrs);
+      if (error) throw new Error(error.message);
+    }
+
     await persistAccess(data.userId, data.isAdmin, data.permissions);
+    await persistSchools(data.userId, data.schoolIds);
     return { ok: true };
   });
 

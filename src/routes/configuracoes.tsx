@@ -26,7 +26,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { usePermissions, APP_MODULES, MODULE_LABELS, type AppModule } from "@/lib/app-context";
+import { usePermissions, useSchool, APP_MODULES, MODULE_LABELS, type AppModule } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -177,8 +177,42 @@ function applyPermChange(
   return next;
 }
 
+// Multi-select of the units (schools) a user may access. No selection means the
+// user is unrestricted (can access every unit).
+function SchoolSelector({
+  schools,
+  value,
+  onChange,
+}: {
+  schools: { id: string; name: string }[];
+  value: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  if (schools.length === 0)
+    return <p className="text-xs text-muted-foreground">Nenhuma unidade cadastrada.</p>;
+  const toggle = (id: string, on: boolean) =>
+    onChange(on ? Array.from(new Set([...value, id])) : value.filter((x) => x !== id));
+  return (
+    <div className="space-y-2">
+      {schools.map((s) => (
+        <label
+          key={s.id}
+          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+        >
+          <span className="text-sm font-medium">{s.name}</span>
+          <Switch checked={value.includes(s.id)} onCheckedChange={(v) => toggle(s.id, v)} />
+        </label>
+      ))}
+      <p className="text-xs text-muted-foreground">
+        Nenhuma unidade marcada = acesso a todas as unidades.
+      </p>
+    </div>
+  );
+}
+
 function UserManagement() {
   const qc = useQueryClient();
+  const { schools } = useSchool();
   const listFn = useServerFn(listManagedUsers);
   const createFn = useServerFn(createManagedUser);
   const updateFn = useServerFn(updateUserAccess);
@@ -187,11 +221,15 @@ function UserManagement() {
   const [password, setPassword] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [perms, setPerms] = useState<PermState>(() => blankPerms(false));
+  const [schoolIds, setSchoolIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editEmail, setEditEmail] = useState("");
+  const [editPassword, setEditPassword] = useState("");
   const [editIsAdmin, setEditIsAdmin] = useState(false);
   const [editPerms, setEditPerms] = useState<PermState>(() => blankPerms(false));
+  const [editSchoolIds, setEditSchoolIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
 
   const { data: users = [], isLoading } = useQuery({
@@ -206,13 +244,20 @@ function UserManagement() {
     setBusy(true);
     try {
       await createFn({
-        data: { email: email.trim(), password, isAdmin, permissions: permsToArray(perms) },
+        data: {
+          email: email.trim(),
+          password,
+          isAdmin,
+          permissions: permsToArray(perms),
+          schoolIds,
+        },
       });
       toast.success("Usuário criado.");
       setEmail("");
       setPassword("");
       setIsAdmin(false);
       setPerms(blankPerms(false));
+      setSchoolIds([]);
       qc.invalidateQueries({ queryKey: ["managed_users"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Falha ao criar usuário.");
@@ -223,21 +268,37 @@ function UserManagement() {
 
   function startEdit(u: any) {
     setEditingId(u.id);
+    setEditEmail(u.email ?? "");
+    setEditPassword("");
     setEditIsAdmin(u.roles.includes("admin"));
     setEditPerms(permsFromUser(u));
+    setEditSchoolIds(u.schoolIds ?? []);
   }
 
   async function handleSaveEdit(userId: string) {
+    if (!editEmail.trim()) {
+      return toast.error("Informe um e-mail válido.");
+    }
+    if (editPassword.length > 0 && editPassword.length < 6) {
+      return toast.error("A nova senha deve ter ao menos 6 caracteres.");
+    }
     setSavingEdit(true);
     try {
       await updateFn({
-        data: { userId, isAdmin: editIsAdmin, permissions: permsToArray(editPerms) },
+        data: {
+          userId,
+          isAdmin: editIsAdmin,
+          permissions: permsToArray(editPerms),
+          schoolIds: editSchoolIds,
+          email: editEmail.trim(),
+          password: editPassword,
+        },
       });
-      toast.success("Acessos atualizados.");
+      toast.success("Usuário atualizado.");
       setEditingId(null);
       qc.invalidateQueries({ queryKey: ["managed_users"] });
     } catch (e: any) {
-      toast.error(e?.message ?? "Falha ao atualizar acessos.");
+      toast.error(e?.message ?? "Falha ao atualizar usuário.");
     } finally {
       setSavingEdit(false);
     }
@@ -306,6 +367,13 @@ function UserManagement() {
             />
           </div>
 
+          <div>
+            <label className="mb-2 block text-xs font-medium text-muted-foreground">
+              Unidades permitidas
+            </label>
+            <SchoolSelector schools={schools} value={schoolIds} onChange={setSchoolIds} />
+          </div>
+
           <div className="flex justify-end">
             <Button onClick={handleCreate} disabled={busy}>
               <Plus className="h-4 w-4" /> Adicionar usuário
@@ -364,17 +432,56 @@ function UserManagement() {
 
                     {editing && (
                       <div className="mt-3 space-y-3 rounded-md bg-muted/30 p-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground">
+                              E-mail
+                            </label>
+                            <Input
+                              type="email"
+                              value={editEmail}
+                              onChange={(e) => setEditEmail(e.target.value)}
+                              placeholder="usuario@exemplo.com"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Redefinir senha
+                            </label>
+                            <Input
+                              type="text"
+                              value={editPassword}
+                              onChange={(e) => setEditPassword(e.target.value)}
+                              placeholder="deixe em branco para manter"
+                            />
+                          </div>
+                        </div>
                         <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
                           <span className="text-sm font-medium">Administrador (acesso total)</span>
                           <Switch checked={editIsAdmin} onCheckedChange={setEditIsAdmin} />
                         </div>
-                        <PermissionMatrix
-                          value={editIsAdmin ? blankPerms(true) : editPerms}
-                          disabled={editIsAdmin}
-                          onChange={(m, key, v) =>
-                            setEditPerms((prev) => applyPermChange(prev, m, key, v))
-                          }
-                        />
+                        <div>
+                          <label className="mb-2 block text-xs font-medium text-muted-foreground">
+                            Permissões por módulo
+                          </label>
+                          <PermissionMatrix
+                            value={editIsAdmin ? blankPerms(true) : editPerms}
+                            disabled={editIsAdmin}
+                            onChange={(m, key, v) =>
+                              setEditPerms((prev) => applyPermChange(prev, m, key, v))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-medium text-muted-foreground">
+                            Unidades permitidas
+                          </label>
+                          <SchoolSelector
+                            schools={schools}
+                            value={editSchoolIds}
+                            onChange={setEditSchoolIds}
+                          />
+                        </div>
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
                             <X className="h-4 w-4" /> Cancelar
@@ -384,7 +491,7 @@ function UserManagement() {
                             onClick={() => handleSaveEdit(u.id)}
                             disabled={savingEdit}
                           >
-                            <Check className="h-4 w-4" /> Salvar acessos
+                            <Check className="h-4 w-4" /> Salvar alterações
                           </Button>
                         </div>
                       </div>
