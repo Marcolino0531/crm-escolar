@@ -35,15 +35,19 @@ type SchoolCtx = {
   selected: SchoolFilter;
   setSelected: (v: SchoolFilter) => void;
   schools: { id: string; name: string }[];
+  // True when the logged-in user is limited to a subset of schools.
+  restricted: boolean;
 };
 const SchoolContext = createContext<SchoolCtx>({
   selected: "all",
   setSelected: () => {},
   schools: [],
+  restricted: false,
 });
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
+  const { isAdmin } = useRole();
   const [selected, setSelected] = useState<SchoolFilter>(() => {
     if (typeof window === "undefined") return "all";
     return localStorage.getItem("school_filter") ?? "all";
@@ -52,7 +56,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") localStorage.setItem("school_filter", selected);
   }, [selected]);
 
-  const { data: schools = [] } = useQuery({
+  const { data: allSchools = [] } = useQuery({
     queryKey: ["schools", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
@@ -62,8 +66,41 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  // Schools this user is explicitly allowed to access. Empty = unrestricted.
+  const { data: allowedIds = [] } = useQuery({
+    queryKey: ["user_schools", session?.user?.id ?? "anon"],
+    enabled: !!session?.user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("user_schools" as any)
+        .select("school_id")
+        .eq("user_id", session!.user.id);
+      if (error) return [] as string[];
+      return ((data ?? []) as unknown as { school_id: string }[]).map((r) => r.school_id);
+    },
+  });
+
+  const restricted = !isAdmin && allowedIds.length > 0;
+  const schools = useMemo(() => {
+    if (!restricted) return allSchools;
+    return allSchools.filter((s) => allowedIds.includes(s.id));
+  }, [allSchools, allowedIds, restricted]);
+
+  // Keep the active selection valid for restricted users: if the current
+  // selection is not allowed, fall back to their single school (locked) or
+  // to the consolidated view of their allowed schools.
+  useEffect(() => {
+    if (!restricted) return;
+    const ids = schools.map((s) => s.id);
+    if (schools.length === 1) {
+      if (selected !== schools[0].id) setSelected(schools[0].id);
+    } else if (selected !== "all" && !ids.includes(selected)) {
+      setSelected("all");
+    }
+  }, [restricted, schools, selected]);
+
   return (
-    <SchoolContext.Provider value={{ selected, setSelected, schools }}>
+    <SchoolContext.Provider value={{ selected, setSelected, schools, restricted }}>
       {children}
     </SchoolContext.Provider>
   );
