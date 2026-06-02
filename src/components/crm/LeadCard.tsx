@@ -13,6 +13,10 @@ interface LeadCardProps {
   onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
+  // Visão Consolidada: exibe a etiqueta da unidade do lead. Nas visões
+  // individuais fica oculta.
+  consolidado?: boolean;
+  schoolNameById?: Record<string, string>;
 }
 
 const LeadCard: React.FC<LeadCardProps> = ({
@@ -25,8 +29,11 @@ const LeadCard: React.FC<LeadCardProps> = ({
   onSolicitarMatricula,
   onEditar,
   isAdmin = false,
+  consolidado = false,
+  schoolNameById,
 }) => {
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
+  const unidadeNome = schoolNameById?.[lead.schoolId];
 
   const formatarData = (data: string) => {
     if (!data) return "";
@@ -74,6 +81,27 @@ const LeadCard: React.FC<LeadCardProps> = ({
             snapshot.isDragging ? "shadow-xl ring-2 ring-indigo-300 rotate-2" : "hover:shadow-md"
           }`}
         >
+          {/* Etiqueta de Unidade (somente na visão Consolidada) */}
+          {consolidado && unidadeNome && (
+            <div className="mb-2 inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-3 w-3"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m4-14h2m-2 4h2m-2 4h2m4-8h2m-2 4h2m-2 4h2"
+                />
+              </svg>
+              {unidadeNome}
+            </div>
+          )}
+
           {/* Selo Matriculado */}
           {lead.coluna === "matricula" && lead.itensMatricula && (
             <div className="mb-2 inline-flex items-center gap-1 bg-green-100 border border-green-300 text-green-700 text-xs font-bold px-2.5 py-1 rounded-full">

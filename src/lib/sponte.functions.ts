@@ -47,16 +47,11 @@ interface SponteCreds {
   segmentaPorTurma: boolean;
 }
 
-// Resolve as credenciais Sponte para a unidade selecionada. Consolidado (sem
-// unidade) usa o token padrão (CEC/CEC Baby) sem filtro de turma, preservando o
-// comportamento anterior. Retorna null para unidades sem integração ativa.
-function resolverCredenciais(unidade: string | null): SponteCreds | null {
-  if (!unidade) {
-    const codigoCliente = process.env.SPONTE_CODIGO_CLIENTE;
-    const token = process.env.SPONTE_TOKEN;
-    if (!codigoCliente || !token) return null;
-    return { codigoCliente, token, segmentaPorTurma: false };
-  }
+// Resolve as credenciais Sponte de UMA unidade. Retorna null quando a unidade
+// não tem integração ativa ou as variáveis de ambiente não estão configuradas.
+// O consolidado é tratado no handler, combinando as credenciais de CEC e
+// Belvedere explicitamente.
+function resolverCredenciais(unidade: string): SponteCreds | null {
   const config = SPONTE_UNIDADES[unidade];
   if (!config) return null;
   const codigoCliente = process.env[config.codigoEnv];
@@ -173,6 +168,9 @@ export interface PendenciaAgrupada {
   descontoBolsa: number;
   categorias: string[];
   qtdParcelas: number;
+  // Unidade pedagógica do boleto (CEC, CEC Baby ou Núcleo Belvedere). Preenchida
+  // sobretudo na visão Consolidada para identificar a origem de cada registro.
+  unidade?: string;
 }
 
 export interface SponteBatchResult {
@@ -214,6 +212,163 @@ function classificarUnidade(turmaAtual: string): "CEC" | "CEC Baby" | null {
   return null;
 }
 
+interface ColetaResult {
+  pendencias: PendenciaAgrupada[];
+  alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null>;
+  fault?: string;
+}
+
+// Núcleo da consulta para UM par de credenciais (código + token): Inversão de
+// Busca (GetParcelas primeiro), enriquecimento apenas dos devedores,
+// agrupamento por boleto e desconto de pontualidade só na Mensalidade.
+// NÃO aplica filtro de turma — quem decide é o chamador (unidade individual vs.
+// consolidado). Retorna também o mapa de classificação por aluno (TurmaAtual)
+// para que o consolidado possa fazer a soma estrita por série.
+async function coletarPendencias(
+  codigoCliente: string,
+  token: string,
+  dtInicio: Date,
+  dtFim: Date,
+): Promise<ColetaResult> {
+  // ── Step 1: Fetch ALL open parcels in ONE call (Query Inversion) ──
+  const parcelasXml = await callSponte("GetParcelas", "Situacao=Aberta", codigoCliente, token);
+  const fault = checkFault(parcelasXml);
+  if (fault) return { pendencias: [], alunoUnidadeMap: {}, fault };
+
+  const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
+
+  // ── Step 2: Filter by date range, collect raw parcelas ──
+  const parcelasRaw: ParcelaRaw[] = [];
+  const alunosComPendencia = new Set<string>();
+
+  for (const parcela of parcelaNodes) {
+    const retorno = parseXmlValue(parcela, "RetornoOperacao");
+    if (!retorno.startsWith("01")) continue;
+    const situacao = parseXmlValue(parcela, "SituacaoParcela");
+    if (situacao === "Quitada" || situacao === "Cancelada") continue;
+    const vencimento = parseXmlValue(parcela, "Vencimento");
+    if (!isInDateRange(vencimento, dtInicio, dtFim)) continue;
+    const valorParcela = parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
+    const valorPago = parseBrDecimal(parseXmlValue(parcela, "ValorPago"));
+    const saldo = valorParcela - valorPago;
+    if (saldo <= 0) continue;
+    const alunoId = parseXmlValue(parcela, "AlunoID");
+    if (!alunoId || alunoId === "0") continue;
+
+    alunosComPendencia.add(alunoId);
+    parcelasRaw.push({
+      alunoId,
+      nomeAluno: parseXmlValue(parcela, "Sacado") || "-",
+      vencimento,
+      valor: valorParcela,
+      valorPago,
+      saldo,
+      status: situacao,
+      numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+      categoria: parseXmlValue(parcela, "Categoria"),
+      bolsaAssociada: parseXmlValue(parcela, "BolsaAssociada"),
+    });
+  }
+
+  if (parcelasRaw.length === 0) return { pendencias: [], alunoUnidadeMap: {} };
+
+  // ── Step 3: Fetch student names + responsável ONLY for debtors ──
+  const debtorIds = Array.from(alunosComPendencia);
+  const alunoNomeMap: Record<string, string> = {};
+  const alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null> = {};
+  const responsaveisMap: Record<string, { nome: string; celular: string }> = {};
+
+  for (let i = 0; i < debtorIds.length; i += BATCH_SIZE) {
+    const batch = debtorIds.slice(i, i + BATCH_SIZE);
+    const [alunoResults, respResults] = await Promise.all([
+      Promise.allSettled(
+        batch.map(async (id) => ({
+          id,
+          xml: await callSponte("GetAlunos", `AlunoID=${id}`, codigoCliente, token),
+        })),
+      ),
+      Promise.allSettled(
+        batch.map(async (id) => ({
+          id,
+          xml: await callSponte("GetResponsavelFinanceiro", `AlunoID=${id}`, codigoCliente, token),
+        })),
+      ),
+    ]);
+
+    for (const result of alunoResults) {
+      if (result.status !== "fulfilled") continue;
+      const { id, xml } = result.value;
+      const nodes = parseXmlList(xml, "wsAluno");
+      if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
+        alunoNomeMap[id] = parseXmlValue(nodes[0], "Nome");
+        alunoUnidadeMap[id] = classificarUnidade(parseXmlValue(nodes[0], "TurmaAtual"));
+      }
+    }
+    for (const result of respResults) {
+      if (result.status !== "fulfilled") continue;
+      const { id, xml } = result.value;
+      const nodes = parseXmlList(xml, "wsResponsavel");
+      if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
+        responsaveisMap[id] = {
+          nome: parseXmlValue(nodes[0], "Nome"),
+          celular: parseXmlValue(nodes[0], "Celular") || parseXmlValue(nodes[0], "Telefone"),
+        };
+      }
+    }
+  }
+
+  // ── Step 4: Group parcelas by NumeroBoleto (or AlunoID+Vencimento) ──
+  const groups: Record<string, ParcelaRaw[]> = {};
+  for (const p of parcelasRaw) {
+    const key =
+      p.numeroBoleto && p.numeroBoleto !== "0"
+        ? `bol_${p.numeroBoleto}`
+        : `${p.alunoId}_${p.vencimento}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  }
+
+  // ── Step 5: Enrich + build grouped pendencias (discount on Mensalidade only) ──
+  const pendenciasAgrupadas: PendenciaAgrupada[] = [];
+  for (const [groupKey, items] of Object.entries(groups)) {
+    const first = items[0];
+    const valorTotalBoleto = items.reduce((sum, it) => sum + it.saldo, 0);
+    const categorias = [...new Set(items.map((it) => it.categoria).filter(Boolean))];
+
+    let maxBolsaPct = 0;
+    let valorMensalidade = 0;
+    let valorOutros = 0;
+    for (const it of items) {
+      const pct = extractBolsaPercent(it.bolsaAssociada);
+      if (pct > maxBolsaPct) maxBolsaPct = pct;
+      if (it.categoria.toLowerCase() === "mensalidade") valorMensalidade += it.saldo;
+      else valorOutros += it.saldo;
+    }
+
+    const valorComDesconto =
+      maxBolsaPct > 0
+        ? Math.round((valorMensalidade * (1 - maxBolsaPct / 100) + valorOutros) * 100) / 100
+        : valorTotalBoleto;
+
+    const resp = responsaveisMap[first.alunoId];
+    pendenciasAgrupadas.push({
+      groupKey,
+      alunoId: first.alunoId,
+      nomeAluno: alunoNomeMap[first.alunoId] || first.nomeAluno,
+      nomeResponsavel: resp ? resp.nome : "-",
+      telefone: resp ? resp.celular : "-",
+      vencimento: first.vencimento,
+      valorTotalBoleto,
+      valorComDesconto,
+      descontoBolsa: maxBolsaPct,
+      categorias,
+      qtdParcelas: items.length,
+    });
+  }
+
+  return { pendencias: pendenciasAgrupadas, alunoUnidadeMap };
+}
+
 const InputSchema = z.object({
   dataInicio: z.string().min(8),
   dataFim: z.string().min(8),
@@ -241,172 +396,75 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       return { pendencias: [], indisponivel: true, meta: emptyMeta };
     }
 
-    // Roteador de credenciais: cada unidade usa seu próprio token/código.
-    const creds = resolverCredenciais(unidadeKey);
-    if (!creds) {
-      throw new Error(
-        `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey ?? "consolidado"}".`,
-      );
-    }
-    const { codigoCliente, token } = creds;
-
     const dtInicio = new Date(dataInicio);
     const dtFim = new Date(dataFim);
     dtFim.setHours(23, 59, 59, 999);
     const startTime = Date.now();
 
-    // ── Step 1: Fetch ALL open parcels in ONE call (Query Inversion) ──
-    const parcelasXml = await callSponte("GetParcelas", "Situacao=Aberta", codigoCliente, token);
-    const fault = checkFault(parcelasXml);
-    if (fault) return { pendencias: [], error: fault, meta: emptyMeta };
+    let pendenciasFinal: PendenciaAgrupada[] = [];
 
-    const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
+    if (unidadeKey === null) {
+      // ── Consolidado: dispara AMBOS os tokens (CEC + Belvedere) em paralelo ──
+      // e mescla os resultados, respeitando as regras de separação pedagógica.
+      const cecCreds = resolverCredenciais("CEC");
+      const belvedereCreds = resolverCredenciais("Núcleo Belvedere");
+      if (!cecCreds && !belvedereCreds) {
+        throw new Error("Credenciais da API do Sponte não configuradas para o consolidado.");
+      }
 
-    // ── Step 2: Filter by date range, collect raw parcelas ──
-    const parcelasRaw: ParcelaRaw[] = [];
-    const alunosComPendencia = new Set<string>();
-
-    for (const parcela of parcelaNodes) {
-      const retorno = parseXmlValue(parcela, "RetornoOperacao");
-      if (!retorno.startsWith("01")) continue;
-      const situacao = parseXmlValue(parcela, "SituacaoParcela");
-      if (situacao === "Quitada" || situacao === "Cancelada") continue;
-      const vencimento = parseXmlValue(parcela, "Vencimento");
-      if (!isInDateRange(vencimento, dtInicio, dtFim)) continue;
-      const valorParcela = parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
-      const valorPago = parseBrDecimal(parseXmlValue(parcela, "ValorPago"));
-      const saldo = valorParcela - valorPago;
-      if (saldo <= 0) continue;
-      const alunoId = parseXmlValue(parcela, "AlunoID");
-      if (!alunoId || alunoId === "0") continue;
-
-      alunosComPendencia.add(alunoId);
-      parcelasRaw.push({
-        alunoId,
-        nomeAluno: parseXmlValue(parcela, "Sacado") || "-",
-        vencimento,
-        valor: valorParcela,
-        valorPago,
-        saldo,
-        status: situacao,
-        numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
-        categoria: parseXmlValue(parcela, "Categoria"),
-        bolsaAssociada: parseXmlValue(parcela, "BolsaAssociada"),
-      });
-    }
-
-    if (parcelasRaw.length === 0) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      return { pendencias: [], meta: { ...emptyMeta, tempoSegundos: parseFloat(elapsed) } };
-    }
-
-    // ── Step 3: Fetch student names + responsável ONLY for debtors ──
-    const debtorIds = Array.from(alunosComPendencia);
-    const alunoNomeMap: Record<string, string> = {};
-    const alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null> = {};
-    const responsaveisMap: Record<string, { nome: string; celular: string }> = {};
-
-    for (let i = 0; i < debtorIds.length; i += BATCH_SIZE) {
-      const batch = debtorIds.slice(i, i + BATCH_SIZE);
-      const [alunoResults, respResults] = await Promise.all([
-        Promise.allSettled(
-          batch.map(async (id) => ({
-            id,
-            xml: await callSponte("GetAlunos", `AlunoID=${id}`, codigoCliente, token),
-          })),
-        ),
-        Promise.allSettled(
-          batch.map(async (id) => ({
-            id,
-            xml: await callSponte(
-              "GetResponsavelFinanceiro",
-              `AlunoID=${id}`,
-              codigoCliente,
-              token,
-            ),
-          })),
-        ),
+      const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
+      const [cecRes, belvedereRes] = await Promise.all([
+        cecCreds
+          ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, dtInicio, dtFim)
+          : Promise.resolve(vazio),
+        belvedereCreds
+          ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, dtInicio, dtFim)
+          : Promise.resolve(vazio),
       ]);
 
-      for (const result of alunoResults) {
-        if (result.status !== "fulfilled") continue;
-        const { id, xml } = result.value;
-        const nodes = parseXmlList(xml, "wsAluno");
-        if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
-          alunoNomeMap[id] = parseXmlValue(nodes[0], "Nome");
-          alunoUnidadeMap[id] = classificarUnidade(parseXmlValue(nodes[0], "TurmaAtual"));
-        }
+      // Token CEC/CEC Baby → soma ESTRITA das listas filtradas por série:
+      // CEC (1º Período–9º Ano) + CEC Baby (Berçário–Maternal 3). Boletos sem
+      // classificação pedagógica são descartados (corrige o 29 → 21 + 4).
+      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias
+        .filter((p) => cecRes.alunoUnidadeMap[p.alunoId] != null)
+        .map((p) => ({ ...p, unidade: cecRes.alunoUnidadeMap[p.alunoId] as string }));
+
+      // Token Belvedere → todos os registros (sem filtro de turma).
+      const belvederePendencias: PendenciaAgrupada[] = belvedereRes.pendencias.map((p) => ({
+        ...p,
+        unidade: "Núcleo Belvedere",
+      }));
+
+      pendenciasFinal = [...cecPendencias, ...belvederePendencias];
+
+      // Se nada veio e ambas as fontes falharam, propaga o erro.
+      if (pendenciasFinal.length === 0 && (cecRes.fault || belvedereRes.fault)) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        return {
+          pendencias: [],
+          error: cecRes.fault ?? belvedereRes.fault,
+          meta: { ...emptyMeta, tempoSegundos: parseFloat(elapsed) },
+        };
       }
-      for (const result of respResults) {
-        if (result.status !== "fulfilled") continue;
-        const { id, xml } = result.value;
-        const nodes = parseXmlList(xml, "wsResponsavel");
-        if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
-          responsaveisMap[id] = {
-            nome: parseXmlValue(nodes[0], "Nome"),
-            celular: parseXmlValue(nodes[0], "Celular") || parseXmlValue(nodes[0], "Telefone"),
-          };
-        }
+    } else {
+      // ── Unidade individual: usa EXCLUSIVAMENTE as credenciais da unidade ──
+      const creds = resolverCredenciais(unidadeKey);
+      if (!creds) {
+        throw new Error(
+          `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey}".`,
+        );
       }
+      const res = await coletarPendencias(creds.codigoCliente, creds.token, dtInicio, dtFim);
+      if (res.fault) return { pendencias: [], error: res.fault, meta: emptyMeta };
+
+      // CEC/CEC Baby: filtra por TurmaAtual. Belvedere: exibe todos os registros.
+      const filtrarPorTurma =
+        creds.segmentaPorTurma && (unidadeKey === "CEC" || unidadeKey === "CEC Baby");
+      const lista = filtrarPorTurma
+        ? res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === unidadeKey)
+        : res.pendencias;
+      pendenciasFinal = lista.map((p) => ({ ...p, unidade: unidadeKey }));
     }
-
-    // ── Step 4: Group parcelas by NumeroBoleto (or AlunoID+Vencimento) ──
-    const groups: Record<string, ParcelaRaw[]> = {};
-    for (const p of parcelasRaw) {
-      const key =
-        p.numeroBoleto && p.numeroBoleto !== "0"
-          ? `bol_${p.numeroBoleto}`
-          : `${p.alunoId}_${p.vencimento}`;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(p);
-    }
-
-    // ── Step 5: Enrich + build grouped pendencias (discount on Mensalidade only) ──
-    const pendenciasAgrupadas: PendenciaAgrupada[] = [];
-    for (const [groupKey, items] of Object.entries(groups)) {
-      const first = items[0];
-      const valorTotalBoleto = items.reduce((sum, it) => sum + it.saldo, 0);
-      const categorias = [...new Set(items.map((it) => it.categoria).filter(Boolean))];
-
-      let maxBolsaPct = 0;
-      let valorMensalidade = 0;
-      let valorOutros = 0;
-      for (const it of items) {
-        const pct = extractBolsaPercent(it.bolsaAssociada);
-        if (pct > maxBolsaPct) maxBolsaPct = pct;
-        if (it.categoria.toLowerCase() === "mensalidade") valorMensalidade += it.saldo;
-        else valorOutros += it.saldo;
-      }
-
-      const valorComDesconto =
-        maxBolsaPct > 0
-          ? Math.round((valorMensalidade * (1 - maxBolsaPct / 100) + valorOutros) * 100) / 100
-          : valorTotalBoleto;
-
-      const resp = responsaveisMap[first.alunoId];
-      pendenciasAgrupadas.push({
-        groupKey,
-        alunoId: first.alunoId,
-        nomeAluno: alunoNomeMap[first.alunoId] || first.nomeAluno,
-        nomeResponsavel: resp ? resp.nome : "-",
-        telefone: resp ? resp.celular : "-",
-        vencimento: first.vencimento,
-        valorTotalBoleto,
-        valorComDesconto,
-        descontoBolsa: maxBolsaPct,
-        categorias,
-        qtdParcelas: items.length,
-      });
-    }
-
-    // ── Step 6: Multi-tenant — filtrar boletos por TurmaAtual quando aplicável ──
-    // Belvedere (e o consolidado) não segmentam por turma: exibem todos os
-    // registros retornados pelas credenciais usadas.
-    const unidadeFiltrada =
-      creds.segmentaPorTurma && (unidade === "CEC" || unidade === "CEC Baby") ? unidade : null;
-    const pendenciasFinal = unidadeFiltrada
-      ? pendenciasAgrupadas.filter((p) => alunoUnidadeMap[p.alunoId] === unidadeFiltrada)
-      : pendenciasAgrupadas;
 
     const parcelasFinal = pendenciasFinal.reduce((sum, p) => sum + p.qtdParcelas, 0);
     const alunosFinal = new Set(pendenciasFinal.map((p) => p.alunoId)).size;
