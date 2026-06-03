@@ -155,7 +155,7 @@ function UploadPage() {
     }
     const parsed = extractTransactions(rowsRaw);
     if (parsed.length === 0) {
-      toast.error("Nenhuma transação encontrada. Verifique se o arquivo tem colunas Data, Descrição e Valor.");
+      toast.error("Nenhuma transação encontrada. Envie um extrato da Caixa (Data, Histórico, Valor) ou do Itaú (Data, Lançamento, Valor (R$)).");
       return;
     }
 
@@ -294,7 +294,7 @@ function UploadPage() {
             <div>
               <div className="font-medium">{fileName ?? "Clique para selecionar um arquivo CSV ou Excel"}</div>
               <div className="text-xs text-muted-foreground">
-                {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Colunas esperadas: Data, Descrição, Valor (e opcionalmente Tipo)" : "Selecione um colégio primeiro"}
+                {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Extratos da Caixa e do Itaú são detectados automaticamente pelas colunas" : "Selecione um colégio primeiro"}
               </div>
             </div>
             <input

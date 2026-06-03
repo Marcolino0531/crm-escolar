@@ -123,11 +123,16 @@ function buildHeader(row: string[]) {
     }
     return -1;
   };
+  // Description: Caixa uses "Histórico/Descrição"; Itaú uses a column named
+  // exactly "Lançamento". We match "lancamento" only as an EXACT header so it
+  // never collides with Caixa's "Data Lançamento"/"Valor Lançamento" columns.
+  const descByName = findIdx("historico", "descri", "memo", "description");
+  const descIdx = descByName >= 0 ? descByName : header.findIndex(h => h === "lancamento");
   return {
     header,
-    // Priority: "Data de Lançamento" wins over "Data de Movimento" (Caixa) → fallback "Data"
+    // Priority: "Data de Lançamento" wins over "Data de Movimento" (Caixa) → fallback "Data" (Itaú)
     dateIdx: findIdxPriority("data lancamento", "data de lancamento", "data movimento", "data de movimento", "data"),
-    descIdx: findIdx("historico", "descri", "memo", "description"),
+    descIdx,
     valueIdx: findIdx("valor lancamento", "valor", "amount", "value"),
     typeIdx: findIdx("tipo", "type"),
     clientIdx: findIdx("nome/razao", "razao social", "nome", "cliente", "favorecido"),
@@ -137,10 +142,16 @@ function buildHeader(row: string[]) {
 export function extractTransactions(rows: string[][]): ParsedTx[] {
   if (rows.length === 0) return [];
 
-  // Find the real header row: scan first few rows for one that has a Data + Valor column
+  // Find the real header row by reading the COLUMN NAMES — this is what makes
+  // bank detection automatic. Caixa puts its header near the top; Itaú prefixes
+  // several lines of account info and the real columns appear on the row whose
+  // first cell is "Data" (~row 10). Scan deep enough to reach it. The first row
+  // that exposes both a Data and a Valor column wins (data rows never do, since
+  // they contain dates/amounts, not the literal words "data"/"valor").
   let headerRow = 0;
   let info = buildHeader(rows[0]);
-  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+  const scanLimit = Math.min(rows.length, 25);
+  for (let i = 0; i < scanLimit; i++) {
     const cand = buildHeader(rows[i]);
     if (cand.dateIdx >= 0 && cand.valueIdx >= 0) {
       headerRow = i;
