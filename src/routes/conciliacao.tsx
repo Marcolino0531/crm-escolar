@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchSponteConciliacao, type ConciliacaoSponteResult } from "@/lib/sponte.functions";
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
+import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
 import { AccessDenied } from "@/components/AccessDenied";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
@@ -240,7 +241,7 @@ function ConciliacaoPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("transactions")
-        .select("id, date, amount, description, type, revenue_category_id, parent_transaction_id")
+        .select("id, date, amount, description, type, revenue_category_id, revenue_subcategory_id, parent_transaction_id")
         .eq("school_id", schoolId)
         .eq("type", "entrada")
         .is("parent_transaction_id", null)
@@ -297,6 +298,42 @@ function ConciliacaoPage() {
     for (const r of reconciliations) map.set(r.transaction_id, r);
     return map;
   }, [reconciliations]);
+
+  // Auto-conciliação por subcategoria: linhas de receita que já possuem uma
+  // subcategoria única definida (na importação) e ainda não têm conciliação são
+  // marcadas automaticamente como "Conciliadas", sem exigir desmembramento
+  // manual. Cobre extratos antigos e qualquer transação subcategorizada fora do
+  // fluxo de importação. O ref evita reprocessar a mesma linha enquanto a query
+  // de conciliações é revalidada.
+  const autoConcRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!schoolId || !revRefs) return;
+    const candidatos = revenueTxs.filter(
+      (t) => !!t.revenue_subcategory_id && !recByTx.has(t.id) && !autoConcRef.current.has(t.id),
+    );
+    if (candidatos.length === 0) return;
+    candidatos.forEach((t) => autoConcRef.current.add(t.id));
+    (async () => {
+      try {
+        await autoReconcileSubcategorized(
+          candidatos.map((t) => ({
+            id: t.id,
+            amount: Number(t.amount),
+            revenue_category_id: t.revenue_category_id ?? null,
+            revenue_subcategory_id: t.revenue_subcategory_id ?? null,
+          })),
+          revRefs.subs,
+          schoolId,
+        );
+        qc.invalidateQueries({ queryKey: ["conc-recs"] });
+        qc.invalidateQueries({ queryKey: ["conc-txs"] });
+        qc.invalidateQueries({ queryKey: ["dashboard"] });
+      } catch (e) {
+        console.error("[CONC] Falha na conciliação automática por subcategoria:", e);
+        candidatos.forEach((t) => autoConcRef.current.delete(t.id));
+      }
+    })();
+  }, [schoolId, revRefs, revenueTxs, recByTx, qc]);
 
   const chartData = useMemo(() => {
     const map = new Map<string, { name: string; value: number }>();

@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Upload, CheckCircle2, AlertCircle, FileSpreadsheet, Building2, Trash2, Plus, Pencil, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { parseCSV, parseExcel, extractTransactions, type ParsedTx } from "@/lib/csv";
+import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -252,11 +253,31 @@ function UploadPage() {
       school_id: schoolId,
       notes: r.notes.trim() || null,
     }));
-    const { error } = await supabase.from("transactions").insert(payload);
+    const { data: inserted, error } = await supabase
+      .from("transactions")
+      .insert(payload)
+      .select("id, type, amount, revenue_category_id, revenue_subcategory_id");
+    if (error) { setSaving(false); toast.error(error.message); return; }
+
+    // Conciliação automática: transações de receita já subcategorizadas na
+    // importação (valor total = uma única subcategoria) entram como "Conciliadas",
+    // sem exigir desmembramento manual na tela de Conciliação de Faturamento.
+    let autoConc = 0;
+    try {
+      const entradasSub = (inserted ?? []).filter(
+        (t) => t.type === "entrada" && !!t.revenue_subcategory_id,
+      );
+      autoConc = await autoReconcileSubcategorized(entradasSub, revSubs, schoolId);
+    } catch (e) {
+      console.error("[UPLOAD] Falha na conciliação automática por subcategoria:", e);
+    }
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
-    toast.success(`${payload.length} transações salvas!`);
+    toast.success(
+      `${payload.length} transações salvas!${autoConc > 0 ? ` ${autoConc} já conciliada(s) por subcategoria.` : ""}`,
+    );
     qc.invalidateQueries({ queryKey: ["dashboard"] });
+    qc.invalidateQueries({ queryKey: ["conc-recs"] });
+    qc.invalidateQueries({ queryKey: ["conc-txs"] });
     navigate({ to: "/" });
   }
 
