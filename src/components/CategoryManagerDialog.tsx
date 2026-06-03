@@ -31,7 +31,7 @@ export function CategoryManagerDialog({ trigger, defaultKind = "expense" }: Prop
         </DialogHeader>
         <Tabs defaultValue={defaultKind}>
           <TabsList>
-            <TabsTrigger value="expense">Despesas (Centros de Custo)</TabsTrigger>
+            <TabsTrigger value="expense">Despesas</TabsTrigger>
             <TabsTrigger value="revenue">Receitas</TabsTrigger>
           </TabsList>
           <TabsContent value="expense" className="mt-4">
@@ -198,6 +198,7 @@ function ExpenseManager() {
 function RevenueManager() {
   const invalidate = useInvalidate();
   const [name, setName] = useState("");
+  const [color, setColor] = useState("#10b981");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [editingCat, setEditingCat] = useState<string | null>(null);
   const [editCatName, setEditCatName] = useState("");
@@ -222,9 +223,9 @@ function RevenueManager() {
 
   async function add() {
     if (!name.trim()) return;
-    const { error } = await supabase.from("revenue_categories").insert({ name: name.trim() });
+    const { error } = await supabase.from("revenue_categories").insert({ name: name.trim(), color } as any);
     if (error) return toast.error(error.message);
-    setName(""); invalidate(); toast.success("Categoria criada.");
+    setName(""); setColor("#10b981"); invalidate(); toast.success("Categoria criada.");
   }
   async function remove(id: string) {
     if (!confirm("Excluir categoria?")) return;
@@ -262,6 +263,7 @@ function RevenueManager() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <Input value={name} onChange={e => setName(e.target.value)} placeholder="Nova categoria de receita…" className="flex-1 min-w-[180px]" />
+        <input type="color" value={color} onChange={e => setColor(e.target.value)} className="h-10 w-14 cursor-pointer rounded-md border border-input bg-transparent" />
         <Button size="sm" onClick={add}><Plus className="h-4 w-4" /> Adicionar</Button>
       </div>
       <div className="divide-y divide-border rounded-lg border border-border max-h-[400px] overflow-y-auto">
@@ -279,6 +281,7 @@ function RevenueManager() {
                     <Input value={editCatName} onChange={e => setEditCatName(e.target.value)} className="h-8 max-w-xs" onClick={e => e.stopPropagation()} />
                   ) : (
                     <>
+                      <span className="h-3 w-3 rounded-full" style={{ background: cat.color ?? "#10b981" }} />
                       <span className="text-sm font-medium">{cat.name}</span>
                       <span className="text-xs text-muted-foreground">({cSubs.length})</span>
                     </>

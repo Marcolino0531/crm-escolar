@@ -204,9 +204,9 @@ function AppShell() {
           </div>
           <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
           {isAdmin && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
-          <NavItem to="/conciliacao" icon={FileCheck2} label="Conciliação de Faturamento" />
+          <NavItem to="/conciliacao" icon={FileCheck2} label="Faturamento" />
           <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />
-          <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência (Sponte)" />
+          <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência" />
           {isAdmin && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
         </nav>
         <Button
