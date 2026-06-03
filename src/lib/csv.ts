@@ -8,6 +8,24 @@ function fmtDateBR(d: Date): string {
   return `${dd}/${mm}/${yy}`;
 }
 
+// Recompute a sheet's range from the ACTUAL cell addresses. Some exporters
+// (notably the Itaú bank statement) write a truncated "!ref"/dimension — e.g.
+// "A1:F13" even though real data extends to row 39 — which makes
+// sheet_to_json silently drop every row beyond the bogus range. We scan the
+// real cells and return the full bounding box (always anchored at A1).
+function realSheetRange(sheet: XLSX.WorkSheet): string | null {
+  let maxR = -1;
+  let maxC = -1;
+  for (const key of Object.keys(sheet)) {
+    if (key[0] === "!") continue;
+    const cell = XLSX.utils.decode_cell(key);
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  if (maxR < 0 || maxC < 0) return null;
+  return XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+}
+
 // Parse an Excel file (.xlsx/.xls) into the same string[][] shape as parseCSV.
 // Uses cellDates:true so real Date cells become JS Date objects, which we then
 // format explicitly as DD/MM/YYYY — avoiding US-format ("M/D/YYYY") strings.
@@ -15,6 +33,10 @@ export function parseExcel(data: ArrayBuffer): string[][] {
   const wb = XLSX.read(data, { type: "array", cellDates: true });
   const firstSheet = wb.Sheets[wb.SheetNames[0]];
   if (!firstSheet) return [];
+  // Never trust the declared range — rebuild it from the real cells so a
+  // truncated "!ref" can't cut the statement short.
+  const fullRange = realSheetRange(firstSheet);
+  if (fullRange) firstSheet["!ref"] = fullRange;
   const aoa = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
     header: 1,
     raw: true,
