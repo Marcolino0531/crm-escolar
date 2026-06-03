@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchSponteConciliacao, type ConciliacaoSponteResult } from "@/lib/sponte.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette } from "lucide-react";
+import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { useSchool, useRole } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -39,6 +42,39 @@ function firstOfMonth(d = new Date()) {
 }
 function lastOfMonth(d = new Date()) {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+function addDays(isoDate: string, delta: number) {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, d ?? 1);
+  dt.setDate(dt.getDate() + delta);
+  return dt.toISOString().slice(0, 10);
+}
+// Dia da semana (0 = domingo, 6 = sábado) a partir de "YYYY-MM-DD".
+function weekday(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1).getDay();
+}
+// "D-1 dia útil": recua a partir da data e ignora sábados/domingos. Assim,
+// segunda-feira retrocede para a sexta anterior (−3 dias corridos); terça a
+// sexta retrocedem 1 dia; e qualquer recuo nunca cai em fim de semana.
+function previousBusinessDay(isoDate: string): string {
+  let cur = addDays(isoDate, -1);
+  while (weekday(cur) === 0 || weekday(cur) === 6) cur = addDays(cur, -1);
+  return cur;
+}
+// Compara dois valores monetários em CENTAVOS INTEIROS (Math.round), com uma
+// tolerância de poucos centavos, evitando falha por dízimas de ponto flutuante.
+function fechaCentavos(a: number, b: number, tolCentavos = 2): boolean {
+  return Math.abs(Math.round(a * 100) - Math.round(b * 100)) <= tolCentavos;
+}
+
+// Unidades com integração Sponte ativa (mesmo roteamento da Inadimplência).
+const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
+
+// Detecta linhas de cobrança bancária compensada ("COB COMPE") no extrato.
+function isCobCompe(desc: unknown): boolean {
+  const d = norm(desc);
+  return d.includes("compe") && (d.includes("cob") || d.includes("cobranca"));
 }
 
 const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
@@ -154,10 +190,13 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
 }
 
 function ConciliacaoPage() {
-  const { isAdmin, loading: roleLoading } = useRole();
+  const { canView, canEdit, loading: roleLoading } = usePermissions();
+  const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
+  const fetchConciliacao = useServerFn(fetchSponteConciliacao);
   const [schoolId, setSchoolId] = useState(() => (selected !== "all" ? selected : ""));
+  const [autoTxId, setAutoTxId] = useState<string | null>(null);
   const [startDate, setStartDate] = useState(firstOfMonth());
   const [endDate, setEndDate] = useState(lastOfMonth());
   const [uploadingTxId, setUploadingTxId] = useState<string | null>(null);
@@ -168,6 +207,9 @@ function ConciliacaoPage() {
   const [colorsOpen, setColorsOpen] = useState(false);
   const [colorDraft, setColorDraft] = useState<Record<string, string>>({});
   const [colorsSaving, setColorsSaving] = useState(false);
+
+  const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "";
+  const sponteAtiva = UNIDADES_SPONTE.includes(schoolName);
 
   const { data: revRefs } = useQuery({
     queryKey: ["rev-refs-conciliacao"],
@@ -348,7 +390,7 @@ function ConciliacaoPage() {
       if (parsed.items.length === 0) throw new Error("Nenhuma linha de valor identificada na planilha.");
 
       const diff = Math.abs(parsed.total - Number(expectedTotal));
-      if (diff > 0.01) {
+      if (!fechaCentavos(parsed.total, Number(expectedTotal))) {
         throw new Error(`Valores não batem: planilha soma ${formatBRL(parsed.total)}, mas o extrato registra ${formatBRL(Number(expectedTotal))} (diferença ${formatBRL(diff)}).`);
       }
 
@@ -381,7 +423,7 @@ function ConciliacaoPage() {
       .filter((r) => r.subcategory_id && r.amount > 0);
     if (rows.length === 0) { toast.error("Adicione ao menos uma linha válida."); return; }
     const total = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100;
-    if (Math.abs(total - expected) > 0.01) {
+    if (!fechaCentavos(total, expected)) {
       toast.error(`Soma ${formatBRL(total)} não confere com o total ${formatBRL(expected)}.`);
       return;
     }
@@ -415,6 +457,82 @@ function ConciliacaoPage() {
     setManualRows([{ subcategory_id: "", amount: "" }]);
   }
 
+  // Conciliação automática via Sponte para linhas "COB COMPE": busca as parcelas
+  // baixadas do dia (e, se não fechar, de D-1) cujo somatório bate com a linha,
+  // e grava o rateio por categoria — respeitando token/filtro de série da unidade.
+  async function handleAutoConciliar(txId: string, expectedTotal: number, date: string) {
+    if (!revRefs) return;
+    const parentTx = revenueTxs.find((t) => t.id === txId);
+    if (!parentTx) return;
+    const unidade = schoolName;
+    if (!UNIDADES_SPONTE.includes(unidade)) {
+      toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
+      return;
+    }
+    setAutoTxId(txId);
+    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
+    try {
+      // Janelas tentadas em ordem: o próprio dia da linha, depois o D-1 dia útil
+      // (segunda → sexta anterior; demais → dia anterior; nunca cai em fim de semana).
+      const dPrevUtil = previousBusinessDay(date);
+      const janelas = [
+        { inicio: date, fim: date, rotulo: "do dia" },
+        { inicio: dPrevUtil, fim: dPrevUtil, rotulo: "do dia útil anterior" },
+      ];
+      let escolhido: ConciliacaoSponteResult | null = null;
+      let usado = "";
+      const totaisVistos: string[] = [];
+      let ultimoDiag: ConciliacaoSponteResult["diagnostico"] | undefined;
+      for (const j of janelas) {
+        const r = await fetchConciliacao({ data: { dataInicio: j.inicio, dataFim: j.fim, unidade } });
+        if (r.error) throw new Error(r.error);
+        if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+        ultimoDiag = r.diagnostico;
+        console.log(`[CONC] janela ${j.rotulo} (${j.inicio}..${j.fim}):`, r);
+        // Mostra o que REALMENTE foi encontrado, não só "R$ 0,00".
+        totaisVistos.push(`${j.rotulo}: ${r.qtdParcelas} reg / ${formatBRL(r.total)}`);
+        if (r.itens.length > 0 && fechaCentavos(r.total, expectedTotal)) {
+          escolhido = r;
+          usado = j.rotulo;
+          break;
+        }
+      }
+      if (!escolhido) {
+        // Diagnóstico: expõe os rótulos reais do Sponte para depurar produção.
+        const d = ultimoDiag;
+        const detalhe = d
+          ? ` Diagnóstico: ${d.totalNos} parcela(s) no lote; ${d.comFormaBancaria} bancária(s), ${d.comSituacaoBaixada} baixada(s), ${d.comDataNaJanela} na data, ${d.comContaCorreta} na conta. Situações: ${d.situacoesVistas.join(", ") || "—"}. Contas: ${d.contasVistas.join(", ") || "—"}.`
+          : "";
+        throw new Error(
+          `Nenhuma janela fechou com ${formatBRL(expectedTotal)} (${totaisVistos.join(" · ")}).${detalhe} Use o desmembramento manual ou anexe a planilha.`,
+        );
+      }
+      const items = escolhido.itens.map((it) => {
+        const m = matchSubcategory(it.categoria);
+        return { subcategory_label: it.categoria, amount: it.valor, ...m };
+      });
+      await persistReconciliation(
+        txId,
+        `Conciliação automática Sponte (${usado})`,
+        parentTx.date,
+        parentTx.description ?? "Receita",
+        items,
+      );
+      toast.success(
+        `Conciliado via Sponte: ${items.length} categoria(s), total ${formatBRL(escolhido.total)} (${escolhido.qtdParcelas} parcela(s)).`,
+      );
+      qc.invalidateQueries({ queryKey: ["conc-recs"] });
+      qc.invalidateQueries({ queryKey: ["conc-txs"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[CONC] Falha na conciliação automática:", e);
+      toast.error(msg, { duration: 10000 });
+    } finally {
+      setAutoTxId(null);
+    }
+  }
+
   async function removeRec(recId: string, txId: string) {
     if (!confirm("Remover esta conciliação? O detalhamento por subcategoria será apagado, mas a linha do extrato será preservada.")) return;
     // Limpeza defensiva contra transações-filhas legadas.
@@ -430,13 +548,15 @@ function ConciliacaoPage() {
   }
 
   if (roleLoading) return null;
+  if (!canView("financeiro_conciliacao"))
+    return <AccessDenied message="Você não tem permissão para acessar a Conciliação de Faturamento." />;
 
   return (
     <div className="space-y-6 max-w-7xl">
       <div>
         <h1 className="text-2xl font-bold">Conciliação de Faturamento</h1>
         <p className="text-sm text-muted-foreground">
-          Clique em uma linha de receita do extrato e anexe a planilha (Excel/CSV) do detalhamento. O sistema soma os valores por serviço e valida pelo total.
+          Para linhas <strong>COB COMPE</strong>, use <strong>Conciliar Automático via Sponte</strong>: o sistema busca as parcelas baixadas do dia (ou D-1) e monta o rateio por categoria, respeitando o token e o filtro de série da unidade. Também é possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma deve fechar com o valor da linha.
         </p>
       </div>
 
@@ -561,11 +681,20 @@ function ConciliacaoPage() {
                   {revenueTxs.map((t) => {
                     const rec = recByTx.get(t.id);
                     const isUploading = uploadingTxId === t.id;
+                    const isAuto = autoTxId === t.id;
                     const isReconciled = !!rec;
+                    const cobCompe = isCobCompe(t.description);
                     return (
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
-                        <TableCell className="text-sm truncate max-w-[280px]" title={t.description}>{t.description}</TableCell>
+                        <TableCell className="text-sm max-w-[280px]" title={t.description}>
+                          <span className="truncate inline-block max-w-[200px] align-middle">{t.description}</span>
+                          {cobCompe && (
+                            <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300 border-sky-500/40">
+                              COB COMPE
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right font-mono text-sm">{formatBRL(Number(t.amount))}</TableCell>
                         <TableCell>
                           {isReconciled ? (
@@ -592,7 +721,20 @@ function ConciliacaoPage() {
                             )}
                             {isAdmin && (
                               <>
-                                <Button size="sm" variant="outline" onClick={() => openManual(t.id)} disabled={isUploading}>
+                                {cobCompe && sponteAtiva && (
+                                  <Button
+                                    size="sm"
+                                    variant={isReconciled ? "outline" : "default"}
+                                    className={isReconciled ? "" : "bg-sky-600 hover:bg-sky-700 text-white"}
+                                    onClick={() => handleAutoConciliar(t.id, Number(t.amount), t.date)}
+                                    disabled={isUploading || isAuto}
+                                    title="Buscar parcelas baixadas no Sponte e conciliar automaticamente"
+                                  >
+                                    {isAuto ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                                    Conciliar Automático via Sponte
+                                  </Button>
+                                )}
+                                <Button size="sm" variant="outline" onClick={() => openManual(t.id)} disabled={isUploading || isAuto}>
                                   <SplitSquareHorizontal className="h-3 w-3" /> Desmembrar Manualmente
                                 </Button>
                                 <label>
@@ -600,14 +742,14 @@ function ConciliacaoPage() {
                                     type="file"
                                     accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                                     className="hidden"
-                                    disabled={isUploading}
+                                    disabled={isUploading || isAuto}
                                     onChange={(e) => {
                                       const f = e.target.files?.[0];
                                       if (f) handleUpload(t.id, Number(t.amount), f);
                                       e.target.value = "";
                                     }}
                                   />
-                                  <Button size="sm" variant={isReconciled ? "outline" : "default"} asChild disabled={isUploading}>
+                                  <Button size="sm" variant={isReconciled ? "outline" : "default"} asChild disabled={isUploading || isAuto}>
                                     <span className="cursor-pointer">
                                       {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
                                       {isReconciled ? "Substituir Planilha" : "Anexar Planilha (Excel/CSV)"}
@@ -672,7 +814,7 @@ function ConciliacaoPage() {
             const expected = Number(parent.amount);
             const sum = manualRows.reduce((s, r) => s + (parseBRNumber(r.amount) ?? 0), 0);
             const diff = Math.round((expected - sum) * 100) / 100;
-            const ok = Math.abs(diff) < 0.01 && manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
+            const ok = fechaCentavos(sum, expected) && manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
             return (
               <div className="space-y-3">
                 <div className="rounded-md bg-muted p-3 text-sm">
@@ -730,7 +872,7 @@ function ConciliacaoPage() {
                 <div className={`rounded-md border p-3 text-sm flex items-center justify-between ${ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
                   <span>Soma informada: <strong className="font-mono">{formatBRL(sum)}</strong></span>
                   <span>
-                    {Math.abs(diff) < 0.01
+                    {fechaCentavos(sum, expected)
                       ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">Bate com o total</Badge>
                       : <span className="text-amber-700 dark:text-amber-300">Faltam <strong className="font-mono">{formatBRL(diff)}</strong></span>}
                   </span>

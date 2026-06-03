@@ -14,7 +14,8 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
   PieChart, Pie, Legend,
 } from "recharts";
-import { useSchool, useRole } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -26,8 +27,16 @@ export const Route = createFileRoute("/")({
       { name: "description", content: "Visão geral das despesas e receitas por centro de custo." },
     ],
   }),
-  component: Dashboard,
+  component: DashboardGate,
 });
+
+function DashboardGate() {
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("financeiro_dashboard"))
+    return <AccessDenied message="Você não tem permissão para visualizar o Dashboard." />;
+  return <Dashboard />;
+}
 
 function formatBRL(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -45,7 +54,8 @@ function lastDayOfMonth(d = new Date()) {
 
 function Dashboard() {
   const { selected, schools } = useSchool();
-  const { isAdmin } = useRole();
+  const { canEdit } = usePermissions();
+  const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth());
   const [endDate, setEndDate] = useState<string>(lastDayOfMonth());

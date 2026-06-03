@@ -17,16 +17,26 @@ import {
   Building2,
   Construction,
 } from "lucide-react";
-import { useSchool } from "@/lib/app-context";
+import { useSchool, usePermissions } from "@/lib/app-context";
+import { AccessDenied } from "@/components/AccessDenied";
 import { fetchSponteInadimplencia, type PendenciaAgrupada } from "@/lib/sponte.functions";
 
 export const Route = createFileRoute("/inadimplencia")({
   head: () => ({ meta: [{ title: "Inadimplência (Sponte) — Schooler Hub" }] }),
-  component: InadimplenciaPage,
+  component: InadimplenciaGate,
 });
 
-// Unidades com integração Sponte ativa (token/código 23568 atende só CEC e CEC Baby).
-const UNIDADES_SPONTE = ["CEC", "CEC Baby"];
+function InadimplenciaGate() {
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("financeiro_inadimplencia"))
+    return <AccessDenied message="Você não tem permissão para visualizar a Inadimplência." />;
+  return <InadimplenciaPage />;
+}
+
+// Unidades com integração Sponte ativa. CEC/CEC Baby compartilham um token
+// (segmentado por turma); Núcleo Belvedere usa credenciais próprias (sem turmas).
+const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
 
 function formatarMoeda(valor: number): string {
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -107,6 +117,7 @@ function InadimplenciaPage() {
   // Mapeia o seletor de Unidade (school_id) para a unidade do Sponte.
   const unidadeNome =
     selected === "all" ? null : (schools.find((s) => s.id === selected)?.name ?? null);
+  const consolidado = unidadeNome === null;
   const integracaoDisponivel = unidadeNome === null || UNIDADES_SPONTE.includes(unidadeNome);
 
   const { data, isFetching, error, refetch } = useQuery({
@@ -205,8 +216,9 @@ function InadimplenciaPage() {
               A integração com o Sponte para esta unidade estará disponível em breve.
             </p>
             <p className="text-xs text-muted-foreground">
-              Selecione <strong>CEC</strong> ou <strong>CEC Baby</strong> no menu superior para
-              visualizar as cobranças ativas.
+              Selecione <strong>CEC</strong>, <strong>CEC Baby</strong> ou{" "}
+              <strong>Núcleo Belvedere</strong> no menu superior para visualizar as cobranças
+              ativas.
             </p>
           </div>
         </div>
@@ -447,7 +459,15 @@ function InadimplenciaPage() {
                 pendenciasFiltradas.map((p, idx) => (
                   <tr key={`${p.groupKey}-${idx}`} className="transition-colors hover:bg-muted/40">
                     <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-foreground">{p.nomeAluno}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-foreground">{p.nomeAluno}</p>
+                        {consolidado && p.unidade && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                            <Building2 size={10} />
+                            {p.unidade}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {p.categorias.length > 0 ? p.categorias.join(", ") : "Parcela"}
                         {p.qtdParcelas > 1 && (

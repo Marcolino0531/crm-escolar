@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { OnboardingAluno } from "@/lib/crm/types";
 import { TAREFAS_ONBOARDING } from "@/lib/crm/constants";
 import { useOnboarding } from "@/lib/crm/hooks";
-import { useRole } from "@/lib/app-context";
+import { usePermissions } from "@/lib/app-context";
 import {
   ChevronDown,
   ChevronRight,
@@ -19,7 +19,8 @@ interface OnboardingBoardProps {
 }
 
 const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => {
-  const { isAdmin } = useRole();
+  const { canEdit } = usePermissions();
+  const isAdmin = canEdit("onboarding");
   const { alunosPendentes, alunosConcluidos, alternarTarefa, contarTarefas, removerAluno } =
     onboardingHook;
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
