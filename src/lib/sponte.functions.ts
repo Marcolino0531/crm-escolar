@@ -555,8 +555,15 @@ interface ColetaBaixadasResult {
   fault?: string;
 }
 
-const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
-const FORMA_BANCARIA_NORM = normalizarTexto(FORMA_COBRANCA_BANCARIA);
+// Reconhece liquidações que caem no crédito bancário agregado do extrato — a
+// linha "COB COMPE" (Caixa) / "BOLETOS RECEBIDOS" (Itaú). Ou seja, somente
+// boletos compensados ("Cobrança Bancária" / "Boleto Bancário"). Exclui PIX,
+// dinheiro, cartão etc., que NÃO entram nessa linha do banco. O rótulo varia,
+// então casamos por inclusão normalizada (sem acento/caixa).
+function ehRecebimentoBancario(forma: string): boolean {
+  const f = normalizarTexto(forma);
+  return f.includes("cobranca bancaria") || f.includes("boleto");
+}
 
 function topContagem(mapa: Map<string, number>, n = 8): string[] {
   return [...mapa.entries()]
@@ -663,30 +670,41 @@ async function coletarBaixadas(
       if (!dataNaJanela(dataPagamento, inicioYMD, fimYMD)) continue;
       diag.comDataNaJanela++;
 
-      // Filtro 1 — somente Cobrança Bancária (exclui PIX avulso, dinheiro, cartão).
-      if (normalizarTexto(formaRaw) !== FORMA_BANCARIA_NORM) continue;
-      diag.comFormaBancaria++;
-
       const categoria = parseXmlValue(parcela, "Categoria") || "Outros";
       const alunoId = parseXmlValue(parcela, "AlunoID");
       const numeroBoleto = parseXmlValue(parcela, "NumeroBoleto");
 
-      // Filtro 3 — Conta Creditada específica da unidade. Belvedere (sem conta):
-      // soma o valor pago integral. CEC/CEC Baby: soma só os lançamentos
-      // rateados na conta-caixa da unidade (trata baixas divididas entre contas).
+      // Filtros de FORMA (boleto) + CONTA da baixa real, somados juntos porque a
+      // forma REAL de liquidação está no RATEIO (TipoRecebimento), não na parcela:
+      // a FormaCobranca da parcela vem "Cobrança Bancária" mesmo quando o boleto
+      // foi PAGO via PIX — e esse PIX NÃO entra no "BOLETOS RECEBIDOS"/"COB COMPE"
+      // do banco, inflando a soma (era a causa do CEC nunca fechar). Por isso o
+      // filtro de boleto é por rateio. Belvedere (sem conta): usa a forma da
+      // parcela. CEC/CEC Baby: soma só os rateios na conta-caixa da unidade E
+      // liquidados via boleto (trata baixas divididas entre contas).
       let valorNaConta: number;
       if (!contaCaixa) {
-        valorNaConta = parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO));
-      } else if (rateioNodes.length) {
-        valorNaConta = rateioNodes
-          .filter((r) => contaCaixaBate(parseXmlValue(r, "ContaCreditada"), contaCaixa))
-          .reduce((s, r) => s + parseBrDecimal(parseXmlValue(r, "ValorPagoRateado")), 0);
-      } else {
-        valorNaConta = contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa)
+        valorNaConta = ehRecebimentoBancario(formaRaw)
           ? parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO))
           : 0;
+      } else if (rateioNodes.length) {
+        valorNaConta = rateioNodes
+          .filter(
+            (r) =>
+              contaCaixaBate(parseXmlValue(r, "ContaCreditada"), contaCaixa) &&
+              ehRecebimentoBancario(parseXmlValue(r, "TipoRecebimento")),
+          )
+          .reduce((s, r) => s + parseBrDecimal(parseXmlValue(r, "ValorPagoRateado")), 0);
+      } else {
+        valorNaConta =
+          contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa) &&
+          ehRecebimentoBancario(formaRaw)
+            ? parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO))
+            : 0;
       }
       if (valorNaConta <= 0) continue;
+      // Contribuiu via boleto na conta certa (funil de diagnóstico).
+      diag.comFormaBancaria++;
       diag.comContaCorreta++;
 
       parcelas.push({ alunoId, categoria, valorPago: valorNaConta, numeroBoleto });
