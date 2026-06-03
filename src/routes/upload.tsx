@@ -153,7 +153,13 @@ function UploadPage() {
       toast.error(`Não foi possível ler o arquivo: ${(e as Error).message}`);
       return;
     }
-    const parsed = extractTransactions(rowsRaw);
+    let parsed: ParsedTx[];
+    try {
+      parsed = extractTransactions(rowsRaw);
+    } catch (e) {
+      toast.error(`Falha ao interpretar as transações: ${(e as Error).message}`);
+      return;
+    }
     if (parsed.length === 0) {
       toast.error("Nenhuma transação encontrada. Envie um extrato da Caixa (Data, Histórico, Valor) ou do Itaú (Data, Lançamento, Valor (R$)).");
       return;

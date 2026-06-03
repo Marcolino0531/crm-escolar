@@ -66,8 +66,11 @@ export type ParsedTx = {
   type: "entrada" | "saida";
 };
 
-function parseDate(s: string): string | null {
-  s = (s ?? "").trim();
+function parseDate(input: unknown): string | null {
+  // Coerce defensively: Excel cells can arrive as Date/number/null, not just
+  // string. Never call string methods on a non-string.
+  if (input == null) return null;
+  const s = String(input).trim();
   if (!s) return null;
   // Brazilian DD/MM/YYYY or DD-MM-YYYY — split strictly by "/" or "-"
   const parts = s.split(/[\/\-]/);
@@ -93,7 +96,13 @@ function parseDate(s: string): string | null {
   return null;
 }
 
-function parseAmount(s: string): number | null {
+function parseAmount(input: unknown): number | null {
+  // The Excel lib often returns numeric cells as real numbers — handle that
+  // directly instead of calling .replace() on a non-string (which would throw
+  // "s.replace is not a function" and abort the whole import).
+  if (input == null || input === "") return null;
+  if (typeof input === "number") return isNaN(input) ? null : input;
+  const s = String(input);
   if (!s) return null;
   let v = s.replace(/[R$\s]/g, "");
   // Brazilian: 1.234,56 -> 1234.56
@@ -106,11 +115,12 @@ function parseAmount(s: string): number | null {
   return isNaN(n) ? null : n;
 }
 
-function norm(s: string): string {
-  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+function norm(s: unknown): string {
+  if (s == null) return "";
+  return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 }
 
-function buildHeader(row: string[]) {
+function buildHeader(row: unknown[]) {
   const header = row.map(norm);
   // Find first column matching ANY of the names (no priority among names)
   const findIdx = (...names: string[]) =>
@@ -163,34 +173,51 @@ export function extractTransactions(rows: string[][]): ParsedTx[] {
   const { dateIdx, descIdx, valueIdx, typeIdx, clientIdx } = info;
   const dataRows = rows.slice(headerRow + 1);
 
+  // Safely coerce any cell (number/Date/null/undefined/string) to a trimmed
+  // string — never call string methods on a raw cell value.
+  const cell = (r: unknown[], i: number): string => {
+    if (i < 0) return "";
+    const v = r[i];
+    return v == null ? "" : String(v).trim();
+  };
+
   const txs: ParsedTx[] = [];
   for (const r of dataRows) {
-    const dRaw = dateIdx >= 0 ? r[dateIdx] : r[0];
-    const descBase = (descIdx >= 0 ? r[descIdx] : r[1]) ?? "";
-    const clientRaw = clientIdx >= 0 ? (r[clientIdx] ?? "").trim() : "";
-    const vRaw = valueIdx >= 0 ? r[valueIdx] : r[2];
-    const date = parseDate(dRaw ?? "");
-    const amt = parseAmount(vRaw ?? "");
-    if (!date || amt === null) continue;
+    // A single malformed row must never abort the rest of the import.
+    try {
+      const dRaw = dateIdx >= 0 ? r[dateIdx] : r[0];
+      const vRaw = valueIdx >= 0 ? r[valueIdx] : r[2];
+      const date = parseDate(dRaw);
+      const amt = parseAmount(vRaw);
+      // Balance/info lines (e.g. "SALDO ANTERIOR") have no valid date+value —
+      // skip them silently.
+      if (!date || amt === null) continue;
 
-    let type: "entrada" | "saida";
-    if (typeIdx >= 0 && r[typeIdx]) {
-      const t = r[typeIdx].toLowerCase();
-      type = t.startsWith("e") || t.includes("cred") || t.includes("rece") ? "entrada" : "saida";
-    } else {
-      type = amt >= 0 ? "entrada" : "saida";
+      const descBase = descIdx >= 0 ? cell(r, descIdx) : cell(r, 1);
+      const clientRaw = clientIdx >= 0 ? cell(r, clientIdx) : "";
+
+      let type: "entrada" | "saida";
+      const tRaw = typeIdx >= 0 ? cell(r, typeIdx) : "";
+      if (tRaw) {
+        const t = tRaw.toLowerCase();
+        type = t.startsWith("e") || t.includes("cred") || t.includes("rece") ? "entrada" : "saida";
+      } else {
+        type = amt >= 0 ? "entrada" : "saida";
+      }
+
+      // Only append the counterparty (Razão Social) when it is actually present.
+      const description = clientRaw ? `${descBase} — ${clientRaw}`.replace(/^ — /, "") : descBase;
+
+      txs.push({
+        date,
+        description,
+        amount: Math.abs(amt),
+        type,
+      });
+    } catch {
+      // Defensive: skip any row that fails to parse rather than breaking the loop.
+      continue;
     }
-
-    const description = clientRaw
-      ? `${descBase.trim()} — ${clientRaw}`.replace(/^ — /, "")
-      : descBase.trim();
-
-    txs.push({
-      date,
-      description,
-      amount: Math.abs(amt),
-      type,
-    });
   }
   return txs;
 }
