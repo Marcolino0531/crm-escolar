@@ -11,7 +11,6 @@ import {
   LayoutDashboard,
   Upload,
   Settings,
-  Wallet,
   LogOut,
   FileCheck2,
   TrendingUp,
@@ -73,14 +72,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "School Finance Hub" },
+      { title: "School Hub" },
       {
         name: "description",
         content:
           "Importe extratos, categorize por centro de custo e acompanhe o financeiro do colégio.",
       },
-      { property: "og:title", content: "School Finance Hub" },
-      { name: "twitter:title", content: "School Finance Hub" },
+      { property: "og:title", content: "School Hub" },
+      { name: "twitter:title", content: "School Hub" },
       {
         property: "og:description",
         content:
@@ -104,7 +103,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "website" },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", type: "image/svg+xml", href: "/school-hub-logo.svg" },
+      { rel: "shortcut icon", href: "/school-hub-logo.svg" },
+    ],
   }),
   shellComponent: RootShell,
   component: RootComponent,
@@ -199,12 +202,11 @@ function AppShell() {
     <div className="flex min-h-screen bg-background">
       <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
         <div className="mb-8 flex items-center gap-2 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Wallet className="h-5 w-5" />
+          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
+            <img src="/school-hub-logo.svg" alt="School Hub" className="h-full w-full object-contain" />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight">Colégio</div>
-            <div className="text-xs text-muted-foreground">Financeiro</div>
+            <div className="text-sm font-semibold leading-tight">School Hub</div>
           </div>
         </div>
         <nav className="flex flex-col gap-1">
@@ -245,8 +247,8 @@ function AppShell() {
       </aside>
       <div className="flex flex-1 flex-col">
         <header className="md:hidden flex items-center gap-2 border-b border-border bg-card px-4 py-3">
-          <Wallet className="h-5 w-5 text-primary" />
-          <span className="font-semibold">Financeiro Colégio</span>
+          <img src="/school-hub-logo.svg" alt="School Hub" className="h-8 w-8 object-contain" />
+          <span className="font-semibold">School Hub</span>
           <nav className="ml-auto flex gap-1">
             {showFinanceiro && showDashboard && (
               <Link

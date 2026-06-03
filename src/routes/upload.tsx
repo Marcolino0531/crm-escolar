@@ -18,7 +18,7 @@ import { CategoryManagerDialog } from "@/components/CategoryManagerDialog";
 export const Route = createFileRoute("/upload")({
   head: () => ({
     meta: [
-      { title: "Importar Extrato — Financeiro do Colégio" },
+      { title: "Importar Extrato — School Hub" },
       { name: "description", content: "Faça upload de um CSV do extrato bancário e categorize por centro de custo." },
     ],
   }),

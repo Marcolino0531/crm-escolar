@@ -9,7 +9,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import type { ItemMatricula, Lead } from "@/lib/crm/types";
 
 export const Route = createFileRoute("/admissoes")({
-  head: () => ({ meta: [{ title: "Admissões — Schooler Hub" }] }),
+  head: () => ({ meta: [{ title: "Admissões — School Hub" }] }),
   component: AdmissoesPage,
 });
 

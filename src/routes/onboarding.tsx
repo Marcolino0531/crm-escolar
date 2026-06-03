@@ -5,7 +5,7 @@ import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 
 export const Route = createFileRoute("/onboarding")({
-  head: () => ({ meta: [{ title: "Onboarding — Schooler Hub" }] }),
+  head: () => ({ meta: [{ title: "Onboarding — School Hub" }] }),
   component: OnboardingPage,
 });
 

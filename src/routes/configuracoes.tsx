@@ -52,7 +52,7 @@ import {
 export const Route = createFileRoute("/configuracoes")({
   head: () => ({
     meta: [
-      { title: "Configurações — Financeiro do Colégio" },
+      { title: "Configurações — School Hub" },
       { name: "description", content: "Gerencie centros de custo e regras de categorização." },
     ],
   }),

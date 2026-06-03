@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wallet } from "lucide-react";
 import { toast } from "sonner";
 
 export function LoginScreen() {
@@ -24,11 +23,11 @@ export function LoginScreen() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/5 via-background to-primary/10 p-4">
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Wallet className="h-6 w-6" />
+          <div className="mx-auto flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl bg-primary/10">
+            <img src="/school-hub-logo.svg" alt="School Hub" className="h-full w-full object-contain" />
           </div>
           <div>
-            <CardTitle className="text-xl">Financeiro do Colégio</CardTitle>
+            <CardTitle className="text-xl">School Hub</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">Acesse com seu e-mail e senha</p>
           </div>
         </CardHeader>

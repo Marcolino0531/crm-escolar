@@ -23,7 +23,7 @@ import * as XLSX from "xlsx";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Dashboard — Financeiro do Colégio" },
+      { title: "School Hub" },
       { name: "description", content: "Visão geral das despesas e receitas por centro de custo." },
     ],
   }),

@@ -22,7 +22,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { fetchSponteInadimplencia, type PendenciaAgrupada } from "@/lib/sponte.functions";
 
 export const Route = createFileRoute("/inadimplencia")({
-  head: () => ({ meta: [{ title: "Inadimplência (Sponte) — Schooler Hub" }] }),
+  head: () => ({ meta: [{ title: "Inadimplência — School Hub" }] }),
   component: InadimplenciaGate,
 });
 

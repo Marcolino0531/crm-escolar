@@ -5,7 +5,7 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 
 export const Route = createFileRoute("/rh")({
-  head: () => ({ meta: [{ title: "Recursos Humanos — Schooler Hub" }] }),
+  head: () => ({ meta: [{ title: "Recursos Humanos — School Hub" }] }),
   component: RecursosHumanosPage,
 });
 

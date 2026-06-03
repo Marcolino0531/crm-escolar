@@ -23,7 +23,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recha
 export const Route = createFileRoute("/conciliacao")({
   head: () => ({
     meta: [
-      { title: "Conciliação de Faturamento — Financeiro do Colégio" },
+      { title: "Faturamento — School Hub" },
       { name: "description", content: "Concilie qualquer receita do extrato anexando a planilha de detalhamento." },
     ],
   }),
