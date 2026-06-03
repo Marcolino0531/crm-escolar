@@ -72,10 +72,16 @@ function fechaCentavos(a: number, b: number, tolCentavos = 2): boolean {
 // Unidades com integração Sponte ativa (mesmo roteamento da Inadimplência).
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
 
-// Detecta linhas de cobrança bancária compensada ("COB COMPE") no extrato.
+// Detecta a linha agregada de cobrança bancária compensada no extrato — a que
+// precisa ser conciliada via Sponte. Cada banco rotula de um jeito:
+//   • Caixa: "COB COMPE" / "COBRANÇA COMPENSADA"
+//   • Itaú : "BOLETOS RECEBIDOS" (crédito diário dos boletos compensados)
+// O CEC usa extrato do Itaú (conta 489426), por isso precisa do rótulo do Itaú.
 function isCobCompe(desc: unknown): boolean {
   const d = norm(desc);
-  return d.includes("compe") && (d.includes("cob") || d.includes("cobranca"));
+  const caixa = d.includes("compe") && (d.includes("cob") || d.includes("cobranca"));
+  const itau = d.includes("boletos recebidos");
+  return caixa || itau;
 }
 
 const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
@@ -225,14 +231,24 @@ function ConciliacaoPage() {
     },
   });
 
-  const colorByLabel = useMemo(() => {
-    const m = new Map<string, string>();
-    if (revRefs) for (const s of revRefs.subs) m.set(norm(s.name), s.color);
-    return m;
-  }, [revRefs]);
-
-  function colorFor(label: string): string {
-    return colorByLabel.get(norm(label)) ?? hashColor(label);
+  // Mapa de cores unificado: resolve um rótulo de item à subcategoria canônica
+  // (primeiro pelo revenue_subcategory_id; senão por nome exato/contido) e
+  // devolve o NOME e a COR canônicos dessa subcategoria. Assim a mesma
+  // subcategoria recebe sempre a mesma cor (a cadastrada em revenue_subcategories,
+  // editável na tela), independente do colégio selecionado. Sem correspondência,
+  // cai numa cor determinística por rótulo (igual em qualquer unidade).
+  function resolveSubcat(label: string, subId: string | null): { name: string; color: string } {
+    if (revRefs) {
+      let sub = subId ? revRefs.subs.find((s) => s.id === subId) : undefined;
+      if (!sub) {
+        const n = norm(label);
+        sub =
+          revRefs.subs.find((s) => norm(s.name) === n) ??
+          revRefs.subs.find((s) => n.includes(norm(s.name)) || norm(s.name).includes(n));
+      }
+      if (sub) return { name: sub.name, color: sub.color };
+    }
+    return { name: label, color: hashColor(label) };
   }
 
   const { data: txs = [], isLoading: txLoading } = useQuery({
@@ -336,17 +352,18 @@ function ConciliacaoPage() {
   }, [schoolId, revRefs, revenueTxs, recByTx, qc]);
 
   const chartData = useMemo(() => {
-    const map = new Map<string, { name: string; value: number }>();
+    const map = new Map<string, { name: string; value: number; color: string }>();
     for (const r of reconciliations) {
       for (const it of r.boleto_reconciliation_items) {
-        const key = it.subcategory_label;
-        const cur = map.get(key);
+        const { name, color } = resolveSubcat(it.subcategory_label, it.revenue_subcategory_id);
+        const cur = map.get(name);
         if (cur) cur.value += Number(it.amount);
-        else map.set(key, { name: key, value: Number(it.amount) });
+        else map.set(name, { name, value: Number(it.amount), color });
       }
     }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [reconciliations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reconciliations, revRefs]);
 
   const totalReconciled = chartData.reduce((s, d) => s + d.value, 0);
 
@@ -663,7 +680,7 @@ function ConciliacaoPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie data={chartData} dataKey="value" nameKey="name" innerRadius={70} outerRadius={120} paddingAngle={2}>
-                          {chartData.map((d) => <Cell key={d.name} fill={colorFor(d.name)} />)}
+                          {chartData.map((d) => <Cell key={d.name} fill={d.color} />)}
                         </Pie>
                         <Tooltip formatter={(v: number) => formatBRL(v)} />
                         <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11 }} />
@@ -674,7 +691,7 @@ function ConciliacaoPage() {
                     {chartData.map((d) => (
                       <div key={d.name} className="flex items-center justify-between text-xs border-b py-1.5">
                         <span className="flex items-center gap-2 truncate">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: colorFor(d.name) }} />
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: d.color }} />
                           {d.name}
                         </span>
                         <span className="font-mono">{formatBRL(d.value)}</span>

@@ -62,9 +62,7 @@ export async function autoReconcileSubcategorized(
     };
   });
 
-  const { error: itErr } = await supabase
-    .from("boleto_reconciliation_items")
-    .insert(itemRows);
+  const { error: itErr } = await supabase.from("boleto_reconciliation_items").insert(itemRows);
   if (itErr) throw new Error(itErr.message);
 
   return elegiveis.length;
