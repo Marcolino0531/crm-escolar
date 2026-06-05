@@ -25,7 +25,8 @@ interface UnidadeSponteConfig {
   segmentaPorTurma: boolean;
   // Conta Caixa creditada usada na Conciliação de Faturamento para isolar a
   // unidade (CEC e CEC Baby compartilham o token, mas creditam em contas
-  // distintas). null = sem filtro de conta (Belvedere).
+  // distintas; Belvedere usa token próprio e credita na 9295). null = sem
+  // filtro de conta.
   contaCaixa: string | null;
 }
 
@@ -46,7 +47,7 @@ const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
     codigoEnv: "SPONTE_BELVEDERE_CODIGO_CLIENTE",
     tokenEnv: "SPONTE_BELVEDERE_TOKEN",
     segmentaPorTurma: false,
-    contaCaixa: null,
+    contaCaixa: "9295",
   },
 };
 
@@ -679,9 +680,10 @@ async function coletarBaixadas(
       // a FormaCobranca da parcela vem "Cobrança Bancária" mesmo quando o boleto
       // foi PAGO via PIX — e esse PIX NÃO entra no "BOLETOS RECEBIDOS"/"COB COMPE"
       // do banco, inflando a soma (era a causa do CEC nunca fechar). Por isso o
-      // filtro de boleto é por rateio. Belvedere (sem conta): usa a forma da
-      // parcela. CEC/CEC Baby: soma só os rateios na conta-caixa da unidade E
-      // liquidados via boleto (trata baixas divididas entre contas).
+      // filtro de boleto é por rateio. Sem conta configurada (fallback): usa a
+      // forma da parcela. CEC/CEC Baby/Belvedere: soma só os rateios na conta-
+      // caixa da unidade E liquidados via boleto (trata baixas divididas entre
+      // contas).
       let valorNaConta: number;
       if (!contaCaixa) {
         valorNaConta = ehRecebimentoBancario(formaRaw)
@@ -740,7 +742,7 @@ const ConciliacaoInputSchema = z.object({
 // não por série:
 //  - CEC: token compartilhado, conta caixa 489426
 //  - CEC Baby: token compartilhado, conta caixa 011311
-//  - Núcleo Belvedere: token exclusivo, sem filtro de conta
+//  - Núcleo Belvedere: token exclusivo, conta caixa 9295
 export const fetchSponteConciliacao = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ConciliacaoInputSchema.parse(input))
   .handler(async ({ data }): Promise<ConciliacaoSponteResult> => {
