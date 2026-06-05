@@ -48,13 +48,9 @@ const SchoolContext = createContext<SchoolCtx>({
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const { isAdmin } = useRole();
-  const [selected, setSelected] = useState<SchoolFilter>(() => {
-    if (typeof window === "undefined") return "all";
-    return localStorage.getItem("school_filter") ?? "all";
-  });
-  useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem("school_filter", selected);
-  }, [selected]);
+  // Every fresh load/login starts on the consolidated view ("Todas as
+  // Unidades"); the selection is intentionally NOT persisted across reloads.
+  const [selected, setSelected] = useState<SchoolFilter>("all");
 
   const { data: allSchools = [] } = useQuery({
     queryKey: ["schools", session?.user?.id ?? "anon"],

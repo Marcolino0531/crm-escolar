@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import {
   Outlet,
   Link,
@@ -183,7 +184,18 @@ function AuthGate() {
 }
 
 function AppShell() {
-  const { canView, canEdit } = usePermissions();
+  const { canView, canEdit, loading: permsLoading } = usePermissions();
+  const router = useRouter();
+  // On every app open / login, land the user on the Dashboard ("/") — the
+  // consolidated "Todas as Unidades" view (school filter defaults to "all").
+  const didRedirect = useRef(false);
+  useEffect(() => {
+    if (permsLoading || didRedirect.current) return;
+    didRedirect.current = true;
+    if (canView("financeiro_dashboard")) {
+      router.navigate({ to: "/" });
+    }
+  }, [permsLoading, canView, router]);
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
