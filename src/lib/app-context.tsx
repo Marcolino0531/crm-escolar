@@ -144,6 +144,7 @@ export const FINANCEIRO_SUBMODULES = [
   "financeiro_conciliacao",
   "financeiro_fluxo",
   "financeiro_inadimplencia",
+  "financeiro_fundos",
 ] as const;
 
 // Every module that can appear in the permission matrix / be persisted.
@@ -163,6 +164,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   financeiro_conciliacao: "Conciliação de Faturamento",
   financeiro_fluxo: "Fluxo Futuro",
   financeiro_inadimplencia: "Inadimplência",
+  financeiro_fundos: "Fundos",
 };
 
 export type ModulePermission = { view: boolean; edit: boolean };

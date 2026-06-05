@@ -18,6 +18,7 @@ import {
   ClipboardCheck,
   Users,
   AlertCircle,
+  PiggyBank,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
@@ -192,11 +193,12 @@ function AppShell() {
   const showConciliacao = canView("financeiro_conciliacao");
   const showFluxo = canView("financeiro_fluxo");
   const showInadimplencia = canView("financeiro_inadimplencia");
+  const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
   // sub-tab is visible.
   const showFinanceiro =
     canView("financeiro") &&
-    (showDashboard || showUpload || showConciliacao || showFluxo || showInadimplencia);
+    (showDashboard || showUpload || showConciliacao || showFluxo || showInadimplencia || showFundos);
   const showConfig = canView("configuracoes");
   return (
     <div className="flex min-h-screen bg-background">
@@ -232,6 +234,7 @@ function AppShell() {
               {showInadimplencia && (
                 <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência" />
               )}
+              {showFundos && <NavItem to="/fundos" icon={PiggyBank} label="Fundos" />}
             </>
           )}
           {showConfig && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
