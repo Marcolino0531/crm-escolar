@@ -26,7 +26,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
-import { TaskNotificationsBell } from "@/components/TaskNotificationsBell";
+import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 
@@ -336,7 +336,7 @@ function AppShell() {
         <div className="flex items-center gap-2 border-b border-border bg-card/50 px-4 py-3 md:px-8">
           <SchoolFilter />
           <div className="ml-auto">
-            <TaskNotificationsBell />
+            <NotificationsBell />
           </div>
         </div>
         <main className="flex-1 p-4 md:p-8">
