@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Plus, ArrowRight, Trash2, Play, Check, Inbox, Loader2, CheckCircle2 } from "lucide-react";
+import { Plus, ArrowRight, Trash2, Play, Check, Inbox, Loader2, CheckCircle2, MessageSquare, Send } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
@@ -22,6 +22,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,6 +35,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDateBR } from "@/lib/date-utils";
+
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const STATUS_LABEL: Record<TaskStatus, string> = {
+  aberto: "Aberto",
+  em_resolucao: "Em Resolução",
+  concluido: "Concluído",
+};
 
 export const Route = createFileRoute("/tasks")({
   component: TasksGate,
@@ -65,6 +89,7 @@ function TasksPage() {
   const me = session?.user?.id ?? "";
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const listUsersFn = useServerFn(listDirectoryUsers);
 
   const { data: users = [] } = useQuery({
@@ -183,6 +208,7 @@ function TasksPage() {
                         task={t}
                         me={me}
                         userName={userName}
+                        onOpen={() => setOpenTaskId(t.id)}
                         onAdvance={(status) => setStatus.mutate({ id: t.id, status })}
                         onDelete={() => {
                           if (confirm(`Excluir a task "${t.title}"?`)) deleteTask.mutate(t.id);
@@ -204,7 +230,153 @@ function TasksPage() {
         onSave={(p) => createTask.mutate(p)}
         saving={createTask.isPending}
       />
+
+      <TaskChatSheet
+        task={tasks.find((t) => t.id === openTaskId) ?? null}
+        me={me}
+        userName={userName}
+        onClose={() => setOpenTaskId(null)}
+      />
     </div>
+  );
+}
+
+function TaskChatSheet({
+  task,
+  me,
+  userName,
+  onClose,
+}: {
+  task: Task | null;
+  me: string;
+  userName: (id: string) => string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [body, setBody] = useState("");
+
+  const { data: messages = [], isLoading } = useQuery({
+    queryKey: ["task_messages", task?.id ?? "none"],
+    enabled: !!task,
+    refetchInterval: task ? 10000 : false,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("task_messages" as any)
+        .select("*")
+        .eq("task_id", task!.id)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as {
+        id: string;
+        author_id: string;
+        body: string;
+        created_at: string;
+      }[];
+    },
+  });
+
+  const send = useMutation({
+    mutationFn: async (text: string) => {
+      const { error } = await supabase.from("task_messages" as any).insert({
+        task_id: task!.id,
+        author_id: me,
+        body: text,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setBody("");
+      qc.invalidateQueries({ queryKey: ["task_messages", task?.id] });
+    },
+    onError: (e: any) => toast.error(e.message ?? "Erro ao enviar mensagem."),
+  });
+
+  return (
+    <Sheet open={!!task} onOpenChange={(v) => { if (!v) { onClose(); setBody(""); } }}>
+      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+        {task && (
+          <>
+            <SheetHeader className="border-b px-4 py-3">
+              <SheetTitle className="pr-6 text-base leading-tight">{task.title}</SheetTitle>
+              <div className="space-y-1.5 pt-1 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="font-medium text-foreground">De: {userName(task.sender_id)}</span>
+                  <ArrowRight className="h-3 w-3" />
+                  <span className="font-medium text-foreground">Para: {userName(task.recipient_id)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-[10px]">{STATUS_LABEL[task.status]}</Badge>
+                  <span>{formatDateBR(task.created_at)}</span>
+                </div>
+                {task.description && (
+                  <p className="whitespace-pre-wrap pt-1 text-foreground">{task.description}</p>
+                )}
+              </div>
+            </SheetHeader>
+
+            <div className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-muted-foreground">
+              <MessageSquare className="h-3.5 w-3.5" /> Observações
+            </div>
+
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4">
+              {isLoading ? (
+                <p className="text-xs text-muted-foreground">Carregando…</p>
+              ) : messages.length === 0 ? (
+                <p className="py-8 text-center text-xs text-muted-foreground">
+                  Nenhuma mensagem ainda. Inicie a conversa abaixo.
+                </p>
+              ) : (
+                messages.map((m) => {
+                  const mine = m.author_id === me;
+                  return (
+                    <div key={m.id} className={`flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                          mine
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-foreground"
+                        }`}
+                      >
+                        <div className={`mb-0.5 text-[10px] font-semibold ${mine ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                          {userName(m.author_id)}
+                        </div>
+                        <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                      </div>
+                      <span className="mt-0.5 text-[10px] text-muted-foreground">{fmtDateTime(m.created_at)}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t p-3">
+              <div className="flex items-end gap-2">
+                <Textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="Escreva uma observação…"
+                  rows={2}
+                  className="resize-none"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (body.trim()) send.mutate(body.trim());
+                    }
+                  }}
+                />
+                <Button
+                  size="icon"
+                  disabled={send.isPending || !body.trim()}
+                  onClick={() => body.trim() && send.mutate(body.trim())}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -212,20 +384,27 @@ function TaskCard({
   task,
   me,
   userName,
+  onOpen,
   onAdvance,
   onDelete,
 }: {
   task: Task;
   me: string;
   userName: (id: string) => string;
+  onOpen: () => void;
   onAdvance: (status: TaskStatus) => void;
   onDelete: () => void;
 }) {
   const isRecipient = task.recipient_id === me;
   const isSender = task.sender_id === me;
+  // Keep action-button clicks from also opening the chat panel.
+  const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
 
   return (
-    <Card className="space-y-2 p-3 shadow-sm">
+    <Card
+      className="cursor-pointer space-y-2 p-3 shadow-sm transition-colors hover:bg-accent/40"
+      onClick={onOpen}
+    >
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-semibold leading-tight">{task.title}</h3>
         <span className="shrink-0 text-[11px] text-muted-foreground">{formatDateBR(task.created_at)}</span>
@@ -238,32 +417,35 @@ function TaskCard({
       </div>
 
       {task.description && (
-        <p className="whitespace-pre-wrap text-xs text-muted-foreground">{task.description}</p>
+        <p className="line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{task.description}</p>
       )}
 
-      <div className="flex flex-wrap gap-1 pt-1">
+      <div className="flex flex-wrap items-center gap-1 pt-1">
         {/* The recipient drives the workflow. */}
         {isRecipient && task.status === "aberto" && (
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => onAdvance("em_resolucao")}>
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("em_resolucao"))}>
             <Play className="h-3 w-3" /> Iniciar
           </Button>
         )}
         {isRecipient && task.status === "em_resolucao" && (
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => onAdvance("concluido")}>
+          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("concluido"))}>
             <Check className="h-3 w-3" /> Concluir
           </Button>
         )}
         {isRecipient && task.status === "concluido" && (
-          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => onAdvance("em_resolucao")}>
+          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("em_resolucao"))}>
             Reabrir
           </Button>
         )}
+        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={stop(onOpen)}>
+          <MessageSquare className="h-3 w-3" /> Observações
+        </Button>
         {isSender && (
           <Button
             size="sm"
             variant="ghost"
             className="ml-auto h-7 gap-1 text-xs text-destructive"
-            onClick={onDelete}
+            onClick={stop(onDelete)}
           >
             <Trash2 className="h-3 w-3" /> Excluir
           </Button>
