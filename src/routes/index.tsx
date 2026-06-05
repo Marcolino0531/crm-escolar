@@ -111,7 +111,7 @@ function Dashboard() {
     },
   });
 
-  const schoolLabel = selected === "all" ? "Consolidado (todos os colégios)" : (schools.find(s => s.id === selected)?.name ?? "");
+  const schoolLabel = selected === "all" ? "Todas as Unidades" : (schools.find(s => s.id === selected)?.name ?? "");
 
   const txs = data?.transactions ?? [];
   const ccs = data?.costCenters ?? [];

@@ -16,7 +16,7 @@ export function SchoolFilter() {
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {showAll && <SelectItem value="all">Consolidado (todos)</SelectItem>}
+          {showAll && <SelectItem value="all">Todas as Unidades</SelectItem>}
           {schools.map((s) => (
             <SelectItem key={s.id} value={s.id}>
               {s.name}
