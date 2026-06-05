@@ -734,6 +734,9 @@ const ConciliacaoInputSchema = z.object({
   dataInicio: z.string().min(8),
   dataFim: z.string().min(8),
   unidade: z.string().min(1),
+  // Override de Conta Creditada decidido pela DESCRIÇÃO da linha do extrato
+  // ("COB COMPE CEB" → 1137). Quando ausente, usa a conta padrão da unidade.
+  contaCreditada: z.string().min(1).optional(),
 });
 
 // Conciliação automática via Sponte (parcelas baixadas → rateio por categoria).
@@ -746,7 +749,7 @@ const ConciliacaoInputSchema = z.object({
 export const fetchSponteConciliacao = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ConciliacaoInputSchema.parse(input))
   .handler(async ({ data }): Promise<ConciliacaoSponteResult> => {
-    const { dataInicio, dataFim, unidade } = data;
+    const { dataInicio, dataFim, unidade, contaCreditada } = data;
     const meta = { dataInicio, dataFim, tempoSegundos: 0 };
 
     if (!(unidade in SPONTE_UNIDADES)) {
@@ -763,12 +766,15 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
     const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
     const startTime = Date.now();
 
+    // A descrição da linha pode forçar uma conta específica ("COB COMPE CEB" →
+    // 1137), ignorando a conta padrão da unidade.
+    const contaAlvo = contaCreditada ?? creds.contaCaixa;
     const res = await coletarBaixadas(
       creds.codigoCliente,
       creds.token,
       inicioYMD,
       fimYMD,
-      creds.contaCaixa,
+      contaAlvo,
     );
     if (res.fault) {
       return {

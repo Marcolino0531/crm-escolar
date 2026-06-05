@@ -84,6 +84,15 @@ function isCobCompe(desc: unknown): boolean {
   return caixa || itau;
 }
 
+// Override de Conta Creditada PELA DESCRIÇÃO da linha do extrato. Há dois rótulos
+// de boleto que apontam para contas diferentes no Sponte:
+//   • "COB COMPE"     → usa a conta configurada da unidade (489426/011311/9295);
+//   • "COB COMPE CEB" → ignora a conta da unidade e busca estritamente na 1137.
+// Retorna a conta a forçar, ou null para manter a conta padrão da unidade.
+function contaOverrideDescricao(desc: unknown): string | null {
+  return /\bceb\b/.test(norm(desc)) ? "1137" : null;
+}
+
 const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
 function hashColor(label: string): string {
   const s = (label ?? "").trim().toLowerCase();
@@ -523,8 +532,11 @@ function ConciliacaoPage() {
       toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
       return;
     }
+    // Conta forçada pela descrição da linha ("COB COMPE CEB" → 1137); senão usa
+    // a conta padrão da unidade (resolvida no servidor).
+    const contaOverride = contaOverrideDescricao(parentTx.description);
     setAutoTxId(txId);
-    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
+    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade, contaOverride });
     try {
       // Janelas tentadas em ordem: o próprio dia da linha, depois o D-1 dia útil
       // (segunda → sexta anterior; demais → dia anterior; nunca cai em fim de semana).
@@ -538,7 +550,9 @@ function ConciliacaoPage() {
       const totaisVistos: string[] = [];
       let ultimoDiag: ConciliacaoSponteResult["diagnostico"] | undefined;
       for (const j of janelas) {
-        const r = await fetchConciliacao({ data: { dataInicio: j.inicio, dataFim: j.fim, unidade } });
+        const r = await fetchConciliacao({
+          data: { dataInicio: j.inicio, dataFim: j.fim, unidade, contaCreditada: contaOverride ?? undefined },
+        });
         if (r.error) throw new Error(r.error);
         if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
         ultimoDiag = r.diagnostico;
