@@ -84,15 +84,6 @@ function isCobCompe(desc: unknown): boolean {
   return caixa || itau;
 }
 
-// Override de Conta Creditada PELA DESCRIÇÃO da linha do extrato. Há dois rótulos
-// de boleto que apontam para contas diferentes no Sponte:
-//   • "COB COMPE"     → usa a conta configurada da unidade (489426/011311/9295);
-//   • "COB COMPE CEB" → ignora a conta da unidade e busca estritamente na 1137.
-// Retorna a conta a forçar, ou null para manter a conta padrão da unidade.
-function contaOverrideDescricao(desc: unknown): string | null {
-  return /\bceb\b/.test(norm(desc)) ? "1137" : null;
-}
-
 const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
 function hashColor(label: string): string {
   const s = (label ?? "").trim().toLowerCase();
@@ -532,11 +523,8 @@ function ConciliacaoPage() {
       toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
       return;
     }
-    // Conta forçada pela descrição da linha ("COB COMPE CEB" → 1137); senão usa
-    // a conta padrão da unidade (resolvida no servidor).
-    const contaOverride = contaOverrideDescricao(parentTx.description);
     setAutoTxId(txId);
-    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade, contaOverride });
+    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
     try {
       // Janelas tentadas em ordem: o próprio dia da linha, depois o D-1 dia útil
       // (segunda → sexta anterior; demais → dia anterior; nunca cai em fim de semana).
@@ -545,25 +533,35 @@ function ConciliacaoPage() {
         { inicio: date, fim: date, rotulo: "do dia" },
         { inicio: dPrevUtil, fim: dPrevUtil, rotulo: "do dia útil anterior" },
       ];
+      // O Belvedere credita boletos em DUAS contas creditadas (9295 e 1137).
+      // Tentamos o valor exato na 9295 primeiro; se nenhuma janela fechar, na
+      // 1137. Demais unidades usam a conta padrão configurada no servidor
+      // (contaCreditada = undefined).
+      const contas: (string | undefined)[] =
+        unidade === "Núcleo Belvedere" ? ["9295", "1137"] : [undefined];
       let escolhido: ConciliacaoSponteResult | null = null;
       let usado = "";
       const totaisVistos: string[] = [];
       let ultimoDiag: ConciliacaoSponteResult["diagnostico"] | undefined;
-      for (const j of janelas) {
-        const r = await fetchConciliacao({
-          data: { dataInicio: j.inicio, dataFim: j.fim, unidade, contaCreditada: contaOverride ?? undefined },
-        });
-        if (r.error) throw new Error(r.error);
-        if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
-        ultimoDiag = r.diagnostico;
-        console.log(`[CONC] janela ${j.rotulo} (${j.inicio}..${j.fim}):`, r);
-        // Mostra o que REALMENTE foi encontrado, não só "R$ 0,00".
-        totaisVistos.push(`${j.rotulo}: ${r.qtdParcelas} reg / ${formatBRL(r.total)}`);
-        if (r.itens.length > 0 && fechaCentavos(r.total, expectedTotal)) {
-          escolhido = r;
-          usado = j.rotulo;
-          break;
+      for (const conta of contas) {
+        for (const j of janelas) {
+          const r = await fetchConciliacao({
+            data: { dataInicio: j.inicio, dataFim: j.fim, unidade, contaCreditada: conta },
+          });
+          if (r.error) throw new Error(r.error);
+          if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+          ultimoDiag = r.diagnostico;
+          const rotulo = conta ? `${j.rotulo} (conta ${conta})` : j.rotulo;
+          console.log(`[CONC] janela ${rotulo} (${j.inicio}..${j.fim}):`, r);
+          // Mostra o que REALMENTE foi encontrado, não só "R$ 0,00".
+          totaisVistos.push(`${rotulo}: ${r.qtdParcelas} reg / ${formatBRL(r.total)}`);
+          if (r.itens.length > 0 && fechaCentavos(r.total, expectedTotal)) {
+            escolhido = r;
+            usado = rotulo;
+            break;
+          }
         }
+        if (escolhido) break;
       }
       if (!escolhido) {
         // Diagnóstico: expõe os rótulos reais do Sponte para depurar produção.

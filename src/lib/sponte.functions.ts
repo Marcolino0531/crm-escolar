@@ -734,8 +734,9 @@ const ConciliacaoInputSchema = z.object({
   dataInicio: z.string().min(8),
   dataFim: z.string().min(8),
   unidade: z.string().min(1),
-  // Override de Conta Creditada decidido pela DESCRIÇÃO da linha do extrato
-  // ("COB COMPE CEB" → 1137). Quando ausente, usa a conta padrão da unidade.
+  // Override de Conta Creditada passado pelo cliente. Usado para tentar contas
+  // alternativas (ex.: Belvedere credita boletos na 9295 e na 1137). Quando
+  // ausente, usa a conta padrão configurada da unidade.
   contaCreditada: z.string().min(1).optional(),
 });
 
@@ -766,8 +767,8 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
     const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
     const startTime = Date.now();
 
-    // A descrição da linha pode forçar uma conta específica ("COB COMPE CEB" →
-    // 1137), ignorando a conta padrão da unidade.
+    // O cliente pode forçar uma conta creditada específica (ex.: dupla conta do
+    // Belvedere: 9295 e 1137); senão usa a conta padrão da unidade.
     const contaAlvo = contaCreditada ?? creds.contaCaixa;
     const res = await coletarBaixadas(
       creds.codigoCliente,
