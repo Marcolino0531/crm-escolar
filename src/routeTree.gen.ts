@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
@@ -23,6 +24,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RhRoute = RhRouteImport.update({
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
+  '/tasks': typeof TasksRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesByTo {
@@ -93,6 +100,7 @@ export interface FileRoutesByTo {
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
+  '/tasks': typeof TasksRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesById {
@@ -106,6 +114,7 @@ export interface FileRoutesById {
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
+  '/tasks': typeof TasksRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRouteTypes {
@@ -120,6 +129,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
+    | '/tasks'
     | '/upload'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -132,6 +142,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
+    | '/tasks'
     | '/upload'
   id:
     | '__root__'
@@ -144,6 +155,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
+    | '/tasks'
     | '/upload'
   fileRoutesById: FileRoutesById
 }
@@ -157,6 +169,7 @@ export interface RootRouteChildren {
   InadimplenciaRoute: typeof InadimplenciaRoute
   OnboardingRoute: typeof OnboardingRoute
   RhRoute: typeof RhRoute
+  TasksRoute: typeof TasksRoute
   UploadRoute: typeof UploadRoute
 }
 
@@ -167,6 +180,13 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/upload'
       preLoaderRoute: typeof UploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rh': {
@@ -245,6 +265,7 @@ const rootRouteChildren: RootRouteChildren = {
   InadimplenciaRoute: InadimplenciaRoute,
   OnboardingRoute: OnboardingRoute,
   RhRoute: RhRoute,
+  TasksRoute: TasksRoute,
   UploadRoute: UploadRoute,
 }
 export const routeTree = rootRouteImport

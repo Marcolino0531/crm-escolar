@@ -20,11 +20,13 @@ import {
   Users,
   AlertCircle,
   PiggyBank,
+  ListTodo,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
+import { TaskNotificationsBell } from "@/components/TaskNotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 
@@ -199,6 +201,7 @@ function AppShell() {
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
+  const showTasks = canView("tasks");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -224,7 +227,7 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAdmissoes || showOnboarding || showRh) && (
+          {(showAdmissoes || showOnboarding || showRh || showTasks) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -232,6 +235,7 @@ function AppShell() {
           {showAdmissoes && <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />}
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
+          {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
           {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
@@ -329,8 +333,11 @@ function AppShell() {
             </button>
           </nav>
         </header>
-        <div className="border-b border-border bg-card/50 px-4 py-3 md:px-8">
+        <div className="flex items-center gap-2 border-b border-border bg-card/50 px-4 py-3 md:px-8">
           <SchoolFilter />
+          <div className="ml-auto">
+            <TaskNotificationsBell />
+          </div>
         </div>
         <main className="flex-1 p-4 md:p-8">
           <Outlet />

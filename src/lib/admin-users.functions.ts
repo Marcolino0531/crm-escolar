@@ -7,6 +7,7 @@ const APP_MODULES = [
   "admissoes",
   "onboarding",
   "rh",
+  "tasks",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)
@@ -15,6 +16,7 @@ const APP_MODULES = [
   "financeiro_conciliacao",
   "financeiro_fluxo",
   "financeiro_inadimplencia",
+  "financeiro_fundos",
 ] as const;
 
 const permissionSchema = z.object({
