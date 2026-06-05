@@ -44,7 +44,7 @@ function FundosGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
   if (!canView("financeiro_fundos"))
-    return <AccessDenied message="Você não tem permissão para visualizar os Fundos de Provisionamento." />;
+    return <AccessDenied message="Você não tem permissão para visualizar os Fundos de Investimento." />;
   return <FundosPage />;
 }
 
@@ -232,9 +232,9 @@ function FundosPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Fundos de Provisionamento</h1>
+          <h1 className="text-2xl font-bold">Fundos de Investimento</h1>
           <p className="text-sm text-muted-foreground">
-            Acompanhe a evolução patrimonial dos fundos provisionados por colégio.
+            Acompanhe a evolução patrimonial dos fundos investidos por colégio.
           </p>
         </div>
         {editable && (
@@ -465,7 +465,7 @@ function CreateFundDialog({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Reserva Estratégica" />
           </div>
           <div>
-            <Label>Destino do Provisionamento</Label>
+            <Label>Destino do Investimento</Label>
             <Input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="Ex.: 13º Salário, Férias" />
           </div>
           {schoolId === "all" && (
@@ -529,7 +529,7 @@ function EditFundDialog({
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
-            <Label>Destino do Provisionamento</Label>
+            <Label>Destino do Investimento</Label>
             <Input value={destination} onChange={(e) => setDestination(e.target.value)} />
           </div>
         </div>
