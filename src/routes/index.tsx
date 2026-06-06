@@ -140,11 +140,17 @@ function Dashboard() {
     return set;
   }, [txs]);
 
+  // Ordenação do extrato: por Data (cronológica); dentro do dia, Entradas antes
+  // de Saídas; e, dentro de cada grupo, em ordem alfabética pela descrição.
   const filteredTxs = useMemo(() =>
     [...txs]
       .filter(t => t.date >= startDate && t.date <= endDate)
       .filter(t => !splitParentIds.has(t.id))
-      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
+      .sort((a, b) =>
+        a.date.localeCompare(b.date)
+        || (a.type === "entrada" ? 0 : 1) - (b.type === "entrada" ? 0 : 1)
+        || String(a.description ?? "").localeCompare(String(b.description ?? ""), "pt-BR", { sensitivity: "base" })
+        || a.id.localeCompare(b.id)),
     [txs, startDate, endDate, splitParentIds]);
 
   const totalIn = filteredTxs.filter(t => t.type === "entrada").reduce((s, t) => s + Number(t.amount), 0);
