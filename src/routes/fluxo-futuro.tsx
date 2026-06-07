@@ -203,7 +203,11 @@ function FluxoFuturoPage() {
     },
   });
 
-  const totalProjected = forecasts.reduce((s, f) => s + Number(f.projected_amount), 0);
+  // Despesas pagas já foram debitadas no extrato e saem da previsão futura:
+  // o total considera apenas as pendentes (status !== "paid").
+  const totalProjected = forecasts
+    .filter((f) => f.status !== "paid")
+    .reduce((s, f) => s + Number(f.projected_amount), 0);
 
   // ── Receitas Previstas (Sponte) — Inversão de Busca + segmentação por unidade ──
   const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "";
