@@ -73,27 +73,36 @@ function formatDateBR(isoDate: string): string {
   return `${d}/${m}/${y}`;
 }
 
-function calcDiffDays(inicio: string, fim: string): number {
-  const d1 = new Date(inicio);
-  const d2 = new Date(fim);
-  return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+const MESES_PT = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+
+function fmtLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Intervalo do dia 1 ao último dia do mês (month0 = mês 0-indexado).
+function monthRange(year: number, month0: number): { inicio: string; fim: string } {
+  return { inicio: fmtLocal(new Date(year, month0, 1)), fim: fmtLocal(new Date(year, month0 + 1, 0)) };
+}
+
+function mesAnoLabel(year: number, month0: number): string {
+  return `${MESES_PT[month0]} de ${year}`;
+}
+
+// Rótulo do período: nome do mês quando o intervalo cobre um mês inteiro.
 function getPeriodoLabel(inicio: string, fim: string): string {
-  const hoje = new Date().toISOString().split("T")[0];
-  const diff = calcDiffDays(inicio, fim);
-  if (fim === hoje && diff === 30) return "Últimos 30 dias";
-  if (fim === hoje && diff === 60) return "Últimos 60 dias";
-  if (fim === hoje && diff === 90) return "Últimos 90 dias";
-  return `${formatDateBR(inicio)} — ${formatDateBR(fim)} (${diff} dias)`;
+  const [yi, mi, di] = inicio.split("-").map(Number);
+  const [yf, mf, df] = fim.split("-").map(Number);
+  const ultimoDia = new Date(yf, mf, 0).getDate();
+  if (yi === yf && mi === mf && di === 1 && df === ultimoDia) return mesAnoLabel(yi, mi - 1);
+  return `${formatDateBR(inicio)} — ${formatDateBR(fim)}`;
 }
 
 function getDefaultDateRange(): { inicio: string; fim: string } {
   const hoje = new Date();
-  const inicio = new Date(hoje);
-  inicio.setDate(inicio.getDate() - 30);
-  const fmt = (d: Date) => d.toISOString().split("T")[0];
-  return { inicio: fmt(inicio), fim: fmt(hoje) };
+  return monthRange(hoje.getFullYear(), hoje.getMonth());
 }
 
 type SortField = keyof PendenciaAgrupada;
@@ -105,8 +114,10 @@ function InadimplenciaPage() {
 
   const [dataInicio, setDataInicio] = useState(defaultRange.inicio);
   const [dataFim, setDataFim] = useState(defaultRange.fim);
-  const [tempInicio, setTempInicio] = useState(defaultRange.inicio);
-  const [tempFim, setTempFim] = useState(defaultRange.fim);
+  const agora = new Date();
+  const [tempMes, setTempMes] = useState(
+    `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`,
+  );
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [filtro, setFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState<{ campo: SortField; direcao: "asc" | "desc" }>({
@@ -142,28 +153,29 @@ function InadimplenciaPage() {
     );
   };
 
-  const aplicarPeriodo = (dias: number) => {
-    const hoje = new Date();
-    const inicio = new Date(hoje);
-    inicio.setDate(inicio.getDate() - dias);
-    const fmt = (d: Date) => d.toISOString().split("T")[0];
-    setDataInicio(fmt(inicio));
-    setDataFim(fmt(hoje));
+  // Últimos 3 meses (mês atual + 2 anteriores), dinâmicos.
+  const ultimosMeses = useMemo(() => {
+    const base = new Date();
+    return [0, 1, 2].map((i) => {
+      const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+      const { inicio, fim } = monthRange(d.getFullYear(), d.getMonth());
+      return { year: d.getFullYear(), month0: d.getMonth(), label: MESES_PT[d.getMonth()], inicio, fim };
+    });
+  }, []);
+
+  const aplicarMes = (inicio: string, fim: string) => {
+    setDataInicio(inicio);
+    setDataFim(fim);
     setShowDatePicker(false);
   };
 
-  const aplicarPeriodoCustom = () => {
-    const diffDays = calcDiffDays(tempInicio, tempFim);
-    if (diffDays > 90) {
-      alert("Selecione um período de no máximo 90 dias para garantir a performance.");
-      return;
-    }
-    if (diffDays < 0) {
-      alert("A data inicial deve ser anterior à data final.");
-      return;
-    }
-    setDataInicio(tempInicio);
-    setDataFim(tempFim);
+  const aplicarMesEspecifico = () => {
+    if (!tempMes) return;
+    const [y, m] = tempMes.split("-").map(Number);
+    if (!y || !m) return;
+    const { inicio, fim } = monthRange(y, m - 1);
+    setDataInicio(inicio);
+    setDataFim(fim);
     setShowDatePicker(false);
   };
 
@@ -270,35 +282,31 @@ function InadimplenciaPage() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {[30, 60, 90].map((dias) => {
-              const ativo = periodoLabel === `Últimos ${dias} dias`;
+            {ultimosMeses.map((mes) => {
+              const ativo = dataInicio === mes.inicio && dataFim === mes.fim;
               return (
                 <button
-                  key={dias}
-                  onClick={() => aplicarPeriodo(dias)}
+                  key={`${mes.year}-${mes.month0}`}
+                  onClick={() => aplicarMes(mes.inicio, mes.fim)}
                   className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                     ativo
                       ? "bg-indigo-600 text-white"
                       : "border border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-100"
                   }`}
                 >
-                  {dias} dias
+                  {mes.label}
                 </button>
               );
             })}
             <button
-              onClick={() => {
-                setTempInicio(dataInicio);
-                setTempFim(dataFim);
-                setShowDatePicker(!showDatePicker);
-              }}
+              onClick={() => setShowDatePicker(!showDatePicker)}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                 showDatePicker
                   ? "bg-indigo-600 text-white"
                   : "border border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-100"
               }`}
             >
-              Personalizar
+              Meses Anteriores
             </button>
           </div>
         </div>
@@ -306,31 +314,22 @@ function InadimplenciaPage() {
         {showDatePicker && (
           <div className="mt-3 flex flex-col items-start gap-3 border-t border-indigo-200 pt-3 sm:flex-row sm:items-end">
             <div>
-              <label className="mb-1 block text-xs font-medium text-indigo-700">Data Inicial</label>
+              <label className="mb-1 block text-xs font-medium text-indigo-700">Mês e Ano</label>
               <input
-                type="date"
-                value={tempInicio}
-                onChange={(e) => setTempInicio(e.target.value)}
-                className="rounded-lg border border-indigo-300 px-3 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-indigo-700">Data Final</label>
-              <input
-                type="date"
-                value={tempFim}
-                onChange={(e) => setTempFim(e.target.value)}
+                type="month"
+                value={tempMes}
+                onChange={(e) => setTempMes(e.target.value)}
                 className="rounded-lg border border-indigo-300 px-3 py-1.5 text-sm"
               />
             </div>
             <button
-              onClick={aplicarPeriodoCustom}
+              onClick={aplicarMesEspecifico}
               disabled={isFetching}
               className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              <Search size={14} /> Buscar Período
+              <Search size={14} /> Buscar Mês
             </button>
-            <p className="text-xs text-indigo-500">Máximo: 90 dias por consulta</p>
+            <p className="text-xs text-indigo-500">Selecione qualquer mês passado.</p>
           </div>
         )}
       </div>
