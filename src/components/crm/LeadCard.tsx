@@ -109,8 +109,17 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
           )}
 
+          {/* Badge irmãos (mais de um aluno na mesma negociação) */}
+          {lead.alunos.length > 1 && (
+            <div className="mb-2 inline-flex items-center gap-1 bg-purple-50 border border-purple-200 text-purple-700 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
+              <span>👨‍👩‍👧</span> {lead.alunos.length} alunos (irmãos)
+            </div>
+          )}
+
           <div className="flex items-start justify-between mb-2">
-            <h3 className="font-semibold text-gray-800 text-sm leading-tight">{lead.nomeAluno}</h3>
+            <h3 className="font-semibold text-gray-800 text-sm leading-tight">
+              {lead.alunos.length > 1 ? `Família ${lead.nomePaiMae}` : lead.nomeAluno}
+            </h3>
             {isAdmin && (
               <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                 <button
@@ -158,22 +167,47 @@ const LeadCard: React.FC<LeadCardProps> = ({
           </div>
 
           <div className="space-y-1.5 text-xs text-gray-500">
-            {lead.idade && (
-              <div className="flex items-center gap-1.5">
-                <span>🎂</span>
-                <span>
-                  {lead.idade} {lead.idade === "1" ? "ano" : "anos"}
-                </span>
-                {lead.dataNascimento && (
-                  <span className="text-gray-400">· {formatarData(lead.dataNascimento)}</span>
+            {lead.alunos.length > 1 ? (
+              <div className="space-y-1.5">
+                {lead.alunos.map((aluno, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-1.5"
+                  >
+                    <div className="font-semibold text-gray-700">{aluno.nome}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      {aluno.idade && (
+                        <span>
+                          🎂 {aluno.idade} {aluno.idade === "1" ? "ano" : "anos"}
+                        </span>
+                      )}
+                      {aluno.turma && (
+                        <span className="font-medium text-indigo-600">🎓 {aluno.turma}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                {lead.idade && (
+                  <div className="flex items-center gap-1.5">
+                    <span>🎂</span>
+                    <span>
+                      {lead.idade} {lead.idade === "1" ? "ano" : "anos"}
+                    </span>
+                    {lead.dataNascimento && (
+                      <span className="text-gray-400">· {formatarData(lead.dataNascimento)}</span>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            {lead.turma && (
-              <div className="flex items-center gap-1.5">
-                <span>🎓</span>
-                <span className="font-medium text-indigo-600">{lead.turma}</span>
-              </div>
+                {lead.turma && (
+                  <div className="flex items-center gap-1.5">
+                    <span>🎓</span>
+                    <span className="font-medium text-indigo-600">{lead.turma}</span>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex items-center gap-1.5">
               <span>👤</span>

@@ -1,14 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Lead } from "@/lib/crm/types";
+import { Lead, AlunoLead } from "@/lib/crm/types";
 import { calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { ORIGENS_PREDEFINIDAS, ORIGENS_STORAGE_KEY } from "@/lib/crm/constants";
 
 export interface LeadFormValues {
-  nomeAluno: string;
-  dataNascimento: string;
-  idade: string;
-  turma: string;
+  alunos: AlunoLead[];
   nomePaiMae: string;
   telefone: string;
   origem: string;
@@ -20,6 +17,19 @@ interface LeadFormProps {
   unidadeSelecionada: string;
   leadParaEditar?: Lead | null;
   onEditar?: (leadId: string, dados: Partial<LeadFormValues>) => void;
+}
+
+// Estado de um bloco de aluno no formulário (inclui a data em formato BR p/ UI).
+interface AlunoFormState {
+  nome: string;
+  dataNascimento: string; // ISO (YYYY-MM-DD)
+  dataNascimentoDisplay: string; // BR (DD/MM/AAAA)
+  idade: string;
+  turma: string;
+}
+
+function alunoVazio(): AlunoFormState {
+  return { nome: "", dataNascimento: "", dataNascimentoDisplay: "", idade: "", turma: "" };
 }
 
 function carregarOrigensCustom(): string[] {
@@ -45,22 +55,15 @@ function converterISOparaBR(dataISO: string): string {
 const LeadForm: React.FC<LeadFormProps> = ({
   onSubmit,
   onFechar,
-  unidadeSelecionada,
   leadParaEditar,
   onEditar,
 }) => {
   const isEditMode = !!leadParaEditar;
 
-  const [form, setForm] = useState({
-    nomeAluno: "",
-    dataNascimento: "",
-    dataNascimentoDisplay: "",
-    idade: "",
-    turma: "",
-    nomePaiMae: "",
-    telefone: "",
-    origem: "",
-  });
+  const [alunos, setAlunos] = useState<AlunoFormState[]>([alunoVazio()]);
+  const [nomePaiMae, setNomePaiMae] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [origem, setOrigem] = useState("");
 
   const [origensCustom, setOrigensCustom] = useState<string[]>(carregarOrigensCustom);
   const [origemInputValue, setOrigemInputValue] = useState("");
@@ -88,17 +91,28 @@ const LeadForm: React.FC<LeadFormProps> = ({
 
   useEffect(() => {
     if (leadParaEditar) {
-      const displayDate = converterISOparaBR(leadParaEditar.dataNascimento);
-      setForm({
-        nomeAluno: leadParaEditar.nomeAluno,
-        dataNascimento: leadParaEditar.dataNascimento,
-        dataNascimentoDisplay: displayDate,
-        idade: leadParaEditar.idade,
-        turma: leadParaEditar.turma,
-        nomePaiMae: leadParaEditar.nomePaiMae,
-        telefone: leadParaEditar.telefone,
-        origem: leadParaEditar.origem || "",
-      });
+      const alunosEdit: AlunoFormState[] = (
+        leadParaEditar.alunos.length > 0
+          ? leadParaEditar.alunos
+          : [
+              {
+                nome: leadParaEditar.nomeAluno,
+                dataNascimento: leadParaEditar.dataNascimento,
+                idade: leadParaEditar.idade,
+                turma: leadParaEditar.turma,
+              },
+            ]
+      ).map((a) => ({
+        nome: a.nome,
+        dataNascimento: a.dataNascimento,
+        dataNascimentoDisplay: converterISOparaBR(a.dataNascimento),
+        idade: a.idade,
+        turma: a.turma,
+      }));
+      setAlunos(alunosEdit);
+      setNomePaiMae(leadParaEditar.nomePaiMae);
+      setTelefone(leadParaEditar.telefone);
+      setOrigem(leadParaEditar.origem || "");
       setOrigemInputValue(leadParaEditar.origem || "");
     }
   }, [leadParaEditar]);
@@ -152,37 +166,42 @@ const LeadForm: React.FC<LeadFormProps> = ({
     return d.getDate() === dia && d.getMonth() === mes - 1 && d.getFullYear() === ano;
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+  const atualizarAluno = (idx: number, patch: Partial<AlunoFormState>) => {
+    setAlunos((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
   };
 
-  const handleDataNascimentoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const display = aplicarMascaraData(e.target.value);
+  const handleNomeAlunoChange = (idx: number, value: string) => {
+    atualizarAluno(idx, { nome: value });
+  };
 
+  const handleDataNascimentoChange = (idx: number, rawValue: string) => {
+    const display = aplicarMascaraData(rawValue);
     if (display.length === 10 && validarData(display)) {
       const dataNascimento = converterParaISO(display);
       const { idade, turma } = calcularIdadeEscolar(dataNascimento);
-      setForm((prev) => ({
-        ...prev,
+      atualizarAluno(idx, {
         dataNascimentoDisplay: display,
         dataNascimento,
         idade: String(idade),
         turma,
-      }));
+      });
     } else {
-      setForm((prev) => ({
-        ...prev,
+      atualizarAluno(idx, {
         dataNascimentoDisplay: display,
         dataNascimento: "",
         idade: "",
         turma: "",
-      }));
+      });
     }
   };
 
+  const adicionarIrmao = () => setAlunos((prev) => [...prev, alunoVazio()]);
+
+  const removerAluno = (idx: number) =>
+    setAlunos((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
+
   const handleOrigemSelect = (valor: string) => {
-    setForm((prev) => ({ ...prev, origem: valor }));
+    setOrigem(valor);
     setOrigemInputValue(valor);
     setOrigemDropdownOpen(false);
   };
@@ -190,7 +209,7 @@ const LeadForm: React.FC<LeadFormProps> = ({
   const handleOrigemInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setOrigemInputValue(value);
-    setForm((prev) => ({ ...prev, origem: value }));
+    setOrigem(value);
     setOrigemDropdownOpen(true);
   };
 
@@ -202,69 +221,48 @@ const LeadForm: React.FC<LeadFormProps> = ({
     origemInputValue.trim() !== "" &&
     !todasOrigens.some((o) => o.toLowerCase() === origemInputValue.trim().toLowerCase());
 
+  const alunosValidos = alunos.every((a) => a.nome.trim() && a.dataNascimento);
+  const formValido =
+    alunosValidos && nomePaiMae.trim() && telefone.trim() && origem.trim();
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-      !form.nomeAluno.trim() ||
-      !form.dataNascimento ||
-      !form.nomePaiMae.trim() ||
-      !form.telefone.trim() ||
-      !form.origem.trim()
-    ) {
-      return;
-    }
+    if (!formValido) return;
 
     // Save custom origin if new
-    const origemTrimmed = form.origem.trim();
+    const origemTrimmed = origem.trim();
     if (!todasOrigens.some((o) => o.toLowerCase() === origemTrimmed.toLowerCase())) {
       const novasCustom = [...origensCustom, origemTrimmed];
       setOrigensCustom(novasCustom);
       salvarOrigensCustom(novasCustom);
     }
 
+    const alunosPayload: AlunoLead[] = alunos.map((a) => ({
+      nome: a.nome.trim(),
+      dataNascimento: a.dataNascimento,
+      idade: a.idade,
+      turma: a.turma,
+    }));
+
     if (isEditMode && leadParaEditar && onEditar) {
       onEditar(leadParaEditar.id, {
-        nomeAluno: form.nomeAluno,
-        dataNascimento: form.dataNascimento,
-        idade: form.idade,
-        turma: form.turma,
-        nomePaiMae: form.nomePaiMae,
-        telefone: form.telefone,
+        alunos: alunosPayload,
+        nomePaiMae,
+        telefone,
         origem: origemTrimmed,
       });
     } else {
-      onSubmit({
-        nomeAluno: form.nomeAluno,
-        dataNascimento: form.dataNascimento,
-        idade: form.idade,
-        turma: form.turma,
-        nomePaiMae: form.nomePaiMae,
-        telefone: form.telefone,
-        origem: origemTrimmed,
-      });
+      onSubmit({ alunos: alunosPayload, nomePaiMae, telefone, origem: origemTrimmed });
     }
 
     if (!isEditMode) {
-      setForm({
-        nomeAluno: "",
-        dataNascimento: "",
-        dataNascimentoDisplay: "",
-        idade: "",
-        turma: "",
-        nomePaiMae: "",
-        telefone: "",
-        origem: "",
-      });
+      setAlunos([alunoVazio()]);
+      setNomePaiMae("");
+      setTelefone("");
+      setOrigem("");
       setOrigemInputValue("");
     }
   };
-
-  const formValido =
-    form.nomeAluno.trim() &&
-    form.dataNascimento &&
-    form.nomePaiMae.trim() &&
-    form.telefone.trim() &&
-    form.origem.trim();
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -293,72 +291,127 @@ const LeadForm: React.FC<LeadFormProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Nome do Aluno <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="nomeAluno"
-              value={form.nomeAluno}
-              onChange={handleChange}
-              required
-              placeholder="Ex: João da Silva"
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
-            />
-          </div>
+          {/* Blocos de alunos (irmãos) */}
+          {alunos.map((aluno, idx) => (
+            <div
+              key={idx}
+              className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wide text-indigo-600">
+                  {alunos.length > 1 ? `Aluno ${idx + 1}` : "Aluno"}
+                </span>
+                {alunos.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removerAluno(idx)}
+                    className="text-gray-400 hover:text-red-500 transition-colors"
+                    title="Remover este aluno"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Data de Nascimento <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={form.dataNascimentoDisplay}
-              onChange={handleDataNascimentoChange}
-              placeholder="DD/MM/AAAA"
-              maxLength={10}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              Idade e Turma são calculadas pela Data de Corte do MEC (31/03)
-            </p>
-          </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome do Aluno <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={aluno.nome}
+                  onChange={(e) => handleNomeAlunoChange(idx, e.target.value)}
+                  required
+                  placeholder="Ex: João da Silva"
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+                />
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Idade (em 31/03)
-              </label>
-              <input
-                type="text"
-                value={form.idade ? `${form.idade} ${form.idade === "1" ? "ano" : "anos"}` : ""}
-                readOnly
-                placeholder="Automático"
-                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Data de Nascimento <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={aluno.dataNascimentoDisplay}
+                  onChange={(e) => handleDataNascimentoChange(idx, e.target.value)}
+                  placeholder="DD/MM/AAAA"
+                  maxLength={10}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Idade e Turma são calculadas pela Data de Corte do MEC (31/03)
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Idade (em 31/03)
+                  </label>
+                  <input
+                    type="text"
+                    value={aluno.idade ? `${aluno.idade} ${aluno.idade === "1" ? "ano" : "anos"}` : ""}
+                    readOnly
+                    placeholder="Automático"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
+                  <input
+                    type="text"
+                    value={aluno.turma}
+                    readOnly
+                    placeholder="Automático"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Turma</label>
-              <input
-                type="text"
-                value={form.turma}
-                readOnly
-                placeholder="Automático"
-                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-not-allowed"
-              />
-            </div>
-          </div>
+          ))}
 
+          {/* Botão adicionar irmão */}
+          <button
+            type="button"
+            onClick={adicionarIrmao}
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 px-4 py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-100 transition-colors"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Adicionar Irmão
+          </button>
+
+          {/* Dados da família (únicos) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Nome do Pai/Mãe <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              name="nomePaiMae"
-              value={form.nomePaiMae}
-              onChange={handleChange}
+              value={nomePaiMae}
+              onChange={(e) => setNomePaiMae(e.target.value)}
               required
               placeholder="Ex: Maria da Silva"
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
@@ -371,9 +424,8 @@ const LeadForm: React.FC<LeadFormProps> = ({
             </label>
             <input
               type="tel"
-              name="telefone"
-              value={form.telefone}
-              onChange={handleChange}
+              value={telefone}
+              onChange={(e) => setTelefone(e.target.value)}
               required
               placeholder="Ex: (11) 99999-9999"
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
@@ -412,18 +464,18 @@ const LeadForm: React.FC<LeadFormProps> = ({
                   }}
                   className="bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto"
                 >
-                  {filteredOrigens.map((origem) => (
+                  {filteredOrigens.map((o) => (
                     <button
-                      key={origem}
+                      key={o}
                       type="button"
-                      onClick={() => handleOrigemSelect(origem)}
+                      onClick={() => handleOrigemSelect(o)}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
-                        form.origem === origem
+                        origem === o
                           ? "bg-indigo-50 text-indigo-700 font-medium"
                           : "text-gray-700"
                       }`}
                     >
-                      {origem}
+                      {o}
                     </button>
                   ))}
                   {showCreateOption && (
