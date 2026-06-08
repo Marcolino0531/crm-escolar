@@ -87,6 +87,20 @@ function monthRange(year: number, month0: number): { inicio: string; fim: string
   return { inicio: fmtLocal(new Date(year, month0, 1)), fim: fmtLocal(new Date(year, month0 + 1, 0)) };
 }
 
+// Intervalo de busca da Inadimplência para um mês. A inadimplência só inclui
+// vencimentos ESTRITAMENTE no passado, então o mês corrente é cortado em ONTEM
+// (hoje − 1); meses já encerrados vão do 1º ao último dia normalmente.
+function mesRange(year: number, month0: number): { inicio: string; fim: string } {
+  const { inicio, fim } = monthRange(year, month0);
+  const hoje = new Date();
+  if (year === hoje.getFullYear() && month0 === hoje.getMonth()) {
+    const ontem = new Date(hoje);
+    ontem.setDate(ontem.getDate() - 1);
+    return { inicio, fim: fmtLocal(ontem) };
+  }
+  return { inicio, fim };
+}
+
 function mesAnoLabel(year: number, month0: number): string {
   return `${MESES_PT[month0]} de ${year}`;
 }
@@ -102,7 +116,7 @@ function getPeriodoLabel(inicio: string, fim: string): string {
 
 function getDefaultDateRange(): { inicio: string; fim: string } {
   const hoje = new Date();
-  return monthRange(hoje.getFullYear(), hoje.getMonth());
+  return mesRange(hoje.getFullYear(), hoje.getMonth());
 }
 
 type SortField = keyof PendenciaAgrupada;
@@ -158,7 +172,7 @@ function InadimplenciaPage() {
     const base = new Date();
     return [0, 1, 2].map((i) => {
       const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-      const { inicio, fim } = monthRange(d.getFullYear(), d.getMonth());
+      const { inicio, fim } = mesRange(d.getFullYear(), d.getMonth());
       return { year: d.getFullYear(), month0: d.getMonth(), label: MESES_PT[d.getMonth()], inicio, fim };
     });
   }, []);
@@ -173,7 +187,7 @@ function InadimplenciaPage() {
     if (!tempMes) return;
     const [y, m] = tempMes.split("-").map(Number);
     if (!y || !m) return;
-    const { inicio, fim } = monthRange(y, m - 1);
+    const { inicio, fim } = mesRange(y, m - 1);
     setDataInicio(inicio);
     setDataFim(fim);
     setShowDatePicker(false);
