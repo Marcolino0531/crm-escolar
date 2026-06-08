@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
 import { usePermissions } from "@/lib/app-context";
+import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 
 interface RHPageProps {
@@ -116,7 +117,7 @@ const downloadCSV = (csv: string, filename: string) => {
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("rh");
-  const { funcionarios, adicionarFuncionario, removerFuncionario, adicionarFerias, removerFerias } =
+  const { funcionarios, adicionarFuncionario, editarFuncionario, removerFuncionario, adicionarFerias, removerFerias } =
     rhHook;
   const [modalAberto, setModalAberto] = useState(false);
   const [funcionarioSelecionadoId, setFuncionarioSelecionadoId] = useState<string | null>(null);
@@ -138,6 +139,13 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
 
   const handleFecharDetalhes = () => {
     setFuncionarioSelecionadoId(null);
+  };
+
+  const handleEditarSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "criadoEm" | "schoolId">) => {
+    if (!funcionarioSelecionadoId) return;
+    editarFuncionario(funcionarioSelecionadoId, dados);
+    setFuncionarioSelecionadoId(null);
+    toast.success("Altera\u00e7\u00f5es salvas com sucesso.");
   };
 
   const toggleColunaExport = (id: string) => {
@@ -309,7 +317,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <FuncionarioModal
           unidadeSelecionada={unidadeSelecionada}
           funcionarioExistente={funcionarioSelecionado}
-          onSalvar={() => {}}
+          onSalvar={handleEditarSalvar}
           onFechar={handleFecharDetalhes}
           onAdicionarFerias={isAdmin ? adicionarFerias : undefined}
           onRemoverFerias={isAdmin ? removerFerias : undefined}
