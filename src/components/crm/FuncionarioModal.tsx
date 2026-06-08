@@ -546,13 +546,13 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
             >
               {isEdicao ? "Fechar" : "Cancelar"}
             </button>
-            {!isEdicao && (
+            {(!isEdicao || isAdmin) && (
               <button
                 type="submit"
                 disabled={!formValido}
                 className="flex-1 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Cadastrar Funcionário
+                {isEdicao ? "Salvar Alterações" : "Cadastrar Funcionário"}
               </button>
             )}
           </div>
