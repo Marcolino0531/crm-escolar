@@ -320,6 +320,7 @@ export type Database = {
       }
       leads: {
         Row: {
+          alunos: Json
           coluna: string
           created_at: string
           data_nascimento: string | null
@@ -339,6 +340,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          alunos?: Json
           coluna?: string
           created_at?: string
           data_nascimento?: string | null
@@ -358,6 +360,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          alunos?: Json
           coluna?: string
           created_at?: string
           data_nascimento?: string | null

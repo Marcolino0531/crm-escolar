@@ -32,13 +32,20 @@ function AdmissoesPage() {
     const lead = leadsHook.leads.find((l) => l.id === leadId);
     leadsHook.registrarMatricula(leadId, itensMatricula);
     if (lead) {
-      onboardingHook.adicionarAluno({
-        schoolId: lead.schoolId,
-        leadId: lead.id,
-        nomeAluno: lead.nomeAluno,
-        turma: lead.turma,
-        nomePaiMae: lead.nomePaiMae,
-        telefone: lead.telefone,
+      // Cria um aluno no Onboarding para cada criança da negociação (irmãos).
+      const alunos =
+        lead.alunos.length > 0
+          ? lead.alunos
+          : [{ nome: lead.nomeAluno, dataNascimento: lead.dataNascimento, idade: lead.idade, turma: lead.turma }];
+      alunos.forEach((aluno) => {
+        onboardingHook.adicionarAluno({
+          schoolId: lead.schoolId,
+          leadId: lead.id,
+          nomeAluno: aluno.nome,
+          turma: aluno.turma,
+          nomePaiMae: lead.nomePaiMae,
+          telefone: lead.telefone,
+        });
       });
     }
   };

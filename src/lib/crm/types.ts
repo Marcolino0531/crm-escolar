@@ -30,6 +30,15 @@ export interface ColunaConfig {
 // still pass a human-readable unit/school name around.
 export type Unidade = string;
 
+// Um aluno (criança) dentro de uma negociação familiar. Um lead pode ter
+// vários (irmãos). Os campos escalares do Lead refletem o 1º aluno.
+export interface AlunoLead {
+  nome: string;
+  dataNascimento: string;
+  idade: string;
+  turma: string;
+}
+
 export interface Lead {
   id: string;
   schoolId: string;
@@ -37,6 +46,7 @@ export interface Lead {
   idade: string;
   dataNascimento: string;
   turma: string;
+  alunos: AlunoLead[];
   nomePaiMae: string;
   telefone: string;
   origem: string;

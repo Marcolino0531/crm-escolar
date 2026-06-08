@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { rowToFuncionario, rowToLead, rowToOnboarding } from "./mappers";
 import { TAREFAS_ONBOARDING } from "./constants";
 import type {
+  AlunoLead,
   ColunaKanban,
   Funcionario,
   ItemMatricula,
@@ -15,7 +16,12 @@ import type {
 } from "./types";
 import type { Json, TablesUpdate } from "@/integrations/supabase/types";
 
-type LeadInput = Omit<Lead, "id" | "coluna" | "criadoEm" | "schoolId">;
+type LeadInput = {
+  alunos: AlunoLead[];
+  nomePaiMae: string;
+  telefone: string;
+  origem: string;
+};
 
 function requireSchool(selected: string): string | null {
   if (selected === "all") {
@@ -51,18 +57,21 @@ export function useLeads() {
   const adicionarLead = (dados: LeadInput) => {
     const schoolId = requireSchool(selected);
     if (!schoolId) return;
+    const primeiro = dados.alunos[0];
     run(async () => {
       const { error } = await supabase.from("leads").insert({
         school_id: schoolId,
-        nome_aluno: dados.nomeAluno,
-        idade: dados.idade,
-        data_nascimento: dados.dataNascimento,
-        turma: dados.turma,
+        // Campos escalares espelham o 1º aluno (compat com Onboarding/Matrícula).
+        nome_aluno: primeiro?.nome ?? "",
+        idade: primeiro?.idade ?? "",
+        data_nascimento: primeiro?.dataNascimento ?? "",
+        turma: primeiro?.turma ?? "",
+        alunos: dados.alunos as unknown as Json,
         nome_pai_mae: dados.nomePaiMae,
         telefone: dados.telefone,
         origem: dados.origem,
         coluna: "contato-inicial",
-        itens_matricula: (dados.itensMatricula ?? []) as unknown as Json,
+        itens_matricula: [] as unknown as Json,
       });
       if (error) throw error;
     });
@@ -71,10 +80,14 @@ export function useLeads() {
   const editarLead = (leadId: string, dados: Partial<LeadInput>) =>
     run(async () => {
       const patch: TablesUpdate<"leads"> = {};
-      if (dados.nomeAluno !== undefined) patch.nome_aluno = dados.nomeAluno;
-      if (dados.idade !== undefined) patch.idade = dados.idade;
-      if (dados.dataNascimento !== undefined) patch.data_nascimento = dados.dataNascimento;
-      if (dados.turma !== undefined) patch.turma = dados.turma;
+      if (dados.alunos !== undefined) {
+        patch.alunos = dados.alunos as unknown as Json;
+        const primeiro = dados.alunos[0];
+        patch.nome_aluno = primeiro?.nome ?? "";
+        patch.idade = primeiro?.idade ?? "";
+        patch.data_nascimento = primeiro?.dataNascimento ?? "";
+        patch.turma = primeiro?.turma ?? "";
+      }
       if (dados.nomePaiMae !== undefined) patch.nome_pai_mae = dados.nomePaiMae;
       if (dados.telefone !== undefined) patch.telefone = dados.telefone;
       if (dados.origem !== undefined) patch.origem = dados.origem;

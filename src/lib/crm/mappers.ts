@@ -1,5 +1,6 @@
 import type { Tables } from "@/integrations/supabase/types";
 import type {
+  AlunoLead,
   EstadoCivil,
   Funcionario,
   Genero,
@@ -14,6 +15,19 @@ import type { ColunaKanban } from "./types";
 
 // ---------- Leads ----------
 export function rowToLead(r: Tables<"leads">): Lead {
+  const alunosRaw = (r.alunos as unknown as AlunoLead[] | null) ?? [];
+  // Leads antigos (sem array): sintetiza um único aluno dos campos escalares.
+  const alunos: AlunoLead[] =
+    alunosRaw.length > 0
+      ? alunosRaw
+      : [
+          {
+            nome: r.nome_aluno,
+            dataNascimento: r.data_nascimento ?? "",
+            idade: r.idade ?? "",
+            turma: r.turma ?? "",
+          },
+        ];
   return {
     id: r.id,
     schoolId: r.school_id,
@@ -21,6 +35,7 @@ export function rowToLead(r: Tables<"leads">): Lead {
     idade: r.idade ?? "",
     dataNascimento: r.data_nascimento ?? "",
     turma: r.turma ?? "",
+    alunos,
     nomePaiMae: r.nome_pai_mae ?? "",
     telefone: r.telefone ?? "",
     origem: r.origem ?? "",
