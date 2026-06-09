@@ -5,6 +5,7 @@ import { usePermissions } from "@/lib/app-context";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
+import FechamentoVT from "./FechamentoVT";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -316,6 +317,12 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <div className="w-full lg:w-80 lg:flex-shrink-0">
           <RankingFaltas funcionarios={funcionarios} />
         </div>
+        </div>
+      )}
+
+      {funcionarios.length > 0 && (
+        <div className="mt-6">
+          <FechamentoVT funcionarios={funcionarios} />
         </div>
       )}
 
