@@ -15,6 +15,7 @@ import type {
   PeriodoFerias,
   TarefaOnboardingId,
   TipoFalta,
+  CategoriaFalta,
 } from "./types";
 import type { Json, TablesUpdate } from "@/integrations/supabase/types";
 
@@ -369,13 +370,20 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
-  const adicionarFalta = (funcionarioId: string, data: string, tipo: TipoFalta) =>
+  const adicionarFalta = (
+    funcionarioId: string,
+    data: string,
+    tipo: TipoFalta,
+    categoria: CategoriaFalta,
+    duracaoMinutos?: number,
+  ) =>
     run(async () => {
       const atual = funcionarios.find((f) => f.id === funcionarioId);
-      const faltas: Falta[] = [
-        ...(atual?.faltas ?? []),
-        { id: crypto.randomUUID(), data, tipo },
-      ];
+      const nova: Falta = { id: crypto.randomUUID(), data, tipo, categoria };
+      if (categoria !== "integral" && duracaoMinutos != null && duracaoMinutos > 0) {
+        nova.duracaoMinutos = duracaoMinutos;
+      }
+      const faltas: Falta[] = [...(atual?.faltas ?? []), nova];
       const { error } = await supabase
         .from("funcionarios")
         .update({ faltas: faltas as unknown as Json })

@@ -96,10 +96,18 @@ export interface PeriodoFerias {
 
 export type TipoFalta = "com_atestado" | "sem_atestado";
 
+// Tipo da ocorrência: falta integral (dia inteiro) ou ausência parcial.
+export type CategoriaFalta = "integral" | "atraso" | "saida_antecipada";
+
 export interface Falta {
   id: string;
   data: string;
   tipo: TipoFalta;
+  // Categoria da ocorrência. Registros antigos não têm este campo e são
+  // tratados como "integral".
+  categoria?: CategoriaFalta;
+  // Tempo de ausência em minutos (apenas para atraso/saída antecipada).
+  duracaoMinutos?: number;
 }
 
 export type Genero = "feminino" | "masculino" | "outro" | "prefiro-nao-informar";
