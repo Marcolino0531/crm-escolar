@@ -271,6 +271,7 @@ function funcionarioToRow(schoolId: string, f: FuncionarioFormData) {
     horario_trabalho_fim: f.horarioTrabalhoFim,
     horario_almoco_inicio: f.horarioAlmocoInicio ?? null,
     horario_almoco_fim: f.horarioAlmocoFim ?? null,
+    valor_diario_vt: f.valorDiarioVt ?? 0,
   };
 }
 

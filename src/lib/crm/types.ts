@@ -130,6 +130,7 @@ export interface Funcionario {
   horarioTrabalhoFim: string;
   horarioAlmocoInicio?: string;
   horarioAlmocoFim?: string;
+  valorDiarioVt: number; // Valor diário do Vale-Transporte
   ferias: PeriodoFerias[];
   faltas: Falta[];
   criadoEm: string;

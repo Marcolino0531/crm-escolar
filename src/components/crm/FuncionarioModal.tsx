@@ -106,6 +106,17 @@ const validarHora = (hora: string): boolean => {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 };
 
+// Valor monetário do VT: aceita vírgula ou ponto como separador decimal.
+const parseVt = (v: string): number => {
+  const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+};
+const vtValido = (v: string): boolean => {
+  if (!v.trim()) return false;
+  const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) && n >= 0;
+};
+
 const GENERO_OPCOES: { valor: Genero; label: string }[] = [
   { valor: "feminino", label: "Feminino" },
   { valor: "masculino", label: "Masculino" },
@@ -153,6 +164,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     horarioTrabalhoFim: funcionarioExistente?.horarioTrabalhoFim || "",
     horarioAlmocoInicio: funcionarioExistente?.horarioAlmocoInicio || "",
     horarioAlmocoFim: funcionarioExistente?.horarioAlmocoFim || "",
+    valorDiarioVt:
+      funcionarioExistente?.valorDiarioVt != null ? String(funcionarioExistente.valorDiarioVt) : "",
   });
 
   const [feriasForm, setFeriasForm] = useState({
@@ -264,7 +277,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       !form.dataNascimento ||
       !form.dataInicio ||
       !validarHora(form.horarioTrabalhoInicio) ||
-      !validarHora(form.horarioTrabalhoFim)
+      !validarHora(form.horarioTrabalhoFim) ||
+      !vtValido(form.valorDiarioVt)
     ) {
       return;
     }
@@ -283,6 +297,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       horarioTrabalhoFim: form.horarioTrabalhoFim,
       horarioAlmocoInicio: form.horarioAlmocoInicio || undefined,
       horarioAlmocoFim: form.horarioAlmocoFim || undefined,
+      valorDiarioVt: parseVt(form.valorDiarioVt),
     });
   };
 
@@ -294,7 +309,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     form.dataNascimento &&
     form.dataInicio &&
     validarHora(form.horarioTrabalhoInicio) &&
-    validarHora(form.horarioTrabalhoFim);
+    validarHora(form.horarioTrabalhoFim) &&
+    vtValido(form.valorDiarioVt);
 
   const inputClass =
     "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm";
@@ -528,6 +544,25 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 className={`flex-1 ${inputClass}`}
               />
             </div>
+          </div>
+
+          {/* Valor Diário do VT (obrigatório) */}
+          <div>
+            <label className={labelClass}>
+              Valor Diário do VT <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">R$</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={form.valorDiarioVt}
+                onChange={(e) => setForm({ ...form, valorDiarioVt: e.target.value })}
+                placeholder="0,00"
+                className={`${inputClass} pl-9`}
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Valor por dia usado no Fechamento de Vale-Transporte.</p>
           </div>
 
           {/* Controle de Férias (somente no modo edição) */}

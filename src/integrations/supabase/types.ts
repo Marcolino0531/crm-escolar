@@ -241,6 +241,7 @@ export type Database = {
           nome_completo: string
           school_id: string
           updated_at: string
+          valor_diario_vt: number
         }
         Insert: {
           cargo?: string | null
@@ -262,6 +263,7 @@ export type Database = {
           nome_completo: string
           school_id: string
           updated_at?: string
+          valor_diario_vt?: number
         }
         Update: {
           cargo?: string | null
@@ -283,6 +285,7 @@ export type Database = {
           nome_completo?: string
           school_id?: string
           updated_at?: string
+          valor_diario_vt?: number
         }
         Relationships: [
           {
