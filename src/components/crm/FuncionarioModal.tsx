@@ -1,5 +1,12 @@
 import React, { useState } from "react";
-import { Unidade, Funcionario, Genero, EstadoCivil, TipoFalta } from "@/lib/crm/types";
+import {
+  Unidade,
+  Funcionario,
+  Genero,
+  EstadoCivil,
+  TipoFalta,
+  CategoriaFalta,
+} from "@/lib/crm/types";
 import { UNIDADES } from "@/lib/crm/constants";
 
 interface FuncionarioModalProps {
@@ -9,7 +16,13 @@ interface FuncionarioModalProps {
   onFechar: () => void;
   onAdicionarFerias?: (funcionarioId: string, dataInicio: string, dataFim: string) => void;
   onRemoverFerias?: (funcionarioId: string, feriasId: string) => void;
-  onAdicionarFalta?: (funcionarioId: string, data: string, tipo: TipoFalta) => void;
+  onAdicionarFalta?: (
+    funcionarioId: string,
+    data: string,
+    tipo: TipoFalta,
+    categoria: CategoriaFalta,
+    duracaoMinutos?: number,
+  ) => void;
   onRemoverFalta?: (funcionarioId: string, faltaId: string) => void;
   isAdmin?: boolean;
 }
@@ -21,6 +34,24 @@ const TIPO_FALTA_OPCOES: { valor: TipoFalta; label: string }[] = [
 
 const tipoFaltaLabel = (t: TipoFalta): string =>
   TIPO_FALTA_OPCOES.find((o) => o.valor === t)?.label ?? "";
+
+const CATEGORIA_FALTA_OPCOES: { valor: CategoriaFalta; label: string }[] = [
+  { valor: "integral", label: "Falta Integral" },
+  { valor: "atraso", label: "Atraso" },
+  { valor: "saida_antecipada", label: "Saída Antecipada" },
+];
+
+const categoriaFaltaLabel = (c: CategoriaFalta): string =>
+  CATEGORIA_FALTA_OPCOES.find((o) => o.valor === c)?.label ?? "";
+
+const formatarDuracao = (minutos: number): string => {
+  if (!minutos || minutos <= 0) return "";
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  if (h > 0 && m > 0) return `${h}h${String(m).padStart(2, "0")}`;
+  if (h > 0) return `${h}h`;
+  return `${m}min`;
+};
 
 const aplicarMascaraData = (valor: string) => {
   const nums = valor.replace(/\D/g, "").slice(0, 8);
@@ -136,10 +167,14 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     dataDisplay: string;
     data: string;
     tipo: TipoFalta;
+    categoria: CategoriaFalta;
+    duracao: string;
   }>({
     dataDisplay: "",
     data: "",
     tipo: "sem_atestado",
+    categoria: "integral",
+    duracao: "",
   });
   const [mostrarFaltaForm, setMostrarFaltaForm] = useState(false);
 
@@ -154,8 +189,18 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
 
   const handleAdicionarFalta = () => {
     if (funcionarioExistente && onAdicionarFalta && faltaForm.data) {
-      onAdicionarFalta(funcionarioExistente.id, faltaForm.data, faltaForm.tipo);
-      setFaltaForm({ dataDisplay: "", data: "", tipo: "sem_atestado" });
+      const duracaoMinutos =
+        faltaForm.categoria === "integral"
+          ? undefined
+          : parseInt(faltaForm.duracao, 10) || undefined;
+      onAdicionarFalta(
+        funcionarioExistente.id,
+        faltaForm.data,
+        faltaForm.tipo,
+        faltaForm.categoria,
+        duracaoMinutos,
+      );
+      setFaltaForm({ dataDisplay: "", data: "", tipo: "sem_atestado", categoria: "integral", duracao: "" });
       setMostrarFaltaForm(false);
     }
   };
@@ -600,7 +645,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 <div className="bg-amber-50 rounded-lg p-3 mb-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-gray-600 mb-1">Data da Falta</label>
+                      <label className="block text-xs text-gray-600 mb-1">Data</label>
                       <input
                         type="text"
                         value={faltaForm.dataDisplay}
@@ -610,6 +655,28 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                         className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
                       />
                     </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Ocorrência</label>
+                      <select
+                        value={faltaForm.categoria}
+                        onChange={(e) =>
+                          setFaltaForm((prev) => ({
+                            ...prev,
+                            categoria: e.target.value as CategoriaFalta,
+                            duracao: e.target.value === "integral" ? "" : prev.duracao,
+                          }))
+                        }
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                      >
+                        {CATEGORIA_FALTA_OPCOES.map((o) => (
+                          <option key={o.valor} value={o.valor}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Tipo</label>
                       <select
@@ -626,6 +693,23 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                         ))}
                       </select>
                     </div>
+                    {faltaForm.categoria !== "integral" && (
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">
+                          Tempo de Ausência (min)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={faltaForm.duracao}
+                          onChange={(e) =>
+                            setFaltaForm((prev) => ({ ...prev, duracao: e.target.value }))
+                          }
+                          placeholder="Ex: 30"
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                        />
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -658,8 +742,14 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                         key={falta.id}
                         className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2"
                       >
-                        <span className="text-sm text-gray-700 flex items-center gap-2">
+                        <span className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
                           📅 {converterParaBR(falta.data)}
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-sky-100 text-sky-700">
+                            {categoriaFaltaLabel(falta.categoria ?? "integral")}
+                            {falta.duracaoMinutos
+                              ? ` · ${formatarDuracao(falta.duracaoMinutos)}`
+                              : ""}
+                          </span>
                           <span
                             className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                               falta.tipo === "com_atestado"
