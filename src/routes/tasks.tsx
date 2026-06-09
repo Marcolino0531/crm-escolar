@@ -228,7 +228,8 @@ function TasksPage() {
       <CreateTaskDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        users={users.filter((u) => u.id !== me)}
+        users={users}
+        me={me}
         onSave={(p) => createTask.mutate(p)}
         saving={createTask.isPending}
       />
@@ -461,18 +462,26 @@ function CreateTaskDialog({
   open,
   onClose,
   users,
+  me,
   onSave,
   saving,
 }: {
   open: boolean;
   onClose: () => void;
   users: DirUser[];
+  me: string;
   onSave: (p: { recipient_id: string; title: string; description: string }) => void;
   saving: boolean;
 }) {
   const [recipient, setRecipient] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+
+  // O próprio usuário aparece como opção (autoatribuição), listado primeiro.
+  const orderedUsers = useMemo(
+    () => [...users].sort((a, b) => (a.id === me ? -1 : b.id === me ? 1 : 0)),
+    [users, me],
+  );
 
   const reset = () => { setRecipient(""); setTitle(""); setDescription(""); };
 
@@ -490,9 +499,10 @@ function CreateTaskDialog({
                 <SelectValue placeholder="Selecione o destinatário" />
               </SelectTrigger>
               <SelectContent>
-                {users.map((u) => (
+                {orderedUsers.map((u) => (
                   <SelectItem key={u.id} value={u.id}>
-                    {u.name} <span className="text-muted-foreground">({u.email})</span>
+                    {u.id === me ? `${u.name} (Você)` : u.name}{" "}
+                    <span className="text-muted-foreground">({u.email})</span>
                   </SelectItem>
                 ))}
               </SelectContent>
