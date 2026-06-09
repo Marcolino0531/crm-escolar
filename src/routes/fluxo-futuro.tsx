@@ -11,7 +11,6 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -59,6 +58,32 @@ type Series = {
   end_month: string | null;
   skipped_months: string[];
 };
+
+type ForecastStatus = "pending" | "scheduled" | "paid";
+
+const STATUS_ORDER: ForecastStatus[] = ["pending", "scheduled", "paid"];
+
+const STATUS_META: Record<ForecastStatus, { label: string; badge: string; trigger: string }> = {
+  pending: {
+    label: "Pendente",
+    badge: "bg-orange-100 text-orange-800 hover:bg-orange-100",
+    trigger: "border-orange-200 bg-orange-50 text-orange-800",
+  },
+  scheduled: {
+    label: "Agendado",
+    badge: "bg-blue-100 text-blue-800 hover:bg-blue-100",
+    trigger: "border-blue-200 bg-blue-50 text-blue-800",
+  },
+  paid: {
+    label: "Pago",
+    badge: "bg-green-600 hover:bg-green-600 text-white",
+    trigger: "border-green-200 bg-green-50 text-green-800",
+  },
+};
+
+function normalizeStatus(s: string): ForecastStatus {
+  return s === "paid" ? "paid" : s === "scheduled" ? "scheduled" : "pending";
+}
 
 function fmtBRL(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -203,8 +228,9 @@ function FluxoFuturoPage() {
     },
   });
 
-  // Despesas pagas já foram debitadas no extrato e saem da previsão futura:
-  // o total considera apenas as pendentes (status !== "paid").
+  // Despesas pagas já foram debitadas no extrato e saem da previsão futura.
+  // Pendentes e Agendadas ainda não saíram do caixa, então continuam somando
+  // (status !== "paid").
   const totalProjected = forecasts
     .filter((f) => f.status !== "paid")
     .reduce((s, f) => s + Number(f.projected_amount), 0);
@@ -241,10 +267,10 @@ function FluxoFuturoPage() {
   const totalReceitasPrevistas = receitas.reduce((s, r) => s + r.valorComDesconto, 0);
   const saldoProjetado = totalReceitasPrevistas - totalProjected;
 
-  async function togglePaid(f: Forecast, paid: boolean) {
+  async function setStatus(f: Forecast, status: ForecastStatus) {
     const { error } = await supabase
       .from("recurring_forecasts")
-      .update({ status: paid ? "paid" : "pending" })
+      .update({ status })
       .eq("id", f.id);
     if (error) toast.error(error.message);
     else qc.invalidateQueries({ queryKey: ["recurring_forecasts"] });
@@ -431,7 +457,7 @@ function FluxoFuturoPage() {
                 {forecasts.map((f) => {
                   const cc = f.cost_center_id ? ccMap[f.cost_center_id] : null;
                   const sub = f.sub_cost_center_id ? subCcMap[f.sub_cost_center_id] : null;
-                  const paid = f.status === "paid";
+                  const status = normalizeStatus(f.status);
                   return (
                     <TableRow key={f.id}>
                       <TableCell className="text-xs">{f.due_date ? formatDateBR(f.due_date) : "—"}</TableCell>
@@ -470,12 +496,29 @@ function FluxoFuturoPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          {isAdmin ? <Switch checked={paid} onCheckedChange={(v) => togglePaid(f, v)} /> : null}
-                          {paid
-                            ? <Badge className="bg-green-600 hover:bg-green-600">Pago</Badge>
-                            : <Badge variant="secondary" className="bg-orange-100 text-orange-800 hover:bg-orange-100">Pendente</Badge>}
-                        </div>
+                        {isAdmin ? (
+                          <Select
+                            value={status}
+                            onValueChange={(v) => setStatus(f, v as ForecastStatus)}
+                          >
+                            <SelectTrigger
+                              className={`h-8 w-32 text-xs font-medium ${STATUS_META[status].trigger}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {STATUS_ORDER.map((s) => (
+                                <SelectItem key={s} value={s} className="text-xs">
+                                  {STATUS_META[s].label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge className={STATUS_META[status].badge}>
+                            {STATUS_META[status].label}
+                          </Badge>
+                        )}
                       </TableCell>
                       {isAdmin && (
                         <TableCell>
