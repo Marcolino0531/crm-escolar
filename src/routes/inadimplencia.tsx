@@ -16,9 +16,11 @@ import {
   Clock,
   Building2,
   Construction,
+  Percent,
 } from "lucide-react";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { supabase } from "@/integrations/supabase/client";
 import { fetchSponteInadimplencia, type PendenciaAgrupada } from "@/lib/sponte.functions";
 
 export const Route = createFileRoute("/inadimplencia")({
@@ -77,6 +79,11 @@ const MESES_PT = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
+
+// O Índice de Inadimplência depende do Faturamento (entradas) do Extrato, que
+// só passou a ser operado a partir de Junho/2026. Para meses anteriores não há
+// base de faturamento confiável, então o card exibe "N/A".
+const INDICE_DESDE_YM = "2026-06";
 
 function fmtLocal(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -216,6 +223,44 @@ function InadimplenciaPage() {
   const totalPendente = pendenciasFiltradas.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
+  // ── Índice de Inadimplência ──────────────────────────────────────────────
+  // % = Total Pendente do Mês ÷ (Total Recebido do Mês + Total Pendente do Mês).
+  // O "Total Recebido" vem do Extrato (transactions): entradas (faturamento) na
+  // MESMA janela do mês e na MESMA unidade do filtro global. Só calcula a partir
+  // de Junho/2026 (quando o extrato começou); antes disso → "N/A".
+  const indiceHabilitado = dataInicio.slice(0, 7) >= INDICE_DESDE_YM;
+
+  const { data: totalRecebido, isFetching: recebidoFetching } = useQuery({
+    queryKey: ["faturamento-mes", dataInicio, dataFim, selected],
+    enabled: indiceHabilitado && integracaoDisponivel,
+    staleTime: 60_000,
+    queryFn: async () => {
+      let q = supabase
+        .from("transactions")
+        .select("amount, description")
+        .eq("type", "entrada")
+        .is("parent_transaction_id", null)
+        .gte("date", dataInicio)
+        .lte("date", dataFim);
+      // Obedece estritamente ao filtro global de colégio (consolidado = "all").
+      if (selected !== "all") q = q.eq("school_id", selected);
+      const { data: rows, error: qErr } = await q;
+      if (qErr) throw qErr;
+      return (rows ?? []).reduce((sum, t) => {
+        const desc = String(t.description ?? "").trim().toUpperCase();
+        const amt = Number(t.amount ?? 0);
+        if (desc.includes("SALDO DIA")) return sum; // ignora marcadores de saldo
+        if (amt === 1) return sum; // ignora placeholders de importação
+        return sum + amt;
+      }, 0);
+    },
+  });
+
+  const recebidoMes = totalRecebido ?? 0;
+  const faturamentoEsperado = recebidoMes + totalPendente;
+  const indiceInadimplencia =
+    faturamentoEsperado > 0 ? (totalPendente / faturamentoEsperado) * 100 : 0;
+
   const SortIcon = ({ campo }: { campo: SortField }) => {
     if (ordenacao.campo !== campo) return <ChevronDown size={14} className="opacity-30" />;
     return ordenacao.direcao === "asc" ? (
@@ -255,7 +300,7 @@ function InadimplenciaPage() {
   return (
     <div className="space-y-6">
       {/* Stat cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <FileText size={14} /> Boletos em Aberto
@@ -280,6 +325,33 @@ function InadimplenciaPage() {
             <AlertTriangle size={14} /> Total Pendente
           </div>
           <p className="mt-1 text-2xl font-bold text-red-600">{formatarMoeda(totalPendente)}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <Percent size={14} /> Índice de Inadimplência
+          </div>
+          {!indiceHabilitado ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
+              <p className="text-xs text-muted-foreground">Disponível a partir de Jun/2026</p>
+            </>
+          ) : recebidoFetching || isFetching ? (
+            <p className="mt-1 text-2xl font-bold text-muted-foreground">…</p>
+          ) : faturamentoEsperado <= 0 ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
+              <p className="text-xs text-muted-foreground">Sem faturamento no período</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-2xl font-bold text-amber-600">
+                {indiceInadimplencia.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Pendente ÷ (Recebido {formatarMoeda(recebidoMes)} + Pendente)
+              </p>
+            </>
+          )}
         </div>
       </div>
 
