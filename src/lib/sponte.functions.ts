@@ -130,22 +130,6 @@ function parseBrDecimal(value: string): number {
   return parseFloat(value.replace(/\./g, "").replace(",", ".")) || 0;
 }
 
-function parseDate(dateStr: string): Date | null {
-  if (!dateStr) return null;
-  if (dateStr.includes("/")) {
-    const [d, m, y] = dateStr.split("/");
-    return new Date(Number(y), Number(m) - 1, Number(d));
-  }
-  if (dateStr.includes("-")) return new Date(dateStr);
-  return null;
-}
-
-function isInDateRange(vencimento: string, dataInicio: Date, dataFim: Date): boolean {
-  const dt = parseDate(vencimento);
-  if (!dt) return false;
-  return dt >= dataInicio && dt <= dataFim;
-}
-
 // Remove acentos, baixa caixa e colapsa espaços — para comparar rótulos do
 // Sponte (FormaCobranca, SituacaoParcela) sem depender de acentuação/caixa.
 function normalizarTexto(s: string): string {
@@ -358,17 +342,44 @@ interface ColetaResult {
 async function coletarPendencias(
   codigoCliente: string,
   token: string,
-  dtInicio: Date,
-  dtFim: Date,
+  inicioYMD: string,
+  fimYMD: string,
 ): Promise<ColetaResult> {
-  // ── Step 1: Fetch ALL open parcels in ONE call (Query Inversion) ──
-  const parcelasXml = await callSponte("GetParcelas", "Situacao=Aberta", codigoCliente, token);
-  const fault = checkFault(parcelasXml);
-  if (fault) return { pendencias: [], alunoUnidadeMap: {}, fault };
+  // ── Step 1: Buscar boletos em aberto VENCIDO A VENCIDO no mês selecionado ──
+  // O GetParcelas com `Situacao=Aberta` (sem data) devolve um lote TRUNCADO
+  // (~7000), dominado por vencimentos futuros, que corta justamente os boletos
+  // vencidos de ex-alunos. O filtro por data de vencimento (`DataVencimento`) é
+  // honrado pela API e devolve o conjunto COMPLETO daquele dia — de TODOS os
+  // alunos (ativos, inativos, transferidos, formados), sem truncar. Iteramos os
+  // dias da janela (a "trava mensal" obrigatória que mantém o payload pequeno e
+  // dentro do timeout de 60s) e unimos os resultados.
+  const dias = diasNaJanela(inicioYMD, fimYMD);
+  const parcelaNodes: string[] = [];
+  let primeiroFault: string | null = null;
+  const DIAS_CONC = 10; // janela de concorrência para não estourar a API/timeout
+  for (let i = 0; i < dias.length; i += DIAS_CONC) {
+    const lote = dias.slice(i, i + DIAS_CONC);
+    const resultados = await Promise.allSettled(
+      lote.map((dia) =>
+        callSponte("GetParcelas", `DataVencimento=${ymdParaBr(dia)};Situacao=Aberta`, codigoCliente, token),
+      ),
+    );
+    for (const r of resultados) {
+      if (r.status !== "fulfilled") continue;
+      const fault = checkFault(r.value);
+      if (fault) {
+        if (!primeiroFault) primeiroFault = fault;
+        continue;
+      }
+      for (const node of parseXmlList(r.value, "wsParcela")) parcelaNodes.push(node);
+    }
+  }
+  // Só propaga erro se NENHUM dia retornou parcelas (falha geral de credencial).
+  if (parcelaNodes.length === 0 && primeiroFault) {
+    return { pendencias: [], alunoUnidadeMap: {}, fault: primeiroFault };
+  }
 
-  const parcelaNodes = parseXmlList(parcelasXml, "wsParcela");
-
-  // ── Step 2: Filter by date range, collect raw parcelas ──
+  // ── Step 2: Filter by status/saldo, collect raw parcelas ──
   const parcelasRaw: ParcelaRaw[] = [];
   const alunosComPendencia = new Set<string>();
 
@@ -378,7 +389,9 @@ async function coletarPendencias(
     const situacao = parseXmlValue(parcela, "SituacaoParcela");
     if (situacao === "Quitada" || situacao === "Cancelada") continue;
     const vencimento = parseXmlValue(parcela, "Vencimento");
-    if (!isInDateRange(vencimento, dtInicio, dtFim)) continue;
+    // Reforço por calendário: a API já recortou por DataVencimento, mas
+    // garantimos que a parcela está estritamente dentro da janela do mês.
+    if (!dataNaJanela(vencimento, inicioYMD, fimYMD)) continue;
     const valorParcela = parseBrDecimal(parseXmlValue(parcela, "ValorParcela"));
     const valorPago = parseBrDecimal(parseXmlValue(parcela, "ValorPago"));
     const saldo = valorParcela - valorPago;
@@ -847,9 +860,10 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       return { pendencias: [], indisponivel: true, meta: emptyMeta };
     }
 
-    const dtInicio = new Date(dataInicio);
-    const dtFim = new Date(dataFim);
-    dtFim.setHours(23, 59, 59, 999);
+    // Janela do mês em "YYYY-MM-DD" (timezone-safe): a coleta filtra por
+    // DataVencimento dia a dia dentro dessa janela.
+    const inicioYMD = paraYMD(dataInicio) ?? dataInicio.slice(0, 10);
+    const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
     const startTime = Date.now();
 
     let pendenciasFinal: PendenciaAgrupada[] = [];
@@ -866,19 +880,21 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
       const [cecRes, belvedereRes] = await Promise.all([
         cecCreds
-          ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, dtInicio, dtFim)
+          ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, inicioYMD, fimYMD)
           : Promise.resolve(vazio),
         belvedereCreds
-          ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, dtInicio, dtFim)
+          ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, inicioYMD, fimYMD)
           : Promise.resolve(vazio),
       ]);
 
-      // Token CEC/CEC Baby → soma ESTRITA das listas filtradas por série:
-      // CEC (1º Período–9º Ano) + CEC Baby (Berçário–Maternal 3). Boletos sem
-      // classificação pedagógica são descartados (corrige o 29 → 21 + 4).
-      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias
-        .filter((p) => cecRes.alunoUnidadeMap[p.alunoId] != null)
-        .map((p) => ({ ...p, unidade: cecRes.alunoUnidadeMap[p.alunoId] as string }));
+      // Token CEC/CEC Baby → CEC (1º Período–9º Ano) + CEC Baby (Berçário–
+      // Maternal 3). Ex-alunos (inativos/transferidos/formados) não têm mais
+      // TurmaAtual, então caem como null: NÃO os descartamos — atribuímos à
+      // unidade-mãe "CEC" para que suas pendências entrem no consolidado.
+      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias.map((p) => ({
+        ...p,
+        unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
+      }));
 
       // Token Belvedere → todos os registros (sem filtro de turma).
       const belvederePendencias: PendenciaAgrupada[] = belvedereRes.pendencias.map((p) => ({
@@ -905,15 +921,20 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
           `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey}".`,
         );
       }
-      const res = await coletarPendencias(creds.codigoCliente, creds.token, dtInicio, dtFim);
+      const res = await coletarPendencias(creds.codigoCliente, creds.token, inicioYMD, fimYMD);
       if (res.fault) return { pendencias: [], error: res.fault, meta: emptyMeta };
 
-      // CEC/CEC Baby: filtra por TurmaAtual. Belvedere: exibe todos os registros.
+      // CEC/CEC Baby compartilham o token e são separados por TurmaAtual.
+      // Ex-alunos (sem turma → null) são atribuídos à unidade-mãe "CEC": no
+      // filtro "CEC" eles aparecem; em "CEC Baby" só entram quem tem turma de
+      // Berçário/Maternal. Belvedere (token próprio) exibe todos os registros.
       const filtrarPorTurma =
         creds.segmentaPorTurma && (unidadeKey === "CEC" || unidadeKey === "CEC Baby");
-      const lista = filtrarPorTurma
-        ? res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === unidadeKey)
-        : res.pendencias;
+      const lista = !filtrarPorTurma
+        ? res.pendencias
+        : unidadeKey === "CEC"
+          ? res.pendencias.filter((p) => (res.alunoUnidadeMap[p.alunoId] ?? "CEC") === "CEC")
+          : res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === "CEC Baby");
       pendenciasFinal = lista.map((p) => ({ ...p, unidade: unidadeKey }));
     }
 
