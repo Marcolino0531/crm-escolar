@@ -3,11 +3,12 @@ import { useSchool } from "@/lib/app-context";
 import { Building2 } from "lucide-react";
 
 export function SchoolFilter() {
-  const { selected, setSelected, schools, restricted } = useSchool();
+  const { selected, setSelected, schools, restricted, canSeeAll } = useSchool();
   // A restricted user with a single allowed unit is locked to that unit.
   const lockedSingle = restricted && schools.length === 1;
-  // Only restricted users with more than one unit keep a consolidated option.
-  const showAll = !restricted || schools.length > 1;
+  // "Todas as Unidades" only for users with global access (admin / unrestricted
+  // / allow-list covering every school). Restricted users never see it.
+  const showAll = canSeeAll;
   return (
     <div className="flex items-center gap-2">
       <Building2 className="h-4 w-4 text-muted-foreground" />
