@@ -239,6 +239,7 @@ export type Database = {
           horario_trabalho_inicio: string | null
           id: string
           nome_completo: string
+          recebe_vt: boolean
           school_id: string
           updated_at: string
           valor_diario_vt: number
@@ -261,6 +262,7 @@ export type Database = {
           horario_trabalho_inicio?: string | null
           id?: string
           nome_completo: string
+          recebe_vt?: boolean
           school_id: string
           updated_at?: string
           valor_diario_vt?: number
@@ -283,6 +285,7 @@ export type Database = {
           horario_trabalho_inicio?: string | null
           id?: string
           nome_completo?: string
+          recebe_vt?: boolean
           school_id?: string
           updated_at?: string
           valor_diario_vt?: number

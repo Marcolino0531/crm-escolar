@@ -43,12 +43,15 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
   const linhas: LinhaVT[] = useMemo(
     () =>
       funcionarios
+        // Só funcionários elegíveis ao VT entram no fechamento.
+        .filter((f) => f.recebeVt)
         .map((f) => {
-          // Apenas Faltas Integrais Sem Atestado dentro do mês de referência.
+          // TODAS as Faltas Integrais do mês (com e sem atestado): qualquer
+          // ausência integral abate o benefício do dia, independente de
+          // justificativa.
           const faltasDescontadas = (f.faltas ?? []).filter(
             (fa) =>
               categoriaDe(fa.categoria) === "integral" &&
-              fa.tipo === "sem_atestado" &&
               (fa.data ?? "").startsWith(mesReferencia),
           ).length;
           const valorDiario = f.valorDiarioVt ?? 0;
@@ -129,7 +132,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
               {linhas.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-gray-400 text-sm">
-                    Nenhum funcionário para esta unidade.
+                    Nenhum funcionário elegível ao VT nesta unidade.
                   </td>
                 </tr>
               ) : (
