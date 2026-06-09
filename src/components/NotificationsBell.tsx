@@ -1,4 +1,4 @@
-import { Bell, AlertTriangle, CalendarClock } from "lucide-react";
+import { Bell, AlertTriangle, CalendarClock, ClipboardList } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,6 +16,12 @@ type Notification = {
   task_id: string;
   message: string;
   read: boolean;
+  created_at: string;
+};
+
+type OpenTask = {
+  id: string;
+  title: string;
   created_at: string;
 };
 
@@ -54,6 +60,27 @@ export function NotificationsBell() {
         .limit(30);
       if (error) return [] as Notification[];
       return (data ?? []) as unknown as Notification[];
+    },
+  });
+
+  // --- New-task alerts for the recipient (derived from `tasks`; persistent and
+  // NON-dismissible: they cannot be read/cleared manually. They stay active
+  // while the task is in "Tickets Abertos" (status 'aberto') and disappear on
+  // their own once the recipient moves the card to "Em Resolução"/"Concluídos". ---
+  const { data: openTasks = [] } = useQuery({
+    queryKey: ["task_open_for_me", userId ?? "anon"],
+    enabled: !!userId && canTasks,
+    refetchInterval: 30000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tasks" as any)
+        .select("id, title, created_at")
+        .eq("recipient_id", userId)
+        .eq("status", "aberto")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) return [] as OpenTask[];
+      return (data ?? []) as unknown as OpenTask[];
     },
   });
 
@@ -96,8 +123,9 @@ export function NotificationsBell() {
   const dueToday = forecasts.filter((f) => (f.due_date ?? "") === today);
   const unreadTasks = notifications.filter((n) => !n.read);
 
-  // Fluxo alerts always count as active; task notices count while unread.
-  const badge = unreadTasks.length + forecasts.length;
+  // Fluxo alerts + persistent new-task alerts always count as active; the
+  // dismissible task notices count only while unread.
+  const badge = unreadTasks.length + forecasts.length + openTasks.length;
 
   return (
     <Popover
@@ -165,6 +193,32 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* New tasks assigned to me: persistent until I move the card. */}
+          {canTasks && openTasks.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Tarefas atribuídas a você
+              </div>
+              {openTasks.map((t) => (
+                <Link
+                  key={t.id}
+                  to="/tasks"
+                  className="block border-b px-3 py-2 text-sm font-medium last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+                    <div className="min-w-0">
+                      <div>Nova tarefa: {t.title}</div>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                        {formatDateBR(t.created_at)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Task notifications. */}
           {canTasks && notifications.length > 0 && (
             <div>
@@ -189,7 +243,10 @@ export function NotificationsBell() {
             </div>
           )}
 
-          {badge === 0 && notifications.length === 0 && forecasts.length === 0 && (
+          {badge === 0 &&
+            notifications.length === 0 &&
+            forecasts.length === 0 &&
+            openTasks.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               Nenhuma notificação.
             </p>

@@ -135,6 +135,7 @@ function TasksPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
+      qc.invalidateQueries({ queryKey: ["task_open_for_me"] });
       toast.success("Task enviada.");
       setShowCreate(false);
     },
@@ -152,6 +153,7 @@ function TasksPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       qc.invalidateQueries({ queryKey: ["task_notifications"] });
+      qc.invalidateQueries({ queryKey: ["task_open_for_me"] });
     },
     onError: (e: any) => toast.error(e.message ?? "Erro ao atualizar status."),
   });
