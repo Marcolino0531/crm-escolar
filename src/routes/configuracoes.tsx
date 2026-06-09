@@ -334,6 +334,7 @@ function UserManagement() {
   const createFn = useServerFn(createManagedUser);
   const updateFn = useServerFn(updateUserAccess);
   const deleteFn = useServerFn(deleteManagedUser);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
@@ -342,6 +343,7 @@ function UserManagement() {
   const [busy, setBusy] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [editIsAdmin, setEditIsAdmin] = useState(false);
@@ -355,6 +357,9 @@ function UserManagement() {
   });
 
   async function handleCreate() {
+    if (!name.trim()) {
+      return toast.error("Informe o nome do usuário.");
+    }
     if (!email.trim() || password.length < 6) {
       return toast.error("Informe e-mail válido e senha com ao menos 6 caracteres.");
     }
@@ -362,6 +367,7 @@ function UserManagement() {
     try {
       await createFn({
         data: {
+          name: name.trim(),
           email: email.trim(),
           password,
           isAdmin,
@@ -370,6 +376,7 @@ function UserManagement() {
         },
       });
       toast.success("Usuário criado.");
+      setName("");
       setEmail("");
       setPassword("");
       setIsAdmin(false);
@@ -385,6 +392,7 @@ function UserManagement() {
 
   function startEdit(u: any) {
     setEditingId(u.id);
+    setEditName(u.name ?? "");
     setEditEmail(u.email ?? "");
     setEditPassword("");
     setEditIsAdmin(u.roles.includes("admin"));
@@ -407,6 +415,7 @@ function UserManagement() {
           isAdmin: editIsAdmin,
           permissions: permsToArray(editPerms),
           schoolIds: editSchoolIds,
+          name: editName.trim(),
           email: editEmail.trim(),
           password: editPassword,
         },
@@ -441,6 +450,15 @@ function UserManagement() {
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
+              <label className="text-xs font-medium text-muted-foreground">Nome</label>
+              <Input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: João da Silva"
+              />
+            </div>
+            <div>
               <label className="text-xs font-medium text-muted-foreground">E-mail</label>
               <Input
                 type="email"
@@ -449,15 +467,15 @@ function UserManagement() {
                 placeholder="usuario@exemplo.com"
               />
             </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Senha inicial</label>
-              <Input
-                type="text"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="mín. 6 caracteres"
-              />
-            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Senha inicial</label>
+            <Input
+              type="text"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="mín. 6 caracteres"
+            />
           </div>
 
           <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
@@ -518,7 +536,16 @@ function UserManagement() {
                   <div key={u.id} className="p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium">{u.email}</div>
+                        {u.name ? (
+                          <div className="truncate text-sm font-semibold">
+                            {u.name}{" "}
+                            <span className="font-normal text-muted-foreground">
+                              - {u.email}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-sm font-medium">{u.email}</div>
+                        )}
                         <div className="text-xs text-muted-foreground">
                           {isAdminUser
                             ? "Administrador (acesso total)"
@@ -548,6 +575,17 @@ function UserManagement() {
                     {editing && (
                       <div className="mt-3 space-y-3 rounded-md bg-muted/30 p-3">
                         <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Nome
+                            </label>
+                            <Input
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              placeholder="Ex.: João da Silva"
+                            />
+                          </div>
                           <div>
                             <label className="text-xs font-medium text-muted-foreground">
                               E-mail
