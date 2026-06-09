@@ -224,11 +224,24 @@ function InadimplenciaPage() {
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
   // ── Índice de Inadimplência ──────────────────────────────────────────────
-  // % = Total Pendente do Mês ÷ (Total Recebido do Mês + Total Pendente do Mês).
-  // O "Total Recebido" vem do Extrato (transactions): entradas (faturamento) na
-  // MESMA janela do mês e na MESMA unidade do filtro global. Só calcula a partir
-  // de Junho/2026 (quando o extrato começou); antes disso → "N/A".
+  // % = Total Inadimplente ÷ (Total Recebido do Mês + Total Inadimplente) × 100.
+  // O numerador (Total Inadimplente) soma APENAS boletos cujo vencimento é
+  // ESTRITAMENTE INFERIOR a hoje (vencidos até ontem). Boletos a vencer hoje ou
+  // no futuro NÃO entram — o que ainda não venceu não é inadimplência. O "Total
+  // Recebido" vem do Extrato (transactions): entradas (faturamento) na MESMA
+  // janela do mês e MESMA unidade do filtro global. Só calcula a partir de
+  // Junho/2026 (quando o extrato começou); antes disso → "N/A".
   const indiceHabilitado = dataInicio.slice(0, 7) >= INDICE_DESDE_YM;
+  const hojeYMD = fmtLocal(new Date());
+  const totalInadimplente = pendenciasFiltradas
+    .filter((p) => {
+      if (!p.vencimento) return false;
+      const v = p.vencimento.includes("/")
+        ? (() => { const [d, m, y] = p.vencimento.split("/"); return `${y}-${m}-${d}`; })()
+        : p.vencimento.slice(0, 10);
+      return v < hojeYMD; // estritamente no passado
+    })
+    .reduce((sum, p) => sum + p.valorTotalBoleto, 0);
 
   const { data: totalRecebido, isFetching: recebidoFetching } = useQuery({
     queryKey: ["faturamento-mes", dataInicio, dataFim, selected],
@@ -257,9 +270,9 @@ function InadimplenciaPage() {
   });
 
   const recebidoMes = totalRecebido ?? 0;
-  const faturamentoEsperado = recebidoMes + totalPendente;
+  const faturamentoVencido = recebidoMes + totalInadimplente;
   const indiceInadimplencia =
-    faturamentoEsperado > 0 ? (totalPendente / faturamentoEsperado) * 100 : 0;
+    faturamentoVencido > 0 ? (totalInadimplente / faturamentoVencido) * 100 : 0;
 
   const SortIcon = ({ campo }: { campo: SortField }) => {
     if (ordenacao.campo !== campo) return <ChevronDown size={14} className="opacity-30" />;
@@ -337,10 +350,10 @@ function InadimplenciaPage() {
             </>
           ) : recebidoFetching || isFetching ? (
             <p className="mt-1 text-2xl font-bold text-muted-foreground">…</p>
-          ) : faturamentoEsperado <= 0 ? (
+          ) : faturamentoVencido <= 0 ? (
             <>
               <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
-              <p className="text-xs text-muted-foreground">Sem faturamento no período</p>
+              <p className="text-xs text-muted-foreground">Sem faturamento vencido no período</p>
             </>
           ) : (
             <>
@@ -348,7 +361,7 @@ function InadimplenciaPage() {
                 {indiceInadimplencia.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
               </p>
               <p className="text-xs text-muted-foreground">
-                Pendente ÷ (Recebido {formatarMoeda(recebidoMes)} + Pendente)
+                Inadimplente {formatarMoeda(totalInadimplente)} ÷ (Recebido {formatarMoeda(recebidoMes)} + Inadimplente)
               </p>
             </>
           )}
