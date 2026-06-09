@@ -94,6 +94,14 @@ export interface PeriodoFerias {
   dataFim: string;
 }
 
+export type TipoFalta = "com_atestado" | "sem_atestado";
+
+export interface Falta {
+  id: string;
+  data: string;
+  tipo: TipoFalta;
+}
+
 export type Genero = "feminino" | "masculino" | "outro" | "prefiro-nao-informar";
 export type EstadoCivil = "solteiro" | "casado" | "divorciado" | "viuvo" | "outro";
 
@@ -115,5 +123,6 @@ export interface Funcionario {
   horarioAlmocoInicio?: string;
   horarioAlmocoFim?: string;
   ferias: PeriodoFerias[];
+  faltas: Falta[];
   criadoEm: string;
 }

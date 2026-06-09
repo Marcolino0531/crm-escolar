@@ -5,6 +5,7 @@ import type {
   Funcionario,
   Genero,
   ItemMatricula,
+  Falta,
   Lead,
   OnboardingAluno,
   PeriodoFerias,
@@ -86,6 +87,7 @@ export function rowToFuncionario(r: Tables<"funcionarios">): Funcionario {
     horarioAlmocoInicio: r.horario_almoco_inicio ?? undefined,
     horarioAlmocoFim: r.horario_almoco_fim ?? undefined,
     ferias: (r.ferias as unknown as PeriodoFerias[]) ?? [],
+    faltas: (r.faltas as unknown as Falta[]) ?? [],
     criadoEm: r.created_at,
   };
 }

@@ -4,6 +4,7 @@ import { useFuncionarios } from "@/lib/crm/hooks";
 import { usePermissions } from "@/lib/app-context";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
+import RankingFaltas from "./RankingFaltas";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -117,8 +118,16 @@ const downloadCSV = (csv: string, filename: string) => {
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("rh");
-  const { funcionarios, adicionarFuncionario, editarFuncionario, removerFuncionario, adicionarFerias, removerFerias } =
-    rhHook;
+  const {
+    funcionarios,
+    adicionarFuncionario,
+    editarFuncionario,
+    removerFuncionario,
+    adicionarFerias,
+    removerFerias,
+    adicionarFalta,
+    removerFalta,
+  } = rhHook;
   const [modalAberto, setModalAberto] = useState(false);
   const [funcionarioSelecionadoId, setFuncionarioSelecionadoId] = useState<string | null>(null);
   const [exportModalAberto, setExportModalAberto] = useState(false);
@@ -128,7 +137,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     ? funcionarios.find((f) => f.id === funcionarioSelecionadoId) || null
     : null;
 
-  const handleSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "criadoEm" | "schoolId">) => {
+  const handleSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => {
     adicionarFuncionario(dados);
     setModalAberto(false);
   };
@@ -141,7 +150,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     setFuncionarioSelecionadoId(null);
   };
 
-  const handleEditarSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "criadoEm" | "schoolId">) => {
+  const handleEditarSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => {
     if (!funcionarioSelecionadoId) return;
     editarFuncionario(funcionarioSelecionadoId, dados);
     setFuncionarioSelecionadoId(null);
@@ -214,7 +223,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           <p className="text-sm">Clique em "Novo Funcionário" para começar.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
+        <div className="flex-1 min-w-0 w-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -303,6 +313,10 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             </table>
           </div>
         </div>
+        <div className="w-full lg:w-80 lg:flex-shrink-0">
+          <RankingFaltas funcionarios={funcionarios} />
+        </div>
+        </div>
       )}
 
       {modalAberto && (
@@ -321,6 +335,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           onFechar={handleFecharDetalhes}
           onAdicionarFerias={isAdmin ? adicionarFerias : undefined}
           onRemoverFerias={isAdmin ? removerFerias : undefined}
+          onAdicionarFalta={isAdmin ? adicionarFalta : undefined}
+          onRemoverFalta={isAdmin ? removerFalta : undefined}
           isAdmin={isAdmin}
         />
       )}
