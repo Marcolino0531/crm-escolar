@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // ─── Phase 6 (Option C migration) ───────────────────────────────────────────
 // Sponte inadimplência integration ported from the CRA app's api/sponte-batch.ts
@@ -76,6 +78,33 @@ function resolverCredenciais(unidade: string): SponteCreds | null {
     segmentaPorTurma: config.segmentaPorTurma,
     contaCaixa: config.contaCaixa,
   };
+}
+
+// ─── RBAC por unidade (server-side) ──────────────────────────────────────────
+// Retorna os NOMES das escolas (= chaves Sponte) que o usuário pode acessar, ou
+// `null` para acesso global (admin, legacy sem restrição explícita, ou allow-
+// list cobrindo tudo). Usado para impedir que um usuário restrito force, via
+// requisição forjada, a leitura de dados de unidades fora da sua permissão —
+// inclusive o consolidado ("Todas as Unidades").
+async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
+  const { data: roles } = await supabaseAdmin
+    .from("user_roles" as any)
+    .select("role")
+    .eq("user_id", userId);
+  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return null;
+
+  const { data: us } = await supabaseAdmin
+    .from("user_schools" as any)
+    .select("school_id")
+    .eq("user_id", userId);
+  const ids = ((us ?? []) as any[]).map((r) => r.school_id as string);
+  if (ids.length === 0) return null; // sem restrição explícita = global (legacy)
+
+  const { data: schools } = await supabaseAdmin
+    .from("schools" as any)
+    .select("name")
+    .in("id", ids);
+  return ((schools ?? []) as any[]).map((s) => s.name as string);
 }
 
 // Casa o nome da Conta Creditada (ex.: "Caixa - 489426") com a conta-caixa da
@@ -761,10 +790,17 @@ const ConciliacaoInputSchema = z.object({
 //  - CEC Baby: token compartilhado, conta caixa 011311
 //  - Núcleo Belvedere: token exclusivo, conta caixa 9295
 export const fetchSponteConciliacao = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => ConciliacaoInputSchema.parse(input))
-  .handler(async ({ data }): Promise<ConciliacaoSponteResult> => {
+  .handler(async ({ data, context }): Promise<ConciliacaoSponteResult> => {
     const { dataInicio, dataFim, unidade, contaCreditada } = data;
     const meta = { dataInicio, dataFim, tempoSegundos: 0 };
+
+    // RBAC por unidade: bloqueia se o usuário não pode acessar a unidade pedida.
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, meta };
+    }
 
     if (!(unidade in SPONTE_UNIDADES)) {
       return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, indisponivel: true, meta };
@@ -840,8 +876,9 @@ const InputSchema = z.object({
 });
 
 export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }): Promise<SponteBatchResult> => {
+  .handler(async ({ data, context }): Promise<SponteBatchResult> => {
     const { dataInicio, dataFim, unidade } = data;
     const unidadeKey = unidade ?? null;
 
@@ -854,6 +891,17 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       dataInicio,
       dataFim,
     };
+
+    // RBAC por unidade (server-side): impede que um usuário restrito force a
+    // leitura de unidades fora da sua permissão (ou do consolidado). `null` =
+    // acesso global.
+    const allowed = await allowedSponteUnidades(context.userId);
+    const isAllowed = (u: string) => allowed === null || allowed.includes(u);
+
+    // Unidade específica fora da permissão do usuário → bloqueia (lista vazia).
+    if (unidadeKey !== null && !isAllowed(unidadeKey)) {
+      return { pendencias: [], meta: emptyMeta };
+    }
 
     // Unidades sem integração Sponte ativa.
     if (unidadeKey !== null && !(unidadeKey in SPONTE_UNIDADES)) {
@@ -871,9 +919,15 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
     if (unidadeKey === null) {
       // ── Consolidado: dispara AMBOS os tokens (CEC + Belvedere) em paralelo ──
       // e mescla os resultados, respeitando as regras de separação pedagógica.
-      const cecCreds = resolverCredenciais("CEC");
-      const belvedereCreds = resolverCredenciais("Núcleo Belvedere");
+      // RBAC: só busca os tokens das unidades que o usuário pode ver. Um usuário
+      // restrito que force o consolidado recebe apenas suas unidades permitidas.
+      const cecAllowed = isAllowed("CEC") || isAllowed("CEC Baby");
+      const belvedereAllowed = isAllowed("Núcleo Belvedere");
+      const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
+      const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
       if (!cecCreds && !belvedereCreds) {
+        // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
+        if (allowed !== null) return { pendencias: [], meta: emptyMeta };
         throw new Error("Credenciais da API do Sponte não configuradas para o consolidado.");
       }
 
@@ -891,10 +945,15 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       // Maternal 3). Ex-alunos (inativos/transferidos/formados) não têm mais
       // TurmaAtual, então caem como null: NÃO os descartamos — atribuímos à
       // unidade-mãe "CEC" para que suas pendências entrem no consolidado.
-      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias.map((p) => ({
-        ...p,
-        unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
-      }));
+      // RBAC: o token CEC/CEC Baby é compartilhado, então um usuário com acesso
+      // só a CEC (ou só a CEC Baby) deve ver apenas a sua fatia — filtramos pela
+      // unidade resolvida por turma.
+      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias
+        .map((p) => ({
+          ...p,
+          unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
+        }))
+        .filter((p) => isAllowed(p.unidade));
 
       // Token Belvedere → todos os registros (sem filtro de turma).
       const belvederePendencias: PendenciaAgrupada[] = belvedereRes.pendencias.map((p) => ({

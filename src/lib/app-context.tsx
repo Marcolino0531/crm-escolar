@@ -37,12 +37,17 @@ type SchoolCtx = {
   schools: { id: string; name: string }[];
   // True when the logged-in user is limited to a subset of schools.
   restricted: boolean;
+  // True only for users with GLOBAL access (admin, legacy unrestricted, or a
+  // user whose explicit allow-list covers every school). Only these users may
+  // see/select the consolidated "Todas as Unidades" view.
+  canSeeAll: boolean;
 };
 const SchoolContext = createContext<SchoolCtx>({
   selected: "all",
   setSelected: () => {},
   schools: [],
   restricted: false,
+  canSeeAll: true,
 });
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
@@ -82,21 +87,28 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     return allSchools.filter((s) => allowedIds.includes(s.id));
   }, [allSchools, allowedIds, restricted]);
 
-  // Keep the active selection valid for restricted users: if the current
-  // selection is not allowed, fall back to their single school (locked) or
-  // to the consolidated view of their allowed schools.
+  // Global access = admin, legacy unrestricted (no explicit rows), or an
+  // allow-list that covers every school. Only these users may use "Todas as
+  // Unidades"; everyone else is confined to their permitted units.
+  const canSeeAll =
+    !restricted || (allSchools.length > 0 && schools.length === allSchools.length);
+
+  // Keep the active selection valid:
+  //  • Global users: leave "all" (or a valid unit) as-is.
+  //  • Restricted users WITHOUT global access: never allow "all" — fall back to
+  //    their first permitted unit (single-unit users stay locked to it). This
+  //    also fixes the default login state, which starts on "all".
   useEffect(() => {
-    if (!restricted) return;
+    if (schools.length === 0) return; // schools not loaded yet
+    if (canSeeAll) return;
     const ids = schools.map((s) => s.id);
-    if (schools.length === 1) {
-      if (selected !== schools[0].id) setSelected(schools[0].id);
-    } else if (selected !== "all" && !ids.includes(selected)) {
-      setSelected("all");
+    if (selected === "all" || !ids.includes(selected)) {
+      setSelected(schools[0].id);
     }
-  }, [restricted, schools, selected]);
+  }, [canSeeAll, schools, selected]);
 
   return (
-    <SchoolContext.Provider value={{ selected, setSelected, schools, restricted }}>
+    <SchoolContext.Provider value={{ selected, setSelected, schools, restricted, canSeeAll }}>
       {children}
     </SchoolContext.Provider>
   );
