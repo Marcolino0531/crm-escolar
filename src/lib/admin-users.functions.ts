@@ -113,14 +113,22 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push(s.school_id);
       schoolMap.set(s.user_id, arr);
     });
-    return usersResp.users.map((u) => ({
+    return usersResp.users.map((u) => {
+      const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+      const name =
+        (typeof meta.full_name === "string" && meta.full_name) ||
+        (typeof meta.name === "string" && meta.name) ||
+        "";
+      return {
       id: u.id,
       email: u.email ?? "",
+      name,
       created_at: u.created_at,
       roles: roleMap.get(u.id) ?? [],
       permissions: permMap.get(u.id) ?? [],
       schoolIds: schoolMap.get(u.id) ?? [],
-    }));
+      };
+    });
   });
 
 export const createManagedUser = createServerFn({ method: "POST" })
@@ -128,6 +136,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
   .inputValidator((input) =>
     z
       .object({
+        name: z.string().trim().min(1).max(120),
         email: z.string().trim().email().max(255),
         password: z.string().min(6).max(72),
         isAdmin: z.boolean().default(false),
@@ -142,6 +151,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
       email: data.email,
       password: data.password,
       email_confirm: true,
+      user_metadata: { full_name: data.name },
     });
     if (error) throw new Error(error.message);
     const userId = created.user?.id;
@@ -160,6 +170,7 @@ export const updateUserAccess = createServerFn({ method: "POST" })
         isAdmin: z.boolean().default(false),
         permissions: z.array(permissionSchema).default([]),
         schoolIds: z.array(z.string().uuid()).default([]),
+        name: z.string().trim().max(120).optional(),
         email: z.string().trim().email().max(255).optional(),
         // Empty string means "leave password unchanged".
         password: z.string().max(72).optional(),
@@ -172,9 +183,10 @@ export const updateUserAccess = createServerFn({ method: "POST" })
       throw new Error("Você não pode remover o próprio acesso de administrador.");
     }
 
-    // Update auth credentials (email / password) via the Supabase admin API.
-    const attrs: { email?: string; password?: string } = {};
+    // Update auth credentials (email / password / name) via the Supabase admin API.
+    const attrs: { email?: string; password?: string; user_metadata?: Record<string, unknown> } = {};
     if (data.email) attrs.email = data.email;
+    if (typeof data.name === "string") attrs.user_metadata = { full_name: data.name };
     if (data.password && data.password.length > 0) {
       if (data.password.length < 6) {
         throw new Error("A senha deve ter pelo menos 6 caracteres.");
