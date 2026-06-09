@@ -7,12 +7,14 @@ import { TAREFAS_ONBOARDING } from "./constants";
 import type {
   AlunoLead,
   ColunaKanban,
+  Falta,
   Funcionario,
   ItemMatricula,
   Lead,
   OnboardingAluno,
   PeriodoFerias,
   TarefaOnboardingId,
+  TipoFalta,
 } from "./types";
 import type { Json, TablesUpdate } from "@/integrations/supabase/types";
 
@@ -250,7 +252,7 @@ export function useOnboarding() {
 }
 
 // ---------- Funcionarios (RH) ----------
-type FuncionarioFormData = Omit<Funcionario, "id" | "criadoEm" | "schoolId" | "ferias">;
+type FuncionarioFormData = Omit<Funcionario, "id" | "criadoEm" | "schoolId" | "ferias" | "faltas">;
 
 function funcionarioToRow(schoolId: string, f: FuncionarioFormData) {
   return {
@@ -315,7 +317,11 @@ export function useFuncionarios() {
     run(async () => {
       const { error } = await supabase
         .from("funcionarios")
-        .insert({ ...funcionarioToRow(schoolId, dados), ferias: [] as unknown as Json });
+        .insert({
+          ...funcionarioToRow(schoolId, dados),
+          ferias: [] as unknown as Json,
+          faltas: [] as unknown as Json,
+        });
       if (error) throw error;
     });
   };
@@ -363,6 +369,31 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
+  const adicionarFalta = (funcionarioId: string, data: string, tipo: TipoFalta) =>
+    run(async () => {
+      const atual = funcionarios.find((f) => f.id === funcionarioId);
+      const faltas: Falta[] = [
+        ...(atual?.faltas ?? []),
+        { id: crypto.randomUUID(), data, tipo },
+      ];
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ faltas: faltas as unknown as Json })
+        .eq("id", funcionarioId);
+      if (error) throw error;
+    });
+
+  const removerFalta = (funcionarioId: string, faltaId: string) =>
+    run(async () => {
+      const atual = funcionarios.find((f) => f.id === funcionarioId);
+      const faltas = (atual?.faltas ?? []).filter((fa) => fa.id !== faltaId);
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ faltas: faltas as unknown as Json })
+        .eq("id", funcionarioId);
+      if (error) throw error;
+    });
+
   return {
     funcionarios,
     isLoading,
@@ -372,6 +403,8 @@ export function useFuncionarios() {
     removerFuncionario,
     adicionarFerias,
     removerFerias,
+    adicionarFalta,
+    removerFalta,
   };
 }
 

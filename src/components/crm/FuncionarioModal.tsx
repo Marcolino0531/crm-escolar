@@ -1,16 +1,26 @@
 import React, { useState } from "react";
-import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
+import { Unidade, Funcionario, Genero, EstadoCivil, TipoFalta } from "@/lib/crm/types";
 import { UNIDADES } from "@/lib/crm/constants";
 
 interface FuncionarioModalProps {
   unidadeSelecionada: Unidade;
   funcionarioExistente?: Funcionario;
-  onSalvar: (dados: Omit<Funcionario, "id" | "ferias" | "criadoEm" | "schoolId">) => void;
+  onSalvar: (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => void;
   onFechar: () => void;
   onAdicionarFerias?: (funcionarioId: string, dataInicio: string, dataFim: string) => void;
   onRemoverFerias?: (funcionarioId: string, feriasId: string) => void;
+  onAdicionarFalta?: (funcionarioId: string, data: string, tipo: TipoFalta) => void;
+  onRemoverFalta?: (funcionarioId: string, faltaId: string) => void;
   isAdmin?: boolean;
 }
+
+const TIPO_FALTA_OPCOES: { valor: TipoFalta; label: string }[] = [
+  { valor: "com_atestado", label: "Com Atestado" },
+  { valor: "sem_atestado", label: "Sem Atestado" },
+];
+
+const tipoFaltaLabel = (t: TipoFalta): string =>
+  TIPO_FALTA_OPCOES.find((o) => o.valor === t)?.label ?? "";
 
 const aplicarMascaraData = (valor: string) => {
   const nums = valor.replace(/\D/g, "").slice(0, 8);
@@ -87,6 +97,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   onFechar,
   onAdicionarFerias,
   onRemoverFerias,
+  onAdicionarFalta,
+  onRemoverFalta,
   isAdmin = true,
 }) => {
   const isEdicao = !!funcionarioExistente;
@@ -119,6 +131,34 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     dataFim: "",
   });
   const [mostrarFeriasForm, setMostrarFeriasForm] = useState(false);
+
+  const [faltaForm, setFaltaForm] = useState<{
+    dataDisplay: string;
+    data: string;
+    tipo: TipoFalta;
+  }>({
+    dataDisplay: "",
+    data: "",
+    tipo: "sem_atestado",
+  });
+  const [mostrarFaltaForm, setMostrarFaltaForm] = useState(false);
+
+  const handleFaltaDataChange = (valor: string) => {
+    const display = aplicarMascaraData(valor);
+    if (display.length === 10 && validarData(display)) {
+      setFaltaForm((prev) => ({ ...prev, dataDisplay: display, data: converterParaISO(display) }));
+    } else {
+      setFaltaForm((prev) => ({ ...prev, dataDisplay: display, data: "" }));
+    }
+  };
+
+  const handleAdicionarFalta = () => {
+    if (funcionarioExistente && onAdicionarFalta && faltaForm.data) {
+      onAdicionarFalta(funcionarioExistente.id, faltaForm.data, faltaForm.tipo);
+      setFaltaForm({ dataDisplay: "", data: "", tipo: "sem_atestado" });
+      setMostrarFaltaForm(false);
+    }
+  };
 
   const handleDataChange = (
     campo: "dataAdmissao" | "dataRescisao" | "dataInicio" | "dataNascimento",
@@ -533,6 +573,114 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Controle de Faltas (somente no modo edição) */}
+          {isEdicao && funcionarioExistente && (
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  <span>📋</span> Controle de Faltas
+                </h3>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarFaltaForm(!mostrarFaltaForm)}
+                    className="text-xs px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 font-medium transition-colors"
+                  >
+                    + Adicionar Falta
+                  </button>
+                )}
+              </div>
+
+              {mostrarFaltaForm && (
+                <div className="bg-amber-50 rounded-lg p-3 mb-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Data da Falta</label>
+                      <input
+                        type="text"
+                        value={faltaForm.dataDisplay}
+                        onChange={(e) => handleFaltaDataChange(e.target.value)}
+                        placeholder="DD/MM/AAAA"
+                        maxLength={10}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Tipo</label>
+                      <select
+                        value={faltaForm.tipo}
+                        onChange={(e) =>
+                          setFaltaForm((prev) => ({ ...prev, tipo: e.target.value as TipoFalta }))
+                        }
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                      >
+                        {TIPO_FALTA_OPCOES.map((o) => (
+                          <option key={o.valor} value={o.valor}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMostrarFaltaForm(false)}
+                      className="text-xs px-3 py-1 text-gray-500 hover:text-gray-700"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAdicionarFalta}
+                      disabled={!faltaForm.data}
+                      className="text-xs px-3 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {funcionarioExistente.faltas.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">Nenhuma falta registrada.</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...funcionarioExistente.faltas]
+                    .sort((a, b) => b.data.localeCompare(a.data))
+                    .map((falta) => (
+                      <div
+                        key={falta.id}
+                        className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2"
+                      >
+                        <span className="text-sm text-gray-700 flex items-center gap-2">
+                          📅 {converterParaBR(falta.data)}
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              falta.tipo === "com_atestado"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-red-100 text-red-700"
+                            }`}
+                          >
+                            {tipoFaltaLabel(falta.tipo)}
+                          </span>
+                        </span>
+                        {isAdmin && onRemoverFalta && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoverFalta(funcionarioExistente.id, falta.id)}
+                            className="text-red-400 hover:text-red-600 text-xs"
+                          >
+                            Excluir
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 </div>
               )}
             </div>

@@ -230,6 +230,7 @@ export type Database = {
           data_nascimento: string | null
           data_rescisao: string | null
           estado_civil: string | null
+          faltas: Json
           ferias: Json
           genero: string | null
           horario_almoco_fim: string | null
@@ -250,6 +251,7 @@ export type Database = {
           data_nascimento?: string | null
           data_rescisao?: string | null
           estado_civil?: string | null
+          faltas?: Json
           ferias?: Json
           genero?: string | null
           horario_almoco_fim?: string | null
@@ -270,6 +272,7 @@ export type Database = {
           data_nascimento?: string | null
           data_rescisao?: string | null
           estado_civil?: string | null
+          faltas?: Json
           ferias?: Json
           genero?: string | null
           horario_almoco_fim?: string | null
