@@ -86,6 +86,7 @@ export function rowToFuncionario(r: Tables<"funcionarios">): Funcionario {
     horarioTrabalhoFim: r.horario_trabalho_fim ?? "",
     horarioAlmocoInicio: r.horario_almoco_inicio ?? undefined,
     horarioAlmocoFim: r.horario_almoco_fim ?? undefined,
+    recebeVt: r.recebe_vt ?? true,
     valorDiarioVt: Number(r.valor_diario_vt ?? 0),
     ferias: (r.ferias as unknown as PeriodoFerias[]) ?? [],
     faltas: (r.faltas as unknown as Falta[]) ?? [],

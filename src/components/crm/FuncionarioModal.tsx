@@ -164,6 +164,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     horarioTrabalhoFim: funcionarioExistente?.horarioTrabalhoFim || "",
     horarioAlmocoInicio: funcionarioExistente?.horarioAlmocoInicio || "",
     horarioAlmocoFim: funcionarioExistente?.horarioAlmocoFim || "",
+    recebeVt: funcionarioExistente?.recebeVt ?? true,
     valorDiarioVt:
       funcionarioExistente?.valorDiarioVt != null ? String(funcionarioExistente.valorDiarioVt) : "",
   });
@@ -278,7 +279,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       !form.dataInicio ||
       !validarHora(form.horarioTrabalhoInicio) ||
       !validarHora(form.horarioTrabalhoFim) ||
-      !vtValido(form.valorDiarioVt)
+      (form.recebeVt && !vtValido(form.valorDiarioVt))
     ) {
       return;
     }
@@ -297,7 +298,8 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       horarioTrabalhoFim: form.horarioTrabalhoFim,
       horarioAlmocoInicio: form.horarioAlmocoInicio || undefined,
       horarioAlmocoFim: form.horarioAlmocoFim || undefined,
-      valorDiarioVt: parseVt(form.valorDiarioVt),
+      recebeVt: form.recebeVt,
+      valorDiarioVt: form.recebeVt ? parseVt(form.valorDiarioVt) : 0,
     });
   };
 
@@ -310,7 +312,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     form.dataInicio &&
     validarHora(form.horarioTrabalhoInicio) &&
     validarHora(form.horarioTrabalhoFim) &&
-    vtValido(form.valorDiarioVt);
+    (!form.recebeVt || vtValido(form.valorDiarioVt));
 
   const inputClass =
     "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm";
@@ -546,23 +548,46 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
             </div>
           </div>
 
-          {/* Valor Diário do VT (obrigatório) */}
+          {/* Elegibilidade ao Vale-Transporte */}
           <div>
-            <label className={labelClass}>
-              Valor Diário do VT <span className="text-red-500">*</span>
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <span className={labelClass + " mb-0"}>Recebe Vale-Transporte?</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.recebeVt}
+                onClick={() => setForm({ ...form, recebeVt: !form.recebeVt })}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                  form.recebeVt ? "bg-emerald-600" : "bg-gray-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    form.recebeVt ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
             </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">R$</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={form.valorDiarioVt}
-                onChange={(e) => setForm({ ...form, valorDiarioVt: e.target.value })}
-                placeholder="0,00"
-                className={`${inputClass} pl-9`}
-              />
-            </div>
-            <p className="text-xs text-gray-400 mt-1">Valor por dia usado no Fechamento de Vale-Transporte.</p>
+
+            {form.recebeVt && (
+              <div className="mt-3">
+                <label className={labelClass}>
+                  Valor Diário do VT <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">R$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={form.valorDiarioVt}
+                    onChange={(e) => setForm({ ...form, valorDiarioVt: e.target.value })}
+                    placeholder="0,00"
+                    className={`${inputClass} pl-9`}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Valor por dia usado no Fechamento de Vale-Transporte.</p>
+              </div>
+            )}
           </div>
 
           {/* Controle de Férias (somente no modo edição) */}
