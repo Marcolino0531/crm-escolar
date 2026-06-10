@@ -1,5 +1,28 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
+// Garante que o usuário pode editar a conciliação do Financeiro antes de chamar
+// o gateway de IA (custo por requisição). Admin sempre passa; caso contrário
+// exige can_edit em "financeiro_conciliacao" ou no módulo pai "financeiro".
+async function assertPodeEditarConciliacao(userId: string) {
+  const { data: roles } = await supabaseAdmin
+    .from("user_roles" as any)
+    .select("role")
+    .eq("user_id", userId);
+  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return;
+
+  const { data: perms } = await supabaseAdmin
+    .from("user_permissions" as any)
+    .select("module, can_edit")
+    .eq("user_id", userId)
+    .in("module", ["financeiro_conciliacao", "financeiro"]);
+  const podeEditar = ((perms ?? []) as any[]).some((p) => p.can_edit === true);
+  if (!podeEditar) {
+    throw new Error("Sem permissão para usar a extração de boletos por IA (requer edição no Financeiro/Conciliação).");
+  }
+}
 
 const InputSchema = z.object({
   pdfText: z.string().min(10).max(200000),
@@ -24,8 +47,10 @@ export type ExtractedItem = {
 };
 
 export const extractBoletoBreakdown = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    await assertPodeEditarConciliacao(context.userId);
     const apiKey = process.env.LOVABLE_API_KEY;
     if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
 
