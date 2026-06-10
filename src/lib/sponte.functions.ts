@@ -1134,6 +1134,125 @@ const InputSchema = z.object({
   unidade: z.string().optional(),
 });
 
+// Núcleo de coleta de inadimplência por ESCOPO (unidade individual ou
+// consolidado), já com o tratamento de RBAC por unidade, a separação
+// pedagógica (CEC/CEC Baby por turma) e a marcação de `unidade` em cada
+// pendência. Reutilizado tanto pela visão mensal (fetchSponteInadimplencia)
+// quanto pela acumulada anual (fetchSponteInadimplenciaAnual). Retorna apenas
+// as pendências (ou error/indisponivel); cada chamador monta seu próprio meta.
+async function coletarInadimplenciaPorEscopo(
+  unidadeKey: string | null,
+  inicioYMD: string,
+  fimYMD: string,
+  userId: string,
+): Promise<{ pendencias: PendenciaAgrupada[]; error?: string; indisponivel?: boolean }> {
+  // RBAC por unidade (server-side): impede que um usuário restrito force a
+  // leitura de unidades fora da sua permissão (ou do consolidado). `null` =
+  // acesso global.
+  const allowed = await allowedSponteUnidades(userId);
+  const isAllowed = (u: string) => allowed === null || allowed.includes(u);
+
+  // Unidade específica fora da permissão do usuário → bloqueia (lista vazia).
+  if (unidadeKey !== null && !isAllowed(unidadeKey)) {
+    return { pendencias: [] };
+  }
+
+  // Unidades sem integração Sponte ativa.
+  if (unidadeKey !== null && !(unidadeKey in SPONTE_UNIDADES)) {
+    return { pendencias: [], indisponivel: true };
+  }
+
+  if (unidadeKey === null) {
+    // ── Consolidado: dispara AMBOS os tokens (CEC + Belvedere) em paralelo ──
+    // e mescla os resultados, respeitando as regras de separação pedagógica.
+    // RBAC: só busca os tokens das unidades que o usuário pode ver. Um usuário
+    // restrito que force o consolidado recebe apenas suas unidades permitidas.
+    const cecAllowed = isAllowed("CEC") || isAllowed("CEC Baby");
+    const belvedereAllowed = isAllowed("Núcleo Belvedere");
+    const valeSerenoAllowed = isAllowed("Núcleo Vale do Sereno");
+    const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
+    const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
+    const valeSerenoCreds = valeSerenoAllowed
+      ? resolverCredenciais("Núcleo Vale do Sereno")
+      : null;
+    if (!cecCreds && !belvedereCreds && !valeSerenoCreds) {
+      // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
+      if (allowed !== null) return { pendencias: [] };
+      throw new Error("Credenciais da API do Sponte não configuradas para o consolidado.");
+    }
+
+    const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
+    const [cecRes, belvedereRes, valeSerenoRes] = await Promise.all([
+      cecCreds
+        ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, inicioYMD, fimYMD)
+        : Promise.resolve(vazio),
+      belvedereCreds
+        ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, inicioYMD, fimYMD)
+        : Promise.resolve(vazio),
+      valeSerenoCreds
+        ? coletarPendencias(valeSerenoCreds.codigoCliente, valeSerenoCreds.token, inicioYMD, fimYMD)
+        : Promise.resolve(vazio),
+    ]);
+
+    // Token CEC/CEC Baby → CEC (1º Período–9º Ano) + CEC Baby (Berçário–
+    // Maternal 3). Ex-alunos (inativos/transferidos/formados) não têm mais
+    // TurmaAtual, então caem como null: NÃO os descartamos — atribuímos à
+    // unidade-mãe "CEC" para que suas pendências entrem no consolidado.
+    // RBAC: o token CEC/CEC Baby é compartilhado, então um usuário com acesso
+    // só a CEC (ou só a CEC Baby) deve ver apenas a sua fatia — filtramos pela
+    // unidade resolvida por turma.
+    const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias
+      .map((p) => ({
+        ...p,
+        unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
+      }))
+      .filter((p) => isAllowed(p.unidade));
+
+    // Token Belvedere → todos os registros (sem filtro de turma).
+    const belvederePendencias: PendenciaAgrupada[] = belvedereRes.pendencias.map((p) => ({
+      ...p,
+      unidade: "Núcleo Belvedere",
+    }));
+
+    // Token Vale do Sereno → todos os registros (sem filtro de turma).
+    const valeSerenoPendencias: PendenciaAgrupada[] = valeSerenoRes.pendencias.map((p) => ({
+      ...p,
+      unidade: "Núcleo Vale do Sereno",
+    }));
+
+    const pendencias = [...cecPendencias, ...belvederePendencias, ...valeSerenoPendencias];
+
+    // Se nada veio e todas as fontes falharam, propaga o erro.
+    if (pendencias.length === 0 && (cecRes.fault || belvedereRes.fault || valeSerenoRes.fault)) {
+      return { pendencias: [], error: cecRes.fault ?? belvedereRes.fault ?? valeSerenoRes.fault };
+    }
+    return { pendencias };
+  }
+
+  // ── Unidade individual: usa EXCLUSIVAMENTE as credenciais da unidade ──
+  const creds = resolverCredenciais(unidadeKey);
+  if (!creds) {
+    throw new Error(
+      `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey}".`,
+    );
+  }
+  const res = await coletarPendencias(creds.codigoCliente, creds.token, inicioYMD, fimYMD);
+  if (res.fault) return { pendencias: [], error: res.fault };
+
+  // CEC/CEC Baby compartilham o token e são separados por TurmaAtual.
+  // Ex-alunos (sem turma → null) são atribuídos à unidade-mãe "CEC": no
+  // filtro "CEC" eles aparecem; em "CEC Baby" só entram quem tem turma de
+  // Berçário/Maternal. Belvedere (token próprio) exibe todos os registros.
+  const filtrarPorTurma =
+    creds.segmentaPorTurma && (unidadeKey === "CEC" || unidadeKey === "CEC Baby");
+  const lista = !filtrarPorTurma
+    ? res.pendencias
+    : unidadeKey === "CEC"
+      ? res.pendencias.filter((p) => (res.alunoUnidadeMap[p.alunoId] ?? "CEC") === "CEC")
+      : res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === "CEC Baby");
+  return { pendencias: lista.map((p) => ({ ...p, unidade: unidadeKey })) };
+}
+
 export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
@@ -1151,126 +1270,28 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       dataFim,
     };
 
-    // RBAC por unidade (server-side): impede que um usuário restrito force a
-    // leitura de unidades fora da sua permissão (ou do consolidado). `null` =
-    // acesso global.
-    const allowed = await allowedSponteUnidades(context.userId);
-    const isAllowed = (u: string) => allowed === null || allowed.includes(u);
-
-    // Unidade específica fora da permissão do usuário → bloqueia (lista vazia).
-    if (unidadeKey !== null && !isAllowed(unidadeKey)) {
-      return { pendencias: [], meta: emptyMeta };
-    }
-
-    // Unidades sem integração Sponte ativa.
-    if (unidadeKey !== null && !(unidadeKey in SPONTE_UNIDADES)) {
-      return { pendencias: [], indisponivel: true, meta: emptyMeta };
-    }
-
     // Janela do mês em "YYYY-MM-DD" (timezone-safe): a coleta filtra por
     // DataVencimento dia a dia dentro dessa janela.
     const inicioYMD = paraYMD(dataInicio) ?? dataInicio.slice(0, 10);
     const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
     const startTime = Date.now();
 
-    let pendenciasFinal: PendenciaAgrupada[] = [];
-
-    if (unidadeKey === null) {
-      // ── Consolidado: dispara AMBOS os tokens (CEC + Belvedere) em paralelo ──
-      // e mescla os resultados, respeitando as regras de separação pedagógica.
-      // RBAC: só busca os tokens das unidades que o usuário pode ver. Um usuário
-      // restrito que force o consolidado recebe apenas suas unidades permitidas.
-      const cecAllowed = isAllowed("CEC") || isAllowed("CEC Baby");
-      const belvedereAllowed = isAllowed("Núcleo Belvedere");
-      const valeSerenoAllowed = isAllowed("Núcleo Vale do Sereno");
-      const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
-      const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
-      const valeSerenoCreds = valeSerenoAllowed
-        ? resolverCredenciais("Núcleo Vale do Sereno")
-        : null;
-      if (!cecCreds && !belvedereCreds && !valeSerenoCreds) {
-        // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
-        if (allowed !== null) return { pendencias: [], meta: emptyMeta };
-        throw new Error("Credenciais da API do Sponte não configuradas para o consolidado.");
-      }
-
-      const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
-      const [cecRes, belvedereRes, valeSerenoRes] = await Promise.all([
-        cecCreds
-          ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, inicioYMD, fimYMD)
-          : Promise.resolve(vazio),
-        belvedereCreds
-          ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, inicioYMD, fimYMD)
-          : Promise.resolve(vazio),
-        valeSerenoCreds
-          ? coletarPendencias(valeSerenoCreds.codigoCliente, valeSerenoCreds.token, inicioYMD, fimYMD)
-          : Promise.resolve(vazio),
-      ]);
-
-      // Token CEC/CEC Baby → CEC (1º Período–9º Ano) + CEC Baby (Berçário–
-      // Maternal 3). Ex-alunos (inativos/transferidos/formados) não têm mais
-      // TurmaAtual, então caem como null: NÃO os descartamos — atribuímos à
-      // unidade-mãe "CEC" para que suas pendências entrem no consolidado.
-      // RBAC: o token CEC/CEC Baby é compartilhado, então um usuário com acesso
-      // só a CEC (ou só a CEC Baby) deve ver apenas a sua fatia — filtramos pela
-      // unidade resolvida por turma.
-      const cecPendencias: PendenciaAgrupada[] = cecRes.pendencias
-        .map((p) => ({
-          ...p,
-          unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
-        }))
-        .filter((p) => isAllowed(p.unidade));
-
-      // Token Belvedere → todos os registros (sem filtro de turma).
-      const belvederePendencias: PendenciaAgrupada[] = belvedereRes.pendencias.map((p) => ({
-        ...p,
-        unidade: "Núcleo Belvedere",
-      }));
-
-      // Token Vale do Sereno → todos os registros (sem filtro de turma).
-      const valeSerenoPendencias: PendenciaAgrupada[] = valeSerenoRes.pendencias.map((p) => ({
-        ...p,
-        unidade: "Núcleo Vale do Sereno",
-      }));
-
-      pendenciasFinal = [...cecPendencias, ...belvederePendencias, ...valeSerenoPendencias];
-
-      // Se nada veio e todas as fontes falharam, propaga o erro.
-      if (
-        pendenciasFinal.length === 0 &&
-        (cecRes.fault || belvedereRes.fault || valeSerenoRes.fault)
-      ) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        return {
-          pendencias: [],
-          error: cecRes.fault ?? belvedereRes.fault ?? valeSerenoRes.fault,
-          meta: { ...emptyMeta, tempoSegundos: parseFloat(elapsed) },
-        };
-      }
-    } else {
-      // ── Unidade individual: usa EXCLUSIVAMENTE as credenciais da unidade ──
-      const creds = resolverCredenciais(unidadeKey);
-      if (!creds) {
-        throw new Error(
-          `Credenciais da API do Sponte não configuradas para a unidade "${unidadeKey}".`,
-        );
-      }
-      const res = await coletarPendencias(creds.codigoCliente, creds.token, inicioYMD, fimYMD);
-      if (res.fault) return { pendencias: [], error: res.fault, meta: emptyMeta };
-
-      // CEC/CEC Baby compartilham o token e são separados por TurmaAtual.
-      // Ex-alunos (sem turma → null) são atribuídos à unidade-mãe "CEC": no
-      // filtro "CEC" eles aparecem; em "CEC Baby" só entram quem tem turma de
-      // Berçário/Maternal. Belvedere (token próprio) exibe todos os registros.
-      const filtrarPorTurma =
-        creds.segmentaPorTurma && (unidadeKey === "CEC" || unidadeKey === "CEC Baby");
-      const lista = !filtrarPorTurma
-        ? res.pendencias
-        : unidadeKey === "CEC"
-          ? res.pendencias.filter((p) => (res.alunoUnidadeMap[p.alunoId] ?? "CEC") === "CEC")
-          : res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === "CEC Baby");
-      pendenciasFinal = lista.map((p) => ({ ...p, unidade: unidadeKey }));
+    const coleta = await coletarInadimplenciaPorEscopo(
+      unidadeKey,
+      inicioYMD,
+      fimYMD,
+      context.userId,
+    );
+    if (coleta.indisponivel) return { pendencias: [], indisponivel: true, meta: emptyMeta };
+    if (coleta.error) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      return {
+        pendencias: [],
+        error: coleta.error,
+        meta: { ...emptyMeta, tempoSegundos: parseFloat(elapsed) },
+      };
     }
+    const pendenciasFinal = coleta.pendencias;
 
     const parcelasFinal = pendenciasFinal.reduce((sum, p) => sum + p.qtdParcelas, 0);
     const alunosFinal = new Set(pendenciasFinal.map((p) => p.alunoId)).size;
@@ -1287,5 +1308,73 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
         dataInicio,
         dataFim,
       },
+    };
+  });
+
+// ── Inadimplência Acumulada (Ano) ──────────────────────────────────────────
+// Numerador do card anual: total de títulos VENCIDOS E NÃO PAGOS desde
+// 01/01 do ano corrente até hoje, por unidade, REMOVENDO completamente
+// qualquer boleto de "Acordo" (renegociação) para não inflar o indicador com
+// dívidas que já foram parceladas/renegociadas. A janela longa pode ser lenta
+// na API do Sponte, então o frontend isola este cálculo com skeleton próprio.
+export interface InadimplenciaAnualResult {
+  totalInadimplente: number;
+  totalBoletos: number;
+  boletosAcordoExcluidos: number;
+  indisponivel?: boolean;
+  error?: string;
+  tempoSegundos: number;
+  dataInicio: string;
+  dataFim: string;
+}
+
+// Detecta boletos de "Acordo" em qualquer categoria do boleto (acento-insensível).
+function ehBoletoAcordo(p: PendenciaAgrupada): boolean {
+  return p.categorias.some((c) => normalizar(c).includes("acordo"));
+}
+
+export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => InputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<InadimplenciaAnualResult> => {
+    const { dataInicio, dataFim, unidade } = data;
+    const unidadeKey = unidade ?? null;
+
+    const inicioYMD = paraYMD(dataInicio) ?? dataInicio.slice(0, 10);
+    const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
+    const startTime = Date.now();
+
+    const base = {
+      totalInadimplente: 0,
+      totalBoletos: 0,
+      boletosAcordoExcluidos: 0,
+      tempoSegundos: 0,
+      dataInicio: inicioYMD,
+      dataFim: fimYMD,
+    };
+
+    const coleta = await coletarInadimplenciaPorEscopo(
+      unidadeKey,
+      inicioYMD,
+      fimYMD,
+      context.userId,
+    );
+    const tempoSegundos = parseFloat(((Date.now() - startTime) / 1000).toFixed(1));
+    if (coleta.indisponivel) return { ...base, tempoSegundos, indisponivel: true };
+    if (coleta.error) return { ...base, tempoSegundos, error: coleta.error };
+
+    // Filtro Anti-Duplicidade (CRÍTICO): remove TODO boleto cuja categoria
+    // contenha "Acordo" antes de somar — só conta mensalidades/taxas originais.
+    const semAcordo = coleta.pendencias.filter((p) => !ehBoletoAcordo(p));
+    const boletosAcordoExcluidos = coleta.pendencias.length - semAcordo.length;
+    const totalInadimplente = semAcordo.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
+
+    return {
+      totalInadimplente: Math.round(totalInadimplente * 100) / 100,
+      totalBoletos: semAcordo.length,
+      boletosAcordoExcluidos,
+      tempoSegundos,
+      dataInicio: inicioYMD,
+      dataFim: fimYMD,
     };
   });

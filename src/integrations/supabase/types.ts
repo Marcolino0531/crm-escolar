@@ -675,16 +675,19 @@ export type Database = {
       schools: {
         Row: {
           created_at: string
+          faturamento_retroativo_jan_mai: number | null
           id: string
           name: string
         }
         Insert: {
           created_at?: string
+          faturamento_retroativo_jan_mai?: number | null
           id?: string
           name: string
         }
         Update: {
           created_at?: string
+          faturamento_retroativo_jan_mai?: number | null
           id?: string
           name?: string
         }

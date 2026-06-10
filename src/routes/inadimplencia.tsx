@@ -19,11 +19,18 @@ import {
   Construction,
   Percent,
   CalendarRange,
+  TrendingUp,
+  Settings2,
 } from "lucide-react";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchSponteInadimplencia, type PendenciaAgrupada } from "@/lib/sponte.functions";
+import {
+  fetchSponteInadimplencia,
+  fetchSponteInadimplenciaAnual,
+  type PendenciaAgrupada,
+} from "@/lib/sponte.functions";
 
 export const Route = createFileRoute("/inadimplencia")({
   head: () => ({ meta: [{ title: "Inadimplência — School Hub" }] }),
@@ -134,6 +141,7 @@ type SortField = keyof PendenciaAgrupada;
 function InadimplenciaPage() {
   const { selected, schools } = useSchool();
   const fetchFn = useServerFn(fetchSponteInadimplencia);
+  const fetchAnualFn = useServerFn(fetchSponteInadimplenciaAnual);
   const defaultRange = getDefaultDateRange();
 
   const [dataInicio, setDataInicio] = useState(defaultRange.inicio);
@@ -324,6 +332,98 @@ function InadimplenciaPage() {
   const indiceInadimplencia =
     faturamentoVencido > 0 ? (totalInadimplente / faturamentoVencido) * 100 : 0;
 
+  // ── Inadimplência Acumulada (Ano) ─────────────────────────────────────────
+  // % = Total Inadimplente do Sponte (01/01 → hoje, SEM "Acordo") ÷
+  //     Faturamento Total do Ano. O Faturamento Total do Ano =
+  //     faturamento_retroativo_jan_mai (informado por unidade) + receitas reais
+  //     registradas no extrato de 01/06 até hoje. A busca anual no Sponte é
+  //     lenta, então o card tem skeleton próprio e não trava o resto da tela.
+  const anoAtual = new Date().getFullYear();
+  const anoInicioYMD = `${anoAtual}-01-01`;
+  const anoJunhoYMD = `${anoAtual}-06-01`;
+  const anoHojeYMD = hojeYMD;
+
+  // Faturamento retroativo (Jan–Mai) por unidade. Leitura aberta (RLS select).
+  const { data: schoolsFaturamento } = useQuery({
+    queryKey: ["faturamento-anual", "schools"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data: rows, error: qErr } = await supabase
+        .from("schools")
+        .select("id, faturamento_retroativo_jan_mai");
+      if (qErr) throw qErr;
+      return rows ?? [];
+    },
+  });
+
+  const retroativoMap = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const s of schoolsFaturamento ?? []) m.set(s.id, s.faturamento_retroativo_jan_mai);
+    return m;
+  }, [schoolsFaturamento]);
+
+  // Retroativo da unidade selecionada (ou soma das unidades acessíveis no
+  // consolidado). `configurado` controla o aviso amigável do card.
+  const { retroativoAno, retroativoConfigurado } = useMemo(() => {
+    if (selected === "all") {
+      const valores = schools
+        .map((s) => retroativoMap.get(s.id))
+        .filter((v): v is number => v != null);
+      return {
+        retroativoAno: valores.reduce((a, b) => a + b, 0),
+        retroativoConfigurado: valores.length > 0,
+      };
+    }
+    const v = retroativoMap.get(selected);
+    return { retroativoAno: v ?? 0, retroativoConfigurado: v != null };
+  }, [selected, schools, retroativoMap]);
+
+  // Receitas reais registradas no extrato de Junho até hoje (mesma fonte e
+  // exclusões do índice mensal), respeitando o filtro global de unidade.
+  const { data: receitasAno, isFetching: receitasAnoFetching } = useQuery({
+    queryKey: ["faturamento-anual", "receitas", anoAtual, selected],
+    enabled: integracaoDisponivel && retroativoConfigurado,
+    staleTime: 60_000,
+    queryFn: async () => {
+      let q = supabase
+        .from("transactions")
+        .select("amount, description")
+        .eq("type", "entrada")
+        .is("parent_transaction_id", null)
+        .gte("date", anoJunhoYMD)
+        .lte("date", anoHojeYMD);
+      if (selected !== "all") q = q.eq("school_id", selected);
+      const { data: rows, error: qErr } = await q;
+      if (qErr) throw qErr;
+      return (rows ?? []).reduce((sum, t) => {
+        const desc = String(t.description ?? "").trim().toUpperCase();
+        const amt = Number(t.amount ?? 0);
+        if (desc.includes("SALDO DIA")) return sum;
+        if (amt === 1) return sum;
+        return sum + amt;
+      }, 0);
+    },
+  });
+
+  // Numerador anual: títulos vencidos e não pagos 01/01 → hoje, SEM "Acordo"
+  // (filtro anti-duplicidade aplicado no backend).
+  const { data: anual, isFetching: anualFetching } = useQuery({
+    queryKey: ["sponte-inadimplencia-anual", anoAtual, unidadeNome ?? "consolidado"],
+    enabled: integracaoDisponivel && retroativoConfigurado,
+    staleTime: 60_000,
+    queryFn: () =>
+      fetchAnualFn({
+        data: { dataInicio: anoInicioYMD, dataFim: anoHojeYMD, unidade: unidadeNome ?? undefined },
+      }),
+  });
+
+  const faturamentoTotalAno = retroativoAno + (receitasAno ?? 0);
+  const inadimplenteAno = anual?.totalInadimplente ?? 0;
+  const indiceAnual =
+    faturamentoTotalAno > 0 ? (inadimplenteAno / faturamentoTotalAno) * 100 : 0;
+  const anualCarregando = anualFetching || receitasAnoFetching;
+  const anualErro = anual?.error ?? null;
+
   const SortIcon = ({ campo }: { campo: SortField }) => {
     if (ordenacao.campo !== campo) return <ChevronDown size={14} className="opacity-30" />;
     return ordenacao.direcao === "asc" ? (
@@ -363,7 +463,7 @@ function InadimplenciaPage() {
   return (
     <div className="space-y-6">
       {/* Stat cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <FileText size={14} /> Boletos em Aberto
@@ -412,6 +512,51 @@ function InadimplenciaPage() {
               </p>
               <p className="text-xs text-muted-foreground">
                 Inadimplente {formatarMoeda(totalInadimplente)} ÷ (Recebido {formatarMoeda(recebidoMes)} + Inadimplente)
+              </p>
+            </>
+          )}
+        </div>
+        {/* Inadimplência Acumulada (Ano): numerador Sponte (01/01→hoje, sem
+            "Acordo") ÷ Faturamento Total do Ano (retroativo Jan–Mai + receitas
+            de Jun→hoje). Skeleton próprio para não travar a tela. */}
+        <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+          <div className="flex items-center gap-2 text-xs font-medium text-violet-700">
+            <TrendingUp size={14} /> Inadimplência Acumulada ({anoAtual})
+          </div>
+          {!integracaoDisponivel ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
+              <p className="text-xs text-muted-foreground">Indisponível para esta unidade</p>
+            </>
+          ) : !retroativoConfigurado ? (
+            <div className="mt-1 flex items-start gap-2 text-xs text-violet-700">
+              <Settings2 size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Configure o faturamento retroativo nas Configurações para ativar este índice.
+              </span>
+            </div>
+          ) : anualCarregando ? (
+            <div className="mt-2 space-y-2">
+              <Skeleton className="h-7 w-24" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+          ) : anualErro ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
+              <p className="text-xs text-muted-foreground">Não foi possível calcular agora</p>
+            </>
+          ) : faturamentoTotalAno <= 0 ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-muted-foreground">N/A</p>
+              <p className="text-xs text-muted-foreground">Sem faturamento no ano</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-2xl font-bold text-violet-700">
+                {indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Inadimplente {formatarMoeda(inadimplenteAno)} ÷ Faturamento {formatarMoeda(faturamentoTotalAno)}
               </p>
             </>
           )}
