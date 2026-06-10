@@ -619,6 +619,13 @@ function ehRecebimentoBancario(forma: string): boolean {
   return f.includes("cobranca bancaria") || f.includes("boleto");
 }
 
+// Reconhece liquidações via PIX no rateio (TipoRecebimento = "Pix"). Usado pela
+// conciliação automática de PIX, que casa cada linha PIX do extrato com a baixa
+// correspondente do Sponte por valor exato + similaridade de nome.
+function ehRecebimentoPix(forma: string): boolean {
+  return normalizarTexto(forma).includes("pix");
+}
+
 function topContagem(mapa: Map<string, number>, n = 8): string[] {
   return [...mapa.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -876,6 +883,247 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
       qtdParcelas: parcelas.length,
       qtdBoletos: boletos.size,
       diagnostico: res.diagnostico,
+      meta: { dataInicio, dataFim, tempoSegundos: parseFloat(elapsed) },
+    };
+  });
+
+// ─── Conciliação automática de PIX ──────────────────────────────────────────
+// Diferente da conciliação "COB COMPE" (que casa UMA linha agregada do extrato
+// com o somatório das baixadas bancárias do dia), o PIX cai no extrato como
+// LANÇAMENTOS INDIVIDUAIS ("PIX RECEBIDO FULANO..."). Por isso aqui devolvemos a
+// lista de PAGAMENTOS PIX baixados no dia, cada um com os nomes envolvidos
+// (aluno, sacado, responsável financeiro, pai/mãe) e o rateio por categoria. O
+// frontend faz a triangulação por valor exato + similaridade de nome e aplica a
+// prevenção de colisão (mesmo valor + nome ambíguo → mantém pendente).
+
+export interface PixPagamentoSponte {
+  // Identificador do pagamento (boleto, ou aluno+data quando sem boleto).
+  pagamentoId: string;
+  alunoId: string;
+  nomeAluno: string;
+  dataPagamento: string; // YYYY-MM-DD
+  valor: number;
+  // Nomes candidatos para o "fuzzy match" com a descrição do extrato.
+  nomes: string[];
+  // Rateio por categoria (Mensalidade, Material, etc.) da parcela PIX.
+  itens: RateioCategoria[];
+}
+
+export interface ConciliacaoPixResult {
+  pagamentos: PixPagamentoSponte[];
+  indisponivel?: boolean;
+  error?: string;
+  meta: {
+    dataInicio: string;
+    dataFim: string;
+    tempoSegundos: number;
+  };
+}
+
+interface PixParcelaRaw {
+  alunoId: string;
+  categoria: string;
+  valor: number; // porção PIX do rateio
+  numeroBoleto: string;
+  sacado: string;
+  dataPagamento: string; // YYYY-MM-DD
+}
+
+// Coleta as parcelas QUITADAS via PIX numa janela. Mesma estratégia de filtro na
+// origem da conciliação bancária (Situacao=1;DataPagamento=DD/MM/YYYY por dia),
+// mas seleciona o rateio cujo TipoRecebimento é "Pix" (e não Cobrança Bancária).
+async function coletarPixBaixadas(
+  codigoCliente: string,
+  token: string,
+  inicioYMD: string,
+  fimYMD: string,
+): Promise<{ parcelas: PixParcelaRaw[]; fault?: string }> {
+  const dias = diasNaJanela(inicioYMD, fimYMD);
+  const parcelas: PixParcelaRaw[] = [];
+  let primeiroFault: string | null = null;
+
+  for (const diaYMD of dias) {
+    const params = `Situacao=${SITUACAO_QUITADA};DataPagamento=${ymdParaBr(diaYMD)}`;
+    const xml = await callSponte("GetParcelas", params, codigoCliente, token);
+    const fault = checkFault(xml);
+    if (fault && !primeiroFault) primeiroFault = fault;
+
+    for (const parcela of parseXmlList(xml, "wsParcela")) {
+      if (!parseXmlValue(parcela, "RetornoOperacao").startsWith("01")) continue;
+      const dataPag = primeiroValor(parcela, TAGS_DATA_PAGAMENTO);
+      if (!dataNaJanela(dataPag, inicioYMD, fimYMD)) continue;
+
+      // A forma REAL de liquidação está no rateio (TipoRecebimento). Somamos só
+      // a porção paga via PIX (um boleto pode ter rateio misto, raro).
+      const rateios = parseXmlList(parcela, "wsRateioLancamento");
+      const pixValor = rateios
+        .filter((r) => ehRecebimentoPix(parseXmlValue(r, "TipoRecebimento")))
+        .reduce((s, r) => s + parseBrDecimal(parseXmlValue(r, "ValorPagoRateado")), 0);
+      if (pixValor <= 0) continue;
+
+      const alunoId = parseXmlValue(parcela, "AlunoID");
+      if (!alunoId || alunoId === "0") continue;
+
+      parcelas.push({
+        alunoId,
+        categoria: parseXmlValue(parcela, "Categoria") || "Outros",
+        valor: pixValor,
+        numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+        sacado: parseXmlValue(parcela, "Sacado"),
+        dataPagamento: paraYMD(dataPag) ?? diaYMD,
+      });
+    }
+  }
+
+  if (primeiroFault && parcelas.length === 0) return { parcelas: [], fault: primeiroFault };
+  return { parcelas };
+}
+
+const PixInputSchema = z.object({
+  dataInicio: z.string().min(8),
+  dataFim: z.string().min(8),
+  unidade: z.string().min(1),
+});
+
+export const fetchSpontePix = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => PixInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ConciliacaoPixResult> => {
+    const { dataInicio, dataFim, unidade } = data;
+    const meta = { dataInicio, dataFim, tempoSegundos: 0 };
+
+    // RBAC por unidade.
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { pagamentos: [], meta };
+    }
+    if (!(unidade in SPONTE_UNIDADES)) {
+      return { pagamentos: [], indisponivel: true, meta };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) {
+      throw new Error(`Credenciais da API do Sponte não configuradas para a unidade "${unidade}".`);
+    }
+
+    const inicioYMD = paraYMD(dataInicio) ?? dataInicio.slice(0, 10);
+    const fimYMD = paraYMD(dataFim) ?? dataFim.slice(0, 10);
+    const startTime = Date.now();
+
+    const res = await coletarPixBaixadas(creds.codigoCliente, creds.token, inicioYMD, fimYMD);
+    if (res.fault) {
+      return { pagamentos: [], error: res.fault, meta };
+    }
+
+    // Agrupa por boleto (várias categorias de um mesmo boleto entram no mesmo
+    // pagamento PIX); sem boleto, agrupa por aluno+data.
+    const groups = new Map<string, PixParcelaRaw[]>();
+    for (const p of res.parcelas) {
+      const key =
+        p.numeroBoleto && p.numeroBoleto !== "0"
+          ? `bol_${p.numeroBoleto}`
+          : `${p.alunoId}_${p.dataPagamento}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    }
+
+    // Enriquece nomes (aluno + responsável financeiro + pai/mãe) e turma para a
+    // segmentação CEC × CEC Baby (que compartilham token).
+    const alunoIds = [...new Set(res.parcelas.map((p) => p.alunoId))];
+    const nomeMap: Record<string, string> = {};
+    const turmaClass: Record<string, "CEC" | "CEC Baby" | null> = {};
+    const respFinMap: Record<string, string> = {};
+    const familiaresMap: Record<string, string[]> = {};
+
+    for (let i = 0; i < alunoIds.length; i += BATCH_SIZE) {
+      const batch = alunoIds.slice(i, i + BATCH_SIZE);
+      const [alunoResults, respResults] = await Promise.all([
+        Promise.allSettled(
+          batch.map(async (id) => ({
+            id,
+            xml: await callSponte("GetAlunos", `AlunoID=${id}`, creds.codigoCliente, creds.token),
+          })),
+        ),
+        Promise.allSettled(
+          batch.map(async (id) => ({
+            id,
+            xml: await callSponte(
+              "GetResponsavelFinanceiro",
+              `AlunoID=${id}`,
+              creds.codigoCliente,
+              creds.token,
+            ),
+          })),
+        ),
+      ]);
+
+      for (const result of alunoResults) {
+        if (result.status !== "fulfilled") continue;
+        const { id, xml } = result.value;
+        const nodes = parseXmlList(xml, "wsAluno");
+        if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
+          nomeMap[id] = parseXmlValue(nodes[0], "Nome");
+          turmaClass[id] = classificarUnidade(parseXmlValue(nodes[0], "TurmaAtual"));
+          familiaresMap[id] = parseXmlList(nodes[0], "wsResponsaveis")
+            .map((w) => parseXmlValue(w, "Nome"))
+            .filter(Boolean);
+        }
+      }
+      for (const result of respResults) {
+        if (result.status !== "fulfilled") continue;
+        const { id, xml } = result.value;
+        const nodes = parseXmlList(xml, "wsResponsavel");
+        if (nodes.length > 0 && parseXmlValue(nodes[0], "RetornoOperacao").startsWith("01")) {
+          respFinMap[id] = parseXmlValue(nodes[0], "Nome");
+        }
+      }
+    }
+
+    const pagamentos: PixPagamentoSponte[] = [];
+    for (const [key, items] of groups) {
+      const first = items[0];
+      // Segmentação CEC × CEC Baby por turma. Mantém os de turma desconhecida no
+      // CEC (bucket padrão); a triangulação por valor + nome no frontend é a
+      // garantia final contra alocação errada.
+      if (creds.segmentaPorTurma) {
+        const cls = turmaClass[first.alunoId];
+        if (cls && cls !== unidade) continue;
+        if (!cls && unidade === "CEC Baby") continue;
+      }
+
+      const porCategoria = new Map<string, number>();
+      for (const it of items) {
+        porCategoria.set(it.categoria, (porCategoria.get(it.categoria) ?? 0) + it.valor);
+      }
+      const itens: RateioCategoria[] = [...porCategoria.entries()]
+        .map(([categoria, valor]) => ({ categoria, valor: Math.round(valor * 100) / 100 }))
+        .sort((a, b) => b.valor - a.valor);
+      const valor = Math.round(itens.reduce((s, it) => s + it.valor, 0) * 100) / 100;
+
+      const nomes = [
+        ...new Set(
+          [
+            nomeMap[first.alunoId],
+            first.sacado,
+            respFinMap[first.alunoId],
+            ...(familiaresMap[first.alunoId] ?? []),
+          ].filter((n): n is string => !!n && n.trim().length > 0),
+        ),
+      ];
+
+      pagamentos.push({
+        pagamentoId: key,
+        alunoId: first.alunoId,
+        nomeAluno: nomeMap[first.alunoId] || first.sacado || "-",
+        dataPagamento: first.dataPagamento,
+        valor,
+        nomes,
+        itens,
+      });
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    return {
+      pagamentos,
       meta: { dataInicio, dataFim, tempoSegundos: parseFloat(elapsed) },
     };
   });

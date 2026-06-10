@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchSponteConciliacao, type ConciliacaoSponteResult } from "@/lib/sponte.functions";
+import { fetchSponteConciliacao, fetchSpontePix, type ConciliacaoSponteResult, type PixPagamentoSponte } from "@/lib/sponte.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap } from "lucide-react";
+import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap, Banknote } from "lucide-react";
 import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
@@ -82,6 +82,31 @@ function isCobCompe(desc: unknown): boolean {
   const caixa = d.includes("compe") && (d.includes("cob") || d.includes("cobranca"));
   const itau = d.includes("boletos recebidos");
   return caixa || itau;
+}
+
+// Linha de PIX recebido no extrato (ex.: "PIX RECEBIDO TAYNA...", "PIX RECEB",
+// "RECEBIMENTO PIX"). Detecta a forma PIX para a conciliação automática.
+function isPix(desc: unknown): boolean {
+  return norm(desc).includes("pix");
+}
+
+// Partículas de nome ignoradas no fuzzy match (não são distintivas).
+const PARTICULAS_NOME = new Set(["da", "de", "do", "das", "dos", "e"]);
+
+// Verifica se um nome do Sponte (aluno, responsável, pai/mãe) "bate" com a
+// descrição do extrato bancário. Casa por substring do nome completo OU por
+// presença de pelo menos dois tokens distintivos (nomes únicos exigem o token
+// presente com ≥4 letras). Conservador para não casar por um primeiro nome
+// comum isolado.
+function nomeBate(nome: string, descNorm: string): boolean {
+  const nn = norm(nome);
+  if (!nn) return false;
+  if (nn.length >= 5 && descNorm.includes(nn)) return true;
+  const tokens = nn.split(/\s+/).filter((t) => t.length >= 3 && !PARTICULAS_NOME.has(t));
+  if (tokens.length === 0) return false;
+  const presentes = tokens.filter((t) => descNorm.includes(t));
+  if (tokens.length === 1) return presentes.length === 1 && tokens[0].length >= 4;
+  return presentes.length >= 2;
 }
 
 const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
@@ -202,8 +227,10 @@ function ConciliacaoPage() {
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
   const fetchConciliacao = useServerFn(fetchSponteConciliacao);
+  const fetchPix = useServerFn(fetchSpontePix);
   const [schoolId, setSchoolId] = useState(() => (selected !== "all" ? selected : ""));
   const [autoTxId, setAutoTxId] = useState<string | null>(null);
+  const [pixRunning, setPixRunning] = useState(false);
   const [startDate, setStartDate] = useState(firstOfMonth());
   const [endDate, setEndDate] = useState(lastOfMonth());
   const [uploadingTxId, setUploadingTxId] = useState<string | null>(null);
@@ -599,6 +626,97 @@ function ConciliacaoPage() {
     }
   }
 
+  // Conciliação automática de PIX (Fuzzy Matching). Para cada linha de PIX
+  // pendente do extrato, busca no Sponte as baixas PIX do dia da linha (e do D-1
+  // dia útil) e faz a triangulação:
+  //   • Condição 1: valor exato do pagamento;
+  //   • Condição 2: o nome na descrição do extrato contém (substring) o nome do
+  //     Responsável Financeiro, Aluno, Pai ou Mãe.
+  // Prevenção de colisão (CRÍTICO): se houver ≥2 pagamentos com o mesmo valor no
+  // dia e o nome não desambiguar para exatamente um, a linha permanece Pendente
+  // (desmembramento manual), evitando alocar saldo para o aluno errado.
+  async function handleConciliarPix() {
+    if (!revRefs) return;
+    const unidade = schoolName;
+    if (!UNIDADES_SPONTE.includes(unidade)) {
+      toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
+      return;
+    }
+    const pendentes = revenueTxs.filter((t) => !recByTx.has(t.id) && isPix(t.description));
+    if (pendentes.length === 0) {
+      toast.info("Nenhuma linha de PIX pendente no período selecionado.");
+      return;
+    }
+    setPixRunning(true);
+    console.log("[CONC][PIX] === Conciliação automática de PIX ===", { unidade, linhas: pendentes.length });
+    let conciliados = 0;
+    let colisoes = 0;
+    let semMatch = 0;
+    // Cache de pagamentos PIX por dia (evita rebuscar a mesma data).
+    const cachePorDia = new Map<string, PixPagamentoSponte[]>();
+    try {
+      for (const t of pendentes) {
+        const datas = [t.date, previousBusinessDay(t.date)];
+        const pagamentos: PixPagamentoSponte[] = [];
+        const vistos = new Set<string>();
+        for (const d of datas) {
+          let arr = cachePorDia.get(d);
+          if (!arr) {
+            const r = await fetchPix({ data: { dataInicio: d, dataFim: d, unidade } });
+            if (r.error) throw new Error(r.error);
+            if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+            arr = r.pagamentos;
+            cachePorDia.set(d, arr);
+          }
+          for (const p of arr) {
+            const k = `${d}_${p.pagamentoId}`;
+            if (!vistos.has(k)) { vistos.add(k); pagamentos.push(p); }
+          }
+        }
+
+        const lineAmount = Number(t.amount);
+        const descNorm = norm(t.description);
+        const porValor = pagamentos.filter((p) => fechaCentavos(p.valor, lineAmount));
+        const porNome = porValor.filter((p) => p.nomes.some((n) => nomeBate(n, descNorm)));
+
+        if (porNome.length === 1) {
+          const p = porNome[0];
+          const items = p.itens.map((it) => {
+            const m = matchSubcategory(it.categoria);
+            return { subcategory_label: it.categoria, amount: it.valor, ...m };
+          });
+          await persistReconciliation(
+            t.id,
+            `Conciliação PIX Sponte (${p.nomeAluno})`,
+            t.date,
+            t.description ?? "PIX",
+            items,
+          );
+          conciliados++;
+        } else if (porValor.length >= 2) {
+          // Mesmo valor, nome ambíguo (0 ou >1) → mantém pendente.
+          colisoes++;
+        } else {
+          semMatch++;
+        }
+      }
+      qc.invalidateQueries({ queryKey: ["conc-recs"] });
+      qc.invalidateQueries({ queryKey: ["conc-txs"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      const partes = [`${conciliados} conciliada(s)`];
+      if (colisoes > 0) partes.push(`${colisoes} mantida(s) pendente(s) por colisão de valor/nome`);
+      if (semMatch > 0) partes.push(`${semMatch} sem correspondência`);
+      if (conciliados > 0) toast.success(`PIX: ${partes.join(" · ")}.`);
+      else toast.info(`Nenhum PIX conciliado automaticamente (${partes.join(" · ")}).`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[CONC][PIX] Falha:", e);
+      toast.error(msg, { duration: 10000 });
+    } finally {
+      setPixRunning(false);
+    }
+  }
+
   async function removeRec(recId: string, txId: string) {
     if (!confirm("Remover esta conciliação? O detalhamento por subcategoria será apagado, mas a linha do extrato será preservada.")) return;
     // Limpeza defensiva contra transações-filhas legadas.
@@ -718,9 +836,23 @@ function ConciliacaoPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center justify-between">
+            <CardTitle className="text-base flex items-center justify-between gap-2">
               <span>Receitas do Período</span>
-              <Badge variant="secondary">{revenueTxs.length} linha(s)</Badge>
+              <div className="flex items-center gap-2">
+                {isAdmin && sponteAtiva && (
+                  <Button
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={handleConciliarPix}
+                    disabled={pixRunning || !!autoTxId || !!uploadingTxId}
+                    title="Cruza as linhas de PIX do extrato com as baixas PIX do Sponte por valor + nome (fuzzy matching)"
+                  >
+                    {pixRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Banknote className="h-3 w-3" />}
+                    Conciliar PIX via Sponte
+                  </Button>
+                )}
+                <Badge variant="secondary">{revenueTxs.length} linha(s)</Badge>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -750,6 +882,7 @@ function ConciliacaoPage() {
                     const isAuto = autoTxId === t.id;
                     const isReconciled = !!rec;
                     const cobCompe = isCobCompe(t.description);
+                    const pix = isPix(t.description);
                     return (
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
@@ -758,6 +891,11 @@ function ConciliacaoPage() {
                           {cobCompe && (
                             <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300 border-sky-500/40">
                               COB COMPE
+                            </Badge>
+                          )}
+                          {pix && !cobCompe && (
+                            <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 border-emerald-500/40">
+                              PIX
                             </Badge>
                           )}
                         </TableCell>
