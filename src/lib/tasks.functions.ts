@@ -3,8 +3,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // Directory of all users, used by the Tasks module so any authenticated user
-// can pick a recipient. Returns only id + display info (no roles/permissions),
-// so it is safe to expose to non-admins.
+// can pick a recipient. Returns only id + display name — the e-mail is NOT
+// exposed, to avoid leaking PII between colleagues in the recipient dropdown.
 export const listDirectoryUsers = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async () => {
@@ -16,9 +16,9 @@ export const listDirectoryUsers = createServerFn({ method: "GET" })
         (typeof meta.full_name === "string" && meta.full_name) ||
         (typeof meta.name === "string" && meta.name) ||
         "";
-      const email = u.email ?? "";
-      // Fall back to the email's local part as a display name.
-      const name = rawName || (email ? email.split("@")[0] : "Usuário");
-      return { id: u.id, email, name };
+      // Fall back to the email's local part as a display name (e-mail itself is
+      // not returned to the client).
+      const name = rawName || (u.email ? u.email.split("@")[0] : "Usuário");
+      return { id: u.id, name };
     });
   });
