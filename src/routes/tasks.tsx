@@ -76,7 +76,7 @@ type Task = {
   status: TaskStatus;
   created_at: string;
 };
-type DirUser = { id: string; email: string; name: string };
+type DirUser = { id: string; name: string };
 
 const COLUMNS: { status: TaskStatus; label: string; icon: any; accent: string }[] = [
   { status: "aberto", label: "Tickets Abertos", icon: Inbox, accent: "border-t-blue-500" },
@@ -501,8 +501,7 @@ function CreateTaskDialog({
               <SelectContent>
                 {orderedUsers.map((u) => (
                   <SelectItem key={u.id} value={u.id}>
-                    {u.id === me ? `${u.name} (Você)` : u.name}{" "}
-                    <span className="text-muted-foreground">({u.email})</span>
+                    {u.id === me ? `${u.name} (Você)` : u.name}
                   </SelectItem>
                 ))}
               </SelectContent>
