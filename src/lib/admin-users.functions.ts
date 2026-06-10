@@ -35,8 +35,8 @@ async function assertAdmin(userId: string) {
   if (!isAdmin) throw new Error("Apenas administradores podem executar essa ação.");
 }
 
-// Persist the set of schools (units) a user may access. An empty array clears
-// all restrictions (treated as "all schools" by the client).
+// Persist the set of schools (units) a user may access. Fail-closed: a non-admin
+// with no rows has access to nothing (callers require >= 1 unit for non-admins).
 async function persistSchools(userId: string, schoolIds: string[]) {
   await supabaseAdmin
     .from("user_schools" as any)
@@ -147,6 +147,11 @@ export const createManagedUser = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await assertAdmin(context.userId);
+    // Fail-closed: um usuário não-admin sem nenhuma unidade não acessa nada.
+    // Exige ao menos uma unidade ao criar o perfil (admins têm acesso global).
+    if (!data.isAdmin && data.schoolIds.length === 0) {
+      throw new Error("Selecione ao menos uma unidade para o novo usuário (ou marque como Administrador).");
+    }
     const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
       email: data.email,
       password: data.password,
@@ -181,6 +186,11 @@ export const updateUserAccess = createServerFn({ method: "POST" })
     await assertAdmin(context.userId);
     if (data.userId === context.userId && !data.isAdmin) {
       throw new Error("Você não pode remover o próprio acesso de administrador.");
+    }
+    // Fail-closed: um não-admin sem unidade ficaria sem acesso a nada; impede
+    // salvar um perfil restrito com zero unidades.
+    if (!data.isAdmin && data.schoolIds.length === 0) {
+      throw new Error("Selecione ao menos uma unidade para o usuário (ou marque como Administrador).");
     }
 
     // Update auth credentials (email / password / name) via the Supabase admin API.

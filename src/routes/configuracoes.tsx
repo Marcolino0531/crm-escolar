@@ -363,6 +363,9 @@ function UserManagement() {
     if (!email.trim() || password.length < 6) {
       return toast.error("Informe e-mail válido e senha com ao menos 6 caracteres.");
     }
+    if (!isAdmin && schoolIds.length === 0) {
+      return toast.error("Selecione ao menos uma unidade (ou marque como Administrador).");
+    }
     setBusy(true);
     try {
       await createFn({
@@ -406,6 +409,9 @@ function UserManagement() {
     }
     if (editPassword.length > 0 && editPassword.length < 6) {
       return toast.error("A nova senha deve ter ao menos 6 caracteres.");
+    }
+    if (!editIsAdmin && editSchoolIds.length === 0) {
+      return toast.error("Selecione ao menos uma unidade (ou marque como Administrador).");
     }
     setSavingEdit(true);
     try {
@@ -499,7 +505,7 @@ function UserManagement() {
             />
           </CollapsibleSection>
 
-          <CollapsibleSection title="Unidades permitidas">
+          <CollapsibleSection title={isAdmin ? "Unidades permitidas" : "Unidades permitidas (obrigatório)"}>
             <SchoolSelector schools={schools} value={schoolIds} onChange={setSchoolIds} />
           </CollapsibleSection>
 

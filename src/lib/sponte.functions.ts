@@ -90,10 +90,10 @@ function resolverCredenciais(unidade: string): SponteCreds | null {
 
 // ─── RBAC por unidade (server-side) ──────────────────────────────────────────
 // Retorna os NOMES das escolas (= chaves Sponte) que o usuário pode acessar, ou
-// `null` para acesso global (admin, legacy sem restrição explícita, ou allow-
-// list cobrindo tudo). Usado para impedir que um usuário restrito force, via
-// requisição forjada, a leitura de dados de unidades fora da sua permissão —
-// inclusive o consolidado ("Todas as Unidades").
+// `null` para acesso global (apenas admin). Fail-closed: um usuário não-admin
+// sem nenhuma unidade vinculada recebe `[]` (acesso NEGADO a tudo, inclusive ao
+// consolidado "Todas as Unidades"). Usado para impedir que um usuário restrito
+// force, via requisição forjada, a leitura de dados fora da sua permissão.
 async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
   const { data: roles } = await supabaseAdmin
     .from("user_roles" as any)
@@ -106,7 +106,7 @@ async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
     .select("school_id")
     .eq("user_id", userId);
   const ids = ((us ?? []) as any[]).map((r) => r.school_id as string);
-  if (ids.length === 0) return null; // sem restrição explícita = global (legacy)
+  if (ids.length === 0) return []; // fail-closed: sem vínculo = nenhuma unidade
 
   const { data: schools } = await supabaseAdmin
     .from("schools" as any)
