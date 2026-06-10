@@ -37,8 +37,9 @@ function InadimplenciaGate() {
 }
 
 // Unidades com integração Sponte ativa. CEC/CEC Baby compartilham um token
-// (segmentado por turma); Núcleo Belvedere usa credenciais próprias (sem turmas).
-const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
+// (segmentado por turma); Núcleo Belvedere e Núcleo Vale do Sereno usam
+// credenciais próprias (sem turmas).
+const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 function formatarMoeda(valor: number): string {
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -300,9 +301,9 @@ function InadimplenciaPage() {
               A integração com o Sponte para esta unidade estará disponível em breve.
             </p>
             <p className="text-xs text-muted-foreground">
-              Selecione <strong>CEC</strong>, <strong>CEC Baby</strong> ou{" "}
-              <strong>Núcleo Belvedere</strong> no menu superior para visualizar as cobranças
-              ativas.
+              Selecione <strong>CEC</strong>, <strong>CEC Baby</strong>,{" "}
+              <strong>Núcleo Belvedere</strong> ou <strong>Núcleo Vale do Sereno</strong> no menu
+              superior para visualizar as cobranças ativas.
             </p>
           </div>
         </div>

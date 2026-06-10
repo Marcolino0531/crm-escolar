@@ -51,6 +51,14 @@ const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
     segmentaPorTurma: false,
     contaCaixa: "9295",
   },
+  // Vale do Sereno usa credenciais EXCLUSIVAS e NÃO divide turmas (como o
+  // Belvedere). As variáveis são populadas no painel da Vercel.
+  "Núcleo Vale do Sereno": {
+    codigoEnv: "SPONTE_VALE_SERENO_CODIGO",
+    tokenEnv: "SPONTE_VALE_SERENO_SENHA",
+    segmentaPorTurma: false,
+    contaCaixa: null,
+  },
 };
 
 const UNIDADES_SPONTE = Object.keys(SPONTE_UNIDADES);
@@ -923,21 +931,28 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
       // restrito que force o consolidado recebe apenas suas unidades permitidas.
       const cecAllowed = isAllowed("CEC") || isAllowed("CEC Baby");
       const belvedereAllowed = isAllowed("Núcleo Belvedere");
+      const valeSerenoAllowed = isAllowed("Núcleo Vale do Sereno");
       const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
       const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
-      if (!cecCreds && !belvedereCreds) {
+      const valeSerenoCreds = valeSerenoAllowed
+        ? resolverCredenciais("Núcleo Vale do Sereno")
+        : null;
+      if (!cecCreds && !belvedereCreds && !valeSerenoCreds) {
         // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
         if (allowed !== null) return { pendencias: [], meta: emptyMeta };
         throw new Error("Credenciais da API do Sponte não configuradas para o consolidado.");
       }
 
       const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
-      const [cecRes, belvedereRes] = await Promise.all([
+      const [cecRes, belvedereRes, valeSerenoRes] = await Promise.all([
         cecCreds
           ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, inicioYMD, fimYMD)
           : Promise.resolve(vazio),
         belvedereCreds
           ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, inicioYMD, fimYMD)
+          : Promise.resolve(vazio),
+        valeSerenoCreds
+          ? coletarPendencias(valeSerenoCreds.codigoCliente, valeSerenoCreds.token, inicioYMD, fimYMD)
           : Promise.resolve(vazio),
       ]);
 
@@ -961,14 +976,23 @@ export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
         unidade: "Núcleo Belvedere",
       }));
 
-      pendenciasFinal = [...cecPendencias, ...belvederePendencias];
+      // Token Vale do Sereno → todos os registros (sem filtro de turma).
+      const valeSerenoPendencias: PendenciaAgrupada[] = valeSerenoRes.pendencias.map((p) => ({
+        ...p,
+        unidade: "Núcleo Vale do Sereno",
+      }));
 
-      // Se nada veio e ambas as fontes falharam, propaga o erro.
-      if (pendenciasFinal.length === 0 && (cecRes.fault || belvedereRes.fault)) {
+      pendenciasFinal = [...cecPendencias, ...belvederePendencias, ...valeSerenoPendencias];
+
+      // Se nada veio e todas as fontes falharam, propaga o erro.
+      if (
+        pendenciasFinal.length === 0 &&
+        (cecRes.fault || belvedereRes.fault || valeSerenoRes.fault)
+      ) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         return {
           pendencias: [],
-          error: cecRes.fault ?? belvedereRes.fault,
+          error: cecRes.fault ?? belvedereRes.fault ?? valeSerenoRes.fault,
           meta: { ...emptyMeta, tempoSegundos: parseFloat(elapsed) },
         };
       }
