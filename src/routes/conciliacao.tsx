@@ -627,14 +627,16 @@ function ConciliacaoPage() {
   }
 
   // Conciliação automática de PIX (Fuzzy Matching). Para cada linha de PIX
-  // pendente do extrato, busca no Sponte as baixas PIX do dia da linha (e do D-1
-  // dia útil) e faz a triangulação:
+  // pendente do extrato, busca no Sponte as baixas PIX numa janela que vai do
+  // dia 01 do mês da linha até a data da linha (o colégio retroage a data de
+  // pagamento no Sponte p/ manter o desconto de pontualidade, então a baixa pode
+  // estar registrada dias antes da compensação no banco) e faz a triangulação:
   //   • Condição 1: valor exato do pagamento;
   //   • Condição 2: o nome na descrição do extrato contém (substring) o nome do
   //     Responsável Financeiro, Aluno, Pai ou Mãe.
-  // Prevenção de colisão (CRÍTICO): se houver ≥2 pagamentos com o mesmo valor no
-  // dia e o nome não desambiguar para exatamente um, a linha permanece Pendente
-  // (desmembramento manual), evitando alocar saldo para o aluno errado.
+  // Prevenção de colisão (CRÍTICO): se houver ≥2 pagamentos com o mesmo valor na
+  // janela e o nome não desambiguar para exatamente um, a linha permanece
+  // Pendente (desmembramento manual), evitando alocar saldo para o aluno errado.
   async function handleConciliarPix() {
     if (!revRefs) return;
     const unidade = schoolName;
@@ -652,26 +654,20 @@ function ConciliacaoPage() {
     let conciliados = 0;
     let colisoes = 0;
     let semMatch = 0;
-    // Cache de pagamentos PIX por dia (evita rebuscar a mesma data).
-    const cachePorDia = new Map<string, PixPagamentoSponte[]>();
+    // Cache de pagamentos PIX por janela (dia 01 do mês → data da linha).
+    const cachePorJanela = new Map<string, PixPagamentoSponte[]>();
     try {
       for (const t of pendentes) {
-        const datas = [t.date, previousBusinessDay(t.date)];
-        const pagamentos: PixPagamentoSponte[] = [];
-        const vistos = new Set<string>();
-        for (const d of datas) {
-          let arr = cachePorDia.get(d);
-          if (!arr) {
-            const r = await fetchPix({ data: { dataInicio: d, dataFim: d, unidade } });
-            if (r.error) throw new Error(r.error);
-            if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
-            arr = r.pagamentos;
-            cachePorDia.set(d, arr);
-          }
-          for (const p of arr) {
-            const k = `${d}_${p.pagamentoId}`;
-            if (!vistos.has(k)) { vistos.add(k); pagamentos.push(p); }
-          }
+        // Janela: do dia 01 do mês da linha até a data da linha (inclusive).
+        const inicioMes = `${t.date.slice(0, 7)}-01`;
+        const cacheKey = `${inicioMes}_${t.date}`;
+        let pagamentos = cachePorJanela.get(cacheKey);
+        if (!pagamentos) {
+          const r = await fetchPix({ data: { dataInicio: inicioMes, dataFim: t.date, unidade } });
+          if (r.error) throw new Error(r.error);
+          if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+          pagamentos = r.pagamentos;
+          cachePorJanela.set(cacheKey, pagamentos);
         }
 
         const lineAmount = Number(t.amount);
