@@ -211,14 +211,16 @@ function ymdParaBr(ymd: string): string {
 
 // Lista os dias de calendário (YYYY-MM-DD) entre início e fim, inclusive. Usa
 // aritmética em UTC só para o passo de +1 dia (sem deslocamento de fuso) e
-// reformata para string. Limita a 31 dias por segurança.
-function diasNaJanela(inicioYMD: string, fimYMD: string): string[] {
+// reformata para string. `maxDias` é um teto de segurança contra payloads
+// patológicos (31 nos blocos mensais; maior na busca por período customizado,
+// que pode cobrir vários meses — limitada pelo timeout da API, não pelo dia).
+function diasNaJanela(inicioYMD: string, fimYMD: string, maxDias = 31): string[] {
   const dias: string[] = [];
   const [yi, mi, di] = inicioYMD.split("-").map(Number);
   const [yf, mf, df] = fimYMD.split("-").map(Number);
   let cur = Date.UTC(yi, mi - 1, di);
   const end = Date.UTC(yf, mf - 1, df);
-  for (let i = 0; cur <= end && i < 31; i++) {
+  for (let i = 0; cur <= end && i < maxDias; i++) {
     const dt = new Date(cur);
     const ymd = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
     dias.push(ymd);
@@ -388,9 +390,10 @@ async function coletarPendencias(
   // vencidos de ex-alunos. O filtro por data de vencimento (`DataVencimento`) é
   // honrado pela API e devolve o conjunto COMPLETO daquele dia — de TODOS os
   // alunos (ativos, inativos, transferidos, formados), sem truncar. Iteramos os
-  // dias da janela (a "trava mensal" obrigatória que mantém o payload pequeno e
-  // dentro do timeout de 60s) e unimos os resultados.
-  const dias = diasNaJanela(inicioYMD, fimYMD);
+  // dias da janela e unimos os resultados. O teto é elevado (≈6 meses) para
+  // permitir a busca por período customizado; janelas longas demais simplesmente
+  // estouram o timeout de 60s da API e o frontend trata isso com aviso amigável.
+  const dias = diasNaJanela(inicioYMD, fimYMD, 186);
   const parcelaNodes: string[] = [];
   let primeiroFault: string | null = null;
   const DIAS_CONC = 10; // janela de concorrência para não estourar a API/timeout

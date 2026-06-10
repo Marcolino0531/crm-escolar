@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -17,6 +18,7 @@ import {
   Building2,
   Construction,
   Percent,
+  CalendarRange,
 } from "lucide-react";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -141,6 +143,11 @@ function InadimplenciaPage() {
     `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`,
   );
   const [showDatePicker, setShowDatePicker] = useState(false);
+  // Período customizado (datas específicas além dos blocos mensais).
+  const [showCustomRange, setShowCustomRange] = useState(false);
+  const [modoCustom, setModoCustom] = useState(false);
+  const [tempInicio, setTempInicio] = useState(defaultRange.inicio);
+  const [tempFim, setTempFim] = useState(defaultRange.fim);
   const [filtro, setFiltro] = useState("");
   const [ordenacao, setOrdenacao] = useState<{ campo: SortField; direcao: "asc" | "desc" }>({
     campo: "valorTotalBoleto",
@@ -167,6 +174,29 @@ function InadimplenciaPage() {
   const meta = data?.meta ?? null;
   const serverError = data?.error ?? (error instanceof Error ? error.message : null);
 
+  // Tratamento "graceful" de timeout: períodos muito longos (ex.: 6 meses)
+  // podem estourar o limite de ~60s da API. Quando a busca falha por tempo
+  // limite, exibimos um toast amigável sugerindo um intervalo menor.
+  const timeoutAvisadoRef = useRef(false);
+  useEffect(() => {
+    if (isFetching) {
+      timeoutAvisadoRef.current = false;
+      return;
+    }
+    if (!serverError) return;
+    const msg = serverError.toLowerCase();
+    const ehTimeout =
+      /timeout|timed out|tempo|excedid|504|gateway|abort|function_invocation_timeout|demorou|deadline|etimedout/.test(
+        msg,
+      );
+    if (ehTimeout && !timeoutAvisadoRef.current) {
+      timeoutAvisadoRef.current = true;
+      toast.error(
+        "A busca demorou muito. Por favor, tente selecionar um período de datas menor.",
+      );
+    }
+  }, [serverError, isFetching]);
+
   const toggleOrdenacao = (campo: SortField) => {
     setOrdenacao((prev) =>
       prev.campo === campo
@@ -189,6 +219,8 @@ function InadimplenciaPage() {
     setDataInicio(inicio);
     setDataFim(fim);
     setShowDatePicker(false);
+    setShowCustomRange(false);
+    setModoCustom(false);
   };
 
   const aplicarMesEspecifico = () => {
@@ -199,6 +231,23 @@ function InadimplenciaPage() {
     setDataInicio(inicio);
     setDataFim(fim);
     setShowDatePicker(false);
+    setShowCustomRange(false);
+    setModoCustom(false);
+  };
+
+  const aplicarPeriodoCustom = () => {
+    if (!tempInicio || !tempFim) {
+      toast.error("Selecione a data inicial e a data final.");
+      return;
+    }
+    if (tempInicio > tempFim) {
+      toast.error("A data inicial não pode ser posterior à data final.");
+      return;
+    }
+    setDataInicio(tempInicio);
+    setDataFim(tempFim);
+    setShowDatePicker(false);
+    setModoCustom(true);
   };
 
   const pendenciasFiltradas = useMemo(() => {
@@ -383,7 +432,7 @@ function InadimplenciaPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {ultimosMeses.map((mes) => {
-              const ativo = dataInicio === mes.inicio && dataFim === mes.fim;
+              const ativo = !modoCustom && dataInicio === mes.inicio && dataFim === mes.fim;
               return (
                 <button
                   key={`${mes.year}-${mes.month0}`}
@@ -399,7 +448,10 @@ function InadimplenciaPage() {
               );
             })}
             <button
-              onClick={() => setShowDatePicker(!showDatePicker)}
+              onClick={() => {
+                setShowDatePicker((v) => !v);
+                setShowCustomRange(false);
+              }}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                 showDatePicker
                   ? "bg-indigo-600 text-white"
@@ -407,6 +459,21 @@ function InadimplenciaPage() {
               }`}
             >
               Meses Anteriores
+            </button>
+            <button
+              onClick={() => {
+                setShowCustomRange((v) => !v);
+                setShowDatePicker(false);
+                setTempInicio(dataInicio);
+                setTempFim(dataFim);
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                showCustomRange || modoCustom
+                  ? "bg-indigo-600 text-white"
+                  : "border border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-100"
+              }`}
+            >
+              <CalendarRange size={14} /> Período Específico
             </button>
           </div>
         </div>
@@ -430,6 +497,42 @@ function InadimplenciaPage() {
               <Search size={14} /> Buscar Mês
             </button>
             <p className="text-xs text-indigo-500">Selecione qualquer mês passado.</p>
+          </div>
+        )}
+
+        {showCustomRange && (
+          <div className="mt-3 flex flex-col items-start gap-3 border-t border-indigo-200 pt-3 sm:flex-row sm:items-end">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-indigo-700">Data Inicial</label>
+              <input
+                type="date"
+                value={tempInicio}
+                max={tempFim || undefined}
+                onChange={(e) => setTempInicio(e.target.value)}
+                className="rounded-lg border border-indigo-300 px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-indigo-700">Data Final</label>
+              <input
+                type="date"
+                value={tempFim}
+                min={tempInicio || undefined}
+                onChange={(e) => setTempFim(e.target.value)}
+                className="rounded-lg border border-indigo-300 px-3 py-1.5 text-sm"
+              />
+            </div>
+            <button
+              onClick={aplicarPeriodoCustom}
+              disabled={isFetching}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <Search size={14} /> Buscar Período
+            </button>
+            <p className="text-xs text-indigo-500">
+              Busca todos os boletos vencidos no intervalo. Períodos muito longos podem demorar —
+              prefira intervalos menores.
+            </p>
           </div>
         )}
       </div>
