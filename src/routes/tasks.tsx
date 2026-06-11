@@ -86,6 +86,8 @@ const COLUMNS: { status: TaskStatus; label: string; icon: any; accent: string }[
 
 function TasksPage() {
   const { session } = useAuth();
+  const { canEdit } = usePermissions();
+  const podeCriar = canEdit("tasks");
   const me = session?.user?.id ?? "";
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -179,9 +181,11 @@ function TasksPage() {
             Gerenciador interno de tarefas. Você vê apenas as tasks que enviou ou recebeu.
           </p>
         </div>
-        <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4" /> Nova Task
-        </Button>
+        {podeCriar && (
+          <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" /> Nova Task
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
