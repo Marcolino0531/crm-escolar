@@ -48,7 +48,8 @@ function dupKey(date: string, amount: number, description: string) {
 }
 
 function UploadPage() {
-  const { canView, loading: roleLoading } = usePermissions();
+  const { canView, canEdit, loading: roleLoading } = usePermissions();
+  const podeEditar = canEdit("financeiro_upload");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
@@ -314,24 +315,26 @@ function UploadPage() {
             </Select>
           </div>
 
-          <label className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-secondary/40 px-6 py-12 text-center transition-colors ${schoolId ? "cursor-pointer hover:bg-secondary" : "cursor-not-allowed opacity-60"}`}>
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Upload className="h-6 w-6" />
-            </div>
-            <div>
-              <div className="font-medium">{fileName ?? "Clique para selecionar um arquivo CSV ou Excel"}</div>
-              <div className="text-xs text-muted-foreground">
-                {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Extratos da Caixa e do Itaú são detectados automaticamente pelas colunas" : "Selecione um colégio primeiro"}
+          {podeEditar && (
+            <label className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-secondary/40 px-6 py-12 text-center transition-colors ${schoolId ? "cursor-pointer hover:bg-secondary" : "cursor-not-allowed opacity-60"}`}>
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Upload className="h-6 w-6" />
               </div>
-            </div>
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              className="hidden"
-              disabled={!schoolId}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-            />
-          </label>
+              <div>
+                <div className="font-medium">{fileName ?? "Clique para selecionar um arquivo CSV ou Excel"}</div>
+                <div className="text-xs text-muted-foreground">
+                  {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Extratos da Caixa e do Itaú são detectados automaticamente pelas colunas" : "Selecione um colégio primeiro"}
+                </div>
+              </div>
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="hidden"
+                disabled={!schoolId}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+              />
+            </label>
+          )}
         </CardContent>
       </Card>
 
@@ -539,11 +542,13 @@ function UploadPage() {
               </table>
             </div>
 
-            <div className="mt-4 flex justify-center">
-              <Button variant="outline" onClick={addManualRow} disabled={!schoolId}>
-                <Plus className="h-4 w-4" /> Adicionar Transação Manualmente
-              </Button>
-            </div>
+            {podeEditar && (
+              <div className="mt-4 flex justify-center">
+                <Button variant="outline" onClick={addManualRow} disabled={!schoolId}>
+                  <Plus className="h-4 w-4" /> Adicionar Transação Manualmente
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
