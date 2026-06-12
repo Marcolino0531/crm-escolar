@@ -1388,3 +1388,100 @@ export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
       dataFim: fimYMD,
     };
   });
+
+// ── Cobrança: dados do Responsável Financeiro p/ Notificação Extrajudicial ──
+// Puxa do Sponte (GetResponsavelFinanceiro) os dados cadastrais completos do
+// responsável (Nome, CPF, endereço) e o nome do aluno, usados para montar o
+// documento de Notificação Extrajudicial (Pré-judicial) quando o boleto atinge
+// 30 dias de atraso. RBAC por unidade aplicado (server-side).
+export interface ResponsavelCobranca {
+  alunoId: string;
+  nomeAluno: string;
+  nomeResponsavel: string;
+  cpf: string;
+  endereco: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  estado: string;
+  cep: string;
+  email: string;
+  telefone: string;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const RespCobrancaInputSchema = z.object({
+  alunoId: z.string().min(1),
+  unidade: z.string().min(1),
+});
+
+export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => RespCobrancaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ResponsavelCobranca> => {
+    const { alunoId, unidade } = data;
+    const vazio: ResponsavelCobranca = {
+      alunoId,
+      nomeAluno: "",
+      nomeResponsavel: "",
+      cpf: "",
+      endereco: "",
+      numero: "",
+      complemento: "",
+      bairro: "",
+      cidade: "",
+      estado: "",
+      cep: "",
+      email: "",
+      telefone: "",
+    };
+
+    // RBAC por unidade: bloqueia leitura fora da permissão do usuário.
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ...vazio, error: "Sem permissão para esta unidade." };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { ...vazio, indisponivel: true };
+
+    try {
+      const [respXml, alunoXml] = await Promise.all([
+        callSponte("GetResponsavelFinanceiro", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+        callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+      ]);
+
+      const respNodes = parseXmlList(respXml, "wsResponsavel");
+      const r = respNodes[0] ?? "";
+      const alunoNodes = parseXmlList(alunoXml, "wsAluno");
+      const a = alunoNodes[0] ?? "";
+
+      const pick = (node: string, ...tags: string[]): string => {
+        for (const t of tags) {
+          const v = parseXmlValue(node, t);
+          if (v) return v;
+        }
+        return "";
+      };
+
+      return {
+        alunoId,
+        nomeAluno: pick(a, "Nome"),
+        nomeResponsavel: pick(r, "Nome"),
+        cpf: pick(r, "CPF", "Cpf", "CPF_CNPJ"),
+        endereco: pick(r, "Endereco", "Logradouro"),
+        numero: pick(r, "Numero"),
+        complemento: pick(r, "Complemento"),
+        bairro: pick(r, "Bairro"),
+        cidade: pick(r, "Cidade"),
+        estado: pick(r, "Estado", "UF"),
+        cep: pick(r, "CEP", "Cep"),
+        email: pick(r, "Email"),
+        telefone: pick(r, "Celular", "Telefone"),
+      };
+    } catch (e) {
+      return { ...vazio, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+    }
+  });

@@ -1,4 +1,4 @@
-import { Bell, AlertTriangle, CalendarClock, ClipboardList } from "lucide-react";
+import { Bell, AlertTriangle, CalendarClock, ClipboardList, HandCoins } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,7 +9,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
+import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
 
 type Notification = {
   id: string;
@@ -40,12 +40,15 @@ function fmtBRL(n: number) {
 
 export function NotificationsBell() {
   const { session } = useAuth();
-  const { canView } = usePermissions();
+  const { canView, canEdit } = usePermissions();
   const { schools } = useSchool();
   const qc = useQueryClient();
   const userId = session?.user?.id;
   const canTasks = canView("tasks");
   const canFluxo = canView("financeiro_fluxo");
+  // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
+  // (quem pode marcar o checklist no módulo de Cobrança).
+  const canCobranca = canEdit("cobranca");
 
   // --- Task notifications (dismissible: clear on open) ---
   const { data: notifications = [] } = useQuery({
@@ -87,6 +90,27 @@ export function NotificationsBell() {
   // --- Accounts payable alerts (derived from Fluxo Futuro; NOT dismissible —
   // they persist until the bill's status becomes "paid" / quitada). ---
   const today = todayISOLocal();
+
+  // --- Alerta do dia 25: data limite para envio dos boletos de mensalidade.
+  // Aparece a partir do dia 25 e some assim que o checklist do mês é marcado. ---
+  const competenciaAtual = monthKeyFromISO(today);
+  const { data: cobrancaChecklist } = useQuery({
+    queryKey: ["cobranca_checklist_alert", competenciaAtual, userId ?? "anon"],
+    enabled: !!userId && canCobranca,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("cobranca_checklist" as any)
+        .select("boletos_enviados")
+        .eq("competencia", competenciaAtual)
+        .maybeSingle();
+      if (error) return null;
+      return (data ?? null) as { boletos_enviados: boolean } | null;
+    },
+  });
+  const diaDoMes = new Date().getDate();
+  const alertaBoletos = canCobranca && diaDoMes >= 25 && !cobrancaChecklist?.boletos_enviados;
+
   const { data: forecasts = [] } = useQuery({
     queryKey: ["fluxo_alerts", today],
     enabled: !!userId && canFluxo,
@@ -116,7 +140,7 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task_notifications"] }),
   });
 
-  if (!userId || (!canTasks && !canFluxo)) return null;
+  if (!userId || (!canTasks && !canFluxo && !canCobranca)) return null;
 
   const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "";
   const overdue = forecasts.filter((f) => (f.due_date ?? "") < today);
@@ -125,7 +149,8 @@ export function NotificationsBell() {
 
   // Fluxo alerts + persistent new-task alerts always count as active; the
   // dismissible task notices count only while unread.
-  const badge = unreadTasks.length + forecasts.length + openTasks.length;
+  const badge =
+    unreadTasks.length + forecasts.length + openTasks.length + (alertaBoletos ? 1 : 0);
 
   return (
     <Popover
@@ -146,6 +171,32 @@ export function NotificationsBell() {
       <PopoverContent align="end" className="w-96 p-0">
         <div className="border-b px-3 py-2 text-sm font-semibold">Notificações</div>
         <div className="max-h-96 overflow-y-auto">
+          {/* Cobrança: data limite (dia 25) para envio dos boletos de mensalidade. */}
+          {alertaBoletos && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cobrança
+              </div>
+              <Link
+                to="/cobranca"
+                className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+              >
+                <div className="flex items-start gap-2">
+                  <HandCoins className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <div className="min-w-0">
+                    <div className="font-medium text-amber-600">
+                      Atenção: Data limite para envio dos boletos de mensalidade
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Realize o envio dos boletos de todos os colégios e marque o checklist no
+                      módulo de Cobrança.
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            </div>
+          )}
+
           {/* Accounts payable: overdue first (red), then due today. */}
           {canFluxo && (overdue.length > 0 || dueToday.length > 0) && (
             <div>
@@ -246,7 +297,8 @@ export function NotificationsBell() {
           {badge === 0 &&
             notifications.length === 0 &&
             forecasts.length === 0 &&
-            openTasks.length === 0 && (
+            openTasks.length === 0 &&
+            !alertaBoletos && (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               Nenhuma notificação.
             </p>
