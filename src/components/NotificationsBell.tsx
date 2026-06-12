@@ -48,7 +48,7 @@ export function NotificationsBell() {
   const canFluxo = canView("financeiro_fluxo");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
-  const canCobranca = canEdit("cobranca");
+  const canCobranca = canEdit("financeiro_cobranca");
 
   // --- Task notifications (dismissible: clear on open) ---
   const { data: notifications = [] } = useQuery({

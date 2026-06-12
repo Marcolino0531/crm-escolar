@@ -33,12 +33,13 @@ export const Route = createFileRoute("/cobranca")({
   component: CobrancaGate,
 });
 
-// VISIBILIDADE (DEFAULT DENY): a rota é bloqueada por padrão. Só renderiza para
-// quem o Administrador concedeu Visualização/Edição no módulo "cobranca".
+// VISIBILIDADE (DEFAULT DENY + cadeia): a rota é bloqueada por padrão. Só
+// renderiza quando o Administrador concede acesso à macro "financeiro" E ao
+// submódulo "financeiro_cobranca".
 function CobrancaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("cobranca"))
+  if (!canView("financeiro") || !canView("financeiro_cobranca"))
     return <AccessDenied message="Você não tem permissão para acessar a Cobrança." />;
   return <CobrancaPage />;
 }
@@ -121,7 +122,7 @@ function CobrancaPage() {
   const { selected, schools } = useSchool();
   const { session } = useAuth();
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("cobranca");
+  const podeEditar = canEdit("financeiro_cobranca");
   const qc = useQueryClient();
   const fetchFn = useServerFn(fetchSponteInadimplencia);
   const fetchRespFn = useServerFn(fetchResponsavelCobranca);

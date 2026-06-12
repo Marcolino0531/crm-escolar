@@ -203,19 +203,26 @@ function AppShell() {
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
   const showTasks = canView("tasks");
-  const showCobranca = canView("cobranca");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
   const showConciliacao = canView("financeiro_conciliacao");
   const showFluxo = canView("financeiro_fluxo");
   const showInadimplencia = canView("financeiro_inadimplencia");
+  // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
+  const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
   // sub-tab is visible.
   const showFinanceiro =
     canView("financeiro") &&
-    (showDashboard || showUpload || showConciliacao || showFluxo || showInadimplencia || showFundos);
+    (showDashboard ||
+      showUpload ||
+      showConciliacao ||
+      showFluxo ||
+      showInadimplencia ||
+      showCobranca ||
+      showFundos);
   const showConfig = canView("configuracoes");
   return (
     <div className="flex min-h-screen bg-background">
@@ -238,7 +245,7 @@ function AppShell() {
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
-          {(showFinanceiro || showCobranca) && (
+          {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 Financeiro
