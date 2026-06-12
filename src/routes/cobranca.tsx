@@ -47,10 +47,10 @@ function CobrancaGate() {
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 // Régua de cobrança: primeiro alerta em D+2 (poupa o D+1 para o arquivo retorno),
-// depois a cada 2 dias até D+30. Em D+30 a régua regular é interrompida e o caso
-// migra para a fase extrajudicial (pré-judicial).
+// depois a cada 2 dias até D+60. Após D+60 a régua regular é interrompida e o
+// caso migra para a fase extrajudicial (pré-judicial).
 const TICK_INICIAL = 2;
-const TICK_FINAL = 30;
+const TICK_FINAL = 60;
 
 function formatarMoeda(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -79,7 +79,7 @@ function ticksDevidos(diasAtraso: number): number[] {
   return ticks;
 }
 
-// Todos os marcos do ciclo (2..30) para desenhar a linha do tempo completa.
+// Todos os marcos do ciclo (2..60) para desenhar a linha do tempo completa.
 const TODOS_TICKS: number[] = (() => {
   const arr: number[] = [];
   for (let d = TICK_INICIAL; d <= TICK_FINAL; d += 2) arr.push(d);
@@ -267,7 +267,7 @@ function CobrancaPage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao registrar o envio."),
   });
 
-  // ── Notificação Extrajudicial (D+30): puxa dados do Sponte e gera o PDF ─────
+  // ── Notificação Extrajudicial (D+60): puxa dados do Sponte e gera o PDF ─────
   const [gerandoKey, setGerandoKey] = useState<string | null>(null);
   async function gerarExtrajudicial(perfil: PerfilCobranca) {
     setGerandoKey(perfil.perfilKey);
@@ -372,7 +372,7 @@ function CabecalhoCobranca({
           <HandCoins className="h-5 w-5 text-primary" /> Cobrança
         </h1>
         <p className="text-sm text-muted-foreground">
-          Régua de cobrança automática (D+2, a cada 2 dias até D+30) e notificação extrajudicial.
+          Régua de cobrança automática (D+2, a cada 2 dias até D+60) e notificação extrajudicial.
         </p>
       </div>
       <Button variant="outline" size="sm" onClick={onRefresh} disabled={isFetching}>
@@ -454,15 +454,17 @@ function PerfilCard({
   onExtrajudicial: () => void;
 }) {
   const atraso = perfil.maxDiasAtraso;
+  // Fase jurídica/extrajudicial só após ULTRAPASSAR D+60 (em D+60 ainda é régua,
+  // pois D+60 é o último marco do ciclo amigável).
   const fase: "grace" | "regua" | "juridica" =
-    atraso >= TICK_FINAL ? "juridica" : atraso >= TICK_INICIAL ? "regua" : "grace";
+    atraso > TICK_FINAL ? "juridica" : atraso >= TICK_INICIAL ? "regua" : "grace";
   const devidos = ticksDevidos(atraso);
   const proximoPendente = devidos.find(
     (t) => !enviosSet.has(`${perfil.perfilKey}|${perfil.competencia}|${t}|regua`),
   );
 
   const tagAtraso =
-    atraso >= TICK_FINAL
+    atraso > TICK_FINAL
       ? "bg-red-600 text-white"
       : atraso >= 10
         ? "bg-amber-500 text-white"
@@ -526,15 +528,16 @@ function PerfilCard({
         </span>
       </div>
 
-      {/* Linha do tempo da régua (D+2..D+30). NUNCA é resetada nem escondida:
-          permanece sempre visível, inclusive após 30/60/90+ dias de atraso,
-          preservando o histórico da cobrança amigável como prova (ação líquida
-          e certa). Em casos de longo atraso, todo o ciclo D+2→D+30 fica marcado. */}
+      {/* Linha do tempo da régua (D+2..D+60), em grid de 3 linhas × 10 colunas
+          (2–20 / 22–40 / 42–60). NUNCA é resetada nem escondida: permanece sempre
+          visível, inclusive após 60/90+ dias de atraso, preservando o histórico da
+          cobrança amigável como prova (ação líquida e certa). Em casos de longo
+          atraso, todo o ciclo D+2→D+60 fica marcado. */}
       <div className="mt-3">
         <div className="mb-1 text-[11px] font-medium text-muted-foreground">
           Régua de cobrança
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="grid grid-cols-10 gap-1">
           {TODOS_TICKS.map((t) => {
             const enviado = enviosSet.has(`${perfil.perfilKey}|${perfil.competencia}|${t}|regua`);
             const devido = devidos.includes(t);
@@ -549,7 +552,7 @@ function PerfilCard({
               <span
                 key={t}
                 title={`D+${t} — ${estado}`}
-                className={`flex h-6 w-6 items-center justify-center rounded text-[10px] font-semibold ${cls}`}
+                className={`flex aspect-square w-full items-center justify-center rounded text-[10px] font-semibold ${cls}`}
               >
                 {t}
               </span>
@@ -558,7 +561,7 @@ function PerfilCard({
         </div>
         {fase === "juridica" && (
           <p className="mt-1 text-[10px] font-medium text-red-600">
-            Ciclo amigável concluído (D+2 → D+30). Histórico mantido para fins legais.
+            Ciclo amigável concluído (D+2 → D+60). Histórico mantido para fins legais.
           </p>
         )}
       </div>
@@ -679,7 +682,7 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
     Vimos, por meio da presente, notificá-lo(a) extrajudicialmente acerca da
     existência de débito(s) em aberto referente(s) a serviços educacionais
     prestados, conforme discriminado abaixo. Até a presente data, constam em nossos
-    registros as seguintes pendências financeiras vencidas há mais de 30 (trinta)
+    registros as seguintes pendências financeiras vencidas há mais de 60 (sessenta)
     dias:
   </p>
   <table>
