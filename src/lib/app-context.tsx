@@ -143,7 +143,6 @@ export const APP_MODULES = [
   "rh",
   "tasks",
   "financeiro",
-  "cobranca",
   "configuracoes",
 ] as const;
 
@@ -154,6 +153,7 @@ export const FINANCEIRO_SUBMODULES = [
   "financeiro_conciliacao",
   "financeiro_fluxo",
   "financeiro_inadimplencia",
+  "financeiro_cobranca",
   "financeiro_fundos",
 ] as const;
 
@@ -169,13 +169,13 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   rh: "Recursos Humanos",
   tasks: "Tasks",
   financeiro: "Financeiro",
-  cobranca: "Cobrança",
   configuracoes: "Configurações",
   financeiro_dashboard: "Dashboard",
   financeiro_upload: "Importar Extrato",
   financeiro_conciliacao: "Conciliação de Faturamento",
   financeiro_fluxo: "Fluxo Futuro",
   financeiro_inadimplencia: "Inadimplência",
+  financeiro_cobranca: "Cobrança",
   financeiro_fundos: "Fundos",
 };
 
