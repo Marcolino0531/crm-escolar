@@ -75,13 +75,27 @@ const LeadForm: React.FC<LeadFormProps> = ({
     top: number;
     left: number;
     width: number;
+    maxHeight: number;
   } | null>(null);
 
+  // Posiciona o dropdown (portalizado no body) ancorado ao input. Trava
+  // anti-clipping: se não couber abaixo e houver mais espaço acima, abre para
+  // CIMA; a altura máxima sempre respeita o espaço visível da viewport.
   const atualizarPosicaoOrigem = useCallback(() => {
     const el = origemInputRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setOrigemDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    const GAP = 4;
+    const ALTURA_MAX = 192; // max-h-48
+    const espacoAbaixo = window.innerHeight - rect.bottom - 8;
+    const espacoAcima = rect.top - 8;
+    const abrirAcima = espacoAbaixo < ALTURA_MAX && espacoAcima > espacoAbaixo;
+    const maxHeight = Math.max(
+      120,
+      Math.min(ALTURA_MAX, abrirAcima ? espacoAcima : espacoAbaixo),
+    );
+    const top = abrirAcima ? rect.top - GAP - maxHeight : rect.bottom + GAP;
+    setOrigemDropdownPos({ top, left: rect.left, width: rect.width, maxHeight });
   }, []);
 
   const todasOrigens = [
@@ -291,6 +305,104 @@ const LeadForm: React.FC<LeadFormProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Dados do Responsável (contato) — no topo: foco em quem faz o contato.
+              Também joga o dropdown de Origem para a parte superior/central da
+              tela, evitando o corte (overflow) na borda inferior do modal. */}
+          <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-4">
+            <span className="text-xs font-bold uppercase tracking-wide text-indigo-600">
+              Responsável
+            </span>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Nome do Pai/Mãe <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={nomePaiMae}
+                onChange={(e) => setNomePaiMae(e.target.value)}
+                required
+                placeholder="Ex: Maria da Silva"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Telefone <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="tel"
+                value={telefone}
+                onChange={(e) => setTelefone(e.target.value)}
+                required
+                placeholder="Ex: (11) 99999-9999"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+              />
+            </div>
+
+            {/* Origem — Creatable Select (Portal + flip anti-clipping) */}
+            <div ref={origemRef} className="relative">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Como conheceu o colégio? (Origem) <span className="text-red-500">*</span>
+              </label>
+              <input
+                ref={origemInputRef}
+                type="text"
+                value={origemInputValue}
+                onChange={handleOrigemInputChange}
+                onFocus={() => {
+                  atualizarPosicaoOrigem();
+                  setOrigemDropdownOpen(true);
+                }}
+                placeholder="Selecione ou digite uma nova origem..."
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+              />
+              {origemDropdownOpen &&
+                origemDropdownPos &&
+                (filteredOrigens.length > 0 || showCreateOption) &&
+                createPortal(
+                  <div
+                    ref={origemDropdownRef}
+                    style={{
+                      position: "fixed",
+                      top: origemDropdownPos.top,
+                      left: origemDropdownPos.left,
+                      width: origemDropdownPos.width,
+                      maxHeight: origemDropdownPos.maxHeight,
+                      zIndex: 9999,
+                    }}
+                    className="bg-white border border-gray-200 rounded-lg shadow-lg overflow-y-auto"
+                  >
+                    {filteredOrigens.map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        onClick={() => handleOrigemSelect(o)}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
+                          origem === o
+                            ? "bg-indigo-50 text-indigo-700 font-medium"
+                            : "text-gray-700"
+                        }`}
+                      >
+                        {o}
+                      </button>
+                    ))}
+                    {showCreateOption && (
+                      <button
+                        type="button"
+                        onClick={() => handleOrigemSelect(origemInputValue.trim())}
+                        className="w-full text-left px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors font-medium border-t border-gray-100"
+                      >
+                        + Criar &quot;{origemInputValue.trim()}&quot;
+                      </button>
+                    )}
+                  </div>,
+                  document.body,
+                )}
+            </div>
+          </div>
+
           {/* Blocos de alunos (irmãos) */}
           {alunos.map((aluno, idx) => (
             <div
@@ -402,95 +514,6 @@ const LeadForm: React.FC<LeadFormProps> = ({
             </svg>
             Adicionar Irmão
           </button>
-
-          {/* Dados da família (únicos) */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Nome do Pai/Mãe <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={nomePaiMae}
-              onChange={(e) => setNomePaiMae(e.target.value)}
-              required
-              placeholder="Ex: Maria da Silva"
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Telefone <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="tel"
-              value={telefone}
-              onChange={(e) => setTelefone(e.target.value)}
-              required
-              placeholder="Ex: (11) 99999-9999"
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
-            />
-          </div>
-
-          {/* Origem — Creatable Select */}
-          <div ref={origemRef} className="relative">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Como conheceu o colégio? (Origem) <span className="text-red-500">*</span>
-            </label>
-            <input
-              ref={origemInputRef}
-              type="text"
-              value={origemInputValue}
-              onChange={handleOrigemInputChange}
-              onFocus={() => {
-                atualizarPosicaoOrigem();
-                setOrigemDropdownOpen(true);
-              }}
-              placeholder="Selecione ou digite uma nova origem..."
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
-            />
-            {origemDropdownOpen &&
-              origemDropdownPos &&
-              (filteredOrigens.length > 0 || showCreateOption) &&
-              createPortal(
-                <div
-                  ref={origemDropdownRef}
-                  style={{
-                    position: "fixed",
-                    top: origemDropdownPos.top,
-                    left: origemDropdownPos.left,
-                    width: origemDropdownPos.width,
-                    zIndex: 9999,
-                  }}
-                  className="bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto"
-                >
-                  {filteredOrigens.map((o) => (
-                    <button
-                      key={o}
-                      type="button"
-                      onClick={() => handleOrigemSelect(o)}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors ${
-                        origem === o
-                          ? "bg-indigo-50 text-indigo-700 font-medium"
-                          : "text-gray-700"
-                      }`}
-                    >
-                      {o}
-                    </button>
-                  ))}
-                  {showCreateOption && (
-                    <button
-                      type="button"
-                      onClick={() => handleOrigemSelect(origemInputValue.trim())}
-                      className="w-full text-left px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 transition-colors font-medium border-t border-gray-100"
-                    >
-                      + Criar &quot;{origemInputValue.trim()}&quot;
-                    </button>
-                  )}
-                </div>,
-                document.body,
-              )}
-          </div>
 
           <div className="flex gap-3 pt-2">
             <button
