@@ -279,16 +279,11 @@ function InadimplenciaPage() {
   }, [pendencias, filtro, ordenacao]);
 
   const totalPendente = pendenciasFiltradas.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
-  // "Sem Acordos": mesmo filtro anti-duplicidade do card anual — remove apenas os
-  // boletos cuja composição é ÚNICA E EXCLUSIVAMENTE "Acordo" (acento-insensível).
-  // Boletos mistos (Acordo + outra categoria) seguem somando integralmente.
-  const normalizarAcordo = (s: string) =>
-    s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const ehBoletoSomenteAcordo = (cats: string[]) =>
-    cats.length > 0 && cats.every((c) => normalizarAcordo(c).includes("acordo"));
+  // "Sem Acordos": desconta ITEM A ITEM apenas a parcela "Acordo" de cada boleto
+  // (valorAcordo, calculado no backend). Boletos mistos seguem somando o restante;
+  // só o valor renegociado sai do montante. Mesma lógica do card anual.
   const totalPendenteSemAcordo = pendenciasFiltradas
-    .filter((p) => !ehBoletoSomenteAcordo(p.categorias))
-    .reduce((sum, p) => sum + p.valorTotalBoleto, 0);
+    .reduce((sum, p) => sum + (p.valorTotalBoleto - p.valorAcordo), 0);
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
   // ── Índice de Inadimplência ──────────────────────────────────────────────

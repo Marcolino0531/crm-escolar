@@ -318,6 +318,10 @@ export interface PendenciaAgrupada {
   telefone: string;
   vencimento: string;
   valorTotalBoleto: number;
+  // Soma dos itens/composições do boleto classificados como "Acordo" (saldo).
+  // Permite descontar item a item — sem remover o boleto inteiro nos cálculos
+  // de "Sem Acordos" / Inadimplência Acumulada.
+  valorAcordo: number;
   valorComDesconto: number;
   descontoBolsa: number;
   categorias: string[];
@@ -517,6 +521,10 @@ async function coletarPendencias(
   for (const [groupKey, items] of Object.entries(groups)) {
     const first = items[0];
     const valorTotalBoleto = items.reduce((sum, it) => sum + it.saldo, 0);
+    const valorAcordo = items.reduce(
+      (sum, it) => sum + (normalizar(it.categoria).includes("acordo") ? it.saldo : 0),
+      0,
+    );
     const categorias = [...new Set(items.map((it) => it.categoria).filter(Boolean))];
 
     let maxBolsaPct = 0;
@@ -543,6 +551,7 @@ async function coletarPendencias(
       telefone: resp ? resp.celular : "-",
       vencimento: first.vencimento,
       valorTotalBoleto,
+      valorAcordo,
       valorComDesconto,
       descontoBolsa: maxBolsaPct,
       categorias,
@@ -1328,13 +1337,6 @@ export interface InadimplenciaAnualResult {
   dataFim: string;
 }
 
-// Detecta boletos cuja composição é ÚNICA E EXCLUSIVAMENTE "Acordo"
-// (acento-insensível). Boletos mistos (Acordo + outra categoria) NÃO contam como
-// Acordo e seguem somando integralmente. Sem categorias → não é Acordo.
-function ehBoletoAcordo(p: PendenciaAgrupada): boolean {
-  return p.categorias.length > 0 && p.categorias.every((c) => normalizar(c).includes("acordo"));
-}
-
 export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))
@@ -1365,15 +1367,21 @@ export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
     if (coleta.indisponivel) return { ...base, tempoSegundos, indisponivel: true };
     if (coleta.error) return { ...base, tempoSegundos, error: coleta.error };
 
-    // Filtro Anti-Duplicidade (CRÍTICO): remove TODO boleto cuja categoria
-    // contenha "Acordo" antes de somar — só conta mensalidades/taxas originais.
-    const semAcordo = coleta.pendencias.filter((p) => !ehBoletoAcordo(p));
-    const boletosAcordoExcluidos = coleta.pendencias.length - semAcordo.length;
-    const totalInadimplente = semAcordo.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
+    // Filtro Anti-Duplicidade (CRÍTICO): desconta ITEM A ITEM apenas a parcela
+    // "Acordo" de cada boleto. Boletos mistos seguem somando o restante
+    // (Mensalidade/Material/etc.); só sai do cálculo o valor renegociado.
+    const totalInadimplente = coleta.pendencias.reduce(
+      (sum, p) => sum + (p.valorTotalBoleto - p.valorAcordo),
+      0,
+    );
+    const boletosAcordoExcluidos = coleta.pendencias.filter((p) => p.valorAcordo > 0).length;
+    const totalBoletos = coleta.pendencias.filter(
+      (p) => p.valorTotalBoleto - p.valorAcordo > 0.005,
+    ).length;
 
     return {
       totalInadimplente: Math.round(totalInadimplente * 100) / 100,
-      totalBoletos: semAcordo.length,
+      totalBoletos,
       boletosAcordoExcluidos,
       tempoSegundos,
       dataInicio: inicioYMD,
