@@ -279,6 +279,13 @@ function InadimplenciaPage() {
   }, [pendencias, filtro, ordenacao]);
 
   const totalPendente = pendenciasFiltradas.reduce((sum, p) => sum + p.valorTotalBoleto, 0);
+  // "Sem Acordos": mesmo filtro anti-duplicidade do card anual — remove os
+  // boletos cuja categoria contenha "Acordo" (acento-insensível) antes de somar.
+  const normalizarAcordo = (s: string) =>
+    s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const totalPendenteSemAcordo = pendenciasFiltradas
+    .filter((p) => !p.categorias.some((c) => normalizarAcordo(c).includes("acordo")))
+    .reduce((sum, p) => sum + p.valorTotalBoleto, 0);
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
   // ── Índice de Inadimplência ──────────────────────────────────────────────
@@ -488,6 +495,9 @@ function InadimplenciaPage() {
             <AlertTriangle size={14} /> Total Pendente
           </div>
           <p className="mt-1 text-2xl font-bold text-red-600">{formatarMoeda(totalPendente)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Sem Acordos: {formatarMoeda(totalPendenteSemAcordo)}
+          </p>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
