@@ -21,6 +21,7 @@ import {
   AlertCircle,
   PiggyBank,
   ListTodo,
+  HandCoins,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
@@ -202,6 +203,7 @@ function AppShell() {
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
   const showTasks = canView("tasks");
+  const showCobranca = canView("cobranca");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -227,7 +229,7 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAdmissoes || showOnboarding || showRh || showTasks) && (
+          {(showAdmissoes || showOnboarding || showRh || showTasks || showCobranca) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -236,6 +238,7 @@ function AppShell() {
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
+          {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
           {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
