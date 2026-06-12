@@ -229,7 +229,7 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAdmissoes || showOnboarding || showRh || showTasks || showCobranca) && (
+          {(showAdmissoes || showOnboarding || showRh || showTasks) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -238,8 +238,7 @@ function AppShell() {
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
-          {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
-          {showFinanceiro && (
+          {(showFinanceiro || showCobranca) && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 Financeiro
@@ -253,6 +252,8 @@ function AppShell() {
               {showInadimplencia && (
                 <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência" />
               )}
+              {/* Cobrança aparece logo abaixo de Inadimplência (gated por cobranca). */}
+              {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
               {showFundos && <NavItem to="/fundos" icon={PiggyBank} label="Fundos" />}
             </>
           )}
