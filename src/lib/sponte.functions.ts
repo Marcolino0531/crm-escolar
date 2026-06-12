@@ -1328,9 +1328,11 @@ export interface InadimplenciaAnualResult {
   dataFim: string;
 }
 
-// Detecta boletos de "Acordo" em qualquer categoria do boleto (acento-insensível).
+// Detecta boletos cuja composição é ÚNICA E EXCLUSIVAMENTE "Acordo"
+// (acento-insensível). Boletos mistos (Acordo + outra categoria) NÃO contam como
+// Acordo e seguem somando integralmente. Sem categorias → não é Acordo.
 function ehBoletoAcordo(p: PendenciaAgrupada): boolean {
-  return p.categorias.some((c) => normalizar(c).includes("acordo"));
+  return p.categorias.length > 0 && p.categorias.every((c) => normalizar(c).includes("acordo"));
 }
 
 export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
