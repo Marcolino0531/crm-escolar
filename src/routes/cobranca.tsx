@@ -129,15 +129,12 @@ function CobrancaPage() {
   const hojeYMD = todayISOLocal();
   const competenciaAtual = monthKeyFromISO(hojeYMD);
 
-  // Janela de busca: últimos 60 dias de vencimentos. Cobre a régua (D+2..D+30) e
-  // os casos recém-entrados na fase extrajudicial (>30 dias).
+  // Janela de busca: ANO CORRENTE (01/01 → hoje). Visão total de quem está
+  // devendo no ano — inclui casos de longo atraso (30/60/90+ dias), não só os
+  // recentes. A busca anual é mais lenta no Sponte, então a UI usa skeleton.
   const janela = useMemo(() => {
     const fim = parseISODateLocal(hojeYMD)!;
-    const inicio = new Date(fim);
-    inicio.setDate(inicio.getDate() - 60);
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return { inicio: fmt(inicio), fim: hojeYMD };
+    return { inicio: `${fim.getFullYear()}-01-01`, fim: hojeYMD };
   }, [hojeYMD]);
 
   const unidadeNome =
@@ -528,7 +525,10 @@ function PerfilCard({
         </span>
       </div>
 
-      {/* Linha do tempo da régua (D+2..D+30) */}
+      {/* Linha do tempo da régua (D+2..D+30). NUNCA é resetada nem escondida:
+          permanece sempre visível, inclusive após 30/60/90+ dias de atraso,
+          preservando o histórico da cobrança amigável como prova (ação líquida
+          e certa). Em casos de longo atraso, todo o ciclo D+2→D+30 fica marcado. */}
       <div className="mt-3">
         <div className="mb-1 text-[11px] font-medium text-muted-foreground">
           Régua de cobrança
@@ -555,6 +555,11 @@ function PerfilCard({
             );
           })}
         </div>
+        {fase === "juridica" && (
+          <p className="mt-1 text-[10px] font-medium text-red-600">
+            Ciclo amigável concluído (D+2 → D+30). Histórico mantido para fins legais.
+          </p>
+        )}
       </div>
 
       {/* Ações */}
