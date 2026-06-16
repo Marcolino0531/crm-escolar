@@ -2,12 +2,17 @@ import React, { useState } from "react";
 import {
   Unidade,
   Funcionario,
+  Falta,
   Genero,
   EstadoCivil,
   TipoFalta,
   CategoriaFalta,
 } from "@/lib/crm/types";
 import { UNIDADES } from "@/lib/crm/constants";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+
+const ATESTADOS_BUCKET = "rh-atestados";
 
 interface FuncionarioModalProps {
   unidadeSelecionada: Unidade;
@@ -22,6 +27,11 @@ interface FuncionarioModalProps {
     tipo: TipoFalta,
     categoria: CategoriaFalta,
     duracaoMinutos?: number,
+  ) => void;
+  onEditarFalta?: (
+    funcionarioId: string,
+    faltaId: string,
+    patch: Partial<Omit<Falta, "id">>,
   ) => void;
   onRemoverFalta?: (funcionarioId: string, faltaId: string) => void;
   isAdmin?: boolean;
@@ -140,6 +150,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   onAdicionarFerias,
   onRemoverFerias,
   onAdicionarFalta,
+  onEditarFalta,
   onRemoverFalta,
   isAdmin = true,
 }) => {
@@ -191,6 +202,124 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     duracao: "",
   });
   const [mostrarFaltaForm, setMostrarFaltaForm] = useState(false);
+
+  // ----- Edição de uma falta existente (modal sobreposto) -----
+  const [faltaEditId, setFaltaEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{
+    dataDisplay: string;
+    data: string;
+    tipo: TipoFalta;
+    categoria: CategoriaFalta;
+    duracao: string;
+    observacao: string;
+    atestadoPath?: string;
+    atestadoNome?: string;
+    novoArquivo: File | null;
+  }>({
+    dataDisplay: "",
+    data: "",
+    tipo: "sem_atestado",
+    categoria: "integral",
+    duracao: "",
+    observacao: "",
+    novoArquivo: null,
+  });
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+
+  const abrirEdicaoFalta = (falta: Falta) => {
+    setFaltaEditId(falta.id);
+    setEditForm({
+      dataDisplay: converterParaBR(falta.data),
+      data: falta.data,
+      tipo: falta.tipo,
+      categoria: falta.categoria ?? "integral",
+      duracao: falta.duracaoMinutos ? String(falta.duracaoMinutos) : "",
+      observacao: falta.observacao ?? "",
+      atestadoPath: falta.atestadoPath,
+      atestadoNome: falta.atestadoNome,
+      novoArquivo: null,
+    });
+  };
+
+  const handleEditFaltaDataChange = (valor: string) => {
+    const display = aplicarMascaraData(valor);
+    if (display.length === 10 && validarData(display)) {
+      setEditForm((prev) => ({ ...prev, dataDisplay: display, data: converterParaISO(display) }));
+    } else {
+      setEditForm((prev) => ({ ...prev, dataDisplay: display, data: "" }));
+    }
+  };
+
+  // Abre o atestado (bucket privado) via URL assinada temporária.
+  const abrirAtestado = async (path: string) => {
+    const { data, error } = await supabase.storage
+      .from(ATESTADOS_BUCKET)
+      .createSignedUrl(path, 60);
+    if (error || !data?.signedUrl) {
+      toast.error("Não foi possível abrir o atestado.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleSalvarEdicaoFalta = async () => {
+    if (!funcionarioExistente || !onEditarFalta || !faltaEditId || !editForm.data) return;
+    setSalvandoEdicao(true);
+    try {
+      let atestadoPath = editForm.atestadoPath;
+      let atestadoNome = editForm.atestadoNome;
+
+      if (editForm.novoArquivo) {
+        const file = editForm.novoArquivo;
+        const ext = file.name.split(".").pop() ?? "bin";
+        const path = `${funcionarioExistente.id}/${faltaEditId}/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from(ATESTADOS_BUCKET)
+          .upload(path, file, { upsert: true, contentType: file.type || undefined });
+        if (upErr) {
+          toast.error(`Falha ao enviar o atestado: ${upErr.message}`);
+          setSalvandoEdicao(false);
+          return;
+        }
+        // Remove o anexo anterior (se houver) para não deixar órfãos.
+        if (editForm.atestadoPath && editForm.atestadoPath !== path) {
+          await supabase.storage.from(ATESTADOS_BUCKET).remove([editForm.atestadoPath]);
+        }
+        atestadoPath = path;
+        atestadoNome = file.name;
+      }
+
+      const duracaoMinutos =
+        editForm.categoria === "integral"
+          ? undefined
+          : parseInt(editForm.duracao, 10) || undefined;
+
+      onEditarFalta(funcionarioExistente.id, faltaEditId, {
+        data: editForm.data,
+        tipo: editForm.tipo,
+        categoria: editForm.categoria,
+        duracaoMinutos,
+        observacao: editForm.observacao.trim() || undefined,
+        atestadoPath,
+        atestadoNome,
+      });
+      toast.success("Falta atualizada com sucesso.");
+      setFaltaEditId(null);
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  const removerAnexoEdicao = async () => {
+    if (editForm.novoArquivo) {
+      setEditForm((prev) => ({ ...prev, novoArquivo: null }));
+      return;
+    }
+    if (editForm.atestadoPath) {
+      await supabase.storage.from(ATESTADOS_BUCKET).remove([editForm.atestadoPath]);
+      setEditForm((prev) => ({ ...prev, atestadoPath: undefined, atestadoNome: undefined }));
+    }
+  };
 
   const handleFaltaDataChange = (valor: string) => {
     const display = aplicarMascaraData(valor);
@@ -819,16 +948,49 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                           >
                             {tipoFaltaLabel(falta.tipo)}
                           </span>
+                          {falta.atestadoPath && (
+                            <span
+                              className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-700"
+                              title={falta.atestadoNome ?? "Atestado anexado"}
+                            >
+                              📎 Atestado
+                            </span>
+                          )}
                         </span>
-                        {isAdmin && onRemoverFalta && (
-                          <button
-                            type="button"
-                            onClick={() => onRemoverFalta(funcionarioExistente.id, falta.id)}
-                            className="text-red-400 hover:text-red-600 text-xs"
-                          >
-                            Excluir
-                          </button>
-                        )}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isAdmin && onEditarFalta && (
+                            <button
+                              type="button"
+                              onClick={() => abrirEdicaoFalta(falta)}
+                              className="text-gray-400 hover:text-indigo-600 transition-colors"
+                              title="Editar falta"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="h-4 w-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth={2}
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                />
+                              </svg>
+                            </button>
+                          )}
+                          {isAdmin && onRemoverFalta && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoverFalta(funcionarioExistente.id, falta.id)}
+                              className="text-red-400 hover:text-red-600 text-xs"
+                            >
+                              Excluir
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                 </div>
@@ -856,6 +1018,176 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Modal de edição de uma falta existente */}
+      {faltaEditId && funcionarioExistente && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                <span>✏️</span> Editar Falta
+              </h3>
+              <button
+                type="button"
+                onClick={() => setFaltaEditId(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Data</label>
+                  <input
+                    type="text"
+                    value={editForm.dataDisplay}
+                    onChange={(e) => handleEditFaltaDataChange(e.target.value)}
+                    placeholder="DD/MM/AAAA"
+                    maxLength={10}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Ocorrência</label>
+                  <select
+                    value={editForm.categoria}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        categoria: e.target.value as CategoriaFalta,
+                        duracao: e.target.value === "integral" ? "" : prev.duracao,
+                      }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                  >
+                    {CATEGORIA_FALTA_OPCOES.map((o) => (
+                      <option key={o.valor} value={o.valor}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Tipo / Motivo</label>
+                  <select
+                    value={editForm.tipo}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({ ...prev, tipo: e.target.value as TipoFalta }))
+                    }
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                  >
+                    {TIPO_FALTA_OPCOES.map((o) => (
+                      <option key={o.valor} value={o.valor}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {editForm.categoria !== "integral" && (
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">
+                      Tempo de Ausência (min)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editForm.duracao}
+                      onChange={(e) =>
+                        setEditForm((prev) => ({ ...prev, duracao: e.target.value }))
+                      }
+                      placeholder="Ex: 30"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Observação</label>
+                <textarea
+                  value={editForm.observacao}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({ ...prev, observacao: e.target.value }))
+                  }
+                  rows={2}
+                  placeholder="Ex: atestado médico entregue em 12/05."
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Atestado (foto ou PDF)
+                </label>
+                {editForm.novoArquivo ? (
+                  <div className="flex items-center justify-between bg-indigo-50 rounded px-2 py-1.5 text-sm text-indigo-700">
+                    <span className="truncate">📎 {editForm.novoArquivo.name}</span>
+                    <button
+                      type="button"
+                      onClick={removerAnexoEdicao}
+                      className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ) : editForm.atestadoPath ? (
+                  <div className="flex items-center justify-between bg-indigo-50 rounded px-2 py-1.5 text-sm text-indigo-700">
+                    <button
+                      type="button"
+                      onClick={() => abrirAtestado(editForm.atestadoPath!)}
+                      className="truncate underline hover:text-indigo-900 text-left"
+                    >
+                      📎 {editForm.atestadoNome ?? "Ver atestado"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={removerAnexoEdicao}
+                      className="text-red-400 hover:text-red-600 text-xs ml-2 shrink-0"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ) : null}
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) =>
+                    setEditForm((prev) => ({
+                      ...prev,
+                      novoArquivo: e.target.files?.[0] ?? null,
+                    }))
+                  }
+                  className="mt-2 w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium hover:file:bg-indigo-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <button
+                type="button"
+                onClick={() => setFaltaEditId(null)}
+                disabled={salvandoEdicao}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSalvarEdicaoFalta}
+                disabled={!editForm.data || salvandoEdicao}
+                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {salvandoEdicao ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
