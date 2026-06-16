@@ -393,6 +393,28 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
+  // Edita uma falta EXISTENTE no array (mesmo id, sem duplicar no ranking).
+  const editarFalta = (
+    funcionarioId: string,
+    faltaId: string,
+    patch: Partial<Omit<Falta, "id">>,
+  ) =>
+    run(async () => {
+      const atual = funcionarios.find((f) => f.id === funcionarioId);
+      const faltas = (atual?.faltas ?? []).map((fa) => {
+        if (fa.id !== faltaId) return fa;
+        const atualizada: Falta = { ...fa, ...patch };
+        // Falta integral não tem tempo de ausência.
+        if (atualizada.categoria === "integral") delete atualizada.duracaoMinutos;
+        return atualizada;
+      });
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ faltas: faltas as unknown as Json })
+        .eq("id", funcionarioId);
+      if (error) throw error;
+    });
+
   const removerFalta = (funcionarioId: string, faltaId: string) =>
     run(async () => {
       const atual = funcionarios.find((f) => f.id === funcionarioId);
@@ -414,6 +436,7 @@ export function useFuncionarios() {
     adicionarFerias,
     removerFerias,
     adicionarFalta,
+    editarFalta,
     removerFalta,
   };
 }

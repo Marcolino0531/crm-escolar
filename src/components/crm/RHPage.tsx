@@ -127,6 +127,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     adicionarFerias,
     removerFerias,
     adicionarFalta,
+    editarFalta,
     removerFalta,
   } = rhHook;
   const [modalAberto, setModalAberto] = useState(false);
@@ -345,6 +346,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           onAdicionarFerias={isAdmin ? adicionarFerias : undefined}
           onRemoverFerias={isAdmin ? removerFerias : undefined}
           onAdicionarFalta={isAdmin ? adicionarFalta : undefined}
+          onEditarFalta={isAdmin ? editarFalta : undefined}
           onRemoverFalta={isAdmin ? removerFalta : undefined}
           isAdmin={isAdmin}
         />
