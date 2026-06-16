@@ -85,7 +85,7 @@ const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"
 
 // ---- Page ----
 function FundosPage() {
-  const { selected: schoolId, schools } = useSchool();
+  const { selected: schoolId, schools, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
   const editable = canEdit("financeiro_fundos");
   const qc = useQueryClient();
@@ -99,10 +99,10 @@ function FundosPage() {
 
   // --- Queries ---
   const { data: funds = [], isLoading: loadingFunds } = useQuery({
-    queryKey: ["provision_funds", schoolId],
+    queryKey: ["provision_funds", schoolId, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("provision_funds" as any).select("*").order("name");
-      if (schoolId !== "all") q = q.eq("school_id", schoolId);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return (data ?? []) as unknown as Fund[];

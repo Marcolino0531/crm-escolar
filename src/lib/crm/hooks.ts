@@ -36,14 +36,14 @@ function requireSchool(selected: string): string | null {
 
 // ---------- Leads (Admissões) ----------
 export function useLeads() {
-  const { selected } = useSchool();
+  const { selected, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads", selected],
+    queryKey: ["leads", selected, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("leads").select("*").order("created_at", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map(rowToLead);
@@ -167,14 +167,14 @@ export function useLeads() {
 
 // ---------- Onboarding ----------
 export function useOnboarding() {
-  const { selected } = useSchool();
+  const { selected, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const { data: alunos = [], isLoading } = useQuery({
-    queryKey: ["onboarding", selected],
+    queryKey: ["onboarding", selected, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("onboarding").select("*").order("created_at", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map(rowToOnboarding);
@@ -277,17 +277,17 @@ function funcionarioToRow(schoolId: string, f: FuncionarioFormData) {
 }
 
 export function useFuncionarios() {
-  const { selected, schools } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const idByName = new Map(schools.map((s) => [s.name, s.id]));
   const nameById = new Map(schools.map((s) => [s.id, s.name]));
 
   const { data: funcionarios = [], isLoading } = useQuery({
-    queryKey: ["funcionarios", selected, schools.length],
+    queryKey: ["funcionarios", selected, schools.length, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("funcionarios").select("*").order("nome_completo", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map((r) => {
