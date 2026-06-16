@@ -10,6 +10,14 @@ export const COLUNAS: ColunaConfig[] = [
     icone: "📞",
   },
   {
+    id: "em-contato",
+    titulo: "Em contato",
+    cor: "text-cyan-700",
+    corBorda: "border-cyan-400",
+    corFundo: "bg-cyan-50",
+    icone: "💬",
+  },
+  {
     id: "visita-marcada",
     titulo: "Visita Marcada",
     cor: "text-amber-700",

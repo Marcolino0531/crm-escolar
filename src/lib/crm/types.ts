@@ -11,6 +11,7 @@ export interface ItemMatricula {
 
 export type ColunaKanban =
   | "contato-inicial"
+  | "em-contato"
   | "visita-marcada"
   | "negociacao"
   | "matricula"

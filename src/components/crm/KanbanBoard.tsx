@@ -58,7 +58,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
     const lead = leads.find((l) => l.id === draggableId);
     if (!lead) return;
 
-    if (colunaOrigem === "contato-inicial" && novaColuna === "visita-marcada") {
+    if (novaColuna === "visita-marcada") {
       setPendingVisita({ leadId: draggableId, nomeAluno: lead.nomeAluno, colunaOrigem });
       return;
     }
@@ -77,7 +77,8 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   };
 
   const handleSolicitarVisita = (leadId: string, nomeAluno: string) => {
-    setPendingVisita({ leadId, nomeAluno, colunaOrigem: "contato-inicial" });
+    const lead = leads.find((l) => l.id === leadId);
+    setPendingVisita({ leadId, nomeAluno, colunaOrigem: lead?.coluna || "contato-inicial" });
   };
 
   const handleConfirmarVisita = (dataVisita: string, horarioVisita: string) => {

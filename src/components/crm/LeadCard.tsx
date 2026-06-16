@@ -41,20 +41,24 @@ const LeadCard: React.FC<LeadCardProps> = ({
     return d.toLocaleDateString("pt-BR");
   };
 
+  const formatarDataCriacao = (data: string) => {
+    if (!data) return "";
+    const d = new Date(data);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("pt-BR");
+  };
+
   const handleAvancar = () => {
-    if (lead.coluna === "contato-inicial") {
+    if (colunaAtualIndex < 0 || colunaAtualIndex >= COLUNAS.length - 1) return;
+    const nextCol = COLUNAS[colunaAtualIndex + 1];
+    if (nextCol.id === "visita-marcada") {
       onSolicitarVisita(lead.id, lead.nomeAluno);
-    } else if (lead.coluna === "negociacao") {
+    } else if (nextCol.id === "matricula") {
       onSolicitarMatricula(lead.id, lead.nomeAluno);
-    } else if (colunaAtualIndex < COLUNAS.length - 1) {
-      const nextCol = COLUNAS[colunaAtualIndex + 1];
-      if (nextCol.id === "matricula") {
-        onSolicitarMatricula(lead.id, lead.nomeAluno);
-      } else if (nextCol.id === "nao-matricula") {
-        onSolicitarNaoMatricula(lead.id, lead.nomeAluno);
-      } else {
-        onMover(lead.id, nextCol.id);
-      }
+    } else if (nextCol.id === "nao-matricula") {
+      onSolicitarNaoMatricula(lead.id, lead.nomeAluno);
+    } else {
+      onMover(lead.id, nextCol.id);
     }
   };
 
@@ -247,21 +251,42 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
           )}
 
-          {/* Itens de matrícula resumo */}
+          {/* Itens de matrícula — detalhamento item a item */}
           {lead.itensMatricula && lead.itensMatricula.length > 0 && (
             <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-sm">💰</span>
-                <span className="text-xs font-medium text-green-700">
+              <ul className="space-y-1">
+                {lead.itensMatricula.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                      <span className="text-sm">💰</span>
+                      {item.tipo}
+                    </span>
+                    <span className="text-xs font-semibold text-green-700 whitespace-nowrap">
+                      R${" "}
+                      {(item.valor || 0).toLocaleString("pt-BR", {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-1.5 pt-1.5 border-t border-green-200 flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-green-800">Total</span>
+                <span className="text-xs font-bold text-green-800 whitespace-nowrap">
                   R${" "}
                   {lead.itensMatricula
                     .reduce((sum, item) => sum + (item.valor || 0), 0)
                     .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="text-xs text-green-600">
-                {lead.itensMatricula.map((item) => item.tipo).join(", ")}
-              </div>
+            </div>
+          )}
+
+          {/* Data de criação do lead */}
+          {lead.criadoEm && formatarDataCriacao(lead.criadoEm) && (
+            <div className="mt-2 flex items-center gap-1 text-[10px] text-gray-400">
+              <span>🗓️</span>
+              <span>Criado em: {formatarDataCriacao(lead.criadoEm)}</span>
             </div>
           )}
 
