@@ -15,6 +15,7 @@ interface KanbanColumnProps {
   isAdmin?: boolean;
   consolidado?: boolean;
   schoolNameById?: Record<string, string>;
+  unidadeNome?: string;
 }
 
 const KanbanColumn: React.FC<KanbanColumnProps> = ({
@@ -29,6 +30,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
   isAdmin = false,
   consolidado = false,
   schoolNameById,
+  unidadeNome,
 }) => {
   return (
     <div className="flex flex-col min-w-[220px] w-[220px] lg:w-auto lg:flex-1">
@@ -88,6 +90,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 isAdmin={isAdmin}
                 consolidado={consolidado}
                 schoolNameById={schoolNameById}
+                unidadeNome={unidadeNome}
               />
             ))}
             {provided.placeholder}
