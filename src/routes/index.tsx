@@ -53,7 +53,7 @@ function lastDayOfMonth(d = new Date()) {
 }
 
 function Dashboard() {
-  const { selected, schools } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
@@ -65,10 +65,10 @@ function Dashboard() {
   const [drill, setDrill] = useState<{ kind: "expense" | "revenue"; id: string | null; name: string; color: string } | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard", selected],
+    queryKey: ["dashboard", selected, schoolFilterIds],
     queryFn: async () => {
       let txQuery = supabase.from("transactions").select("*");
-      if (selected !== "all") txQuery = txQuery.eq("school_id", selected);
+      if (schoolFilterIds) txQuery = txQuery.in("school_id", schoolFilterIds);
       const [txRes, ccRes, subCcRes, rcRes, rsRes, recRes] = await Promise.all([
         txQuery,
         supabase.from("cost_centers").select("*").order("name"),

@@ -37,10 +37,18 @@ type SchoolCtx = {
   schools: { id: string; name: string }[];
   // True when the logged-in user is limited to a subset of schools.
   restricted: boolean;
-  // True only for users with GLOBAL access (admin, legacy unrestricted, or a
-  // user whose explicit allow-list covers every school). Only these users may
-  // see/select the consolidated "Todas as Unidades" view.
+  // True for users who may select the consolidated "Todas as Unidades" view:
+  // global users (admin/unrestricted) and restricted users with MORE THAN ONE
+  // permitted unit. Single-unit restricted users stay locked to their unit.
   canSeeAll: boolean;
+  // School ids the current user is explicitly allowed to access (empty for
+  // global/unrestricted users).
+  allowedIds: string[];
+  // School ids to constrain Supabase queries by. `null` = no filter (global
+  // access pulls the whole table). For a specific selection it is `[selected]`;
+  // for a restricted user on "Todas as Unidades" it is their permitted units,
+  // so the consolidated view never leaks data from other schools.
+  schoolFilterIds: string[] | null;
 };
 const SchoolContext = createContext<SchoolCtx>({
   selected: "all",
@@ -48,6 +56,8 @@ const SchoolContext = createContext<SchoolCtx>({
   schools: [],
   restricted: false,
   canSeeAll: true,
+  allowedIds: [],
+  schoolFilterIds: null,
 });
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
@@ -87,20 +97,36 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     return allSchools.filter((s) => allowedIds.includes(s.id));
   }, [allSchools, allowedIds, restricted]);
 
-  // Global access = admin, legacy unrestricted (no explicit rows), or an
-  // allow-list that covers every school. Only these users may use "Todas as
-  // Unidades"; everyone else is confined to their permitted units.
-  const canSeeAll =
-    !restricted || (allSchools.length > 0 && schools.length === allSchools.length);
+  // Who may use "Todas as Unidades": global users (admin/unrestricted) and any
+  // restricted user with more than one permitted unit. For the latter, "all"
+  // means the consolidation of *their* units (see schoolFilterIds). A restricted
+  // user with a single unit has nothing to consolidate and stays locked to it.
+  const canSeeAll = !restricted || schools.length > 1;
+
+  // School ids to constrain Supabase queries by:
+  //  • specific unit selected → just that unit;
+  //  • "Todas as Unidades" + restricted → only the user's permitted units;
+  //  • "Todas as Unidades" + global → null (no filter, whole table).
+  const schoolFilterIds = useMemo<string[] | null>(() => {
+    if (selected !== "all") return [selected];
+    if (restricted) return schools.map((s) => s.id);
+    return null;
+  }, [selected, restricted, schools]);
 
   // Keep the active selection valid:
-  //  • Global users: leave "all" (or a valid unit) as-is.
-  //  • Restricted users WITHOUT global access: never allow "all" — fall back to
-  //    their first permitted unit (single-unit users stay locked to it). This
-  //    also fixes the default login state, which starts on "all".
+  //  • Users who can see all: leave "all" (or a valid unit) as-is.
+  //  • Single-unit restricted users: never allow "all" — fall back to their
+  //    first permitted unit. This also fixes the default login state ("all").
   useEffect(() => {
     if (schools.length === 0) return; // schools not loaded yet
-    if (canSeeAll) return;
+    if (canSeeAll) {
+      // Selection may still point to a now-invalid unit (e.g. permissions
+      // changed). Keep "all" as-is; coerce stale specific ids to "all".
+      if (selected !== "all" && !schools.some((s) => s.id === selected)) {
+        setSelected("all");
+      }
+      return;
+    }
     const ids = schools.map((s) => s.id);
     if (selected === "all" || !ids.includes(selected)) {
       setSelected(schools[0].id);
@@ -108,7 +134,9 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
   }, [canSeeAll, schools, selected]);
 
   return (
-    <SchoolContext.Provider value={{ selected, setSelected, schools, restricted, canSeeAll }}>
+    <SchoolContext.Provider
+      value={{ selected, setSelected, schools, restricted, canSeeAll, allowedIds, schoolFilterIds }}
+    >
       {children}
     </SchoolContext.Provider>
   );

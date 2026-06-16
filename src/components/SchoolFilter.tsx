@@ -6,8 +6,9 @@ export function SchoolFilter() {
   const { selected, setSelected, schools, restricted, canSeeAll } = useSchool();
   // A restricted user with a single allowed unit is locked to that unit.
   const lockedSingle = restricted && schools.length === 1;
-  // "Todas as Unidades" only for users with global access (admin / unrestricted
-  // / allow-list covering every school). Restricted users never see it.
+  // "Todas as Unidades" for global users and for restricted users with more
+  // than one permitted unit (consolidates only their units). Single-unit
+  // restricted users stay locked to their unit.
   const showAll = canSeeAll;
   return (
     <div className="flex items-center gap-2">
