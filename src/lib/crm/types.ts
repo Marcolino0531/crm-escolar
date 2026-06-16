@@ -11,6 +11,7 @@ export interface ItemMatricula {
 
 export type ColunaKanban =
   | "contato-inicial"
+  | "em-contato"
   | "visita-marcada"
   | "negociacao"
   | "matricula"
@@ -108,6 +109,12 @@ export interface Falta {
   categoria?: CategoriaFalta;
   // Tempo de ausência em minutos (apenas para atraso/saída antecipada).
   duracaoMinutos?: number;
+  // Observação livre (ex.: contexto da justificativa). Opcional.
+  observacao?: string;
+  // Anexo do atestado/justificativa: caminho no bucket privado rh-atestados.
+  // O nome original é guardado só para exibição.
+  atestadoPath?: string;
+  atestadoNome?: string;
 }
 
 export type Genero = "feminino" | "masculino" | "outro" | "prefiro-nao-informar";

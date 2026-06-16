@@ -20,6 +20,10 @@ import type {
 import type { Json, TablesUpdate } from "@/integrations/supabase/types";
 
 type LeadInput = {
+  // Unidade escolhida no próprio modal (independe do filtro global). A RLS de
+  // `leads` (can_access_school) rejeita ids fora da permissão do usuário; aqui
+  // validamos antes para dar um erro amigável.
+  schoolId: string;
   alunos: AlunoLead[];
   nomePaiMae: string;
   telefone: string;
@@ -36,14 +40,14 @@ function requireSchool(selected: string): string | null {
 
 // ---------- Leads (Admissões) ----------
 export function useLeads() {
-  const { selected } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads", selected],
+    queryKey: ["leads", selected, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("leads").select("*").order("created_at", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map(rowToLead);
@@ -58,8 +62,15 @@ export function useLeads() {
   const run = (fn: () => Promise<void>) => m.mutate(fn);
 
   const adicionarLead = (dados: LeadInput) => {
-    const schoolId = requireSchool(selected);
-    if (!schoolId) return;
+    const schoolId = dados.schoolId?.trim();
+    if (!schoolId) {
+      toast.error("Selecione a unidade do lead.");
+      return;
+    }
+    if (!schools.some((s) => s.id === schoolId)) {
+      toast.error("Você não tem permissão para criar leads nesta unidade.");
+      return;
+    }
     const primeiro = dados.alunos[0];
     run(async () => {
       const { error } = await supabase.from("leads").insert({
@@ -153,7 +164,7 @@ export function useLeads() {
   return {
     leads,
     isLoading,
-    canAdd: selected !== "all",
+    canAdd: schools.length > 0,
     adicionarLead,
     editarLead,
     moverLead,
@@ -167,14 +178,14 @@ export function useLeads() {
 
 // ---------- Onboarding ----------
 export function useOnboarding() {
-  const { selected } = useSchool();
+  const { selected, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const { data: alunos = [], isLoading } = useQuery({
-    queryKey: ["onboarding", selected],
+    queryKey: ["onboarding", selected, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("onboarding").select("*").order("created_at", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map(rowToOnboarding);
@@ -277,17 +288,17 @@ function funcionarioToRow(schoolId: string, f: FuncionarioFormData) {
 }
 
 export function useFuncionarios() {
-  const { selected, schools } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const idByName = new Map(schools.map((s) => [s.name, s.id]));
   const nameById = new Map(schools.map((s) => [s.id, s.name]));
 
   const { data: funcionarios = [], isLoading } = useQuery({
-    queryKey: ["funcionarios", selected, schools.length],
+    queryKey: ["funcionarios", selected, schools.length, schoolFilterIds],
     queryFn: async () => {
       let q = supabase.from("funcionarios").select("*").order("nome_completo", { ascending: true });
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
       return data.map((r) => {
@@ -393,6 +404,28 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
+  // Edita uma falta EXISTENTE no array (mesmo id, sem duplicar no ranking).
+  const editarFalta = (
+    funcionarioId: string,
+    faltaId: string,
+    patch: Partial<Omit<Falta, "id">>,
+  ) =>
+    run(async () => {
+      const atual = funcionarios.find((f) => f.id === funcionarioId);
+      const faltas = (atual?.faltas ?? []).map((fa) => {
+        if (fa.id !== faltaId) return fa;
+        const atualizada: Falta = { ...fa, ...patch };
+        // Falta integral não tem tempo de ausência.
+        if (atualizada.categoria === "integral") delete atualizada.duracaoMinutos;
+        return atualizada;
+      });
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ faltas: faltas as unknown as Json })
+        .eq("id", funcionarioId);
+      if (error) throw error;
+    });
+
   const removerFalta = (funcionarioId: string, faltaId: string) =>
     run(async () => {
       const atual = funcionarios.find((f) => f.id === funcionarioId);
@@ -414,6 +447,7 @@ export function useFuncionarios() {
     adicionarFerias,
     removerFerias,
     adicionarFalta,
+    editarFalta,
     removerFalta,
   };
 }

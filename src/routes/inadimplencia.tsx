@@ -139,7 +139,7 @@ function getDefaultDateRange(): { inicio: string; fim: string } {
 type SortField = keyof PendenciaAgrupada;
 
 function InadimplenciaPage() {
-  const { selected, schools } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const fetchFn = useServerFn(fetchSponteInadimplencia);
   const fetchAnualFn = useServerFn(fetchSponteInadimplenciaAnual);
   const defaultRange = getDefaultDateRange();
@@ -307,7 +307,7 @@ function InadimplenciaPage() {
     .reduce((sum, p) => sum + p.valorTotalBoleto, 0);
 
   const { data: totalRecebido, isFetching: recebidoFetching } = useQuery({
-    queryKey: ["faturamento-mes", dataInicio, dataFim, selected],
+    queryKey: ["faturamento-mes", dataInicio, dataFim, selected, schoolFilterIds],
     enabled: indiceHabilitado && integracaoDisponivel,
     staleTime: 60_000,
     queryFn: async () => {
@@ -318,8 +318,9 @@ function InadimplenciaPage() {
         .is("parent_transaction_id", null)
         .gte("date", dataInicio)
         .lte("date", dataFim);
-      // Obedece estritamente ao filtro global de colégio (consolidado = "all").
-      if (selected !== "all") q = q.eq("school_id", selected);
+      // Obedece ao filtro global de colégio. No consolidado de um usuário
+      // restrito, limita às unidades permitidas (schoolFilterIds).
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data: rows, error: qErr } = await q;
       if (qErr) throw qErr;
       return (rows ?? []).reduce((sum, t) => {
@@ -386,7 +387,7 @@ function InadimplenciaPage() {
   // Receitas reais registradas no extrato de Junho até hoje (mesma fonte e
   // exclusões do índice mensal), respeitando o filtro global de unidade.
   const { data: receitasAno, isFetching: receitasAnoFetching } = useQuery({
-    queryKey: ["faturamento-anual", "receitas", anoAtual, selected],
+    queryKey: ["faturamento-anual", "receitas", anoAtual, selected, schoolFilterIds],
     enabled: integracaoDisponivel && retroativoConfigurado,
     staleTime: 60_000,
     queryFn: async () => {
@@ -397,7 +398,7 @@ function InadimplenciaPage() {
         .is("parent_transaction_id", null)
         .gte("date", anoJunhoYMD)
         .lte("date", anoHojeYMD);
-      if (selected !== "all") q = q.eq("school_id", selected);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data: rows, error: qErr } = await q;
       if (qErr) throw qErr;
       return (rows ?? []).reduce((sum, t) => {

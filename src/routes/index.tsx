@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowDownCircle, ArrowUpCircle, Upload, Wallet, Download, Pencil, Trash2 } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, Upload, Wallet, Download, Pencil, Trash2, AlertCircle } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
   PieChart, Pie, Legend,
@@ -53,7 +53,7 @@ function lastDayOfMonth(d = new Date()) {
 }
 
 function Dashboard() {
-  const { selected, schools } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
@@ -65,10 +65,10 @@ function Dashboard() {
   const [drill, setDrill] = useState<{ kind: "expense" | "revenue"; id: string | null; name: string; color: string } | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard", selected],
+    queryKey: ["dashboard", selected, schoolFilterIds],
     queryFn: async () => {
       let txQuery = supabase.from("transactions").select("*");
-      if (selected !== "all") txQuery = txQuery.eq("school_id", selected);
+      if (schoolFilterIds) txQuery = txQuery.in("school_id", schoolFilterIds);
       const [txRes, ccRes, subCcRes, rcRes, rsRes, recRes] = await Promise.all([
         txQuery,
         supabase.from("cost_centers").select("*").order("name"),
@@ -378,7 +378,7 @@ function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>Gastos por Centro de Custo</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Despesas</CardTitle></CardHeader>
           <CardContent className="h-[340px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Carregando…</div>
@@ -406,7 +406,7 @@ function Dashboard() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Faturamento</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Receitas</CardTitle></CardHeader>
           <CardContent className="h-[340px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Carregando…</div>
@@ -514,12 +514,28 @@ function Dashboard() {
                     const tag = isEntrada ? rc : cc;
                     const subTag = isEntrada ? rs : subCc;
                     const tagColor = (tag as any)?.color ?? "#94a3b8";
+                    const needsCategory = isEntrada
+                      ? !(t as any).revenue_category_id
+                      : !t.cost_center_id;
                     return (
-                      <tr key={t.id} className="group border-b border-border/50 last:border-0">
+                      <tr
+                        key={t.id}
+                        className={`group border-b border-border/50 last:border-0 ${needsCategory ? "bg-destructive/10 hover:bg-destructive/15" : ""}`}
+                      >
                         <td className="py-2 pr-4">{formatDateBR(t.date)}</td>
                         <td className="py-2 pr-4">{t.description}</td>
                         <td className="py-2 pr-4">
-                          {tag ? (
+                          {needsCategory ? (
+                            <button
+                              type="button"
+                              onClick={() => isAdmin && setEditing(t)}
+                              disabled={!isAdmin}
+                              className="inline-flex w-fit items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-xs font-medium text-destructive-foreground disabled:cursor-default"
+                              title={isAdmin ? "Definir categoria" : "Sem categoria"}
+                            >
+                              <AlertCircle className="h-3 w-3" /> Definir
+                            </button>
+                          ) : tag ? (
                             <div className="flex flex-col gap-1">
                               <span className="inline-flex w-fit items-center gap-2 rounded-full bg-secondary px-2 py-0.5 text-xs">
                                 <span className="h-2 w-2 rounded-full" style={{ background: tagColor }} />
