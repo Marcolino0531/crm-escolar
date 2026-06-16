@@ -234,13 +234,9 @@ function UploadPage() {
       toast.error(`${invalid.length} linha(s) manual(is) sem descrição ou valor válido.`);
       return;
     }
-    const missingExp = rows.filter(r => r.type !== "entrada" && !r.costCenterId);
-    const missingRev = rows.filter(r => r.type === "entrada" && !r.revenueCategoryId);
-    const missingTotal = missingExp.length + missingRev.length;
-    if (missingTotal > 0) {
-      toast.error(`Defina a categorização para ${missingTotal} transação(ões).`);
-      return;
-    }
+    // Transações sem categoria são permitidas (fluxo assíncrono): entram no
+    // banco com category/subcategory nulos e ficam destacadas como "Definir"
+    // no Extrato para categorização posterior.
     setSaving(true);
     const payload = rows.map(r => ({
       date: r.date,
@@ -273,8 +269,11 @@ function UploadPage() {
       console.error("[UPLOAD] Falha na conciliação automática por subcategoria:", e);
     }
     setSaving(false);
+    const semCategoria = rows.filter(r => !isCategorized(r)).length;
     toast.success(
-      `${payload.length} transações salvas!${autoConc > 0 ? ` ${autoConc} já conciliada(s) por subcategoria.` : ""}`,
+      `${payload.length} transações salvas!` +
+        (autoConc > 0 ? ` ${autoConc} já conciliada(s) por subcategoria.` : "") +
+        (semCategoria > 0 ? ` ${semCategoria} sem categoria — defina no Extrato.` : ""),
     );
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["conc-recs"] });
@@ -348,7 +347,7 @@ function UploadPage() {
               </CardTitle>
               <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> {matched} categorizadas</span>
-                <span className="inline-flex items-center gap-1"><AlertCircle className="h-3.5 w-3.5 text-destructive" /> {missing} pendentes</span>
+                <span className="inline-flex items-center gap-1"><AlertCircle className="h-3.5 w-3.5 text-destructive" /> {missing} a definir (pode salvar)</span>
                 {pendingDups > 0 && (
                   <span className="inline-flex items-center gap-1 text-warning"><AlertTriangle className="h-3.5 w-3.5" /> {pendingDups} possível(eis) duplicata(s)</span>
                 )}
@@ -361,7 +360,7 @@ function UploadPage() {
               {rows.length > 0 && (
                 <>
                   <Button variant="outline" onClick={() => { setRows([]); setFileName(null); }}>Cancelar</Button>
-                  <Button onClick={save} disabled={saving || missing > 0 || pendingDups > 0}>
+                  <Button onClick={save} disabled={saving || pendingDups > 0}>
                     {saving ? "Salvando…" : `Salvar ${rows.length} Transações`}
                   </Button>
                 </>
