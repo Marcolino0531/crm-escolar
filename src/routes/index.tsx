@@ -378,7 +378,7 @@ function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>Gastos por Centro de Custo</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Despesas</CardTitle></CardHeader>
           <CardContent className="h-[340px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Carregando…</div>
@@ -406,7 +406,7 @@ function Dashboard() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Faturamento</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Receitas</CardTitle></CardHeader>
           <CardContent className="h-[340px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Carregando…</div>
