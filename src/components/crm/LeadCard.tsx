@@ -44,17 +44,10 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
   const unidadeNomeBadge = schoolNameById?.[lead.schoolId];
 
-  // Nome da unidade para a saudação: usa a unidade selecionada no topo; quando
-  // "Todas as unidades" estiver ativo, cai para a unidade do próprio lead.
-  const unidadeSaudacao =
-    unidadeNome && unidadeNome !== "Todas as unidades"
-      ? unidadeNome
-      : unidadeNomeBadge || "nossa equipe";
-
   const whatsappNumero = formatarTelefoneWhatsApp(lead.telefone);
   const whatsappLink = whatsappNumero
     ? `https://wa.me/${whatsappNumero}?text=${encodeURIComponent(
-        `Olá! Aqui é da equipe do ${unidadeSaudacao}. Vimos o seu interesse e estamos à disposição para ajudar!`,
+        "Olá, meu nome é Charline e sou coordenadora do Colégio CEC. Vimos o seu interesse no colégio e estou à disposição.",
       )}`
     : "";
 
