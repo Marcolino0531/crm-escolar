@@ -80,6 +80,7 @@ function AdmissoesPage() {
         isAdmin={podeEditar}
         consolidado={consolidado}
         schoolNameById={schoolNameById}
+        unidadeNome={unidadeNome}
       />
 
       {(formularioAberto || leadEditando) && (

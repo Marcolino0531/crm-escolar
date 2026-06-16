@@ -17,6 +17,14 @@ interface LeadCardProps {
   // individuais fica oculta.
   consolidado?: boolean;
   schoolNameById?: Record<string, string>;
+  unidadeNome?: string;
+}
+
+// Higieniza o telefone para o formato wa.me (só dígitos, com DDI 55 do Brasil).
+function formatarTelefoneWhatsApp(telefone: string): string {
+  const nums = (telefone || "").replace(/\D/g, "");
+  if (!nums) return "";
+  return nums.startsWith("55") ? nums : `55${nums}`;
 }
 
 const LeadCard: React.FC<LeadCardProps> = ({
@@ -31,9 +39,24 @@ const LeadCard: React.FC<LeadCardProps> = ({
   isAdmin = false,
   consolidado = false,
   schoolNameById,
+  unidadeNome,
 }) => {
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
-  const unidadeNome = schoolNameById?.[lead.schoolId];
+  const unidadeNomeBadge = schoolNameById?.[lead.schoolId];
+
+  // Nome da unidade para a saudação: usa a unidade selecionada no topo; quando
+  // "Todas as unidades" estiver ativo, cai para a unidade do próprio lead.
+  const unidadeSaudacao =
+    unidadeNome && unidadeNome !== "Todas as unidades"
+      ? unidadeNome
+      : unidadeNomeBadge || "nossa equipe";
+
+  const whatsappNumero = formatarTelefoneWhatsApp(lead.telefone);
+  const whatsappLink = whatsappNumero
+    ? `https://wa.me/${whatsappNumero}?text=${encodeURIComponent(
+        `Olá! Aqui é da equipe do ${unidadeSaudacao}. Vimos o seu interesse e estamos à disposição para ajudar!`,
+      )}`
+    : "";
 
   const formatarData = (data: string) => {
     if (!data) return "";
@@ -86,7 +109,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
           }`}
         >
           {/* Etiqueta de Unidade (somente na visão Consolidada) */}
-          {consolidado && unidadeNome && (
+          {consolidado && unidadeNomeBadge && (
             <div className="mb-2 inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -102,7 +125,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
                   d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m4-14h2m-2 4h2m-2 4h2m4-8h2m-2 4h2m-2 4h2"
                 />
               </svg>
-              {unidadeNome}
+              {unidadeNomeBadge}
             </div>
           )}
 
@@ -220,6 +243,26 @@ const LeadCard: React.FC<LeadCardProps> = ({
             <div className="flex items-center gap-1.5">
               <span>📱</span>
               <span>{lead.telefone}</span>
+              {whatsappLink && (
+                <a
+                  href={whatsappLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Conversar no WhatsApp"
+                  aria-label="Conversar no WhatsApp"
+                  className="ml-1 inline-flex items-center justify-center h-6 w-6 rounded-full bg-[#25D366] text-white hover:bg-[#1ebe5d] transition-colors flex-shrink-0"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="h-3.5 w-3.5"
+                  >
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.625.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.247-.694.247-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.885-9.885 9.885M20.52 3.449C18.24 1.245 15.24 0 12.045 0 5.463 0 .104 5.36.101 11.945c0 2.096.547 4.142 1.588 5.945L0 24l6.305-1.654a11.95 11.95 0 005.71 1.454h.005c6.582 0 11.945-5.36 11.948-11.945a11.88 11.88 0 00-3.48-8.418z" />
+                  </svg>
+                </a>
+              )}
             </div>
             {lead.origem && (
               <div className="flex items-center gap-1.5">

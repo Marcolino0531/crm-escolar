@@ -15,6 +15,7 @@ interface KanbanBoardProps {
   isAdmin?: boolean;
   consolidado?: boolean;
   schoolNameById?: Record<string, string>;
+  unidadeNome?: string;
 }
 
 interface PendingAction {
@@ -30,6 +31,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   isAdmin = false,
   consolidado = false,
   schoolNameById,
+  unidadeNome,
 }) => {
   const {
     leads,
@@ -146,6 +148,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
               isAdmin={isAdmin}
               consolidado={consolidado}
               schoolNameById={schoolNameById}
+              unidadeNome={unidadeNome}
             />
           ))}
         </div>
