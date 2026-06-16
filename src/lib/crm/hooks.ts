@@ -20,6 +20,10 @@ import type {
 import type { Json, TablesUpdate } from "@/integrations/supabase/types";
 
 type LeadInput = {
+  // Unidade escolhida no próprio modal (independe do filtro global). A RLS de
+  // `leads` (can_access_school) rejeita ids fora da permissão do usuário; aqui
+  // validamos antes para dar um erro amigável.
+  schoolId: string;
   alunos: AlunoLead[];
   nomePaiMae: string;
   telefone: string;
@@ -36,7 +40,7 @@ function requireSchool(selected: string): string | null {
 
 // ---------- Leads (Admissões) ----------
 export function useLeads() {
-  const { selected, schoolFilterIds } = useSchool();
+  const { selected, schools, schoolFilterIds } = useSchool();
   const qc = useQueryClient();
 
   const { data: leads = [], isLoading } = useQuery({
@@ -58,8 +62,15 @@ export function useLeads() {
   const run = (fn: () => Promise<void>) => m.mutate(fn);
 
   const adicionarLead = (dados: LeadInput) => {
-    const schoolId = requireSchool(selected);
-    if (!schoolId) return;
+    const schoolId = dados.schoolId?.trim();
+    if (!schoolId) {
+      toast.error("Selecione a unidade do lead.");
+      return;
+    }
+    if (!schools.some((s) => s.id === schoolId)) {
+      toast.error("Você não tem permissão para criar leads nesta unidade.");
+      return;
+    }
     const primeiro = dados.alunos[0];
     run(async () => {
       const { error } = await supabase.from("leads").insert({
@@ -153,7 +164,7 @@ export function useLeads() {
   return {
     leads,
     isLoading,
-    canAdd: selected !== "all",
+    canAdd: schools.length > 0,
     adicionarLead,
     editarLead,
     moverLead,

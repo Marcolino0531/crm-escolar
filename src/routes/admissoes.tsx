@@ -94,6 +94,8 @@ function AdmissoesPage() {
             setLeadEditando(null);
           }}
           unidadeSelecionada={unidadeNome}
+          escolas={schools}
+          schoolIdInicial={selected !== "all" ? selected : (schools[0]?.id ?? "")}
           leadParaEditar={leadEditando}
           onEditar={(leadId, dados) => {
             leadsHook.editarLead(leadId, dados);

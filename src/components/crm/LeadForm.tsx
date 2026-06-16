@@ -5,6 +5,7 @@ import { calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { ORIGENS_PREDEFINIDAS, ORIGENS_STORAGE_KEY } from "@/lib/crm/constants";
 
 export interface LeadFormValues {
+  schoolId: string;
   alunos: AlunoLead[];
   nomePaiMae: string;
   telefone: string;
@@ -15,6 +16,10 @@ interface LeadFormProps {
   onSubmit: (dados: LeadFormValues) => void;
   onFechar: () => void;
   unidadeSelecionada: string;
+  // Unidades que o usuário tem permissão de acessar (popula o seletor do modal).
+  escolas: { id: string; name: string }[];
+  // Unidade pré-selecionada (= filtro global, quando aplicável).
+  schoolIdInicial: string;
   leadParaEditar?: Lead | null;
   onEditar?: (leadId: string, dados: Partial<LeadFormValues>) => void;
 }
@@ -55,10 +60,19 @@ function converterISOparaBR(dataISO: string): string {
 const LeadForm: React.FC<LeadFormProps> = ({
   onSubmit,
   onFechar,
+  escolas,
+  schoolIdInicial,
   leadParaEditar,
   onEditar,
 }) => {
   const isEditMode = !!leadParaEditar;
+
+  // Default = unidade do filtro global; se inválida/ausente, 1ª unidade permitida.
+  const schoolIdPadrao =
+    schoolIdInicial && escolas.some((e) => e.id === schoolIdInicial)
+      ? schoolIdInicial
+      : (escolas[0]?.id ?? "");
+  const [schoolId, setSchoolId] = useState(schoolIdPadrao);
 
   const [alunos, setAlunos] = useState<AlunoFormState[]>([alunoVazio()]);
   const [nomePaiMae, setNomePaiMae] = useState("");
@@ -223,7 +237,11 @@ const LeadForm: React.FC<LeadFormProps> = ({
 
   const alunosValidos = alunos.every((a) => a.nome.trim() && a.dataNascimento);
   const formValido =
-    alunosValidos && nomePaiMae.trim() && telefone.trim() && origem.trim();
+    (isEditMode || !!schoolId) &&
+    alunosValidos &&
+    nomePaiMae.trim() &&
+    telefone.trim() &&
+    origem.trim();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,10 +270,11 @@ const LeadForm: React.FC<LeadFormProps> = ({
         origem: origemTrimmed,
       });
     } else {
-      onSubmit({ alunos: alunosPayload, nomePaiMae, telefone, origem: origemTrimmed });
+      onSubmit({ schoolId, alunos: alunosPayload, nomePaiMae, telefone, origem: origemTrimmed });
     }
 
     if (!isEditMode) {
+      setSchoolId(schoolIdPadrao);
       setAlunos([alunoVazio()]);
       setNomePaiMae("");
       setTelefone("");
@@ -291,6 +310,29 @@ const LeadForm: React.FC<LeadFormProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Unidade (somente na criação) — grava o lead na unidade escolhida,
+              independentemente do filtro global. Opções = unidades permitidas. */}
+          {!isEditMode && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Unidade <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={schoolId}
+                onChange={(e) => setSchoolId(e.target.value)}
+                required
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
+              >
+                {escolas.length === 0 && <option value="">Nenhuma unidade disponível</option>}
+                {escolas.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Blocos de alunos (irmãos) */}
           {alunos.map((aluno, idx) => (
             <div
