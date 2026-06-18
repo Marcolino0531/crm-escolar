@@ -3,6 +3,7 @@ import { OnboardingAluno } from "@/lib/crm/types";
 import { TAREFAS_ONBOARDING } from "@/lib/crm/constants";
 import { useOnboarding } from "@/lib/crm/hooks";
 import { usePermissions } from "@/lib/app-context";
+import { displayPhoneBR } from "@/lib/phone";
 import {
   ChevronDown,
   ChevronRight,
@@ -98,7 +99,7 @@ const OnboardingBoard: React.FC<OnboardingBoardProps> = ({ onboardingHook }) => 
               </span>
               <span className="flex items-center gap-1">
                 <Phone size={12} />
-                {aluno.telefone}
+                {displayPhoneBR(aluno.telefone)}
               </span>
             </div>
           </div>

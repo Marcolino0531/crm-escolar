@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { parseISODateLocal, formatDateBR } from "@/lib/date-utils";
+import { formatDateBR } from "@/lib/date-utils";
+import { displayPhoneBR } from "@/lib/phone";
 import type { ColunaKanban, Lead } from "@/lib/crm/types";
 
 export const Route = createFileRoute("/agenda")({
@@ -32,6 +33,18 @@ const COLUNA_LABEL: Partial<Record<ColunaKanban, string>> = {
 };
 
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+// Identidade visual por unidade (cores claras). "baby" antes de "cec" pois
+// "CEC Baby" também contém "cec".
+function unitColorClasses(name: string): string {
+  const n = (name || "").toLowerCase();
+  if (n.includes("baby")) return "border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100";
+  if (n.includes("belvedere")) return "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100";
+  if (n.includes("sereno") || n.includes("vale"))
+    return "border-green-200 bg-green-50 text-green-800 hover:bg-green-100";
+  if (n.includes("cec")) return "border-yellow-200 bg-yellow-50 text-yellow-800 hover:bg-yellow-100";
+  return "border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100";
+}
 
 type CalEvent = { lead: Lead; iso: string; time: string };
 
@@ -258,12 +271,13 @@ function WeekView({
 function EventChip({ ev, schoolName }: { ev: CalEvent; schoolName: (id: string) => string }) {
   const { lead, time } = ev;
   const alunos = lead.alunos.length > 0 ? lead.alunos.map((a) => a.nome).filter(Boolean) : [lead.nomeAluno];
+  const unidade = schoolName(lead.schoolId);
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-1 text-left text-[11px] leading-tight text-indigo-800 transition-colors hover:bg-indigo-100"
+          className={`flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors ${unitColorClasses(unidade)}`}
         >
           {time && <span className="shrink-0 font-semibold">{time}</span>}
           <span className="truncate">{lead.nomePaiMae || "Responsável"}</span>
@@ -280,8 +294,8 @@ function EventChip({ ev, schoolName }: { ev: CalEvent; schoolName: (id: string) 
           <Row icon={Clock} text={`${formatDateBR(lead.dataVisita)}${time ? ` · ${time}` : ""}`} />
           <Row icon={GraduationCap} text={alunos.join(", ") || "—"} />
           {lead.turma && <Row icon={GraduationCap} text={`Turma: ${lead.turma}`} />}
-          {lead.telefone && <Row icon={Phone} text={lead.telefone} />}
-          <Row icon={MapPin} text={schoolName(lead.schoolId)} />
+          {lead.telefone && <Row icon={Phone} text={displayPhoneBR(lead.telefone)} />}
+          <Row icon={MapPin} text={unidade} />
           {lead.origem && <Row icon={Compass} text={lead.origem} />}
         </div>
       </PopoverContent>
