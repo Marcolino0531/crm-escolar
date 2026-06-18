@@ -70,16 +70,18 @@ function fechaCentavos(a: number, b: number, tolCentavos = 2): boolean {
 }
 
 // Unidades com integração Sponte ativa (mesmo roteamento da Inadimplência).
-const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere"];
+const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 // Detecta a linha agregada de cobrança bancária compensada no extrato — a que
 // precisa ser conciliada via Sponte. Cada banco rotula de um jeito:
-//   • Caixa: "COB COMPE" / "COBRANÇA COMPENSADA"
+//   • Caixa: "COB COMPE" / "COBRANÇA COMPENSADA" / "COB INTERN"
+//     (cobrança internalizada da própria Caixa, usada pelo Núcleo Vale do Sereno)
 //   • Itaú : "BOLETOS RECEBIDOS" (crédito diário dos boletos compensados)
 // O CEC usa extrato do Itaú (conta 489426), por isso precisa do rótulo do Itaú.
 function isCobCompe(desc: unknown): boolean {
   const d = norm(desc);
-  const caixa = d.includes("compe") && (d.includes("cob") || d.includes("cobranca"));
+  const ehCob = d.includes("cob") || d.includes("cobranca");
+  const caixa = ehCob && (d.includes("compe") || d.includes("intern"));
   const itau = d.includes("boletos recebidos");
   return caixa || itau;
 }
@@ -88,6 +90,26 @@ function isCobCompe(desc: unknown): boolean {
 // "RECEBIMENTO PIX"). Detecta a forma PIX para a conciliação automática.
 function isPix(desc: unknown): boolean {
   return norm(desc).includes("pix");
+}
+
+// Conciliação originada da API do Sponte (automática), identificada pelo
+// source_filename gravado em persistReconciliation ("Conciliação automática
+// Sponte (...)" / "Conciliação PIX Sponte (...)"). Para essas linhas a UI
+// esconde os botões manuais (Desmembrar/Anexar) e mostra o detalhamento.
+function isAutoSponte(sourceFilename: string | null | undefined): boolean {
+  return !!sourceFilename && /sponte/i.test(sourceFilename);
+}
+
+// Extrai o nome do aluno/responsável vindo do Sponte do source_filename da
+// conciliação PIX ("Conciliação PIX Sponte (Fulano)" → "Fulano").
+function alunoFromFilename(sourceFilename: string | null | undefined): string | null {
+  if (!sourceFilename) return null;
+  const m = sourceFilename.match(/\(([^)]+)\)/);
+  const nome = m?.[1]?.trim();
+  if (!nome) return null;
+  // Ignora rótulos de janela do boleto ("do dia", "do D+1 ...").
+  if (/^do\b/i.test(nome)) return null;
+  return nome;
 }
 
 // Partículas de nome ignoradas no fuzzy match (não são distintivas).
@@ -231,6 +253,7 @@ function ConciliacaoPage() {
   const [schoolId, setSchoolId] = useState(() => (selected !== "all" ? selected : ""));
   const [autoTxId, setAutoTxId] = useState<string | null>(null);
   const [pixRunning, setPixRunning] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [startDate, setStartDate] = useState(firstOfMonth());
   const [endDate, setEndDate] = useState(lastOfMonth());
   const [uploadingTxId, setUploadingTxId] = useState<string | null>(null);
@@ -541,24 +564,34 @@ function ConciliacaoPage() {
   // Conciliação automática via Sponte para linhas "COB COMPE": busca as parcelas
   // baixadas do dia (e, se não fechar, de D-1) cujo somatório bate com a linha,
   // e grava o rateio por categoria — respeitando token/filtro de série da unidade.
-  async function handleAutoConciliar(txId: string, expectedTotal: number, date: string) {
-    if (!revRefs) return;
+  async function handleAutoConciliar(
+    txId: string,
+    expectedTotal: number,
+    date: string,
+    silent = false,
+  ): Promise<boolean> {
+    if (!revRefs) return false;
     const parentTx = revenueTxs.find((t) => t.id === txId);
-    if (!parentTx) return;
+    if (!parentTx) return false;
     const unidade = schoolName;
     if (!UNIDADES_SPONTE.includes(unidade)) {
-      toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
-      return;
+      if (!silent) toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
+      return false;
     }
     setAutoTxId(txId);
     console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
     try {
-      // Janelas tentadas em ordem: o próprio dia da linha, depois o D-1 dia útil
-      // (segunda → sexta anterior; demais → dia anterior; nunca cai em fim de semana).
+      // Janelas tentadas em ordem, respeitando a margem de compensação de
+      // boleto (D+1/D+2): a baixa é registrada no Sponte na data do pagamento,
+      // mas o crédito só cai no extrato 1–2 dias úteis depois. Por isso, além do
+      // próprio dia da linha, recuamos até D-2 (dois dias úteis anteriores),
+      // pulando fins de semana.
       const dPrevUtil = previousBusinessDay(date);
+      const dPrev2Util = previousBusinessDay(dPrevUtil);
       const janelas = [
         { inicio: date, fim: date, rotulo: "do dia" },
-        { inicio: dPrevUtil, fim: dPrevUtil, rotulo: "do dia útil anterior" },
+        { inicio: dPrevUtil, fim: dPrevUtil, rotulo: "do D+1 (dia útil anterior)" },
+        { inicio: dPrev2Util, fim: dPrev2Util, rotulo: "do D+2 (2º dia útil anterior)" },
       ];
       // O Belvedere credita boletos em DUAS contas creditadas (9295 e 1137).
       // Tentamos o valor exato na 9295 primeiro; se nenhuma janela fechar, na
@@ -611,16 +644,20 @@ function ConciliacaoPage() {
         parentTx.description ?? "Receita",
         items,
       );
-      toast.success(
-        `Conciliado via Sponte: ${items.length} categoria(s), total ${formatBRL(escolhido.total)} (${escolhido.qtdParcelas} parcela(s)).`,
-      );
+      if (!silent) {
+        toast.success(
+          `Conciliado via Sponte: ${items.length} categoria(s), total ${formatBRL(escolhido.total)} (${escolhido.qtdParcelas} parcela(s)).`,
+        );
+      }
       qc.invalidateQueries({ queryKey: ["conc-recs"] });
       qc.invalidateQueries({ queryKey: ["conc-txs"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[CONC] Falha na conciliação automática:", e);
-      toast.error(msg, { duration: 10000 });
+      if (!silent) toast.error(msg, { duration: 10000 });
+      return false;
     } finally {
       setAutoTxId(null);
     }
@@ -713,6 +750,37 @@ function ConciliacaoPage() {
     }
   }
 
+  // Ação global "Sincronizar com Sponte": força a busca de novas conciliações
+  // para a unidade selecionada. Processa em sequência todas as linhas de boleto
+  // pendentes (COB COMPE / COB INTERN) via matching por valor + janela D+1/D+2 e,
+  // em seguida, roda o fuzzy matching de PIX. Cada etapa reaproveita a lógica já
+  // validada (handleAutoConciliar / handleConciliarPix).
+  async function handleSincronizar() {
+    if (!revRefs) return;
+    const unidade = schoolName;
+    if (!UNIDADES_SPONTE.includes(unidade)) {
+      toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
+      return;
+    }
+    setSyncing(true);
+    try {
+      const cobPendentes = revenueTxs.filter(
+        (t) => !recByTx.has(t.id) && isCobCompe(t.description),
+      );
+      let boletos = 0;
+      for (const t of cobPendentes) {
+        const ok = await handleAutoConciliar(t.id, Number(t.amount), t.date, true);
+        if (ok) boletos++;
+      }
+      if (cobPendentes.length > 0) {
+        toast.info(`Boletos: ${boletos}/${cobPendentes.length} linha(s) conciliada(s) via Sponte.`);
+      }
+      await handleConciliarPix();
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function removeRec(recId: string, txId: string) {
     if (!confirm("Remover esta conciliação? O detalhamento por subcategoria será apagado, mas a linha do extrato será preservada.")) return;
     // Limpeza defensiva contra transações-filhas legadas.
@@ -736,7 +804,7 @@ function ConciliacaoPage() {
       <div>
         <h1 className="text-2xl font-bold">Conciliação de Faturamento</h1>
         <p className="text-sm text-muted-foreground">
-          Para linhas <strong>COB COMPE</strong>, use <strong>Conciliar Automático via Sponte</strong>: o sistema busca as parcelas baixadas do dia (ou D-1) e monta o rateio por categoria, respeitando o token e o filtro de série da unidade. Também é possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma deve fechar com o valor da linha.
+          Use <strong>Sincronizar com Sponte</strong> para conciliar de uma vez os <strong>Boletos</strong> (COB COMPE / COB INTERN) e o <strong>PIX</strong> da unidade. Para boletos, o sistema busca as parcelas baixadas do dia e na margem de compensação D+1/D+2, monta o rateio por categoria e respeita o token/filtro da unidade. Também é possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma deve fechar com o valor da linha.
         </p>
       </div>
 
@@ -836,16 +904,29 @@ function ConciliacaoPage() {
               <span>Receitas do Período</span>
               <div className="flex items-center gap-2">
                 {isAdmin && sponteAtiva && (
-                  <Button
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    onClick={handleConciliarPix}
-                    disabled={pixRunning || !!autoTxId || !!uploadingTxId}
-                    title="Cruza as linhas de PIX do extrato com as baixas PIX do Sponte por valor + nome (fuzzy matching)"
-                  >
-                    {pixRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Banknote className="h-3 w-3" />}
-                    Conciliar PIX via Sponte
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      className="bg-sky-600 hover:bg-sky-700 text-white"
+                      onClick={handleSincronizar}
+                      disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
+                      title="Busca as baixas de Boletos (COB COMPE / COB INTERN) e PIX no Sponte e concilia automaticamente as linhas pendentes"
+                    >
+                      {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+                      Sincronizar com Sponte
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
+                      onClick={handleConciliarPix}
+                      disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
+                      title="Cruza as linhas de PIX do extrato com as baixas PIX do Sponte por valor + nome (fuzzy matching)"
+                    >
+                      {pixRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Banknote className="h-3 w-3" />}
+                      Conciliar PIX via Sponte
+                    </Button>
+                  </>
                 )}
                 <Badge variant="secondary">{revenueTxs.length} linha(s)</Badge>
               </div>
@@ -879,6 +960,11 @@ function ConciliacaoPage() {
                     const isReconciled = !!rec;
                     const cobCompe = isCobCompe(t.description);
                     const pix = isPix(t.description);
+                    // Linha conciliada AUTOMATICAMENTE via Sponte: esconde os
+                    // botões manuais e mostra o detalhamento (aluno + itens).
+                    const autoConc = isReconciled && isAutoSponte(rec?.source_filename);
+                    const alunoSponte = autoConc ? alunoFromFilename(rec?.source_filename) : null;
+                    const itensSponte = autoConc ? rec!.boleto_reconciliation_items : [];
                     return (
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
@@ -886,7 +972,7 @@ function ConciliacaoPage() {
                           <span className="truncate inline-block max-w-[200px] align-middle">{t.description}</span>
                           {cobCompe && (
                             <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300 border-sky-500/40">
-                              COB COMPE
+                              {norm(t.description).includes("intern") ? "COB INTERN" : "COB COMPE"}
                             </Badge>
                           )}
                           {pix && !cobCompe && (
@@ -919,7 +1005,25 @@ function ConciliacaoPage() {
                                 <Trash2 className="h-3 w-3" />
                               </Button>
                             )}
-                            {isAdmin && (
+                            {isAdmin && autoConc && (
+                              // Detalhamento vindo da API do Sponte (no lugar dos
+                              // botões manuais Desmembrar/Anexar, que ficam ocultos).
+                              <div className="max-w-[260px] text-[11px] leading-tight">
+                                {alunoSponte && (
+                                  <div className="font-medium text-foreground truncate text-right" title={alunoSponte}>
+                                    {alunoSponte}
+                                  </div>
+                                )}
+                                <div className="flex flex-wrap justify-end gap-1 mt-0.5">
+                                  {itensSponte.map((it) => (
+                                    <Badge key={it.id} variant="outline" className="text-[10px] font-normal">
+                                      {it.subcategory_label}: {formatBRL(Number(it.amount))}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {isAdmin && !autoConc && (
                               <>
                                 {cobCompe && sponteAtiva && (
                                   <Button
