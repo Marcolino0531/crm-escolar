@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDateBR } from "@/lib/date-utils";
 
 function fmtDateTime(iso: string) {
@@ -92,6 +93,7 @@ function TasksPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [view, setView] = useState<"recebidas" | "enviadas">("recebidas");
   const listUsersFn = useServerFn(listDirectoryUsers);
 
   const { data: users = [] } = useQuery({
@@ -118,11 +120,20 @@ function TasksPage() {
     },
   });
 
+  const visibleTasks = useMemo(() => {
+    if (view === "recebidas") {
+      // Tasks que vou executar (inclui as que deleguei a mim mesmo).
+      return tasks.filter((t) => t.recipient_id === me);
+    }
+    // Enviadas: criadas por mim e direcionadas a outra pessoa.
+    return tasks.filter((t) => t.sender_id === me && t.recipient_id !== me);
+  }, [tasks, view, me]);
+
   const byStatus = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = { aberto: [], em_resolucao: [], concluido: [] };
-    for (const t of tasks) map[t.status].push(t);
+    for (const t of visibleTasks) map[t.status].push(t);
     return map;
-  }, [tasks]);
+  }, [visibleTasks]);
 
   const createTask = useMutation({
     mutationFn: async (p: { recipient_id: string; title: string; description: string }) => {
@@ -187,6 +198,13 @@ function TasksPage() {
           </Button>
         )}
       </div>
+
+      <Tabs value={view} onValueChange={(v) => setView(v as "recebidas" | "enviadas")}>
+        <TabsList>
+          <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
+          <TabsTrigger value="enviadas">Enviadas</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Carregando…</p>
