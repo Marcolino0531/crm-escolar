@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Plus, ArrowRight, Trash2, Play, Check, Inbox, Loader2, CheckCircle2, MessageSquare, Send } from "lucide-react";
+import { Plus, ArrowRight, Trash2, Play, Check, Inbox, Loader2, CheckCircle2, MessageSquare, Send, Archive } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
@@ -104,6 +104,7 @@ function TasksPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
   const [view, setView] = useState<"recebidas" | "enviadas">("recebidas");
   const listUsersFn = useServerFn(listDirectoryUsers);
 
@@ -149,6 +150,15 @@ function TasksPage() {
     }
     return map;
   }, [visibleTasks]);
+
+  // Histórico: concluídas que já saíram do quadro (mais de 7 dias), da aba atual.
+  const archivedTasks = useMemo(
+    () =>
+      visibleTasks
+        .filter((t) => t.status === "concluido" && !isRecentlyCompleted(t.completed_at))
+        .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? "")),
+    [visibleTasks],
+  );
 
   const createTask = useMutation({
     mutationFn: async (p: { recipient_id: string; title: string; description: string }) => {
@@ -255,6 +265,15 @@ function TasksPage() {
                       />
                     ))
                   )}
+                  {col.status === "concluido" && archivedTasks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowArchive(true)}
+                      className="flex items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Archive className="h-3.5 w-3.5" /> Ver tarefas arquivadas ({archivedTasks.length})
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -269,6 +288,14 @@ function TasksPage() {
         me={me}
         onSave={(p) => createTask.mutate(p)}
         saving={createTask.isPending}
+      />
+
+      <ArchivedTasksSheet
+        open={showArchive}
+        tasks={archivedTasks}
+        userName={userName}
+        onClose={() => setShowArchive(false)}
+        onOpenTask={(id) => { setOpenTaskId(id); setShowArchive(false); }}
       />
 
       <TaskChatSheet
@@ -294,6 +321,8 @@ function TaskChatSheet({
 }) {
   const qc = useQueryClient();
   const [body, setBody] = useState("");
+  // Tarefas arquivadas (concluídas há +7 dias) abrem como consulta somente leitura.
+  const readOnly = !!task && task.status === "concluido" && !isRecentlyCompleted(task.completed_at);
 
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ["task_messages", task?.id ?? "none"],
@@ -392,32 +421,97 @@ function TaskChatSheet({
               )}
             </div>
 
-            <div className="border-t p-3">
-              <div className="flex items-end gap-2">
-                <Textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  placeholder="Escreva uma observação…"
-                  rows={2}
-                  className="resize-none"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (body.trim()) send.mutate(body.trim());
-                    }
-                  }}
-                />
-                <Button
-                  size="icon"
-                  disabled={send.isPending || !body.trim()}
-                  onClick={() => body.trim() && send.mutate(body.trim())}
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
+            {readOnly ? (
+              <div className="flex items-center justify-center gap-1.5 border-t px-4 py-3 text-xs text-muted-foreground">
+                <Archive className="h-3.5 w-3.5" /> Tarefa arquivada — somente leitura.
               </div>
-            </div>
+            ) : (
+              <div className="border-t p-3">
+                <div className="flex items-end gap-2">
+                  <Textarea
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    placeholder="Escreva uma observação…"
+                    rows={2}
+                    className="resize-none"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (body.trim()) send.mutate(body.trim());
+                      }
+                    }}
+                  />
+                  <Button
+                    size="icon"
+                    disabled={send.isPending || !body.trim()}
+                    onClick={() => body.trim() && send.mutate(body.trim())}
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </>
         )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function ArchivedTasksSheet({
+  open,
+  tasks,
+  userName,
+  onClose,
+  onOpenTask,
+}: {
+  open: boolean;
+  tasks: Task[];
+  userName: (id: string) => string;
+  onClose: () => void;
+  onOpenTask: (id: string) => void;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <Archive className="h-4 w-4" /> Tarefas arquivadas
+          </SheetTitle>
+          <p className="pt-1 text-xs text-muted-foreground">
+            Concluídas há mais de 7 dias. Clique para consultar as observações (somente leitura).
+          </p>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto p-3">
+          {tasks.length === 0 ? (
+            <p className="py-8 text-center text-xs text-muted-foreground">
+              Nenhuma tarefa arquivada.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {tasks.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => onOpenTask(t.id)}
+                  className="flex flex-col gap-1 rounded-md border p-3 text-left text-sm shadow-sm transition-colors hover:bg-accent"
+                >
+                  <span className="font-semibold leading-tight">{t.title}</span>
+                  <span className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">De: {userName(t.sender_id)}</span>
+                    <ArrowRight className="h-3 w-3" />
+                    <span className="font-medium text-foreground">Para: {userName(t.recipient_id)}</span>
+                  </span>
+                  {t.completed_at && (
+                    <span className="text-xs text-emerald-600">
+                      Finalizada: {formatDateBR(t.completed_at)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </SheetContent>
     </Sheet>
   );
