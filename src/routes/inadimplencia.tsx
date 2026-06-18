@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { displayPhoneBR, toWhatsAppNumber } from "@/lib/phone";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -54,14 +55,8 @@ function formatarMoeda(valor: number): string {
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function formatarTelefoneWhatsApp(telefone: string): string {
-  const nums = telefone.replace(/\D/g, "");
-  if (nums.startsWith("55")) return nums;
-  return `55${nums}`;
-}
-
 function gerarLinkWhatsApp(telefone: string, nomeAluno: string, valorTotal: number): string {
-  const numero = formatarTelefoneWhatsApp(telefone);
+  const numero = toWhatsAppNumber(telefone);
   const valorFormatado = formatarMoeda(valorTotal);
   const mensagem = encodeURIComponent(
     `Olá, aqui é do setor financeiro do colégio. Notamos uma pendência referente ao aluno ${nomeAluno} no valor de ${valorFormatado}. Como podemos ajudar?`,
@@ -832,7 +827,7 @@ function InadimplenciaPage() {
                       </p>
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">{p.nomeResponsavel}</td>
-                    <td className="px-4 py-3 font-mono text-sm text-foreground">{p.telefone}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">{displayPhoneBR(p.telefone)}</td>
                     <td className="px-4 py-3 text-sm text-foreground">
                       {formatarData(p.vencimento)}
                     </td>

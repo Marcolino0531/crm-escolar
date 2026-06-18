@@ -2,6 +2,7 @@ import React from "react";
 import { Draggable } from "@hello-pangea/dnd";
 import { Lead, ColunaKanban } from "@/lib/crm/types";
 import { COLUNAS } from "@/lib/crm/constants";
+import { displayPhoneBR, toWhatsAppNumber } from "@/lib/phone";
 
 interface LeadCardProps {
   lead: Lead;
@@ -18,13 +19,6 @@ interface LeadCardProps {
   consolidado?: boolean;
   schoolNameById?: Record<string, string>;
   unidadeNome?: string;
-}
-
-// Higieniza o telefone para o formato wa.me (só dígitos, com DDI 55 do Brasil).
-function formatarTelefoneWhatsApp(telefone: string): string {
-  const nums = (telefone || "").replace(/\D/g, "");
-  if (!nums) return "";
-  return nums.startsWith("55") ? nums : `55${nums}`;
 }
 
 const LeadCard: React.FC<LeadCardProps> = ({
@@ -44,7 +38,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   const colunaAtualIndex = COLUNAS.findIndex((c) => c.id === lead.coluna);
   const unidadeNomeBadge = schoolNameById?.[lead.schoolId];
 
-  const whatsappNumero = formatarTelefoneWhatsApp(lead.telefone);
+  const whatsappNumero = toWhatsAppNumber(lead.telefone);
   const whatsappLink = whatsappNumero
     ? `https://wa.me/${whatsappNumero}?text=${encodeURIComponent(
         "Olá, meu nome é Charline e sou coordenadora do Colégio CEC. Vimos o seu interesse no colégio e estou à disposição.",
@@ -235,7 +229,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
             <div className="flex items-center gap-1.5">
               <span>📱</span>
-              <span>{lead.telefone}</span>
+              <span>{displayPhoneBR(lead.telefone)}</span>
               {whatsappLink && (
                 <a
                   href={whatsappLink}
