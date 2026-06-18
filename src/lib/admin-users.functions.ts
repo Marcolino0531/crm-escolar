@@ -115,22 +115,27 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push(s.school_id);
       schoolMap.set(s.user_id, arr);
     });
-    return usersResp.users.map((u) => {
-      const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
-      const name =
-        (typeof meta.full_name === "string" && meta.full_name) ||
-        (typeof meta.name === "string" && meta.name) ||
-        "";
-      return {
-      id: u.id,
-      email: u.email ?? "",
-      name,
-      created_at: u.created_at,
-      roles: roleMap.get(u.id) ?? [],
-      permissions: permMap.get(u.id) ?? [],
-      schoolIds: schoolMap.get(u.id) ?? [],
-      };
-    });
+    return usersResp.users
+      .map((u) => {
+        const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+        const name =
+          (typeof meta.full_name === "string" && meta.full_name) ||
+          (typeof meta.name === "string" && meta.name) ||
+          "";
+        return {
+          id: u.id,
+          email: u.email ?? "",
+          name,
+          created_at: u.created_at,
+          roles: roleMap.get(u.id) ?? [],
+          permissions: permMap.get(u.id) ?? [],
+          schoolIds: schoolMap.get(u.id) ?? [],
+        };
+      })
+      // Ordenação alfabética crescente (fallback no e-mail quando sem nome).
+      .sort((a, b) =>
+        (a.name || a.email).localeCompare(b.name || b.email, "pt-BR", { sensitivity: "base" }),
+      );
   });
 
 export const createManagedUser = createServerFn({ method: "POST" })
