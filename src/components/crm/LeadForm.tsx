@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Lead, AlunoLead } from "@/lib/crm/types";
 import { calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { ORIGENS_PREDEFINIDAS, ORIGENS_STORAGE_KEY } from "@/lib/crm/constants";
+import { formatPhoneBR } from "@/lib/phone";
 
 export interface LeadFormValues {
   schoolId: string;
@@ -139,7 +140,7 @@ const LeadForm: React.FC<LeadFormProps> = ({
       }));
       setAlunos(alunosEdit);
       setNomePaiMae(leadParaEditar.nomePaiMae);
-      setTelefone(leadParaEditar.telefone);
+      setTelefone(formatPhoneBR(leadParaEditar.telefone));
       setOrigem(leadParaEditar.origem || "");
       setOrigemInputValue(leadParaEditar.origem || "");
     }
@@ -376,8 +377,9 @@ const LeadForm: React.FC<LeadFormProps> = ({
               <input
                 type="tel"
                 value={telefone}
-                onChange={(e) => setTelefone(e.target.value)}
+                onChange={(e) => setTelefone(formatPhoneBR(e.target.value))}
                 required
+                maxLength={15}
                 placeholder="Ex: (11) 99999-9999"
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-sm"
               />

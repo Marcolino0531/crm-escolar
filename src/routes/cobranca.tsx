@@ -27,6 +27,7 @@ import {
   type ResponsavelCobranca,
 } from "@/lib/sponte.functions";
 import { parseISODateLocal, formatDateBR, monthKeyFromISO, todayISOLocal } from "@/lib/date-utils";
+import { toWhatsAppNumber } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca")({
   head: () => ({ meta: [{ title: "Cobrança — School Hub" }] }),
@@ -85,11 +86,6 @@ const TODOS_TICKS: number[] = (() => {
   for (let d = TICK_INICIAL; d <= TICK_FINAL; d += 2) arr.push(d);
   return arr;
 })();
-
-function formatarTelefoneWhatsApp(telefone: string): string {
-  const nums = telefone.replace(/\D/g, "");
-  return nums.startsWith("55") ? nums : `55${nums}`;
-}
 
 function iniciais(nome: string): string {
   const parts = nome.trim().split(/\s+/).filter(Boolean);
@@ -471,7 +467,7 @@ function PerfilCard({
         : "bg-yellow-100 text-yellow-800";
 
   const whatsappLink = (() => {
-    const numero = formatarTelefoneWhatsApp(perfil.telefone);
+    const numero = toWhatsAppNumber(perfil.telefone);
     const msg = encodeURIComponent(
       `Olá, aqui é do setor financeiro do colégio. Identificamos pendência(s) em aberto no valor de ${formatarMoeda(perfil.valorTotal)}. Poderia, por favor, regularizar? Estamos à disposição.`,
     );
