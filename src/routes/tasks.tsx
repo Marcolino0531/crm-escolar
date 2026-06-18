@@ -76,7 +76,18 @@ type Task = {
   description: string | null;
   status: TaskStatus;
   created_at: string;
+  completed_at: string | null;
 };
+
+// Concluídos só exibe entregas dos últimos 7 dias; as mais antigas seguem
+// salvas no banco (arquivadas), apenas fora do quadro.
+const CONCLUIDO_VISIBLE_DAYS = 7;
+function isRecentlyCompleted(completedAt: string | null): boolean {
+  if (!completedAt) return false;
+  const done = new Date(completedAt).getTime();
+  if (isNaN(done)) return false;
+  return Date.now() - done <= CONCLUIDO_VISIBLE_DAYS * 24 * 60 * 60 * 1000;
+}
 type DirUser = { id: string; name: string };
 
 const COLUMNS: { status: TaskStatus; label: string; icon: any; accent: string }[] = [
@@ -131,7 +142,11 @@ function TasksPage() {
 
   const byStatus = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = { aberto: [], em_resolucao: [], concluido: [] };
-    for (const t of visibleTasks) map[t.status].push(t);
+    for (const t of visibleTasks) {
+      // Arquivamento automático: concluídas há mais de 7 dias somem do quadro.
+      if (t.status === "concluido" && !isRecentlyCompleted(t.completed_at)) continue;
+      map[t.status].push(t);
+    }
     return map;
   }, [visibleTasks]);
 
@@ -329,9 +344,12 @@ function TaskChatSheet({
                   <ArrowRight className="h-3 w-3" />
                   <span className="font-medium text-foreground">Para: {userName(task.recipient_id)}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="text-[10px]">{STATUS_LABEL[task.status]}</Badge>
-                  <span>{formatDateBR(task.created_at)}</span>
+                  <span>Criada: {formatDateBR(task.created_at)}</span>
+                  {task.completed_at && (
+                    <span className="text-emerald-600">Finalizada: {formatDateBR(task.completed_at)}</span>
+                  )}
                 </div>
                 {task.description && (
                   <p className="whitespace-pre-wrap pt-1 text-foreground">{task.description}</p>
@@ -432,7 +450,12 @@ function TaskCard({
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-semibold leading-tight">{task.title}</h3>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{formatDateBR(task.created_at)}</span>
+        <div className="flex shrink-0 flex-col items-end text-[11px] text-muted-foreground">
+          <span>Criada: {formatDateBR(task.created_at)}</span>
+          {task.completed_at && (
+            <span className="text-emerald-600">Finalizada: {formatDateBR(task.completed_at)}</span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
