@@ -19,6 +19,7 @@ import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
+import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -72,6 +73,11 @@ const CobrancaRoute = CobrancaRouteImport.update({
   path: '/cobranca',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgendaRoute = AgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdmissoesRoute = AdmissoesRouteImport.update({
   id: '/admissoes',
   path: '/admissoes',
@@ -86,6 +92,7 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
+  '/agenda': typeof AgendaRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
+  '/agenda': typeof AgendaRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
+  '/agenda': typeof AgendaRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -131,6 +140,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admissoes'
+    | '/agenda'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admissoes'
+    | '/agenda'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/admissoes'
+    | '/agenda'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -174,6 +186,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdmissoesRoute: typeof AdmissoesRoute
+  AgendaRoute: typeof AgendaRoute
   CobrancaRoute: typeof CobrancaRoute
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CobrancaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agenda': {
+      id: '/agenda'
+      path: '/agenda'
+      fullPath: '/agenda'
+      preLoaderRoute: typeof AgendaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admissoes': {
       id: '/admissoes'
       path: '/admissoes'
@@ -278,6 +298,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdmissoesRoute: AdmissoesRoute,
+  AgendaRoute: AgendaRoute,
   CobrancaRoute: CobrancaRoute,
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,

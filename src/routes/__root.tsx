@@ -16,6 +16,7 @@ import {
   FileCheck2,
   TrendingUp,
   KanbanSquare,
+  CalendarDays,
   ClipboardCheck,
   Users,
   AlertCircle,
@@ -199,6 +200,7 @@ function AppShell() {
       router.navigate({ to: "/" });
     }
   }, [permsLoading, canView, router]);
+  const showAgenda = canView("agenda");
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
@@ -236,11 +238,12 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAdmissoes || showOnboarding || showRh || showTasks) && (
+          {(showAgenda || showAdmissoes || showOnboarding || showRh || showTasks) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
           )}
+          {showAgenda && <NavItem to="/agenda" icon={CalendarDays} label="Agenda" />}
           {showAdmissoes && <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />}
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
