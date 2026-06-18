@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, Zap, Banknote } from "lucide-react";
+import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
@@ -95,21 +95,10 @@ function isPix(desc: unknown): boolean {
 // Conciliação originada da API do Sponte (automática), identificada pelo
 // source_filename gravado em persistReconciliation ("Conciliação automática
 // Sponte (...)" / "Conciliação PIX Sponte (...)"). Para essas linhas a UI
-// esconde os botões manuais (Desmembrar/Anexar) e mostra o detalhamento.
+// esconde os botões manuais (Desmembrar/Anexar); o detalhamento fica
+// disponível pelo ícone de documento (viewer).
 function isAutoSponte(sourceFilename: string | null | undefined): boolean {
   return !!sourceFilename && /sponte/i.test(sourceFilename);
-}
-
-// Extrai o nome do aluno/responsável vindo do Sponte do source_filename da
-// conciliação PIX ("Conciliação PIX Sponte (Fulano)" → "Fulano").
-function alunoFromFilename(sourceFilename: string | null | undefined): string | null {
-  if (!sourceFilename) return null;
-  const m = sourceFilename.match(/\(([^)]+)\)/);
-  const nome = m?.[1]?.trim();
-  if (!nome) return null;
-  // Ignora rótulos de janela do boleto ("do dia", "do D+1 ...").
-  if (/^do\b/i.test(nome)) return null;
-  return nome;
 }
 
 // Partículas de nome ignoradas no fuzzy match (não são distintivas).
@@ -904,29 +893,16 @@ function ConciliacaoPage() {
               <span>Receitas do Período</span>
               <div className="flex items-center gap-2">
                 {isAdmin && sponteAtiva && (
-                  <>
-                    <Button
-                      size="sm"
-                      className="bg-sky-600 hover:bg-sky-700 text-white"
-                      onClick={handleSincronizar}
-                      disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
-                      title="Busca as baixas de Boletos (COB COMPE / COB INTERN) e PIX no Sponte e concilia automaticamente as linhas pendentes"
-                    >
-                      {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
-                      Sincronizar com Sponte
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
-                      onClick={handleConciliarPix}
-                      disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
-                      title="Cruza as linhas de PIX do extrato com as baixas PIX do Sponte por valor + nome (fuzzy matching)"
-                    >
-                      {pixRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Banknote className="h-3 w-3" />}
-                      Conciliar PIX via Sponte
-                    </Button>
-                  </>
+                  <Button
+                    size="sm"
+                    className="bg-sky-600 hover:bg-sky-700 text-white"
+                    onClick={handleSincronizar}
+                    disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
+                    title="Concilia em lote todas as linhas pendentes do período: Boletos (COB COMPE / COB INTERN) e PIX, via Sponte"
+                  >
+                    {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+                    Sincronizar com Sponte
+                  </Button>
                 )}
                 <Badge variant="secondary">{revenueTxs.length} linha(s)</Badge>
               </div>
@@ -961,10 +937,9 @@ function ConciliacaoPage() {
                     const cobCompe = isCobCompe(t.description);
                     const pix = isPix(t.description);
                     // Linha conciliada AUTOMATICAMENTE via Sponte: esconde os
-                    // botões manuais e mostra o detalhamento (aluno + itens).
+                    // botões manuais (Desmembrar/Anexar). O detalhamento fica
+                    // disponível só pelo ícone de documento (viewer).
                     const autoConc = isReconciled && isAutoSponte(rec?.source_filename);
-                    const alunoSponte = autoConc ? alunoFromFilename(rec?.source_filename) : null;
-                    const itensSponte = autoConc ? rec!.boleto_reconciliation_items : [];
                     return (
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
@@ -1005,39 +980,12 @@ function ConciliacaoPage() {
                                 <Trash2 className="h-3 w-3" />
                               </Button>
                             )}
-                            {isAdmin && autoConc && (
-                              // Detalhamento vindo da API do Sponte (no lugar dos
-                              // botões manuais Desmembrar/Anexar, que ficam ocultos).
-                              <div className="max-w-[260px] text-[11px] leading-tight">
-                                {alunoSponte && (
-                                  <div className="font-medium text-foreground truncate text-right" title={alunoSponte}>
-                                    {alunoSponte}
-                                  </div>
-                                )}
-                                <div className="flex flex-wrap justify-end gap-1 mt-0.5">
-                                  {itensSponte.map((it) => (
-                                    <Badge key={it.id} variant="outline" className="text-[10px] font-normal">
-                                      {it.subcategory_label}: {formatBRL(Number(it.amount))}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
                             {isAdmin && !autoConc && (
+                              // Linhas conciliadas automaticamente via Sponte ficam
+                              // limpas (só os ícones de visualizar/remover acima); a
+                              // conciliação automática individual foi unificada no
+                              // botão global "Sincronizar com Sponte" do cabeçalho.
                               <>
-                                {cobCompe && sponteAtiva && (
-                                  <Button
-                                    size="sm"
-                                    variant={isReconciled ? "outline" : "default"}
-                                    className={isReconciled ? "" : "bg-sky-600 hover:bg-sky-700 text-white"}
-                                    onClick={() => handleAutoConciliar(t.id, Number(t.amount), t.date)}
-                                    disabled={isUploading || isAuto}
-                                    title="Buscar parcelas baixadas no Sponte e conciliar automaticamente"
-                                  >
-                                    {isAuto ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
-                                    Conciliar Automático via Sponte
-                                  </Button>
-                                )}
                                 <Button size="sm" variant="outline" onClick={() => openManual(t.id)} disabled={isUploading || isAuto}>
                                   <SplitSquareHorizontal className="h-3 w-3" /> Desmembrar Manualmente
                                 </Button>
