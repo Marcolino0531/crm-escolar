@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleNuvemshopApi } from "./lib/nuvemshop.api";
 import { handleUniformesApi } from "./lib/uniformes.api";
+import { handleCobrancasApi } from "./lib/cobrancas.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -80,6 +81,10 @@ export default {
       // Exportação de pedidos de uniformes (.xlsx).
       const uniformesResponse = await handleUniformesApi(request);
       if (uniformesResponse) return uniformesResponse;
+
+      // Histórico de envios de WhatsApp da Cobrança.
+      const cobrancasResponse = await handleCobrancasApi(request);
+      if (cobrancasResponse) return cobrancasResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
