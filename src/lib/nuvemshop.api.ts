@@ -8,7 +8,12 @@
 //   GET  /api/nuvemshop/callback  — callback OAuth do App de Parceiro (code -> token)
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { handleWebhookEvent, runFullSync, verifyWebhookHmac } from "@/lib/nuvemshop.server";
+import {
+  handleWebhookEvent,
+  NUVEMSHOP_USER_AGENT,
+  runFullSync,
+  verifyWebhookHmac,
+} from "@/lib/nuvemshop.server";
 
 const NUVEMSHOP_TOKEN_URL = "https://www.tiendanube.com/apps/authorize/token";
 
@@ -156,7 +161,10 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
     try {
       const res = await fetch(NUVEMSHOP_TOKEN_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": NUVEMSHOP_USER_AGENT,
+        },
         body: JSON.stringify({
           client_id: clientId,
           client_secret: clientSecret,
