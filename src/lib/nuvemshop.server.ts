@@ -15,6 +15,10 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const API_BASE = "https://api.nuvemshop.com.br/v1";
 
+// Identifica o app em toda chamada à API da Nuvemshop (obrigatório):
+// https://tiendanube.github.io/api-documentation/intro#identify-your-app
+export const NUVEMSHOP_USER_AGENT = "School Hub (uniformesnb@gmail.com)";
+
 type Localized = { pt?: string } | string;
 
 type NuvemshopVariant = {
@@ -78,7 +82,7 @@ async function nuvemshopFetch(path: string): Promise<Response> {
       // A Nuvemshop usa o header "Authentication" (não "Authorization").
       Authentication: `bearer ${token}`,
       "Content-Type": "application/json",
-      "User-Agent": "SchoolHub CRM (suporte@schoolhub.app)",
+      "User-Agent": NUVEMSHOP_USER_AGENT,
     },
   });
   console.info(`[nuvemshop] GET ${path} -> ${res.status}`);
