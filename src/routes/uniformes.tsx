@@ -2,8 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, Shirt, AlertTriangle, PackageSearch, Search } from "lucide-react";
-import { usePermissions } from "@/lib/app-context";
+import {
+  RefreshCw,
+  Shirt,
+  AlertTriangle,
+  PackageSearch,
+  Search,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
+} from "lucide-react";
+import { usePermissions, useSchool } from "@/lib/app-context";
+import { storeKeyForUnitName, type StoreKey } from "@/lib/nuvemshop.stores";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -25,6 +35,7 @@ function UniformesGate() {
 
 type UniformProduct = {
   ns_product_id: string;
+  store_key: StoreKey;
   name: string;
   category: string | null;
   active: boolean;
@@ -34,6 +45,7 @@ type UniformVariant = {
   id: string;
   ns_variant_id: string;
   ns_product_id: string;
+  store_key: StoreKey;
   size: string;
   sku: string | null;
   stock: number;
@@ -50,18 +62,55 @@ type SyncLog = {
   finished_at: string | null;
 };
 
+type SortColumn = "produto" | "size";
+type SortDir = "asc" | "desc";
+
+// Ordem canônica de tamanhos por letra (quando o tamanho não é numérico).
+const LETTER_SIZE_ORDER = ["pp", "p", "m", "g", "gg", "xg", "xgg", "exg"];
+
+// Chave de ordenação de tamanho: numéricos primeiro (por valor), depois letras
+// na ordem canônica e, por fim, os demais em ordem alfabética.
+function sizeKey(size: string): [number, number, string] {
+  const s = (size ?? "").trim().toLowerCase();
+  const num = s.match(/^\d+(?:[.,]\d+)?/);
+  if (num) return [0, parseFloat(num[0].replace(",", ".")), s];
+  const idx = LETTER_SIZE_ORDER.indexOf(s);
+  if (idx >= 0) return [1, idx, s];
+  return [2, 0, s];
+}
+
+function compareSize(a: string, b: string): number {
+  const ka = sizeKey(a);
+  const kb = sizeKey(b);
+  if (ka[0] !== kb[0]) return ka[0] - kb[0];
+  if (ka[0] === 2) return ka[2].localeCompare(kb[2], "pt-BR");
+  return ka[1] - kb[1];
+}
+
 function UniformesPage() {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("uniformes");
+  const { selected, schools, schoolFilterIds } = useSchool();
   const [busca, setBusca] = useState("");
   const [sincronizando, setSincronizando] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("produto");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function toggleSort(column: SortColumn) {
+    if (column === sortColumn) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDir("asc");
+    }
+  }
 
   const { data: products = [], isLoading: loadingProducts } = useQuery({
     queryKey: ["uniform_products"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("uniform_products" as any)
-        .select("ns_product_id, name, category, active")
+        .select("ns_product_id, store_key, name, category, active")
         .order("name", { ascending: true });
       if (error) return [] as UniformProduct[];
       return (data ?? []) as unknown as UniformProduct[];
@@ -77,7 +126,7 @@ function UniformesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("uniform_variants" as any)
-        .select("id, ns_variant_id, ns_product_id, size, sku, stock, min_stock")
+        .select("id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock")
         .order("size", { ascending: true });
       if (error) return [] as UniformVariant[];
       return (data ?? []) as unknown as UniformVariant[];
@@ -100,13 +149,40 @@ function UniformesPage() {
 
   const productName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const p of products) m.set(p.ns_product_id, p.name);
-    return (id: string) => m.get(id) ?? "—";
+    for (const p of products) m.set(`${p.store_key}:${p.ns_product_id}`, p.name);
+    return (storeKey: StoreKey, id: string) => m.get(`${storeKey}:${id}`) ?? "—";
   }, [products]);
+
+  // Lojas (store_key) visíveis para a unidade selecionada no header. `null` =
+  // sem filtro (usuário global em "Todas as Unidades" → todas as lojas).
+  const allowedStoreKeys = useMemo<Set<StoreKey> | null>(() => {
+    const idToName = new Map(schools.map((s) => [s.id, s.name]));
+    const ids = selected !== "all" ? [selected] : schoolFilterIds;
+    if (ids === null) return null;
+    const keys = new Set<StoreKey>();
+    for (const id of ids) {
+      const key = storeKeyForUnitName(idToName.get(id));
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [selected, schools, schoolFilterIds]);
+
+  const unitFiltered = useMemo(() => {
+    if (!allowedStoreKeys) return variants;
+    return variants.filter((v) => allowedStoreKeys.has(v.store_key));
+  }, [variants, allowedStoreKeys]);
+
+  const visibleProducts = useMemo(() => {
+    const ids = new Set(unitFiltered.map((v) => `${v.store_key}:${v.ns_product_id}`));
+    return products.filter((p) => ids.has(`${p.store_key}:${p.ns_product_id}`));
+  }, [products, unitFiltered]);
 
   const rows = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    const enriched = variants.map((v) => ({ ...v, produto: productName(v.ns_product_id) }));
+    const enriched = unitFiltered.map((v) => ({
+      ...v,
+      produto: productName(v.store_key, v.ns_product_id),
+    }));
     if (!termo) return enriched;
     return enriched.filter(
       (v) =>
@@ -114,7 +190,20 @@ function UniformesPage() {
         v.size.toLowerCase().includes(termo) ||
         (v.sku ?? "").toLowerCase().includes(termo),
     );
-  }, [variants, busca, productName]);
+  }, [unitFiltered, busca, productName]);
+
+  const sortedRows = useMemo(() => {
+    const factor = sortDir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortColumn === "produto") {
+        const byName = a.produto.localeCompare(b.produto, "pt-BR");
+        // Agrupa o mesmo modelo e, dentro dele, ordena por tamanho.
+        return factor * (byName !== 0 ? byName : compareSize(a.size, b.size));
+      }
+      const bySize = compareSize(a.size, b.size);
+      return factor * (bySize !== 0 ? bySize : a.produto.localeCompare(b.produto, "pt-BR"));
+    });
+  }, [rows, sortColumn, sortDir]);
 
   const baixoEstoque = rows.filter((v) => v.stock <= v.min_stock).length;
 
@@ -170,13 +259,13 @@ function UniformesPage() {
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Peças
           </div>
-          <div className="mt-1 text-2xl font-bold text-foreground">{products.length}</div>
+          <div className="mt-1 text-2xl font-bold text-foreground">{visibleProducts.length}</div>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Variações (tamanhos)
           </div>
-          <div className="mt-1 text-2xl font-bold text-foreground">{variants.length}</div>
+          <div className="mt-1 text-2xl font-bold text-foreground">{unitFiltered.length}</div>
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -223,15 +312,29 @@ function UniformesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Peça</th>
-                <th className="px-4 py-3 font-medium">Tamanho</th>
+                <th className="px-4 py-3 font-medium">
+                  <SortHeader
+                    label="Peça"
+                    active={sortColumn === "produto"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("produto")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-medium">
+                  <SortHeader
+                    label="Tamanho"
+                    active={sortColumn === "size"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("size")}
+                  />
+                </th>
                 <th className="px-4 py-3 font-medium">SKU</th>
                 <th className="px-4 py-3 text-right font-medium">Saldo</th>
                 <th className="px-4 py-3 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((v) => {
+              {sortedRows.map((v) => {
                 const critico = v.stock <= v.min_stock;
                 return (
                   <tr
@@ -276,5 +379,38 @@ function UniformesPage() {
         </p>
       )}
     </div>
+  );
+}
+
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1 uppercase tracking-wide transition-colors hover:text-foreground ${
+        active ? "text-foreground" : ""
+      }`}
+    >
+      {label}
+      {active ? (
+        dir === "asc" ? (
+          <ArrowUp className="h-3 w-3" />
+        ) : (
+          <ArrowDown className="h-3 w-3" />
+        )
+      ) : (
+        <ChevronsUpDown className="h-3 w-3 opacity-40" />
+      )}
+    </button>
   );
 }
