@@ -171,6 +171,7 @@ export const APP_MODULES = [
   "onboarding",
   "rh",
   "tasks",
+  "uniformes",
   "financeiro",
   "configuracoes",
 ] as const;
@@ -198,6 +199,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   onboarding: "Onboarding",
   rh: "Recursos Humanos",
   tasks: "Tasks",
+  uniformes: "Uniformes",
   financeiro: "Financeiro",
   configuracoes: "Configurações",
   financeiro_dashboard: "Dashboard",
