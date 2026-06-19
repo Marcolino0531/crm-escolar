@@ -56,9 +56,16 @@ function variantSize(v: NuvemshopVariant): string {
 function getNuvemshopEnv() {
   const storeId = process.env.NUVEMSHOP_STORE_ID;
   const token = process.env.NUVEMSHOP_ACCESS_TOKEN;
-  if (!storeId || !token) {
+  // Loga apenas a presença das variáveis (nunca os valores).
+  console.info(
+    `[nuvemshop] env STORE_ID=${storeId ? "set" : "VAZIO"} ACCESS_TOKEN=${token ? "set" : "VAZIO"}`,
+  );
+  const missing: string[] = [];
+  if (!storeId) missing.push("NUVEMSHOP_STORE_ID");
+  if (!token) missing.push("NUVEMSHOP_ACCESS_TOKEN");
+  if (missing.length > 0) {
     throw new Error(
-      "Credenciais da Nuvemshop ausentes: defina NUVEMSHOP_STORE_ID e NUVEMSHOP_ACCESS_TOKEN.",
+      `Credenciais da Nuvemshop ausentes no ambiente da Vercel: ${missing.join(", ")}.`,
     );
   }
   return { storeId, token };
@@ -66,7 +73,7 @@ function getNuvemshopEnv() {
 
 async function nuvemshopFetch(path: string): Promise<Response> {
   const { storeId, token } = getNuvemshopEnv();
-  return fetch(`${API_BASE}/${storeId}${path}`, {
+  const res = await fetch(`${API_BASE}/${storeId}${path}`, {
     headers: {
       // A Nuvemshop usa o header "Authentication" (não "Authorization").
       Authentication: `bearer ${token}`,
@@ -74,6 +81,8 @@ async function nuvemshopFetch(path: string): Promise<Response> {
       "User-Agent": "SchoolHub CRM (suporte@schoolhub.app)",
     },
   });
+  console.info(`[nuvemshop] GET ${path} -> ${res.status}`);
+  return res;
 }
 
 async function fetchAllProducts(): Promise<NuvemshopProduct[]> {

@@ -36,12 +36,17 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
 
   // --- Sincronização manual (UI) ---
   if (pathname === "/api/nuvemshop/sync" && request.method === "POST") {
-    if (!(await isAuthenticated(request))) return json({ ok: false, error: "não autorizado" }, 401);
+    if (!(await isAuthenticated(request))) {
+      console.warn("[nuvemshop] /sync rejeitado: usuário não autenticado");
+      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+    }
     try {
       const result = await runFullSync("manual");
       return json({ ok: true, ...result });
     } catch (e) {
-      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[nuvemshop] /sync falhou:", msg);
+      return json({ ok: false, error: msg }, 500);
     }
   }
 
