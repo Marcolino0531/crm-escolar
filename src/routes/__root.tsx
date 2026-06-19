@@ -23,6 +23,7 @@ import {
   PiggyBank,
   ListTodo,
   HandCoins,
+  Shirt,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
@@ -205,6 +206,7 @@ function AppShell() {
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
   const showTasks = canView("tasks");
+  const showUniformes = canView("uniformes");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -231,14 +233,23 @@ function AppShell() {
       <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
         <div className="mb-8 flex items-center gap-2 px-2">
           <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
-            <img src="/school-hub-logo.svg" alt="School Hub" className="h-full w-full object-contain" />
+            <img
+              src="/school-hub-logo.svg"
+              alt="School Hub"
+              className="h-full w-full object-contain"
+            />
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight">School Hub</div>
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAgenda || showAdmissoes || showOnboarding || showRh || showTasks) && (
+          {(showAgenda ||
+            showAdmissoes ||
+            showOnboarding ||
+            showRh ||
+            showTasks ||
+            showUniformes) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -248,6 +259,7 @@ function AppShell() {
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
+          {showUniformes && <NavItem to="/uniformes" icon={Shirt} label="Uniformes" />}
           {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">

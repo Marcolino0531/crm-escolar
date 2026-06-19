@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
@@ -26,6 +27,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UniformesRoute = UniformesRouteImport.update({
+  id: '/uniformes',
+  path: '/uniformes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TasksRoute = TasksRouteImport.update({
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesByTo {
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesById {
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRouteTypes {
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   id:
     | '__root__'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   fileRoutesById: FileRoutesById
 }
@@ -196,6 +208,7 @@ export interface RootRouteChildren {
   OnboardingRoute: typeof OnboardingRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
+  UniformesRoute: typeof UniformesRoute
   UploadRoute: typeof UploadRoute
 }
 
@@ -206,6 +219,13 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/upload'
       preLoaderRoute: typeof UploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/uniformes': {
+      id: '/uniformes'
+      path: '/uniformes'
+      fullPath: '/uniformes'
+      preLoaderRoute: typeof UniformesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/tasks': {
@@ -308,6 +328,7 @@ const rootRouteChildren: RootRouteChildren = {
   OnboardingRoute: OnboardingRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
+  UniformesRoute: UniformesRoute,
   UploadRoute: UploadRoute,
 }
 export const routeTree = rootRouteImport

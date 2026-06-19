@@ -9,6 +9,7 @@ const APP_MODULES = [
   "onboarding",
   "rh",
   "tasks",
+  "uniformes",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)
@@ -47,9 +48,7 @@ async function persistSchools(userId: string, schoolIds: string[]) {
   const unique = Array.from(new Set(schoolIds));
   if (unique.length === 0) return;
   const rows = unique.map((school_id) => ({ user_id: userId, school_id }));
-  const { error } = await supabaseAdmin
-    .from("user_schools" as any)
-    .insert(rows);
+  const { error } = await supabaseAdmin.from("user_schools" as any).insert(rows);
   if (error) throw new Error(error.message);
 }
 
@@ -115,27 +114,29 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push(s.school_id);
       schoolMap.set(s.user_id, arr);
     });
-    return usersResp.users
-      .map((u) => {
-        const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
-        const name =
-          (typeof meta.full_name === "string" && meta.full_name) ||
-          (typeof meta.name === "string" && meta.name) ||
-          "";
-        return {
-          id: u.id,
-          email: u.email ?? "",
-          name,
-          created_at: u.created_at,
-          roles: roleMap.get(u.id) ?? [],
-          permissions: permMap.get(u.id) ?? [],
-          schoolIds: schoolMap.get(u.id) ?? [],
-        };
-      })
-      // Ordenação alfabética crescente (fallback no e-mail quando sem nome).
-      .sort((a, b) =>
-        (a.name || a.email).localeCompare(b.name || b.email, "pt-BR", { sensitivity: "base" }),
-      );
+    return (
+      usersResp.users
+        .map((u) => {
+          const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+          const name =
+            (typeof meta.full_name === "string" && meta.full_name) ||
+            (typeof meta.name === "string" && meta.name) ||
+            "";
+          return {
+            id: u.id,
+            email: u.email ?? "",
+            name,
+            created_at: u.created_at,
+            roles: roleMap.get(u.id) ?? [],
+            permissions: permMap.get(u.id) ?? [],
+            schoolIds: schoolMap.get(u.id) ?? [],
+          };
+        })
+        // Ordenação alfabética crescente (fallback no e-mail quando sem nome).
+        .sort((a, b) =>
+          (a.name || a.email).localeCompare(b.name || b.email, "pt-BR", { sensitivity: "base" }),
+        )
+    );
   });
 
 export const createManagedUser = createServerFn({ method: "POST" })
@@ -157,7 +158,9 @@ export const createManagedUser = createServerFn({ method: "POST" })
     // Fail-closed: um usuário não-admin sem nenhuma unidade não acessa nada.
     // Exige ao menos uma unidade ao criar o perfil (admins têm acesso global).
     if (!data.isAdmin && data.schoolIds.length === 0) {
-      throw new Error("Selecione ao menos uma unidade para o novo usuário (ou marque como Administrador).");
+      throw new Error(
+        "Selecione ao menos uma unidade para o novo usuário (ou marque como Administrador).",
+      );
     }
     const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
       email: data.email,
@@ -197,11 +200,14 @@ export const updateUserAccess = createServerFn({ method: "POST" })
     // Fail-closed: um não-admin sem unidade ficaria sem acesso a nada; impede
     // salvar um perfil restrito com zero unidades.
     if (!data.isAdmin && data.schoolIds.length === 0) {
-      throw new Error("Selecione ao menos uma unidade para o usuário (ou marque como Administrador).");
+      throw new Error(
+        "Selecione ao menos uma unidade para o usuário (ou marque como Administrador).",
+      );
     }
 
     // Update auth credentials (email / password / name) via the Supabase admin API.
-    const attrs: { email?: string; password?: string; user_metadata?: Record<string, unknown> } = {};
+    const attrs: { email?: string; password?: string; user_metadata?: Record<string, unknown> } =
+      {};
     if (data.email) attrs.email = data.email;
     if (typeof data.name === "string") attrs.user_metadata = { full_name: data.name };
     if (data.password && data.password.length > 0) {
