@@ -121,13 +121,21 @@ function UniformesPage() {
   async function sincronizar() {
     setSincronizando(true);
     try {
-      const { error } = await supabase.functions.invoke("nuvemshop-sync", {
-        body: { source: "manual" },
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch("/api/nuvemshop/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
       });
-      if (error) throw error;
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !body.ok) throw new Error(body.error ?? "Falha na sincronização");
       toast.success("Sincronização concluída.");
       await Promise.all([refetchVariants(), refetchSync()]);
-    } catch (e) {
+    } catch {
       toast.error("Falha ao sincronizar com a Nuvemshop. Verifique as credenciais da integração.");
     } finally {
       setSincronizando(false);
