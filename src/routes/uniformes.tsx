@@ -135,8 +135,9 @@ function UniformesPage() {
       if (!res.ok || !body.ok) throw new Error(body.error ?? "Falha na sincronização");
       toast.success("Sincronização concluída.");
       await Promise.all([refetchVariants(), refetchSync()]);
-    } catch {
-      toast.error("Falha ao sincronizar com a Nuvemshop. Verifique as credenciais da integração.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Falha ao sincronizar com a Nuvemshop.";
+      toast.error(msg);
     } finally {
       setSincronizando(false);
     }
