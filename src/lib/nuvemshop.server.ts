@@ -5,7 +5,8 @@
 //   GET  /api/nuvemshop/cron     — auditoria noturna (Vercel Cron, 03h)
 //
 // Variáveis de ambiente (painel da Vercel):
-//   NUVEMSHOP_STORE_ID, NUVEMSHOP_ACCESS_TOKEN, NUVEMSHOP_CLIENT_SECRET
+//   NUVEMSHOP_STORE_ID, NUVEMSHOP_ACCESS_TOKEN
+//   NUVEMSHOP_WEBHOOK_TOKEN (token da query string que protege o webhook)
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (já existentes — gravam o estoque)
 //   CRON_SECRET (opcional — protege o endpoint de cron)
 //
@@ -184,33 +185,6 @@ export async function runFullSync(source: "manual" | "cron"): Promise<SyncResult
 }
 
 type WebhookPayload = { store_id: number; event: string; id: number };
-
-// Verifica a assinatura HMAC-SHA256 do webhook (header x-linkedstore-hmac-sha256),
-// calculada sobre o corpo bruto usando o client_secret do app.
-export async function verifyWebhookHmac(
-  rawBody: string,
-  signature: string | null,
-): Promise<boolean> {
-  const secret = process.env.NUVEMSHOP_CLIENT_SECRET;
-  if (!secret || !signature) return false;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
-  const computed = Array.from(new Uint8Array(mac))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  if (computed.length !== signature.length) return false;
-  let diff = 0;
-  for (let i = 0; i < computed.length; i++) {
-    diff |= computed.charCodeAt(i) ^ signature.charCodeAt(i);
-  }
-  return diff === 0;
-}
 
 // Processa um evento de webhook já validado (produto atualizado ou pedido criado).
 export async function handleWebhookEvent(payload: WebhookPayload): Promise<void> {

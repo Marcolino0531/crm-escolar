@@ -3,11 +3,11 @@
 // um endpoint Nuvemshop (deixando o roteador da aplicação seguir o fluxo normal).
 //
 //   POST /api/nuvemshop/sync     — sincronização manual (botão da UI; exige login)
-//   POST /api/nuvemshop/webhook  — eventos em tempo real (validação HMAC)
+//   POST /api/nuvemshop/webhook  — eventos em tempo real (token na query string)
 //   GET  /api/nuvemshop/cron     — auditoria noturna (Vercel Cron; CRON_SECRET)
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { handleWebhookEvent, runFullSync, verifyWebhookHmac } from "@/lib/nuvemshop.server";
+import { handleWebhookEvent, runFullSync } from "@/lib/nuvemshop.server";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -31,7 +31,8 @@ async function isAuthenticated(request: Request): Promise<boolean> {
 }
 
 export async function handleNuvemshopApi(request: Request): Promise<Response | null> {
-  const { pathname } = new URL(request.url);
+  const url = new URL(request.url);
+  const { pathname } = url;
   if (!pathname.startsWith("/api/nuvemshop/")) return null;
 
   // --- Sincronização manual (UI) ---
@@ -47,9 +48,13 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
 
   // --- Webhook em tempo real ---
   if (pathname === "/api/nuvemshop/webhook" && request.method === "POST") {
+    // Custom Apps da Nuvemshop não possuem Client Secret (sem HMAC). A rota é
+    // protegida por um token na query string (?token=...) validado aqui.
+    const expected = process.env.NUVEMSHOP_WEBHOOK_TOKEN;
+    if (!expected || url.searchParams.get("token") !== expected) {
+      return json({ ok: false, error: "não autorizado" }, 401);
+    }
     const raw = await request.text();
-    const valid = await verifyWebhookHmac(raw, request.headers.get("x-linkedstore-hmac-sha256"));
-    if (!valid) return json({ ok: false, error: "assinatura inválida" }, 401);
     try {
       await handleWebhookEvent(JSON.parse(raw));
       return json({ ok: true });
