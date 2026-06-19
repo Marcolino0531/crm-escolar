@@ -11,6 +11,7 @@ import {
   ArrowUp,
   ArrowDown,
   ChevronsUpDown,
+  FileSpreadsheet,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { storeKeyForUnitName, type StoreKey } from "@/lib/nuvemshop.stores";
@@ -93,6 +94,7 @@ function UniformesPage() {
   const { selected, schools, schoolFilterIds } = useSchool();
   const [busca, setBusca] = useState("");
   const [sincronizando, setSincronizando] = useState(false);
+  const [gerandoPlanilha, setGerandoPlanilha] = useState(false);
   const [sortColumn, setSortColumn] = useState<SortColumn>("produto");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -232,6 +234,48 @@ function UniformesPage() {
     }
   }
 
+  async function gerarPlanilha() {
+    setGerandoPlanilha(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      // Respeita a unidade do header: null => todas as lojas; set => lojas da
+      // unidade selecionada (set vazio => nenhuma loja correspondente).
+      const storesParam =
+        allowedStoreKeys === null ? "all" : Array.from(allowedStoreKeys).join(",");
+      const res = await fetch(
+        `/api/uniformes/export-order?stores=${encodeURIComponent(storesParam)}`,
+        {
+          method: "GET",
+          headers: {
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Falha ao gerar a planilha.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const today = new Date().toISOString().slice(0, 10);
+      a.download = `pedido-uniformes-${today}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Planilha de pedidos gerada.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Falha ao gerar a planilha.";
+      toast.error(msg);
+    } finally {
+      setGerandoPlanilha(false);
+    }
+  }
+
   const isLoading = loadingProducts || loadingVariants;
 
   return (
@@ -246,12 +290,18 @@ function UniformesPage() {
             Controle de estoque das peças, sincronizado com a Nuvemshop.
           </p>
         </div>
-        {podeEditar && (
-          <Button onClick={sincronizar} disabled={sincronizando}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${sincronizando ? "animate-spin" : ""}`} />
-            Sincronizar com Nuvemshop
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={gerarPlanilha} disabled={gerandoPlanilha || isLoading}>
+            <FileSpreadsheet className={`mr-2 h-4 w-4 ${gerandoPlanilha ? "animate-pulse" : ""}`} />
+            Gerar Planilha de Pedidos
           </Button>
-        )}
+          {podeEditar && (
+            <Button onClick={sincronizar} disabled={sincronizando}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${sincronizando ? "animate-spin" : ""}`} />
+              Sincronizar com Nuvemshop
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">

@@ -3,6 +3,7 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handleNuvemshopApi } from "./lib/nuvemshop.api";
+import { handleUniformesApi } from "./lib/uniformes.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -75,6 +76,10 @@ export default {
       // (webhook/cron) que não passam pelo fluxo de RPC do front.
       const nuvemshopResponse = await handleNuvemshopApi(request);
       if (nuvemshopResponse) return nuvemshopResponse;
+
+      // Exportação de pedidos de uniformes (.xlsx).
+      const uniformesResponse = await handleUniformesApi(request);
+      if (uniformesResponse) return uniformesResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
