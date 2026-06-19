@@ -75,18 +75,42 @@ function getNuvemshopEnv() {
   return { storeId, token };
 }
 
+const MAX_RATE_LIMIT_RETRIES = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Atraso (ms) ao receber 429: respeita o header Retry-After (em segundos) e,
+// na ausência dele, usa backoff exponencial.
+function retryDelayMs(res: Response, attempt: number): number {
+  const retryAfter = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return retryAfter * 1000;
+  return Math.min(1000 * 2 ** attempt, 16000);
+}
+
 async function nuvemshopFetch(path: string): Promise<Response> {
   const { storeId, token } = getNuvemshopEnv();
-  const res = await fetch(`${API_BASE}/${storeId}${path}`, {
-    headers: {
-      // A Nuvemshop usa o header "Authentication" (não "Authorization").
-      Authentication: `bearer ${token}`,
-      "Content-Type": "application/json",
-      "User-Agent": NUVEMSHOP_USER_AGENT,
-    },
-  });
-  console.info(`[nuvemshop] GET ${path} -> ${res.status}`);
-  return res;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${API_BASE}/${storeId}${path}`, {
+      headers: {
+        // A Nuvemshop usa o header "Authentication" (não "Authorization").
+        Authentication: `bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": NUVEMSHOP_USER_AGENT,
+      },
+    });
+    console.info(`[nuvemshop] GET ${path} -> ${res.status}`);
+    if (res.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      const delay = retryDelayMs(res, attempt);
+      console.warn(
+        `[nuvemshop] 429 Too Many Requests em ${path}; retry ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES} em ${delay}ms`,
+      );
+      await sleep(delay);
+      continue;
+    }
+    return res;
+  }
 }
 
 async function fetchAllProducts(): Promise<NuvemshopProduct[]> {
@@ -98,6 +122,11 @@ async function fetchAllProducts(): Promise<NuvemshopProduct[]> {
       `/products?page=${page}&per_page=${perPage}&fields=id,name,handle,published,categories,variants`,
     );
     if (res.status === 404) break;
+    if (res.status === 429) {
+      throw new Error(
+        "Nuvemshop GET /products: limite de requisições (429) persistiu após retries. Tente novamente em instantes.",
+      );
+    }
     if (!res.ok) {
       throw new Error(`Nuvemshop GET /products falhou: ${res.status} ${await res.text()}`);
     }
