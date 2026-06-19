@@ -101,7 +101,11 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
   // --- Webhook em tempo real ---
   if (pathname === "/api/nuvemshop/webhook" && request.method === "POST") {
     const raw = await request.text();
-    const valid = await verifyWebhookHmac(raw, request.headers.get("x-linkedstore-hmac-sha256"));
+    // A Nuvemshop assina o body com HMAC-SHA256; o header padrão é
+    // x-linkedstore-hmac-sha256 (fallback x-nuvemshop-mac).
+    const signature =
+      request.headers.get("x-linkedstore-hmac-sha256") ?? request.headers.get("x-nuvemshop-mac");
+    const valid = await verifyWebhookHmac(raw, signature);
     if (!valid) return json({ ok: false, error: "assinatura inválida" }, 401);
     try {
       await handleWebhookEvent(JSON.parse(raw));
