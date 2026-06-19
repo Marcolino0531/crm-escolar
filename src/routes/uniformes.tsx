@@ -2,7 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, Shirt, AlertTriangle, PackageSearch, Search } from "lucide-react";
+import {
+  RefreshCw,
+  Shirt,
+  AlertTriangle,
+  PackageSearch,
+  Search,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
+} from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { storeKeyForUnitName, type StoreKey } from "@/lib/nuvemshop.stores";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -53,12 +62,48 @@ type SyncLog = {
   finished_at: string | null;
 };
 
+type SortColumn = "produto" | "size";
+type SortDir = "asc" | "desc";
+
+// Ordem canônica de tamanhos por letra (quando o tamanho não é numérico).
+const LETTER_SIZE_ORDER = ["pp", "p", "m", "g", "gg", "xg", "xgg", "exg"];
+
+// Chave de ordenação de tamanho: numéricos primeiro (por valor), depois letras
+// na ordem canônica e, por fim, os demais em ordem alfabética.
+function sizeKey(size: string): [number, number, string] {
+  const s = (size ?? "").trim().toLowerCase();
+  const num = s.match(/^\d+(?:[.,]\d+)?/);
+  if (num) return [0, parseFloat(num[0].replace(",", ".")), s];
+  const idx = LETTER_SIZE_ORDER.indexOf(s);
+  if (idx >= 0) return [1, idx, s];
+  return [2, 0, s];
+}
+
+function compareSize(a: string, b: string): number {
+  const ka = sizeKey(a);
+  const kb = sizeKey(b);
+  if (ka[0] !== kb[0]) return ka[0] - kb[0];
+  if (ka[0] === 2) return ka[2].localeCompare(kb[2], "pt-BR");
+  return ka[1] - kb[1];
+}
+
 function UniformesPage() {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("uniformes");
   const { selected, schools, schoolFilterIds } = useSchool();
   const [busca, setBusca] = useState("");
   const [sincronizando, setSincronizando] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("produto");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  function toggleSort(column: SortColumn) {
+    if (column === sortColumn) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDir("asc");
+    }
+  }
 
   const { data: products = [], isLoading: loadingProducts } = useQuery({
     queryKey: ["uniform_products"],
@@ -146,6 +191,19 @@ function UniformesPage() {
         (v.sku ?? "").toLowerCase().includes(termo),
     );
   }, [unitFiltered, busca, productName]);
+
+  const sortedRows = useMemo(() => {
+    const factor = sortDir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortColumn === "produto") {
+        const byName = a.produto.localeCompare(b.produto, "pt-BR");
+        // Agrupa o mesmo modelo e, dentro dele, ordena por tamanho.
+        return factor * (byName !== 0 ? byName : compareSize(a.size, b.size));
+      }
+      const bySize = compareSize(a.size, b.size);
+      return factor * (bySize !== 0 ? bySize : a.produto.localeCompare(b.produto, "pt-BR"));
+    });
+  }, [rows, sortColumn, sortDir]);
 
   const baixoEstoque = rows.filter((v) => v.stock <= v.min_stock).length;
 
@@ -254,15 +312,29 @@ function UniformesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Peça</th>
-                <th className="px-4 py-3 font-medium">Tamanho</th>
+                <th className="px-4 py-3 font-medium">
+                  <SortHeader
+                    label="Peça"
+                    active={sortColumn === "produto"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("produto")}
+                  />
+                </th>
+                <th className="px-4 py-3 font-medium">
+                  <SortHeader
+                    label="Tamanho"
+                    active={sortColumn === "size"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("size")}
+                  />
+                </th>
                 <th className="px-4 py-3 font-medium">SKU</th>
                 <th className="px-4 py-3 text-right font-medium">Saldo</th>
                 <th className="px-4 py-3 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((v) => {
+              {sortedRows.map((v) => {
                 const critico = v.stock <= v.min_stock;
                 return (
                   <tr
@@ -307,5 +379,38 @@ function UniformesPage() {
         </p>
       )}
     </div>
+  );
+}
+
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1 uppercase tracking-wide transition-colors hover:text-foreground ${
+        active ? "text-foreground" : ""
+      }`}
+    >
+      {label}
+      {active ? (
+        dir === "asc" ? (
+          <ArrowUp className="h-3 w-3" />
+        ) : (
+          <ArrowDown className="h-3 w-3" />
+        )
+      ) : (
+        <ChevronsUpDown className="h-3 w-3 opacity-40" />
+      )}
+    </button>
   );
 }
