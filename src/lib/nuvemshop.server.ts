@@ -4,14 +4,18 @@
 //   POST /api/nuvemshop/webhook  — eventos em tempo real (produto/pedido)
 //   GET  /api/nuvemshop/cron     — auditoria noturna (Vercel Cron, 03h)
 //
-// Variáveis de ambiente (painel da Vercel):
-//   NUVEMSHOP_STORE_ID, NUVEMSHOP_ACCESS_TOKEN, NUVEMSHOP_CLIENT_SECRET
+// Variáveis de ambiente (painel da Vercel), por loja (multiloja):
+//   NUVEMSHOP_BELVEDERE_STORE_ID / NUVEMSHOP_BELVEDERE_TOKEN
+//   NUVEMSHOP_CEC_STORE_ID       / NUVEMSHOP_CEC_TOKEN
+//   NUVEMSHOP_STORE_ID / NUVEMSHOP_ACCESS_TOKEN (legado → fallback 'belvedere')
+//   NUVEMSHOP_CLIENT_SECRET (HMAC dos webhooks)
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (já existentes — gravam o estoque)
 //   CRON_SECRET (opcional — protege o endpoint de cron)
 //
 // Docs: https://tiendanube.github.io/api-documentation/
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
 
 const API_BASE = "https://api.nuvemshop.com.br/v1";
 
@@ -19,7 +23,7 @@ const API_BASE = "https://api.nuvemshop.com.br/v1";
 // https://tiendanube.github.io/api-documentation/intro#identify-your-app
 export const NUVEMSHOP_USER_AGENT = "School Hub (uniformesnb@gmail.com)";
 
-type Localized = { pt?: string } | string;
+type Localized = { [lang: string]: string | undefined } | string;
 
 type NuvemshopVariant = {
   id: number;
@@ -27,7 +31,9 @@ type NuvemshopVariant = {
   stock: number | null;
   sku: string | null;
   price: string | null;
-  values?: { pt?: string; es?: string; en?: string }[];
+  // Cada elemento corresponde a um atributo do produto (ex.: Tamanho, Cor),
+  // localizado por idioma: [{ pt: "P" }, { pt: "Azul" }].
+  values?: Localized[];
 };
 
 type NuvemshopProduct = {
@@ -42,9 +48,14 @@ type NuvemshopProduct = {
 export type SyncResult = { products: number; variants: number; discrepancies: number };
 
 function readLocalized(v: Localized | undefined): string {
-  if (!v) return "";
-  if (typeof v === "string") return v;
-  return v.pt ?? Object.values(v)[0] ?? "";
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  // Prioriza pt; cai para qualquer idioma com valor não vazio.
+  const candidates = [v.pt, ...Object.values(v)];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return "";
 }
 
 function variantSize(v: NuvemshopVariant): string {
@@ -57,22 +68,31 @@ function variantSize(v: NuvemshopVariant): string {
   );
 }
 
-function getNuvemshopEnv() {
-  const storeId = process.env.NUVEMSHOP_STORE_ID;
-  const token = process.env.NUVEMSHOP_ACCESS_TOKEN;
-  // Loga apenas a presença das variáveis (nunca os valores).
-  console.info(
-    `[nuvemshop] env STORE_ID=${storeId ? "set" : "VAZIO"} ACCESS_TOKEN=${token ? "set" : "VAZIO"}`,
-  );
-  const missing: string[] = [];
-  if (!storeId) missing.push("NUVEMSHOP_STORE_ID");
-  if (!token) missing.push("NUVEMSHOP_ACCESS_TOKEN");
-  if (missing.length > 0) {
-    throw new Error(
-      `Credenciais da Nuvemshop ausentes no ambiente da Vercel: ${missing.join(", ")}.`,
-    );
+export type StoreCreds = { key: StoreKey; storeId: string; token: string };
+
+// Resolve as credenciais de uma loja a partir do ambiente, com fallback legado
+// (NUVEMSHOP_STORE_ID/ACCESS_TOKEN) apenas para a loja 'belvedere'.
+function storeCreds(key: StoreKey): StoreCreds | null {
+  const prefix = `NUVEMSHOP_${key.toUpperCase()}`;
+  let storeId = process.env[`${prefix}_STORE_ID`];
+  let token = process.env[`${prefix}_TOKEN`];
+  if ((!storeId || !token) && key === "belvedere") {
+    storeId = storeId ?? process.env.NUVEMSHOP_STORE_ID;
+    token = token ?? process.env.NUVEMSHOP_ACCESS_TOKEN;
   }
-  return { storeId, token };
+  if (!storeId || !token) return null;
+  return { key, storeId, token };
+}
+
+// Lojas com credenciais configuradas no ambiente.
+export function configuredStores(): StoreCreds[] {
+  const found: StoreCreds[] = [];
+  for (const store of STORES) {
+    const creds = storeCreds(store.key);
+    console.info(`[nuvemshop] loja ${store.key}: credenciais ${creds ? "set" : "VAZIO"}`);
+    if (creds) found.push(creds);
+  }
+  return found;
 }
 
 const MAX_RATE_LIMIT_RETRIES = 4;
@@ -89,8 +109,8 @@ function retryDelayMs(res: Response, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 16000);
 }
 
-async function nuvemshopFetch(path: string): Promise<Response> {
-  const { storeId, token } = getNuvemshopEnv();
+async function nuvemshopFetch(store: StoreCreds, path: string): Promise<Response> {
+  const { storeId, token } = store;
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${API_BASE}/${storeId}${path}`, {
       headers: {
@@ -100,11 +120,11 @@ async function nuvemshopFetch(path: string): Promise<Response> {
         "User-Agent": NUVEMSHOP_USER_AGENT,
       },
     });
-    console.info(`[nuvemshop] GET ${path} -> ${res.status}`);
+    console.info(`[nuvemshop] [${store.key}] GET ${path} -> ${res.status}`);
     if (res.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
       const delay = retryDelayMs(res, attempt);
       console.warn(
-        `[nuvemshop] 429 Too Many Requests em ${path}; retry ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES} em ${delay}ms`,
+        `[nuvemshop] [${store.key}] 429 Too Many Requests em ${path}; retry ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES} em ${delay}ms`,
       );
       await sleep(delay);
       continue;
@@ -113,14 +133,14 @@ async function nuvemshopFetch(path: string): Promise<Response> {
   }
 }
 
-async function fetchAllProducts(): Promise<NuvemshopProduct[]> {
+async function fetchAllProducts(store: StoreCreds): Promise<NuvemshopProduct[]> {
   const products: NuvemshopProduct[] = [];
   let page = 1;
   const perPage = 200;
   for (;;) {
-    const res = await nuvemshopFetch(
-      `/products?page=${page}&per_page=${perPage}&fields=id,name,handle,published,categories,variants`,
-    );
+    // Sem `fields=` para garantir o retorno completo das variações
+    // (values/sku/price) e do nome localizado.
+    const res = await nuvemshopFetch(store, `/products?page=${page}&per_page=${perPage}`);
     if (res.status === 404) break;
     if (res.status === 429) {
       throw new Error(
@@ -139,21 +159,28 @@ async function fetchAllProducts(): Promise<NuvemshopProduct[]> {
   return products;
 }
 
-async function fetchProduct(productId: number | string): Promise<NuvemshopProduct | null> {
-  const res = await nuvemshopFetch(`/products/${productId}`);
+async function fetchProduct(
+  store: StoreCreds,
+  productId: number | string,
+): Promise<NuvemshopProduct | null> {
+  const res = await nuvemshopFetch(store, `/products/${productId}`);
   if (!res.ok) return null;
   return (await res.json()) as NuvemshopProduct;
 }
 
 // Espelha (upsert) os produtos + variações da Nuvemshop no Supabase. Conta como
 // "discrepância" toda variação cujo estoque local divergia do estoque da API.
-async function upsertCatalog(products: NuvemshopProduct[]): Promise<SyncResult> {
+async function upsertCatalog(
+  storeKey: StoreKey,
+  products: NuvemshopProduct[],
+): Promise<SyncResult> {
   let variantCount = 0;
   let discrepancies = 0;
 
   const { data: existing } = await supabaseAdmin
     .from("uniform_variants" as never)
-    .select("ns_variant_id, stock");
+    .select("ns_variant_id, stock")
+    .eq("store_key", storeKey);
   const localStock = new Map<string, number>();
   for (const row of (existing ?? []) as { ns_variant_id: string; stock: number }[]) {
     localStock.set(String(row.ns_variant_id), Number(row.stock));
@@ -161,6 +188,7 @@ async function upsertCatalog(products: NuvemshopProduct[]): Promise<SyncResult> 
 
   for (const p of products) {
     const productRow = {
+      store_key: storeKey,
       ns_product_id: String(p.id),
       name: readLocalized(p.name),
       category: p.categories?.[0] ? readLocalized(p.categories[0].name) : null,
@@ -169,7 +197,7 @@ async function upsertCatalog(products: NuvemshopProduct[]): Promise<SyncResult> 
     };
     const { error: pErr } = await supabaseAdmin
       .from("uniform_products" as never)
-      .upsert(productRow as never, { onConflict: "ns_product_id" });
+      .upsert(productRow as never, { onConflict: "store_key,ns_product_id" });
     if (pErr) throw new Error(`upsert produto ${p.id}: ${pErr.message}`);
 
     for (const v of p.variants ?? []) {
@@ -177,16 +205,17 @@ async function upsertCatalog(products: NuvemshopProduct[]): Promise<SyncResult> 
       const prev = localStock.get(String(v.id));
       if (prev !== undefined && prev !== stock) discrepancies += 1;
       const variantRow = {
+        store_key: storeKey,
         ns_variant_id: String(v.id),
         ns_product_id: String(p.id),
         size: variantSize(v),
-        sku: v.sku ?? null,
+        sku: v.sku?.trim() || null,
         stock,
         price: v.price ? Number(v.price) : null,
       };
       const { error: vErr } = await supabaseAdmin
         .from("uniform_variants" as never)
-        .upsert(variantRow as never, { onConflict: "ns_variant_id" });
+        .upsert(variantRow as never, { onConflict: "store_key,ns_variant_id" });
       if (vErr) throw new Error(`upsert variação ${v.id}: ${vErr.message}`);
       variantCount += 1;
     }
@@ -211,13 +240,27 @@ async function logSync(
   } as never);
 }
 
-// Reconciliação completa do catálogo (acionada pelo botão da UI e pelo cron).
+// Reconciliação completa do catálogo de TODAS as lojas configuradas (acionada
+// pelo botão da UI e pelo cron). Agrega os totais e grava no log.
 export async function runFullSync(source: "manual" | "cron"): Promise<SyncResult> {
+  const stores = configuredStores();
+  if (stores.length === 0) {
+    const message =
+      "Nenhuma loja Nuvemshop configurada: defina NUVEMSHOP_<LOJA>_STORE_ID e NUVEMSHOP_<LOJA>_TOKEN.";
+    await logSync(source, "error", { message });
+    throw new Error(message);
+  }
+  const total: SyncResult = { products: 0, variants: 0, discrepancies: 0 };
   try {
-    const products = await fetchAllProducts();
-    const result = await upsertCatalog(products);
-    await logSync(source, "ok", result);
-    return result;
+    for (const store of stores) {
+      const products = await fetchAllProducts(store);
+      const result = await upsertCatalog(store.key, products);
+      total.products += result.products;
+      total.variants += result.variants;
+      total.discrepancies += result.discrepancies;
+    }
+    await logSync(source, "ok", total);
+    return total;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await logSync(source, "error", { message });
@@ -254,14 +297,27 @@ export async function verifyWebhookHmac(
   return diff === 0;
 }
 
+// Identifica de qual loja configurada veio o webhook, pelo store_id do payload.
+function storeForPayload(payload: WebhookPayload): StoreCreds | null {
+  const id = String(payload.store_id);
+  return configuredStores().find((s) => s.storeId === id) ?? null;
+}
+
 // Processa um evento de webhook já validado (produto atualizado ou pedido criado).
 export async function handleWebhookEvent(payload: WebhookPayload): Promise<void> {
   try {
+    const store = storeForPayload(payload);
+    if (!store) {
+      await logSync("webhook", "error", {
+        message: `loja desconhecida para store_id=${payload.store_id}`,
+      });
+      return;
+    }
     if (payload.event.startsWith("product/")) {
-      const product = await fetchProduct(payload.id);
-      if (product) await upsertCatalog([product]);
+      const product = await fetchProduct(store, payload.id);
+      if (product) await upsertCatalog(store.key, [product]);
     } else if (payload.event.startsWith("order/")) {
-      const res = await nuvemshopFetch(`/orders/${payload.id}`);
+      const res = await nuvemshopFetch(store, `/orders/${payload.id}`);
       if (res.ok) {
         const order = (await res.json()) as {
           products?: { variant_id?: number; variant?: { id?: number }; quantity?: number }[];
@@ -273,6 +329,7 @@ export async function handleWebhookEvent(payload: WebhookPayload): Promise<void>
           const { data: current } = await supabaseAdmin
             .from("uniform_variants" as never)
             .select("stock")
+            .eq("store_key", store.key)
             .eq("ns_variant_id", String(variantId))
             .maybeSingle();
           if (current) {
@@ -280,12 +337,13 @@ export async function handleWebhookEvent(payload: WebhookPayload): Promise<void>
             await supabaseAdmin
               .from("uniform_variants" as never)
               .update({ stock: novoSaldo } as never)
+              .eq("store_key", store.key)
               .eq("ns_variant_id", String(variantId));
           }
         }
       }
     }
-    await logSync("webhook", "ok", { message: payload.event });
+    await logSync("webhook", "ok", { message: `${store.key}: ${payload.event}` });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await logSync("webhook", "error", { message });
