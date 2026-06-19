@@ -6,6 +6,7 @@ import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
+import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
 
 type Notification = {
   id: string;
@@ -32,11 +33,15 @@ type Forecast = {
 
 type LowStockVariant = {
   id: string;
-  size: string;
-  sku: string | null;
+  store_key: StoreKey;
   stock: number;
   min_stock: number;
-  ns_product_id: string;
+};
+
+// Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
+const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
+  belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
+  cec: "Estoque baixo detectado no CEC e CEC Baby",
 };
 
 function fmtBRL(n: number) {
@@ -143,23 +148,11 @@ export function NotificationsBell() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("uniform_variants" as any)
-        .select("id, size, sku, stock, min_stock, ns_product_id")
+        .select("id, store_key, stock, min_stock")
         .order("stock", { ascending: true })
-        .limit(100);
+        .limit(1000);
       if (error) return [] as LowStockVariant[];
       return ((data ?? []) as unknown as LowStockVariant[]).filter((v) => v.stock <= v.min_stock);
-    },
-  });
-
-  const { data: uniformProducts = [] } = useQuery({
-    queryKey: ["uniform_products_names"],
-    enabled: !!userId && canUniformes,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("uniform_products" as any)
-        .select("ns_product_id, name");
-      if (error) return [] as { ns_product_id: string; name: string }[];
-      return (data ?? []) as unknown as { ns_product_id: string; name: string }[];
     },
   });
 
@@ -177,6 +170,12 @@ export function NotificationsBell() {
 
   if (!userId || (!canTasks && !canFluxo && !canCobranca && !canUniformes)) return null;
 
+  // Agrupa as variações em baixo estoque por loja: 1 alerta por grupo de
+  // unidades, na ordem canônica das lojas.
+  const lowStockStores = STORES.map((s) => s.key).filter((key) =>
+    lowStock.some((v) => v.store_key === key),
+  );
+
   const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "";
   const overdue = forecasts.filter((f) => (f.due_date ?? "") < today);
   const dueToday = forecasts.filter((f) => (f.due_date ?? "") === today);
@@ -184,14 +183,11 @@ export function NotificationsBell() {
 
   // Fluxo alerts + persistent new-task alerts always count as active; the
   // dismissible task notices count only while unread.
-  const uniformName = (id: string) =>
-    uniformProducts.find((p) => p.ns_product_id === id)?.name ?? "Uniforme";
-
   const badge =
     unreadTasks.length +
     forecasts.length +
     openTasks.length +
-    lowStock.length +
+    lowStockStores.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -239,28 +235,22 @@ export function NotificationsBell() {
             </div>
           )}
 
-          {/* Uniformes: variações no/abaixo do estoque mínimo. */}
-          {canUniformes && lowStock.length > 0 && (
+          {/* Uniformes: 1 alerta agrupado por loja quando há itens em baixo estoque. */}
+          {canUniformes && lowStockStores.length > 0 && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Uniformes
               </div>
-              {lowStock.map((v) => (
+              {lowStockStores.map((key) => (
                 <Link
-                  key={v.id}
+                  key={key}
                   to="/uniformes"
                   className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
                   <div className="flex items-start gap-2">
                     <Shirt className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
                     <div className="min-w-0">
-                      <div className="font-medium text-red-600">
-                        Estoque baixo: {uniformName(v.ns_product_id)}
-                        {v.size ? ` · ${v.size}` : ""}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {v.stock} em estoque (mínimo {v.min_stock})
-                      </div>
+                      <div className="font-medium text-red-600">{LOW_STOCK_ALERT_TEXT[key]}</div>
                     </div>
                   </div>
                 </Link>
@@ -373,7 +363,7 @@ export function NotificationsBell() {
             notifications.length === 0 &&
             forecasts.length === 0 &&
             openTasks.length === 0 &&
-            lowStock.length === 0 &&
+            lowStockStores.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
