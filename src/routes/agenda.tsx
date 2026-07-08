@@ -1,15 +1,40 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Clock, Phone, GraduationCap, MapPin, Compass } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  Clock,
+  Phone,
+  GraduationCap,
+  MapPin,
+  Compass,
+  Users,
+  Plus,
+  Trash2,
+  UserRound,
+} from "lucide-react";
 import { useLeads } from "@/lib/crm/hooks";
+import { useReunioes, useColaboradores } from "@/lib/agenda.hooks";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatDateBR } from "@/lib/date-utils";
 import { displayPhoneBR } from "@/lib/phone";
+import { toTitleCase } from "@/lib/name-format";
 import type { ColunaKanban, Lead } from "@/lib/crm/types";
 
 export const Route = createFileRoute("/agenda")({
@@ -38,15 +63,36 @@ const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 // "CEC Baby" também contém "cec".
 function unitColorClasses(name: string): string {
   const n = (name || "").toLowerCase();
-  if (n.includes("baby")) return "border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100";
+  if (n.includes("baby"))
+    return "border-orange-200 bg-orange-50 text-orange-800 hover:bg-orange-100";
   if (n.includes("belvedere")) return "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100";
   if (n.includes("sereno") || n.includes("vale"))
     return "border-green-200 bg-green-50 text-green-800 hover:bg-green-100";
-  if (n.includes("cec")) return "border-yellow-200 bg-yellow-50 text-yellow-800 hover:bg-yellow-100";
+  if (n.includes("cec"))
+    return "border-yellow-200 bg-yellow-50 text-yellow-800 hover:bg-yellow-100";
   return "border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100";
 }
 
-type CalEvent = { lead: Lead; iso: string; time: string };
+// Reuniões manuais têm identidade própria (tons de azul), destacando-as das
+// visitas do funil.
+const REUNIAO_CLASSES = "border-blue-400 bg-blue-100 text-blue-900 hover:bg-blue-200";
+
+type CalEvent = {
+  id: string;
+  kind: "visita" | "reuniao";
+  iso: string;
+  time: string;
+  responsavel: string;
+  alunos: string[];
+  // visita
+  unidade?: string;
+  telefone?: string;
+  turma?: string;
+  origem?: string;
+  colunaLabel?: string;
+  // reuniao
+  colaboradores?: string[];
+};
 
 function toISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -65,31 +111,67 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function leadToEvent(lead: Lead, unidade: string): CalEvent {
+  const alunos =
+    lead.alunos.length > 0 ? lead.alunos.map((a) => a.nome).filter(Boolean) : [lead.nomeAluno];
+  return {
+    id: `lead:${lead.id}`,
+    kind: "visita",
+    iso: String(lead.dataVisita).slice(0, 10),
+    time: lead.horarioVisita ?? "",
+    responsavel: toTitleCase(lead.nomePaiMae) || "Responsável",
+    alunos: alunos.map((a) => toTitleCase(a)).filter(Boolean),
+    unidade,
+    telefone: lead.telefone,
+    turma: lead.turma,
+    origem: lead.origem,
+    colunaLabel: COLUNA_LABEL[lead.coluna],
+  };
+}
+
 function AgendaPage() {
   const { leads, isLoading } = useLeads();
+  const { reunioes, isLoading: loadingReunioes, adicionarReuniao, removerReuniao } = useReunioes();
   const { schools } = useSchool();
+  const { canEdit } = usePermissions();
+  const podeEditar = canEdit("agenda");
   const [mode, setMode] = useState<"mes" | "semana">("mes");
   const [cursor, setCursor] = useState(() => new Date());
+  const [novaOpen, setNovaOpen] = useState(false);
 
   const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "—";
 
-  // Eventos agrupados por dia (YYYY-MM-DD), já ordenados por horário.
+  // Eventos agrupados por dia (YYYY-MM-DD), já ordenados por horário. Reúne as
+  // visitas do funil de Admissões e as reuniões manuais.
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalEvent[]>();
+    const push = (ev: CalEvent) => {
+      const arr = map.get(ev.iso) ?? [];
+      arr.push(ev);
+      map.set(ev.iso, arr);
+    };
     for (const lead of leads) {
       if (!lead.dataVisita) continue;
       if (!COLUNAS_AGENDADAS.includes(lead.coluna)) continue;
-      const iso = String(lead.dataVisita).slice(0, 10);
-      const ev: CalEvent = { lead, iso, time: lead.horarioVisita ?? "" };
-      const arr = map.get(iso) ?? [];
-      arr.push(ev);
-      map.set(iso, arr);
+      push(leadToEvent(lead, schoolName(lead.schoolId)));
+    }
+    for (const r of reunioes) {
+      push({
+        id: `reuniao:${r.id}`,
+        kind: "reuniao",
+        iso: r.data,
+        time: r.horario,
+        responsavel: r.responsavelNome || "Responsável",
+        alunos: r.alunoNome ? [r.alunoNome] : [],
+        colaboradores: r.colaboradores,
+      });
     }
     for (const arr of map.values()) {
       arr.sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
     }
     return map;
-  }, [leads]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads, reunioes, schools]);
 
   const totalAgendados = useMemo(
     () => Array.from(eventsByDay.values()).reduce((acc, a) => acc + a.length, 0),
@@ -115,6 +197,11 @@ function AgendaPage() {
     });
   };
 
+  const onRemove = (ev: CalEvent) => {
+    if (ev.kind !== "reuniao") return;
+    removerReuniao(ev.id.replace("reuniao:", ""));
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -123,20 +210,39 @@ function AgendaPage() {
             <CalendarDays className="h-6 w-6" /> Agenda
           </h1>
           <p className="text-sm text-muted-foreground">
-            Visitas e reuniões marcadas no funil de Admissões.
+            Visitas do funil de Admissões e reuniões marcadas manualmente.
           </p>
         </div>
-        <Badge variant="secondary" className="text-xs">
-          {totalAgendados} agendamento{totalAgendados === 1 ? "" : "s"}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="text-xs">
+            {totalAgendados} agendamento{totalAgendados === 1 ? "" : "s"}
+          </Badge>
+          {podeEditar && (
+            <Button size="sm" onClick={() => setNovaOpen(true)}>
+              <Plus className="h-4 w-4" /> Nova Reunião
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => go(-1)} aria-label="Anterior">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => go(-1)}
+            aria-label="Anterior"
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => go(1)} aria-label="Próximo">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => go(1)}
+            aria-label="Próximo"
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
           <Button variant="outline" size="sm" className="h-8" onClick={() => setCursor(new Date())}>
@@ -152,12 +258,36 @@ function AgendaPage() {
         </Tabs>
       </div>
 
-      {isLoading ? (
+      {isLoading || loadingReunioes ? (
         <p className="text-sm text-muted-foreground">Carregando…</p>
       ) : mode === "mes" ? (
-        <MonthView cursor={cursor} eventsByDay={eventsByDay} todayISO={todayISO} schoolName={schoolName} />
+        <MonthView
+          cursor={cursor}
+          eventsByDay={eventsByDay}
+          todayISO={todayISO}
+          podeEditar={podeEditar}
+          onRemove={onRemove}
+        />
       ) : (
-        <WeekView cursor={cursor} eventsByDay={eventsByDay} todayISO={todayISO} schoolName={schoolName} />
+        <WeekView
+          cursor={cursor}
+          eventsByDay={eventsByDay}
+          todayISO={todayISO}
+          podeEditar={podeEditar}
+          onRemove={onRemove}
+        />
+      )}
+
+      {podeEditar && (
+        <NovaReuniaoDialog
+          open={novaOpen}
+          onOpenChange={setNovaOpen}
+          defaultDate={todayISO}
+          onSubmit={(input) => {
+            adicionarReuniao(input);
+            setNovaOpen(false);
+          }}
+        />
       )}
     </div>
   );
@@ -167,12 +297,14 @@ function MonthView({
   cursor,
   eventsByDay,
   todayISO,
-  schoolName,
+  podeEditar,
+  onRemove,
 }: {
   cursor: Date;
   eventsByDay: Map<string, CalEvent[]>;
   todayISO: string;
-  schoolName: (id: string) => string;
+  podeEditar: boolean;
+  onRemove: (ev: CalEvent) => void;
 }) {
   const cells = useMemo(() => {
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -186,7 +318,10 @@ function MonthView({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="grid grid-cols-7 border-b bg-muted/40">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <div
+            key={w}
+            className="px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          >
             {w}
           </div>
         ))}
@@ -206,14 +341,18 @@ function MonthView({
             >
               <div
                 className={`mb-1 flex h-6 w-6 items-center justify-center rounded-full text-xs ${
-                  isToday ? "bg-primary font-semibold text-primary-foreground" : inMonth ? "text-foreground" : "text-muted-foreground/60"
+                  isToday
+                    ? "bg-primary font-semibold text-primary-foreground"
+                    : inMonth
+                      ? "text-foreground"
+                      : "text-muted-foreground/60"
                 }`}
               >
                 {d.getDate()}
               </div>
               <div className="flex flex-col gap-1">
                 {events.map((ev) => (
-                  <EventChip key={ev.lead.id} ev={ev} schoolName={schoolName} />
+                  <EventChip key={ev.id} ev={ev} podeEditar={podeEditar} onRemove={onRemove} />
                 ))}
               </div>
             </div>
@@ -228,12 +367,14 @@ function WeekView({
   cursor,
   eventsByDay,
   todayISO,
-  schoolName,
+  podeEditar,
+  onRemove,
 }: {
   cursor: Date;
   eventsByDay: Map<string, CalEvent[]>;
   todayISO: string;
-  schoolName: (id: string) => string;
+  podeEditar: boolean;
+  onRemove: (ev: CalEvent) => void;
 }) {
   const days = useMemo(() => {
     const start = startOfWeek(cursor);
@@ -248,17 +389,25 @@ function WeekView({
         const isToday = iso === todayISO;
         return (
           <div key={iso} className="flex flex-col rounded-lg border bg-card">
-            <div className={`flex items-center justify-between border-b px-2 py-1.5 ${isToday ? "bg-primary/10" : "bg-muted/40"}`}>
+            <div
+              className={`flex items-center justify-between border-b px-2 py-1.5 ${isToday ? "bg-primary/10" : "bg-muted/40"}`}
+            >
               <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {WEEKDAYS[d.getDay()]}
               </span>
-              <span className={`text-xs ${isToday ? "font-bold text-primary" : ""}`}>{d.getDate()}</span>
+              <span className={`text-xs ${isToday ? "font-bold text-primary" : ""}`}>
+                {d.getDate()}
+              </span>
             </div>
             <div className="flex min-h-[80px] flex-col gap-1 p-1.5">
               {events.length === 0 ? (
-                <span className="px-1 py-2 text-center text-[11px] text-muted-foreground/60">—</span>
+                <span className="px-1 py-2 text-center text-[11px] text-muted-foreground/60">
+                  —
+                </span>
               ) : (
-                events.map((ev) => <EventChip key={ev.lead.id} ev={ev} schoolName={schoolName} />)
+                events.map((ev) => (
+                  <EventChip key={ev.id} ev={ev} podeEditar={podeEditar} onRemove={onRemove} />
+                ))
               )}
             </div>
           </div>
@@ -268,46 +417,273 @@ function WeekView({
   );
 }
 
-function EventChip({ ev, schoolName }: { ev: CalEvent; schoolName: (id: string) => string }) {
-  const { lead, time } = ev;
-  const alunos = lead.alunos.length > 0 ? lead.alunos.map((a) => a.nome).filter(Boolean) : [lead.nomeAluno];
-  const unidade = schoolName(lead.schoolId);
+function EventChip({
+  ev,
+  podeEditar,
+  onRemove,
+}: {
+  ev: CalEvent;
+  podeEditar: boolean;
+  onRemove: (ev: CalEvent) => void;
+}) {
+  const isReuniao = ev.kind === "reuniao";
+  const colorClasses = isReuniao ? REUNIAO_CLASSES : unitColorClasses(ev.unidade ?? "");
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors ${unitColorClasses(unidade)}`}
+          className={`flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors ${colorClasses}`}
         >
-          {time && <span className="shrink-0 font-semibold">{time}</span>}
-          <span className="truncate">{lead.nomePaiMae || "Responsável"}</span>
+          {ev.time && <span className="shrink-0 font-semibold">{ev.time}</span>}
+          <span className="truncate">{ev.responsavel}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 text-sm">
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold">{lead.nomePaiMae || "Responsável"}</span>
-            {COLUNA_LABEL[lead.coluna] && (
-              <Badge variant="secondary" className="text-[10px]">{COLUNA_LABEL[lead.coluna]}</Badge>
-            )}
+            <span className="font-semibold">{ev.responsavel}</span>
+            <Badge
+              variant="secondary"
+              className={`text-[10px] ${isReuniao ? "bg-blue-100 text-blue-900" : ""}`}
+            >
+              {isReuniao ? "Reunião" : (ev.colunaLabel ?? "Visita")}
+            </Badge>
           </div>
-          <Row icon={Clock} text={`${formatDateBR(lead.dataVisita)}${time ? ` · ${time}` : ""}`} />
-          <Row icon={GraduationCap} text={alunos.join(", ") || "—"} />
-          {lead.turma && <Row icon={GraduationCap} text={`Turma: ${lead.turma}`} />}
-          {lead.telefone && <Row icon={Phone} text={displayPhoneBR(lead.telefone)} />}
-          <Row icon={MapPin} text={unidade} />
-          {lead.origem && <Row icon={Compass} text={lead.origem} />}
+          <Row icon={Clock} text={`${formatDateBR(ev.iso)}${ev.time ? ` · ${ev.time}` : ""}`} />
+          {ev.alunos.length > 0 && <Row icon={GraduationCap} text={ev.alunos.join(", ")} />}
+          {isReuniao ? (
+            <Row icon={Users} text={`Equipe: ${ev.colaboradores?.join(", ") || "—"}`} />
+          ) : (
+            <>
+              {ev.turma && <Row icon={GraduationCap} text={`Turma: ${ev.turma}`} />}
+              {ev.telefone && <Row icon={Phone} text={displayPhoneBR(ev.telefone)} />}
+              {ev.unidade && <Row icon={MapPin} text={ev.unidade} />}
+              {ev.origem && <Row icon={Compass} text={ev.origem} />}
+            </>
+          )}
+          {isReuniao && podeEditar && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-full justify-start text-destructive hover:text-destructive"
+              onClick={() => onRemove(ev)}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Remover reunião
+            </Button>
+          )}
         </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-function Row({ icon: Icon, text }: { icon: React.ComponentType<{ className?: string }>; text: string }) {
+function Row({
+  icon: Icon,
+  text,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  text: string;
+}) {
   return (
     <div className="flex items-start gap-2 text-xs text-muted-foreground">
       <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span className="text-foreground">{text}</span>
     </div>
+  );
+}
+
+function NovaReuniaoDialog({
+  open,
+  onOpenChange,
+  defaultDate,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  defaultDate: string;
+  onSubmit: (input: {
+    data: string;
+    horario: string;
+    responsavelNome: string;
+    alunoNome: string;
+    colaboradores: string[];
+  }) => void;
+}) {
+  const [data, setData] = useState(defaultDate);
+  const [horario, setHorario] = useState("");
+  const [responsavel, setResponsavel] = useState("");
+  const [aluno, setAluno] = useState("");
+  const [colaboradores, setColaboradores] = useState<string[]>([]);
+
+  // Reseta o formulário sempre que o modal (re)abre.
+  const reset = () => {
+    setData(defaultDate);
+    setHorario("");
+    setResponsavel("");
+    setAluno("");
+    setColaboradores([]);
+  };
+
+  const handleOpenChange = (v: boolean) => {
+    if (v) reset();
+    onOpenChange(v);
+  };
+
+  const submit = () => {
+    onSubmit({ data, horario, responsavelNome: responsavel, alunoNome: aluno, colaboradores });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Nova Reunião</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="reuniao-data">Data</Label>
+              <Input
+                id="reuniao-data"
+                type="date"
+                value={data}
+                onChange={(e) => setData(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="reuniao-hora">Hora</Label>
+              <Input
+                id="reuniao-hora"
+                type="time"
+                value={horario}
+                onChange={(e) => setHorario(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="reuniao-responsavel">Nome do Responsável (Mãe/Pai)</Label>
+            <Input
+              id="reuniao-responsavel"
+              value={responsavel}
+              onChange={(e) => setResponsavel(e.target.value)}
+              placeholder="Ex.: Maria da Silva"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="reuniao-aluno">Nome do Aluno(a)</Label>
+            <Input
+              id="reuniao-aluno"
+              value={aluno}
+              onChange={(e) => setAluno(e.target.value)}
+              placeholder="Ex.: João Pedro"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Colaboradores</Label>
+            <ColaboradoresPicker value={colaboradores} onChange={setColaboradores} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={submit} disabled={!data}>
+            Agendar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ColaboradoresPicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const { colaboradores, adicionarColaborador } = useColaboradores();
+  const [novo, setNovo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const toggle = (nome: string) => {
+    onChange(value.includes(nome) ? value.filter((c) => c !== nome) : [...value, nome]);
+  };
+
+  const adicionar = async () => {
+    const nome = novo.trim();
+    if (!nome) return;
+    setSaving(true);
+    try {
+      const clean = await adicionarColaborador(nome);
+      if (clean && !value.includes(clean)) onChange([...value, clean]);
+      setNovo("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // União: opções cadastradas + quaisquer já selecionadas que ainda não constem.
+  const opcoes = useMemo(() => {
+    const set = new Set<string>([...colaboradores, ...value]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+  }, [colaboradores, value]);
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className="w-full justify-start font-normal">
+          <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">
+            {value.length > 0 ? value.join(", ") : "Selecione os participantes"}
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 space-y-2">
+        <div className="max-h-52 space-y-1 overflow-y-auto">
+          {opcoes.length === 0 && (
+            <p className="px-1 py-2 text-xs text-muted-foreground">
+              Nenhum colaborador cadastrado.
+            </p>
+          )}
+          {opcoes.map((nome) => (
+            <label
+              key={nome}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-accent"
+            >
+              <Checkbox checked={value.includes(nome)} onCheckedChange={() => toggle(nome)} />
+              <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>{nome}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 border-t pt-2">
+          <Input
+            value={novo}
+            onChange={(e) => setNovo(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void adicionar();
+              }
+            }}
+            placeholder="Adicionar colaborador"
+            className="h-8"
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-8 w-8 shrink-0"
+            disabled={saving || !novo.trim()}
+            onClick={() => void adicionar()}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
