@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
 import { AccessDenied } from "@/components/AccessDenied";
+import { MonthYearPicker } from "@/components/MonthYearPicker";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -809,6 +810,16 @@ function ConciliacaoPage() {
               </SelectContent>
             </Select>
           </div>
+          <MonthYearPicker
+            className="md:col-span-2"
+            startDate={startDate}
+            onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+          />
+          <div className="flex items-end">
+            <Button variant="outline" className="w-full" onClick={() => { setStartDate(firstOfMonth()); setEndDate(lastOfMonth()); }}>
+              <RefreshCcw className="h-4 w-4" /> Mês atual
+            </Button>
+          </div>
           <div>
             <Label>Data inicial</Label>
             <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -816,11 +827,6 @@ function ConciliacaoPage() {
           <div>
             <Label>Data final</Label>
             <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </div>
-          <div className="flex items-end">
-            <Button variant="outline" className="w-full" onClick={() => { setStartDate(firstOfMonth()); setEndDate(lastOfMonth()); }}>
-              <RefreshCcw className="h-4 w-4" /> Mês atual
-            </Button>
           </div>
         </CardContent>
       </Card>

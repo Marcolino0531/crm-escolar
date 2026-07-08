@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { formatDateBR } from "@/lib/date-utils";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -441,6 +442,10 @@ function Dashboard() {
               <label className="text-xs font-medium text-muted-foreground block">Até</label>
               <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-9 w-[150px]" />
             </div>
+            <MonthYearPicker
+              startDate={startDate}
+              onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+            />
             <Button variant="outline" size="sm" onClick={setCurrentMonth}>Mês atual</Button>
             <div>
               <label className="text-xs font-medium text-muted-foreground block">Categoria</label>
@@ -455,13 +460,29 @@ function Dashboard() {
                     <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">Despesas</div>
                   )}
                   {[...ccs].sort((a: any, b: any) => a.name.localeCompare(b.name)).map((c: any) => (
-                    <SelectItem key={`e:${c.id}`} value={`e:${c.id}`}>{c.name}</SelectItem>
+                    <SelectItem key={`e:${c.id}`} value={`e:${c.id}`}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: c.color ?? "#94a3b8" }}
+                        />
+                        {c.name}
+                      </span>
+                    </SelectItem>
                   ))}
                   {rcs.length > 0 && (
                     <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">Receitas</div>
                   )}
                   {[...rcs].sort((a: any, b: any) => a.name.localeCompare(b.name)).map((c: any) => (
-                    <SelectItem key={`r:${c.id}`} value={`r:${c.id}`}>{c.name}</SelectItem>
+                    <SelectItem key={`r:${c.id}`} value={`r:${c.id}`}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: c.color ?? "#94a3b8" }}
+                        />
+                        {c.name}
+                      </span>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
