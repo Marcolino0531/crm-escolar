@@ -17,6 +17,7 @@ import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FundosRouteImport } from './routes/fundos'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
+import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
@@ -65,6 +66,11 @@ const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
   path: '/fluxo-futuro',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ExtratoBancarioRoute = ExtratoBancarioRouteImport.update({
+  id: '/extrato-bancario',
+  path: '/extrato-bancario',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
   id: '/configuracoes',
   path: '/configuracoes',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
@@ -197,6 +208,7 @@ export interface FileRouteTypes {
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   CobrancaRoute: typeof CobrancaRoute
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
+  ExtratoBancarioRoute: typeof ExtratoBancarioRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
   FundosRoute: typeof FundosRoute
   InadimplenciaRoute: typeof InadimplenciaRoute
@@ -283,6 +296,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FluxoFuturoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/extrato-bancario': {
+      id: '/extrato-bancario'
+      path: '/extrato-bancario'
+      fullPath: '/extrato-bancario'
+      preLoaderRoute: typeof ExtratoBancarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/configuracoes': {
       id: '/configuracoes'
       path: '/configuracoes'
@@ -343,6 +363,7 @@ const rootRouteChildren: RootRouteChildren = {
   CobrancaRoute: CobrancaRoute,
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
+  ExtratoBancarioRoute: ExtratoBancarioRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
   FundosRoute: FundosRoute,
   InadimplenciaRoute: InadimplenciaRoute,

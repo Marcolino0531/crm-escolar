@@ -1485,3 +1485,107 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
       return { ...vazio, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
     }
   });
+
+// ── Alunos Matriculados Ativos (Dashboard) ──────────────────────────────────
+// Consulta o número REAL de alunos com Situação "Ativo" no Sponte, por unidade.
+// GetAlunos com `Situacao=-1` (ID da situação "Ativo", ver GetSituacoesAlunos)
+// devolve apenas os matriculados ativos, cada um com seu `TurmaAtual`. Para o
+// token CEC/CEC Baby (compartilhado), separamos por turma (Berçário/Maternal →
+// CEC Baby; Período/Ano → CEC). Belvedere e Vale do Sereno têm token próprio e
+// contam todos. RBAC por unidade aplicado (server-side).
+export interface AlunosAtivosResult {
+  total: number;
+  porUnidade: Record<string, number>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const AlunosAtivosInputSchema = z.object({
+  unidade: z.string().optional(),
+});
+
+// ID da situação "Ativo" no Sponte (negativo, conforme GetSituacoesAlunos).
+const SITUACAO_ATIVO = "-1";
+
+// Conta os alunos ativos de UM par de credenciais. Quando `segmentaPorTurma`,
+// devolve a separação CEC × CEC Baby; caso contrário, tudo em `total`.
+async function contarAtivosPorToken(
+  codigoCliente: string,
+  token: string,
+): Promise<{ cec: number; cecBaby: number; total: number }> {
+  const xml = await callSponte("GetAlunos", `Situacao=${SITUACAO_ATIVO}`, codigoCliente, token);
+  const fault = checkFault(xml);
+  if (fault) throw new Error(fault);
+  const nodes = parseXmlList(xml, "wsAluno");
+  let cec = 0;
+  let cecBaby = 0;
+  let total = 0;
+  for (const node of nodes) {
+    const alunoId = parseXmlValue(node, "AlunoID");
+    // O nó de status (RetornoOperacao) vem com AlunoID=0 quando não há registros.
+    if (!alunoId || alunoId === "0") continue;
+    total++;
+    const unidade = classificarUnidade(parseXmlValue(node, "TurmaAtual"));
+    if (unidade === "CEC Baby") cecBaby++;
+    else cec++; // null (sem turma classificável) cai na unidade-mãe CEC
+  }
+  return { cec, cecBaby, total };
+}
+
+export const fetchSponteAlunosAtivos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => AlunosAtivosInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<AlunosAtivosResult> => {
+    const unidadeKey = data.unidade ?? null;
+
+    // RBAC por unidade (server-side). `null` = acesso global (admin).
+    const allowed = await allowedSponteUnidades(context.userId);
+    const isAllowed = (u: string) => allowed === null || allowed.includes(u);
+
+    const porUnidade: Record<string, number> = {};
+
+    try {
+      if (unidadeKey === null) {
+        // ── Consolidado: CEC token (CEC + CEC Baby) + Belvedere + Vale do Sereno.
+        if (isAllowed("CEC") || isAllowed("CEC Baby")) {
+          const creds = resolverCredenciais("CEC");
+          if (creds) {
+            const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+            if (isAllowed("CEC")) porUnidade["CEC"] = c.cec;
+            if (isAllowed("CEC Baby")) porUnidade["CEC Baby"] = c.cecBaby;
+          }
+        }
+        for (const u of ["Núcleo Belvedere", "Núcleo Vale do Sereno"]) {
+          if (!isAllowed(u)) continue;
+          const creds = resolverCredenciais(u);
+          if (!creds) continue;
+          const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+          porUnidade[u] = c.total;
+        }
+      } else {
+        if (!isAllowed(unidadeKey)) {
+          return { total: 0, porUnidade: {}, error: "Sem permissão para esta unidade." };
+        }
+        const creds = resolverCredenciais(unidadeKey);
+        if (!creds) return { total: 0, porUnidade: {}, indisponivel: true };
+        const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+        if (creds.segmentaPorTurma) {
+          porUnidade[unidadeKey] = unidadeKey === "CEC Baby" ? c.cecBaby : c.cec;
+        } else {
+          porUnidade[unidadeKey] = c.total;
+        }
+      }
+    } catch (e) {
+      return {
+        total: 0,
+        porUnidade: {},
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    if (Object.keys(porUnidade).length === 0) {
+      return { total: 0, porUnidade: {}, indisponivel: true };
+    }
+    const total = Object.values(porUnidade).reduce((s, n) => s + n, 0);
+    return { total, porUnidade };
+  });
