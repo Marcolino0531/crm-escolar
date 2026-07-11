@@ -20,6 +20,7 @@ import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
+import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
@@ -79,6 +80,11 @@ const CobrancaRoute = CobrancaRouteImport.update({
   path: '/cobranca',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
+  id: '/cartao-credito',
+  path: '/cartao-credito',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AgendaRoute = AgendaRouteImport.update({
   id: '/agenda',
   path: '/agenda',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
     | '/conciliacao'
     | '/configuracoes'
@@ -199,6 +211,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdmissoesRoute: typeof AdmissoesRoute
   AgendaRoute: typeof AgendaRoute
+  CartaoCreditoRoute: typeof CartaoCreditoRoute
   CobrancaRoute: typeof CobrancaRoute
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CobrancaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cartao-credito': {
+      id: '/cartao-credito'
+      path: '/cartao-credito'
+      fullPath: '/cartao-credito'
+      preLoaderRoute: typeof CartaoCreditoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agenda': {
       id: '/agenda'
       path: '/agenda'
@@ -319,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdmissoesRoute: AdmissoesRoute,
   AgendaRoute: AgendaRoute,
+  CartaoCreditoRoute: CartaoCreditoRoute,
   CobrancaRoute: CobrancaRoute,
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,

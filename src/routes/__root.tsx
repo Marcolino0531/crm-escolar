@@ -24,6 +24,7 @@ import {
   ListTodo,
   HandCoins,
   Shirt,
+  CreditCard,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
@@ -215,6 +216,7 @@ function AppShell() {
   const showInadimplencia = canView("financeiro_inadimplencia");
   // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
   const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
+  const showCartao = canView("financeiro") && canView("financeiro_cartao");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
   // sub-tab is visible.
@@ -226,6 +228,7 @@ function AppShell() {
       showFluxo ||
       showInadimplencia ||
       showCobranca ||
+      showCartao ||
       showFundos);
   const showConfig = canView("configuracoes");
   return (
@@ -276,6 +279,9 @@ function AppShell() {
               )}
               {/* Cobrança aparece logo abaixo de Inadimplência (gated por cobranca). */}
               {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
+              {showCartao && (
+                <NavItem to="/cartao-credito" icon={CreditCard} label="Cartão de Crédito" />
+              )}
               {showFundos && <NavItem to="/fundos" icon={PiggyBank} label="Fundos" />}
             </>
           )}

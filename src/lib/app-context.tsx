@@ -184,6 +184,7 @@ export const FINANCEIRO_SUBMODULES = [
   "financeiro_fluxo",
   "financeiro_inadimplencia",
   "financeiro_cobranca",
+  "financeiro_cartao",
   "financeiro_fundos",
 ] as const;
 
@@ -208,6 +209,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   financeiro_fluxo: "Fluxo Futuro",
   financeiro_inadimplencia: "Inadimplência",
   financeiro_cobranca: "Cobrança",
+  financeiro_cartao: "Cartão de Crédito",
   financeiro_fundos: "Fundos",
 };
 

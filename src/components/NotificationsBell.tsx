@@ -1,4 +1,12 @@
-import { Bell, AlertTriangle, CalendarClock, ClipboardList, HandCoins, Shirt } from "lucide-react";
+import {
+  Bell,
+  AlertTriangle,
+  CalendarClock,
+  ClipboardList,
+  HandCoins,
+  Shirt,
+  CreditCard,
+} from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
@@ -38,6 +46,11 @@ type LowStockVariant = {
   min_stock: number;
 };
 
+type AvailableReceivable = {
+  id: string;
+  valor_liquido: number;
+};
+
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
   belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
@@ -57,6 +70,7 @@ export function NotificationsBell() {
   const canTasks = canView("tasks");
   const canFluxo = canView("financeiro_fluxo");
   const canUniformes = canView("uniformes");
+  const canCartao = canView("financeiro_cartao");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -156,6 +170,25 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Recebíveis de cartão disponíveis para transferência (derivado ao vivo:
+  // status != 'transferido' e a data de disponibilidade já chegou). NÃO
+  // dismissível — some quando o recebível é marcado como transferido. ---
+  const { data: availableReceivables = [] } = useQuery({
+    queryKey: ["credit_card_available", today],
+    enabled: !!userId && canCartao,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("credit_card_receivables" as any)
+        .select("id, valor_liquido")
+        .neq("status", "transferido")
+        .lte("data_disponibilidade", today)
+        .order("data_disponibilidade", { ascending: true });
+      if (error) return [] as AvailableReceivable[];
+      return (data ?? []) as unknown as AvailableReceivable[];
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -168,7 +201,8 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task_notifications"] }),
   });
 
-  if (!userId || (!canTasks && !canFluxo && !canCobranca && !canUniformes)) return null;
+  if (!userId || (!canTasks && !canFluxo && !canCobranca && !canUniformes && !canCartao))
+    return null;
 
   // Agrupa as variações em baixo estoque por loja: 1 alerta por grupo de
   // unidades, na ordem canônica das lojas.
@@ -188,6 +222,7 @@ export function NotificationsBell() {
     forecasts.length +
     openTasks.length +
     lowStockStores.length +
+    availableReceivables.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -251,6 +286,34 @@ export function NotificationsBell() {
                     <Shirt className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
                     <div className="min-w-0">
                       <div className="font-medium text-red-600">{LOW_STOCK_ALERT_TEXT[key]}</div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Recebíveis de cartão liberados: transferir para a conta do colégio. */}
+          {canCartao && availableReceivables.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cartão de Crédito
+              </div>
+              {availableReceivables.map((r) => (
+                <Link
+                  key={r.id}
+                  to="/cartao-credito"
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-emerald-600">
+                        Crédito de {fmtBRL(Number(r.valor_liquido) || 0)} disponível.
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        É necessário realizar a transferência para a conta do colégio.
+                      </div>
                     </div>
                   </div>
                 </Link>
@@ -364,6 +427,7 @@ export function NotificationsBell() {
             forecasts.length === 0 &&
             openTasks.length === 0 &&
             lowStockStores.length === 0 &&
+            availableReceivables.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.

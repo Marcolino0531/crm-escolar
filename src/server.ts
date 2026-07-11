@@ -5,6 +5,7 @@ import { renderErrorPage } from "./lib/error-page";
 import { handleNuvemshopApi } from "./lib/nuvemshop.api";
 import { handleUniformesApi } from "./lib/uniformes.api";
 import { handleCobrancasApi } from "./lib/cobrancas.api";
+import { handleReceivablesApi } from "./lib/receivables.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -85,6 +86,10 @@ export default {
       // Histórico de envios de WhatsApp da Cobrança.
       const cobrancasResponse = await handleCobrancasApi(request);
       if (cobrancasResponse) return cobrancasResponse;
+
+      // Verificação diária dos recebíveis de cartão (Vercel Cron).
+      const receivablesResponse = await handleReceivablesApi(request);
+      if (receivablesResponse) return receivablesResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
