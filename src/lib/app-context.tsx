@@ -166,6 +166,7 @@ export function useRole() {
 
 // ---------- Granular module permissions ----------
 export const APP_MODULES = [
+  "dashboard",
   "agenda",
   "admissoes",
   "onboarding",
@@ -195,6 +196,7 @@ export type AppModule = (typeof ALL_MODULES)[number];
 export type FinanceiroSubmodule = (typeof FINANCEIRO_SUBMODULES)[number];
 
 export const MODULE_LABELS: Record<AppModule, string> = {
+  dashboard: "Dashboard",
   agenda: "Agenda",
   admissoes: "Admissões",
   onboarding: "Onboarding",

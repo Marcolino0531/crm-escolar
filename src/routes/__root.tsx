@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router";
 import {
   LayoutDashboard,
+  Landmark,
   Upload,
   Settings,
   LogOut,
@@ -198,10 +199,13 @@ function AppShell() {
   useEffect(() => {
     if (permsLoading || didRedirect.current) return;
     didRedirect.current = true;
-    if (canView("financeiro_dashboard")) {
+    if (canView("dashboard")) {
       router.navigate({ to: "/" });
+    } else if (canView("financeiro_dashboard")) {
+      router.navigate({ to: "/extrato-bancario" });
     }
   }, [permsLoading, canView, router]);
+  const showMainDashboard = canView("dashboard");
   const showAgenda = canView("agenda");
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
@@ -247,6 +251,9 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
+          {showMainDashboard && (
+            <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
+          )}
           {(showAgenda ||
             showAdmissoes ||
             showOnboarding ||
@@ -268,7 +275,9 @@ function AppShell() {
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 Financeiro
               </div>
-              {showDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
+              {showDashboard && (
+                <NavItem to="/extrato-bancario" icon={Landmark} label="Extrato Bancário" />
+              )}
               {showUpload && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
               {showConciliacao && (
                 <NavItem to="/conciliacao" icon={FileCheck2} label="Faturamento" />

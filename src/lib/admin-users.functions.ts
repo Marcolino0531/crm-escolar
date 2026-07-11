@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const APP_MODULES = [
+  "dashboard",
   "agenda",
   "admissoes",
   "onboarding",

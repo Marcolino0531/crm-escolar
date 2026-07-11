@@ -278,7 +278,7 @@ function UploadPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["conc-recs"] });
     qc.invalidateQueries({ queryKey: ["conc-txs"] });
-    navigate({ to: "/" });
+    navigate({ to: "/extrato-bancario" });
   }
 
   function isCategorized(r: Pending) {
