@@ -19,6 +19,7 @@ const APP_MODULES = [
   "financeiro_fluxo",
   "financeiro_inadimplencia",
   "financeiro_cobranca",
+  "financeiro_cartao",
   "financeiro_fundos",
 ] as const;
 
