@@ -51,6 +51,7 @@ type UniformVariant = {
   sku: string | null;
   stock: number;
   min_stock: number;
+  price: number | null;
 };
 
 type SyncLog = {
@@ -128,7 +129,7 @@ function UniformesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("uniform_variants" as any)
-        .select("id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock")
+        .select("id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock, price")
         .order("size", { ascending: true });
       if (error) return [] as UniformVariant[];
       return (data ?? []) as unknown as UniformVariant[];
@@ -208,6 +209,13 @@ function UniformesPage() {
   }, [rows, sortColumn, sortDir]);
 
   const baixoEstoque = rows.filter((v) => v.stock <= v.min_stock).length;
+
+  // Patrimônio em estoque: soma de (preço de venda × saldo) de cada variação da
+  // unidade selecionada (não depende da busca). Preço vem sincronizado da Nuvemshop.
+  const valorEstoque = useMemo(
+    () => unitFiltered.reduce((sum, v) => sum + Number(v.price ?? 0) * (v.stock ?? 0), 0),
+    [unitFiltered],
+  );
 
   async function sincronizar() {
     setSincronizando(true);
@@ -304,7 +312,7 @@ function UniformesPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Peças
@@ -325,6 +333,14 @@ function UniformesPage() {
             className={`mt-1 text-2xl font-bold ${baixoEstoque > 0 ? "text-red-600" : "text-foreground"}`}
           >
             {baixoEstoque}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Valor em estoque
+          </div>
+          <div className="mt-1 text-2xl font-bold text-foreground">
+            {valorEstoque.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
           </div>
         </div>
       </div>
