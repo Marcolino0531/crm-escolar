@@ -30,6 +30,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
+import { UpdatePasswordScreen } from "@/components/UpdatePasswordScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
@@ -178,7 +179,7 @@ function RootComponent() {
 }
 
 function AuthGate() {
-  const { session, loading } = useAuth();
+  const { session, loading, recovery } = useAuth();
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
@@ -186,6 +187,7 @@ function AuthGate() {
       </div>
     );
   }
+  if (recovery) return <UpdatePasswordScreen />;
   if (!session) return <LoginScreen />;
   return <AppShell />;
 }
@@ -251,9 +253,7 @@ function AppShell() {
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {showMainDashboard && (
-            <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
-          )}
+          {showMainDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
           {(showAgenda ||
             showAdmissoes ||
             showOnboarding ||

@@ -4,18 +4,33 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // ---------- Auth ----------
-type AuthCtx = { session: Session | null; loading: boolean };
-const AuthContext = createContext<AuthCtx>({ session: null, loading: true });
+type AuthCtx = {
+  session: Session | null;
+  loading: boolean;
+  // True while the user is in a password-recovery flow (arrived via the
+  // "Esqueci minha senha" e-mail link). The app must show the new-password
+  // form instead of the normal shell until the password is updated.
+  recovery: boolean;
+  clearRecovery: () => void;
+};
+const AuthContext = createContext<AuthCtx>({
+  session: null,
+  loading: true,
+  recovery: false,
+  clearRecovery: () => {},
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
     });
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -24,7 +39,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
+  const clearRecovery = () => setRecovery(false);
+
+  return (
+    <AuthContext.Provider value={{ session, loading, recovery, clearRecovery }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 export const useAuth = () => useContext(AuthContext);
 
