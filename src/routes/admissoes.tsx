@@ -29,6 +29,7 @@ function AdmissoesPage() {
 
   // Filtro opcional por data de criação (Mês/Ano). null = mostra todos os leads.
   const [periodo, setPeriodo] = useState<{ start: string; end: string } | null>(null);
+  const [mostrarArquivados, setMostrarArquivados] = useState(false);
 
   const unidadeNome = schools.find((s) => s.id === selected)?.name ?? "Todas as unidades";
   const consolidado = selected === "all";
@@ -110,6 +111,15 @@ function AdmissoesPage() {
             <span className="pb-2 text-xs text-muted-foreground">Mostrando todos os leads</span>
           )}
 
+          <Button
+            variant={mostrarArquivados ? "default" : "outline"}
+            size="sm"
+            onClick={() => setMostrarArquivados((v) => !v)}
+            title="Exibir/ocultar os cartões arquivados no funil"
+          >
+            {mostrarArquivados ? "Ocultar Arquivados" : "Mostrar Arquivados"}
+          </Button>
+
           {podeEditar && (
             <button
               onClick={() => setFormularioAberto(true)}
@@ -131,6 +141,7 @@ function AdmissoesPage() {
         schoolNameById={schoolNameById}
         unidadeNome={unidadeNome}
         periodo={periodo}
+        mostrarArquivados={mostrarArquivados}
       />
 
       {(formularioAberto || leadEditando) && (

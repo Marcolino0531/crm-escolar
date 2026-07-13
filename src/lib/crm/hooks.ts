@@ -167,9 +167,9 @@ export function useLeads() {
       if (error) throw error;
     });
 
-  // Leads arquivados saem do funil (mas permanecem no banco para o histórico).
-  const leadsporColuna = (coluna: ColunaKanban) =>
-    leads.filter((l) => l.coluna === coluna && !l.arquivado);
+  // Todos os leads de uma coluna (inclui arquivados). O filtro de arquivados
+  // é aplicado na visualização (Kanban), preservando a contagem total real.
+  const leadsporColuna = (coluna: ColunaKanban) => leads.filter((l) => l.coluna === coluna);
 
   return {
     leads,

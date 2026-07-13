@@ -95,16 +95,22 @@ const LeadCard: React.FC<LeadCardProps> = ({
   };
 
   return (
-    <Draggable draggableId={lead.id} index={index} isDragDisabled={!isAdmin}>
+    <Draggable draggableId={lead.id} index={index} isDragDisabled={!isAdmin || lead.arquivado}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
           {...provided.dragHandleProps}
-          className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-3 transition-shadow ${
-            snapshot.isDragging ? "shadow-xl ring-2 ring-indigo-300 rotate-2" : "hover:shadow-md"
-          }`}
+          className={`bg-white rounded-xl shadow-sm border p-4 mb-3 transition-shadow ${
+            lead.arquivado ? "border-dashed border-gray-300 opacity-60" : "border-gray-100"
+          } ${snapshot.isDragging ? "shadow-xl ring-2 ring-indigo-300 rotate-2" : "hover:shadow-md"}`}
         >
+          {/* Etiqueta de lead arquivado */}
+          {lead.arquivado && (
+            <div className="mb-2 inline-flex items-center gap-1 bg-gray-200 border border-gray-300 text-gray-600 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
+              <span>📦</span> Arquivado
+            </div>
+          )}
           {/* Etiqueta de Unidade (somente na visão Consolidada) */}
           {consolidado && unidadeNomeBadge && (
             <div className="mb-2 inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
@@ -330,7 +336,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
           )}
 
-          {lead.coluna === "matricula" && isAdmin && onAvancarParaOnboarding && (
+          {lead.coluna === "matricula" && isAdmin && !lead.arquivado && onAvancarParaOnboarding && (
             <div className="mt-3 pt-2 border-t border-gray-50">
               <button
                 onClick={handleAvancarOnboarding}
@@ -342,7 +348,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
           )}
 
-          {!isTerminal && isAdmin && (
+          {!isTerminal && isAdmin && !lead.arquivado && (
             <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
               {colunaAtualIndex > 0 && (
                 <button
