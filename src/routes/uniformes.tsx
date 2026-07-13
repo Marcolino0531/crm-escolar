@@ -220,18 +220,43 @@ function UniformesPage() {
   async function sincronizar() {
     setSincronizando(true);
     try {
+      type SyncResponse = { ok?: boolean; error?: string; code?: string };
+      const postSync = async (token?: string) => {
+        const res = await fetch("/api/nuvemshop/sync", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        const body = (await res.json().catch(() => ({}))) as SyncResponse;
+        return { res, body };
+      };
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      const res = await fetch("/api/nuvemshop/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-      });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (!res.ok || !body.ok) throw new Error(body.error ?? "Falha na sincronização");
+      let { res, body } = await postSync(session?.access_token);
+
+      // O access_token do Supabase pode ter expirado com a aba aberta por muito
+      // tempo. Nesse caso renova a sessão e tenta 1x antes de pedir novo login.
+      if (res.status === 401 && body.code === "unauthenticated") {
+        const { data } = await supabase.auth.refreshSession();
+        if (data.session?.access_token) {
+          ({ res, body } = await postSync(data.session.access_token));
+        }
+      }
+
+      if (!res.ok || !body.ok) {
+        if (body.code === "unauthenticated") {
+          toast.error("Sua sessão do School Hub expirou. Faça login novamente.");
+        } else {
+          // Falha na integração com a Nuvemshop (token/erro do servidor): nunca
+          // pede novo login do School Hub.
+          toast.error(body.error ?? "Falha ao sincronizar com a Nuvemshop.");
+        }
+        return;
+      }
       toast.success("Sincronização concluída.");
       await Promise.all([refetchVariants(), refetchSync()]);
     } catch (e) {
