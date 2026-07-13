@@ -11,6 +11,7 @@ interface KanbanColumnProps {
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
   onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
   onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
+  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   consolidado?: boolean;
@@ -26,6 +27,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onSolicitarVisita,
   onSolicitarNaoMatricula,
   onSolicitarMatricula,
+  onAvancarParaOnboarding,
   onEditar,
   isAdmin = false,
   consolidado = false,
@@ -86,6 +88,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 onSolicitarVisita={onSolicitarVisita}
                 onSolicitarNaoMatricula={onSolicitarNaoMatricula}
                 onSolicitarMatricula={onSolicitarMatricula}
+                onAvancarParaOnboarding={onAvancarParaOnboarding}
                 onEditar={onEditar}
                 isAdmin={isAdmin}
                 consolidado={consolidado}
