@@ -10,6 +10,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   handleWebhookEvent,
+  NuvemshopAuthError,
   NUVEMSHOP_USER_AGENT,
   runFullSync,
   verifyWebhookHmac,
@@ -86,15 +87,31 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
   if (pathname === "/api/nuvemshop/sync" && request.method === "POST") {
     if (!(await isAuthenticated(request))) {
       console.warn("[nuvemshop] /sync rejeitado: usuário não autenticado");
-      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+      return json(
+        { ok: false, code: "unauthenticated", error: "Sessão inválida — faça login novamente." },
+        401,
+      );
     }
     try {
       const result = await runFullSync("manual");
       return json({ ok: true, ...result });
     } catch (e) {
+      // Falha de token da Nuvemshop (401/403) é da integração, NÃO da sessão do
+      // School Hub: devolve código próprio para a UI não pedir novo login.
+      if (e instanceof NuvemshopAuthError) {
+        console.error("[nuvemshop] /sync auth Nuvemshop falhou:", e.message);
+        return json(
+          {
+            ok: false,
+            code: "nuvemshop_auth",
+            error: `Falha na integração com a Nuvemshop: o token de acesso da loja "${e.storeKey}" está inválido ou expirado. Reconecte a loja para renovar o token.`,
+          },
+          502,
+        );
+      }
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[nuvemshop] /sync falhou:", msg);
-      return json({ ok: false, error: msg }, 500);
+      return json({ ok: false, code: "nuvemshop_error", error: msg }, 502);
     }
   }
 

@@ -47,6 +47,23 @@ type NuvemshopProduct = {
 
 export type SyncResult = { products: number; variants: number; discrepancies: number };
 
+// Erro de autenticação/autorização vindo da própria API da Nuvemshop (HTTP
+// 401/403): o token de acesso da loja é inválido, foi revogado ou o app foi
+// desinstalado. É distinto de uma sessão inválida do School Hub (Supabase);
+// os endpoints usam essa distinção para não pedir novo login por engano.
+export class NuvemshopAuthError extends Error {
+  readonly storeKey: StoreKey;
+  readonly status: number;
+  constructor(storeKey: StoreKey, status: number, detail: string) {
+    super(
+      `Nuvemshop [${storeKey}] recusou o token (HTTP ${status}): ${detail || "token inválido ou revogado"}.`,
+    );
+    this.name = "NuvemshopAuthError";
+    this.storeKey = storeKey;
+    this.status = status;
+  }
+}
+
 function readLocalized(v: Localized | undefined): string {
   if (v == null) return "";
   if (typeof v === "string") return v.trim();
@@ -128,6 +145,10 @@ async function nuvemshopFetch(store: StoreCreds, path: string): Promise<Response
       );
       await sleep(delay);
       continue;
+    }
+    if (res.status === 401 || res.status === 403) {
+      const detail = await res.text().catch(() => "");
+      throw new NuvemshopAuthError(store.key, res.status, detail.slice(0, 200));
     }
     return res;
   }
