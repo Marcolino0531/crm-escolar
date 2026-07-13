@@ -159,7 +159,17 @@ export function useLeads() {
       if (error) throw error;
     });
 
-  const leadsporColuna = (coluna: ColunaKanban) => leads.filter((l) => l.coluna === coluna);
+  // Arquiva o lead sem apagar o registro: mantém coluna/histórico, apenas o
+  // remove da visualização principal do Kanban.
+  const arquivarLead = (leadId: string) =>
+    run(async () => {
+      const { error } = await supabase.from("leads").update({ arquivado: true }).eq("id", leadId);
+      if (error) throw error;
+    });
+
+  // Leads arquivados saem do funil (mas permanecem no banco para o histórico).
+  const leadsporColuna = (coluna: ColunaKanban) =>
+    leads.filter((l) => l.coluna === coluna && !l.arquivado);
 
   return {
     leads,
@@ -172,6 +182,7 @@ export function useLeads() {
     registrarNaoMatricula,
     registrarMatricula,
     removerLead,
+    arquivarLead,
     leadsporColuna,
   };
 }

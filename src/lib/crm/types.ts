@@ -58,6 +58,9 @@ export interface Lead {
   motivoPerda?: string;
   observacaoPerda?: string;
   itensMatricula?: ItemMatricula[];
+  // Lead arquivado: matrícula já avançou para o Onboarding; sai do funil sem
+  // apagar o histórico (coluna permanece 'matricula').
+  arquivado?: boolean;
 }
 
 export interface TarefaOnboardingConfig {

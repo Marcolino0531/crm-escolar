@@ -12,6 +12,7 @@ interface LeadCardProps {
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
   onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
   onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
+  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   // Visão Consolidada: exibe a etiqueta da unidade do lead. Nas visões
@@ -29,6 +30,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   onSolicitarVisita,
   onSolicitarNaoMatricula,
   onSolicitarMatricula,
+  onAvancarParaOnboarding,
   onEditar,
   isAdmin = false,
   consolidado = false,
@@ -83,6 +85,14 @@ const LeadCard: React.FC<LeadCardProps> = ({
   };
 
   const isTerminal = lead.coluna === "matricula" || lead.coluna === "nao-matricula";
+
+  const handleAvancarOnboarding = () => {
+    if (!onAvancarParaOnboarding) return;
+    const ok = window.confirm(
+      `Avançar ${lead.nomeAluno} para o Onboarding? O cartão será arquivado e sairá do funil (o histórico é preservado).`,
+    );
+    if (ok) onAvancarParaOnboarding(lead.id, lead.nomeAluno);
+  };
 
   return (
     <Draggable draggableId={lead.id} index={index} isDragDisabled={!isAdmin}>
@@ -317,6 +327,18 @@ const LeadCard: React.FC<LeadCardProps> = ({
             <div className="mt-2 flex items-center gap-1 text-[10px] text-gray-400">
               <span>🗓️</span>
               <span>Criado em: {formatarDataCriacao(lead.criadoEm)}</span>
+            </div>
+          )}
+
+          {lead.coluna === "matricula" && isAdmin && onAvancarParaOnboarding && (
+            <div className="mt-3 pt-2 border-t border-gray-50">
+              <button
+                onClick={handleAvancarOnboarding}
+                className="w-full text-xs py-1.5 px-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-semibold"
+                title="Enviar para o Onboarding e arquivar o cartão"
+              >
+                Avançar para Onboarding →
+              </button>
             </div>
           )}
 
