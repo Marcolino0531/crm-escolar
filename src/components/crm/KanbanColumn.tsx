@@ -6,6 +6,9 @@ import LeadCard from "./LeadCard";
 interface KanbanColumnProps {
   coluna: ColunaConfig;
   leads: Lead[];
+  // Contagem total do status no período (inclui arquivados). Se ausente, usa
+  // o tamanho de `leads`.
+  total?: number;
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
@@ -22,6 +25,7 @@ interface KanbanColumnProps {
 const KanbanColumn: React.FC<KanbanColumnProps> = ({
   coluna,
   leads,
+  total,
   onRemover,
   onMover,
   onSolicitarVisita,
@@ -44,7 +48,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
           <h2 className={`font-bold text-sm ${coluna.cor}`}>{coluna.titulo}</h2>
         </div>
         <span className={`${coluna.cor} bg-white/80 text-xs font-bold px-2 py-0.5 rounded-full`}>
-          {leads.length}
+          {total ?? leads.length}
         </span>
       </div>
 

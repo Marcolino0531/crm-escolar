@@ -19,6 +19,8 @@ interface KanbanBoardProps {
   unidadeNome?: string;
   // Filtro opcional por data de criação (YYYY-MM-DD). null = mostra todos.
   periodo?: { start: string; end: string } | null;
+  // Quando true, exibe também os cartões arquivados em suas colunas.
+  mostrarArquivados?: boolean;
 }
 
 interface PendingAction {
@@ -37,6 +39,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
   schoolNameById,
   unidadeNome,
   periodo = null,
+  mostrarArquivados = false,
 }) => {
   const {
     leads,
@@ -148,24 +151,33 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
     <>
       <DragDropContext onDragEnd={onDragEnd}>
         <div className="flex gap-4 p-4 sm:p-6 overflow-x-auto h-full">
-          {COLUNAS.map((coluna) => (
-            <KanbanColumn
-              key={coluna.id}
-              coluna={coluna}
-              leads={filtrarPeriodo(leadsporColuna(coluna.id))}
-              onRemover={removerLead}
-              onMover={moverLead}
-              onSolicitarVisita={handleSolicitarVisita}
-              onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
-              onSolicitarMatricula={handleSolicitarMatricula}
-              onAvancarParaOnboarding={onAvancarParaOnboarding}
-              onEditar={onEditar}
-              isAdmin={isAdmin}
-              consolidado={consolidado}
-              schoolNameById={schoolNameById}
-              unidadeNome={unidadeNome}
-            />
-          ))}
+          {COLUNAS.map((coluna) => {
+            // Total do status no período (inclui arquivados) — alimenta o
+            // contador do cabeçalho, que não pode diminuir ao arquivar.
+            const totalColuna = filtrarPeriodo(leadsporColuna(coluna.id));
+            const visiveis = mostrarArquivados
+              ? totalColuna
+              : totalColuna.filter((l) => !l.arquivado);
+            return (
+              <KanbanColumn
+                key={coluna.id}
+                coluna={coluna}
+                leads={visiveis}
+                total={totalColuna.length}
+                onRemover={removerLead}
+                onMover={moverLead}
+                onSolicitarVisita={handleSolicitarVisita}
+                onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
+                onSolicitarMatricula={handleSolicitarMatricula}
+                onAvancarParaOnboarding={onAvancarParaOnboarding}
+                onEditar={onEditar}
+                isAdmin={isAdmin}
+                consolidado={consolidado}
+                schoolNameById={schoolNameById}
+                unidadeNome={unidadeNome}
+              />
+            );
+          })}
         </div>
       </DragDropContext>
 
