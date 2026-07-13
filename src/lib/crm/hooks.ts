@@ -329,13 +329,11 @@ export function useFuncionarios() {
     const schoolId = resolveSchoolId(dados.unidade);
     if (!schoolId) return;
     run(async () => {
-      const { error } = await supabase
-        .from("funcionarios")
-        .insert({
-          ...funcionarioToRow(schoolId, dados),
-          ferias: [] as unknown as Json,
-          faltas: [] as unknown as Json,
-        });
+      const { error } = await supabase.from("funcionarios").insert({
+        ...funcionarioToRow(schoolId, dados),
+        ferias: [] as unknown as Json,
+        faltas: [] as unknown as Json,
+      });
       if (error) throw error;
     });
   };
@@ -404,12 +402,41 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
-  // Edita uma falta EXISTENTE no array (mesmo id, sem duplicar no ranking).
-  const editarFalta = (
+  // Registra uma falta que abrange N dias consecutivos (ex.: atestado médico),
+  // gerando UMA falta por dia a partir de `dataInicio` (ISO) para que o peso
+  // total dos dias seja contabilizado no ranking. Grava tudo num único update.
+  const adicionarFaltasPeriodo = (
     funcionarioId: string,
-    faltaId: string,
-    patch: Partial<Omit<Falta, "id">>,
+    dataInicio: string,
+    numeroDias: number,
+    tipo: TipoFalta,
+    categoria: CategoriaFalta,
+    duracaoMinutos?: number,
   ) =>
+    run(async () => {
+      const atual = funcionarios.find((f) => f.id === funcionarioId);
+      const dias = Math.max(1, Math.floor(numeroDias));
+      const novas: Falta[] = [];
+      for (let i = 0; i < dias; i++) {
+        const d = new Date(`${dataInicio}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + i);
+        const dataDia = d.toISOString().slice(0, 10);
+        const nova: Falta = { id: crypto.randomUUID(), data: dataDia, tipo, categoria };
+        if (categoria !== "integral" && duracaoMinutos != null && duracaoMinutos > 0) {
+          nova.duracaoMinutos = duracaoMinutos;
+        }
+        novas.push(nova);
+      }
+      const faltas: Falta[] = [...(atual?.faltas ?? []), ...novas];
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ faltas: faltas as unknown as Json })
+        .eq("id", funcionarioId);
+      if (error) throw error;
+    });
+
+  // Edita uma falta EXISTENTE no array (mesmo id, sem duplicar no ranking).
+  const editarFalta = (funcionarioId: string, faltaId: string, patch: Partial<Omit<Falta, "id">>) =>
     run(async () => {
       const atual = funcionarios.find((f) => f.id === funcionarioId);
       const faltas = (atual?.faltas ?? []).map((fa) => {
@@ -447,6 +474,7 @@ export function useFuncionarios() {
     adicionarFerias,
     removerFerias,
     adicionarFalta,
+    adicionarFaltasPeriodo,
     editarFalta,
     removerFalta,
   };
