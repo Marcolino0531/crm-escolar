@@ -6,6 +6,7 @@ import {
   HandCoins,
   Shirt,
   CreditCard,
+  BookOpen,
 } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -52,6 +53,14 @@ type AvailableReceivable = {
   valor_liquido: number;
 };
 
+type ExtraEvent = {
+  id: string;
+  label: string;
+  meal: string | null;
+  created_at: string;
+  student: { name: string } | null;
+};
+
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
   belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
@@ -72,6 +81,7 @@ export function NotificationsBell() {
   const canFluxo = canView("financeiro_fluxo");
   const canUniformes = canView("uniformes");
   const canCartao = canView("financeiro_cartao");
+  const canDiario = canView("diario");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -204,6 +214,26 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Consumos extras do Diário do Aluno registrados HOJE (refeição/horário
+  // fora do contratado). NÃO dismissível — a lista some naturalmente no dia
+  // seguinte. Alerta a gestão sobre cobranças extras geradas. ---
+  const { data: extraEvents = [] } = useQuery({
+    queryKey: ["diario_extra_today", today],
+    enabled: !!userId && canDiario,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("diario_events" as never)
+        .select("id, label, meal, created_at, student:diario_students(name)")
+        .eq("extra_charge", true)
+        .gte("created_at", `${today}T00:00:00`)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) return [] as ExtraEvent[];
+      return (data ?? []) as unknown as ExtraEvent[];
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -216,7 +246,10 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task_notifications"] }),
   });
 
-  if (!userId || (!canTasks && !canFluxo && !canCobranca && !canUniformes && !canCartao))
+  if (
+    !userId ||
+    (!canTasks && !canFluxo && !canCobranca && !canUniformes && !canCartao && !canDiario)
+  )
     return null;
 
   // Agrupa as variações em baixo estoque por loja: 1 alerta por grupo de
@@ -238,6 +271,7 @@ export function NotificationsBell() {
     openTasks.length +
     lowStockStores.length +
     availableReceivables.length +
+    extraEvents.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -328,6 +362,34 @@ export function NotificationsBell() {
                       </div>
                       <div className="text-[11px] text-muted-foreground">
                         É necessário realizar a transferência para a conta do colégio.
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Diário do Aluno: consumos extras (refeição/horário fora do contratado). */}
+          {canDiario && extraEvents.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Diário do Aluno
+              </div>
+              {extraEvents.map((e) => (
+                <Link
+                  key={e.id}
+                  to="/diario"
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">
+                        Consumo extra: {e.student?.name ?? "Aluno"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {e.label} — cobrança extra gerada para a família.
                       </div>
                     </div>
                   </div>
@@ -443,6 +505,7 @@ export function NotificationsBell() {
             openTasks.length === 0 &&
             lowStockStores.length === 0 &&
             availableReceivables.length === 0 &&
+            extraEvents.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
