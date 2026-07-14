@@ -6,6 +6,7 @@ import { handleNuvemshopApi } from "./lib/nuvemshop.api";
 import { handleUniformesApi } from "./lib/uniformes.api";
 import { handleCobrancasApi } from "./lib/cobrancas.api";
 import { handleReceivablesApi } from "./lib/receivables.api";
+import { handleDiarioApi } from "./lib/diario.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -90,6 +91,10 @@ export default {
       // Verificação diária dos recebíveis de cartão (Vercel Cron).
       const receivablesResponse = await handleReceivablesApi(request);
       if (receivablesResponse) return receivablesResponse;
+
+      // Sincronização diária do Diário do Aluno com o Sponte (Vercel Cron).
+      const diarioResponse = await handleDiarioApi(request);
+      if (diarioResponse) return diarioResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
