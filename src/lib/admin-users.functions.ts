@@ -11,6 +11,7 @@ const APP_MODULES = [
   "rh",
   "tasks",
   "uniformes",
+  "diario",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)
