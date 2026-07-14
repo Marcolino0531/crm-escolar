@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowDownCircle, ArrowUpCircle, Upload, Wallet, Download, Pencil, Trash2, AlertCircle } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, Upload, Wallet, Download, Pencil, Trash2, AlertCircle, Wand2 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
   PieChart, Pie, Legend,
@@ -110,6 +110,15 @@ function Dashboard() {
         .maybeSingle();
       if (error) throw error;
       return data as any;
+    },
+  });
+
+  const { data: rules = [] } = useQuery({
+    queryKey: ["categorization_rules"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("categorization_rules").select("*");
+      if (error) throw error;
+      return data ?? [];
     },
   });
 
@@ -288,6 +297,54 @@ function Dashboard() {
     setSelectedIds(new Set());
     setBulkCategory("");
     setBulkSub("");
+    await qc.invalidateQueries({ queryKey: ["dashboard"] });
+  }
+
+  // ── Aplicar regras de categorização retroativamente ─────────────────────────
+  const [applyingRules, setApplyingRules] = useState(false);
+
+  async function applyPendingRules() {
+    if (rules.length === 0) return toast.error("Nenhuma regra de categorização cadastrada.");
+    // Transações sem categoria no período exibido (independente do filtro de categoria,
+    // já que lançamentos "Definir" não aparecem quando há categoria selecionada).
+    const pendentes = filteredTxs.filter(t =>
+      t.type === "entrada" ? !(t as any).revenue_category_id : !t.cost_center_id,
+    );
+    // Agrupa por patch resultante para atualizar em lote (um update por combinação).
+    const groups = new Map<string, { patch: Record<string, string | null>; ids: string[] }>();
+    for (const t of pendentes) {
+      const d = String(t.description ?? "").toLowerCase();
+      const wantedKind = t.type === "entrada" ? "revenue" : "expense";
+      const match = (rules as any[]).find(r =>
+        (r.kind ?? "expense") === wantedKind &&
+        d.includes(String(r.keyword).toLowerCase()) &&
+        (wantedKind === "revenue" ? !!r.revenue_category_id : !!r.cost_center_id),
+      );
+      if (!match) continue;
+      const patch =
+        wantedKind === "revenue"
+          ? { revenue_category_id: match.revenue_category_id, revenue_subcategory_id: match.revenue_subcategory_id ?? null, cost_center_id: null, sub_cost_center_id: null }
+          : { cost_center_id: match.cost_center_id, sub_cost_center_id: match.sub_cost_center_id ?? null, revenue_category_id: null, revenue_subcategory_id: null };
+      const key = JSON.stringify(patch);
+      const group = groups.get(key) ?? { patch, ids: [] };
+      group.ids.push(t.id);
+      groups.set(key, group);
+    }
+    if (groups.size === 0) {
+      return toast.info("Nenhuma transação pendente correspondeu às regras ativas.");
+    }
+    setApplyingRules(true);
+    let updated = 0;
+    for (const { patch, ids } of groups.values()) {
+      const { error } = await supabase.from("transactions").update(patch).in("id", ids);
+      if (error) {
+        setApplyingRules(false);
+        return toast.error(error.message);
+      }
+      updated += ids.length;
+    }
+    setApplyingRules(false);
+    toast.success(`${updated} transação(ões) categorizada(s) automaticamente pelas regras.`);
     await qc.invalidateQueries({ queryKey: ["dashboard"] });
   }
 
@@ -575,6 +632,17 @@ function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={applyPendingRules}
+                disabled={applyingRules || rules.length === 0}
+                title="Categoriza automaticamente as transações sem categoria do período usando as regras cadastradas"
+              >
+                <Wand2 className="h-4 w-4" /> {applyingRules ? "Aplicando…" : "Aplicar Regras Pendentes"}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={exportExcel} disabled={tableRows.length === 0}>
               <Download className="h-4 w-4" /> Exportar Excel
             </Button>
