@@ -1638,20 +1638,19 @@ async function listarAlunosAtivos(codigoCliente: string, token: string): Promise
   return alunos;
 }
 
-export const syncDiarioSponte = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }): Promise<DiarioSyncResult> => {
-    // Somente admin (allowedSponteUnidades retorna null para admin).
-    const allowed = await allowedSponteUnidades(context.userId);
-    if (allowed !== null) {
-      return {
-        turmas: 0,
-        alunos: 0,
-        porUnidade: {},
-        error: "Apenas administradores podem sincronizar.",
-      };
-    }
+// Regra estrita de distribuição do token compartilhado CEC/CEC Baby: turmas de
+// Berçário até Maternal 3 vão obrigatoriamente para "CEC Baby"; todas as demais
+// (Jardim, Períodos, Anos etc.) vão para "CEC".
+function unidadeDestinoDiario(turma: string): "CEC" | "CEC Baby" {
+  const t = normalizar(turma);
+  if (t.includes("bercario") || t.includes("maternal")) return "CEC Baby";
+  return "CEC";
+}
 
+// Núcleo do sync do Diário (sem auth) — reutilizado pelo botão manual (admin) e
+// pelo cron diário (/api/diario/cron). Escreve via service role.
+export async function runDiarioSponteSync(): Promise<DiarioSyncResult> {
+  {
     // Mapa nome da unidade → school_id (as unidades Sponte casam com schools.name).
     const { data: schoolRows } = await supabaseAdmin.from("schools" as any).select("id, name");
     const schoolIdByName: Record<string, string> = {};
@@ -1669,7 +1668,7 @@ export const syncDiarioSponte = createServerFn({ method: "POST" })
       if (credsCec) {
         const alunos = await listarAlunosAtivos(credsCec.codigoCliente, credsCec.token);
         for (const a of alunos) {
-          const unidade = classificarUnidade(a.turma) ?? "CEC";
+          const unidade = unidadeDestinoDiario(a.turma);
           coletados.push({
             schoolName: unidade,
             className: a.turma,
@@ -1758,4 +1757,21 @@ export const syncDiarioSponte = createServerFn({ method: "POST" })
     if (stErr) return { turmas: turmaRows.length, alunos: 0, porUnidade: {}, error: stErr.message };
 
     return { turmas: turmaRows.length, alunos: studentRows.length, porUnidade };
+  }
+}
+
+export const syncDiarioSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<DiarioSyncResult> => {
+    // Somente admin (allowedSponteUnidades retorna null para admin).
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null) {
+      return {
+        turmas: 0,
+        alunos: 0,
+        porUnidade: {},
+        error: "Apenas administradores podem sincronizar.",
+      };
+    }
+    return runDiarioSponteSync();
   });
