@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   BookOpen,
   Search,
@@ -9,6 +10,7 @@ import {
   AlertTriangle,
   Download,
   Utensils,
+  RefreshCw,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -19,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { StudentActionSheet } from "@/components/diario/StudentActionSheet";
 import { DiarioManager } from "@/components/diario/DiarioManager";
+import { syncDiarioSponte } from "@/lib/sponte.functions";
 import {
   MEALS,
   MEAL_LABEL,
@@ -102,10 +105,32 @@ function useStudents(schoolFilterIds: string[] | null) {
 }
 
 function DiarioPage() {
-  const { canEdit } = usePermissions();
+  const { canEdit, isAdmin } = usePermissions();
   const podeEditar = canEdit("diario");
   const { selected, schools, schoolFilterIds } = useSchool();
   const { data: students = [], isLoading } = useStudents(schoolFilterIds);
+  const qc = useQueryClient();
+
+  // Sincronização com o Sponte (fonte da verdade de turmas/alunos). Admin-only.
+  const sync = useMutation({
+    mutationFn: async () => {
+      const res = await syncDiarioSponte();
+      if (res.error) throw new Error(res.error);
+      return res;
+    },
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["diario_students"] });
+      if (res.indisponivel) {
+        toast.warning("Sponte indisponível ou sem alunos ativos.");
+      } else {
+        toast.success(
+          `Sincronizado com o Sponte: ${res.alunos} aluno(s) e ${res.turmas} turma(s).`,
+        );
+      }
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Falha ao sincronizar com o Sponte."),
+  });
 
   const [busca, setBusca] = useState("");
   const [active, setActive] = useState<DiarioStudent | null>(null);
@@ -147,11 +172,19 @@ function DiarioPage() {
             </p>
           </div>
         </div>
-        {podeEditar && (
-          <Button variant="outline" onClick={() => setManagerOpen(true)}>
-            <Settings2 className="mr-2 h-4 w-4" /> Gerenciar
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />
+              {sync.isPending ? "Sincronizando…" : "Sincronizar com Sponte"}
+            </Button>
+          )}
+          {podeEditar && (
+            <Button variant="outline" onClick={() => setManagerOpen(true)}>
+              <Settings2 className="mr-2 h-4 w-4" /> Gerenciar
+            </Button>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="registro" className="w-full">

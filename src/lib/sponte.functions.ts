@@ -405,7 +405,12 @@ async function coletarPendencias(
     const lote = dias.slice(i, i + DIAS_CONC);
     const resultados = await Promise.allSettled(
       lote.map((dia) =>
-        callSponte("GetParcelas", `DataVencimento=${ymdParaBr(dia)};Situacao=Aberta`, codigoCliente, token),
+        callSponte(
+          "GetParcelas",
+          `DataVencimento=${ymdParaBr(dia)};Situacao=Aberta`,
+          codigoCliente,
+          token,
+        ),
       ),
     );
     for (const r of resultados) {
@@ -1181,9 +1186,7 @@ async function coletarInadimplenciaPorEscopo(
     const valeSerenoAllowed = isAllowed("Núcleo Vale do Sereno");
     const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
     const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
-    const valeSerenoCreds = valeSerenoAllowed
-      ? resolverCredenciais("Núcleo Vale do Sereno")
-      : null;
+    const valeSerenoCreds = valeSerenoAllowed ? resolverCredenciais("Núcleo Vale do Sereno") : null;
     if (!cecCreds && !belvedereCreds && !valeSerenoCreds) {
       // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
       if (allowed !== null) return { pendencias: [] };
@@ -1449,7 +1452,12 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
 
     try {
       const [respXml, alunoXml] = await Promise.all([
-        callSponte("GetResponsavelFinanceiro", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+        callSponte(
+          "GetResponsavelFinanceiro",
+          `AlunoID=${alunoId}`,
+          creds.codigoCliente,
+          creds.token,
+        ),
         callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
       ]);
 
@@ -1588,4 +1596,166 @@ export const fetchSponteAlunosAtivos = createServerFn({ method: "POST" })
     }
     const total = Object.values(porUnidade).reduce((s, n) => s + n, 0);
     return { total, porUnidade };
+  });
+
+// ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
+// Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
+// verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são
+// casados por (school_id, sponte_aluno_id); as fotos existentes nunca são
+// sobrescritas. Somente administradores podem executar (escreve em TODAS as
+// unidades via service role).
+
+export interface DiarioSyncResult {
+  turmas: number;
+  alunos: number;
+  porUnidade: Record<string, number>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+interface AlunoAtivo {
+  sponteId: string;
+  nome: string;
+  turma: string;
+}
+
+// Lista os alunos ativos de UM par de credenciais (Nome, AlunoID, TurmaAtual).
+async function listarAlunosAtivos(codigoCliente: string, token: string): Promise<AlunoAtivo[]> {
+  const xml = await callSponte("GetAlunos", `Situacao=${SITUACAO_ATIVO}`, codigoCliente, token);
+  const fault = checkFault(xml);
+  if (fault) throw new Error(fault);
+  const nodes = parseXmlList(xml, "wsAluno");
+  const alunos: AlunoAtivo[] = [];
+  for (const node of nodes) {
+    const sponteId = parseXmlValue(node, "AlunoID");
+    if (!sponteId || sponteId === "0") continue;
+    alunos.push({
+      sponteId,
+      nome: parseXmlValue(node, "Nome").trim(),
+      turma: parseXmlValue(node, "TurmaAtual").trim(),
+    });
+  }
+  return alunos;
+}
+
+export const syncDiarioSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<DiarioSyncResult> => {
+    // Somente admin (allowedSponteUnidades retorna null para admin).
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null) {
+      return {
+        turmas: 0,
+        alunos: 0,
+        porUnidade: {},
+        error: "Apenas administradores podem sincronizar.",
+      };
+    }
+
+    // Mapa nome da unidade → school_id (as unidades Sponte casam com schools.name).
+    const { data: schoolRows } = await supabaseAdmin.from("schools" as any).select("id, name");
+    const schoolIdByName: Record<string, string> = {};
+    for (const s of (schoolRows ?? []) as any[]) schoolIdByName[s.name as string] = s.id as string;
+
+    // Coleta os alunos ativos por unidade de destino (school name).
+    // Cada aluno: { schoolName, className, name, sponteId }.
+    const coletados: { schoolName: string; className: string; name: string; sponteId: string }[] =
+      [];
+    const porUnidade: Record<string, number> = {};
+
+    try {
+      // CEC token (compartilhado): separa CEC × CEC Baby por TurmaAtual.
+      const credsCec = resolverCredenciais("CEC");
+      if (credsCec) {
+        const alunos = await listarAlunosAtivos(credsCec.codigoCliente, credsCec.token);
+        for (const a of alunos) {
+          const unidade = classificarUnidade(a.turma) ?? "CEC";
+          coletados.push({
+            schoolName: unidade,
+            className: a.turma,
+            name: a.nome,
+            sponteId: a.sponteId,
+          });
+        }
+      }
+      // Belvedere e Vale do Sereno: token próprio, todos os alunos na sua unidade.
+      for (const unidade of ["Núcleo Belvedere", "Núcleo Vale do Sereno"]) {
+        const creds = resolverCredenciais(unidade);
+        if (!creds) continue;
+        const alunos = await listarAlunosAtivos(creds.codigoCliente, creds.token);
+        for (const a of alunos) {
+          coletados.push({
+            schoolName: unidade,
+            className: a.turma,
+            name: a.nome,
+            sponteId: a.sponteId,
+          });
+        }
+      }
+    } catch (e) {
+      return {
+        turmas: 0,
+        alunos: 0,
+        porUnidade: {},
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    // Filtra alunos de unidades que não existem em schools (sem destino válido).
+    const validos = coletados.filter((c) => schoolIdByName[c.schoolName]);
+    if (validos.length === 0) {
+      return { turmas: 0, alunos: 0, porUnidade: {}, indisponivel: true };
+    }
+
+    // ── Upsert das turmas (distinct por school_id + nome, ignorando vazios). ──
+    const turmaKeys = new Set<string>();
+    const turmaRows: { school_id: string; name: string }[] = [];
+    for (const c of validos) {
+      if (!c.className) continue;
+      const schoolId = schoolIdByName[c.schoolName];
+      const key = `${schoolId}::${c.className}`;
+      if (turmaKeys.has(key)) continue;
+      turmaKeys.add(key);
+      turmaRows.push({ school_id: schoolId, name: c.className });
+    }
+    if (turmaRows.length > 0) {
+      const { error: upErr } = await supabaseAdmin
+        .from("diario_classes" as any)
+        .upsert(turmaRows, { onConflict: "school_id,name", ignoreDuplicates: true });
+      if (upErr) return { turmas: 0, alunos: 0, porUnidade: {}, error: upErr.message };
+    }
+
+    // Recarrega as turmas para montar o mapa (school_id, name) → class_id.
+    const schoolIds = Array.from(new Set(validos.map((c) => schoolIdByName[c.schoolName])));
+    const { data: classRows } = await supabaseAdmin
+      .from("diario_classes" as any)
+      .select("id, school_id, name")
+      .in("school_id", schoolIds);
+    const classIdByKey: Record<string, string> = {};
+    for (const r of (classRows ?? []) as any[]) {
+      classIdByKey[`${r.school_id}::${r.name}`] = r.id as string;
+    }
+
+    // ── Upsert dos alunos por (school_id, sponte_aluno_id). NÃO envia `photo`
+    // (preserva a foto existente no update). O trigger sincroniza class_name a
+    // partir do class_id quando presente. ──
+    const studentRows = validos.map((c) => {
+      const schoolId = schoolIdByName[c.schoolName];
+      const classId = c.className ? (classIdByKey[`${schoolId}::${c.className}`] ?? null) : null;
+      porUnidade[c.schoolName] = (porUnidade[c.schoolName] ?? 0) + 1;
+      return {
+        school_id: schoolId,
+        sponte_aluno_id: c.sponteId,
+        name: c.name,
+        class_id: classId,
+        class_name: c.className,
+      };
+    });
+
+    const { error: stErr } = await supabaseAdmin
+      .from("diario_students" as any)
+      .upsert(studentRows, { onConflict: "school_id,sponte_aluno_id" });
+    if (stErr) return { turmas: turmaRows.length, alunos: 0, porUnidade: {}, error: stErr.message };
+
+    return { turmas: turmaRows.length, alunos: studentRows.length, porUnidade };
   });
