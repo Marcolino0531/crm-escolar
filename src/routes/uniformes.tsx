@@ -14,7 +14,11 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
-import { storeKeyForUnitName, type StoreKey } from "@/lib/nuvemshop.stores";
+import {
+  storeKeyForUnitName,
+  isValeDoSerenoProductName,
+  type StoreKey,
+} from "@/lib/nuvemshop.stores";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -208,7 +212,11 @@ function UniformesPage() {
     });
   }, [rows, sortColumn, sortDir]);
 
-  const baixoEstoque = rows.filter((v) => v.stock <= v.min_stock).length;
+  // Vale do Sereno está sendo descontinuado: seus itens abaixo do mínimo não
+  // contam como estoque baixo (não poluem o indicador nem a tabela).
+  const baixoEstoque = rows.filter(
+    (v) => v.stock <= v.min_stock && !isValeDoSerenoProductName(v.produto),
+  ).length;
 
   // Patrimônio em estoque: soma de (preço de venda × saldo) de cada variação da
   // unidade selecionada (não depende da busca). Preço vem sincronizado da Nuvemshop.
@@ -426,7 +434,8 @@ function UniformesPage() {
             </thead>
             <tbody>
               {sortedRows.map((v) => {
-                const critico = v.stock <= v.min_stock;
+                const descontinuado = isValeDoSerenoProductName(v.produto);
+                const critico = v.stock <= v.min_stock && !descontinuado;
                 return (
                   <tr
                     key={v.id}
@@ -445,6 +454,10 @@ function UniformesPage() {
                         <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
                           <AlertTriangle className="h-3 w-3" />
                           Estoque baixo
+                        </span>
+                      ) : descontinuado && v.stock <= v.min_stock ? (
+                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+                          Descontinuado
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">

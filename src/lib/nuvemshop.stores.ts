@@ -50,3 +50,13 @@ export function storeKeyForUnitName(unitName: string | null | undefined): StoreK
   }
   return null;
 }
+
+// Belvedere e Vale do Sereno partilham a mesma loja Nuvemshop (store_key
+// "belvedere"), então a origem só pode ser distinguida pelo nome da peça: os
+// itens do Vale do Sereno vêm prefixados com "VALE DO SERENO - ...". Como esses
+// uniformes estão sendo descontinuados, seus alertas de estoque baixo são
+// intencionalmente ignorados.
+export function isValeDoSerenoProductName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return normalize(name).includes("vale do sereno");
+}

@@ -14,7 +14,7 @@ import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
-import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
+import { STORES, isValeDoSerenoProductName, type StoreKey } from "@/lib/nuvemshop.stores";
 
 type Notification = {
   id: string;
@@ -42,6 +42,7 @@ type Forecast = {
 type LowStockVariant = {
   id: string;
   store_key: StoreKey;
+  ns_product_id: string;
   stock: number;
   min_stock: number;
 };
@@ -160,13 +161,27 @@ export function NotificationsBell() {
     enabled: !!userId && canUniformes,
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("uniform_variants" as any)
-        .select("id, store_key, stock, min_stock")
-        .order("stock", { ascending: true })
-        .limit(1000);
-      if (error) return [] as LowStockVariant[];
-      return ((data ?? []) as unknown as LowStockVariant[]).filter((v) => v.stock <= v.min_stock);
+      const [vRes, pRes] = await Promise.all([
+        supabase
+          .from("uniform_variants" as any)
+          .select("id, store_key, ns_product_id, stock, min_stock")
+          .order("stock", { ascending: true })
+          .limit(1000),
+        supabase.from("uniform_products" as any).select("store_key, ns_product_id, name"),
+      ]);
+      if (vRes.error) return [] as LowStockVariant[];
+      const nameByKey = new Map<string, string>();
+      for (const p of (pRes.data ?? []) as unknown as {
+        store_key: string;
+        ns_product_id: string;
+        name: string | null;
+      }[]) {
+        nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
+      }
+      return ((vRes.data ?? []) as unknown as LowStockVariant[])
+        .filter((v) => v.stock <= v.min_stock)
+        // Vale do Sereno em descontinuação: não dispara alerta no sininho.
+        .filter((v) => !isValeDoSerenoProductName(nameByKey.get(`${v.store_key}:${v.ns_product_id}`)));
     },
   });
 
