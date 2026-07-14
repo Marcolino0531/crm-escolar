@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowDownCircle, ArrowUpCircle, Upload, Wallet, Download, Pencil, Trash2, AlertCircle } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -218,6 +219,77 @@ function Dashboard() {
     if (kind === "r") opts = rss.filter((s: any) => s.revenue_category_id === id).map((s: any) => ({ id: s.id, name: s.name }));
     return opts.sort((a, b) => a.name.localeCompare(b.name));
   }, [categoryFilter, subCcs, rss]);
+
+  // ── Edição em lote ──────────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkCategory, setBulkCategory] = useState<string>(""); // "" | "e:<ccId>" | "r:<rcId>"
+  const [bulkSub, setBulkSub] = useState<string>("");
+  const [bulkSaving, setBulkSaving] = useState(false);
+
+  // Só contam os selecionados que continuam visíveis na tabela atual.
+  const selectedRows = useMemo(
+    () => tableRows.filter(t => selectedIds.has(t.id)),
+    [tableRows, selectedIds],
+  );
+  const allVisibleSelected = tableRows.length > 0 && selectedRows.length === tableRows.length;
+  const someVisibleSelected = selectedRows.length > 0 && !allVisibleSelected;
+
+  function toggleRow(id: string, checked: boolean) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+  function toggleAllVisible(checked: boolean) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      for (const t of tableRows) {
+        if (checked) next.add(t.id);
+        else next.delete(t.id);
+      }
+      return next;
+    });
+  }
+
+  const bulkSubOptions = useMemo(() => {
+    if (!bulkCategory) return [] as { id: string; name: string }[];
+    const [kind, id] = bulkCategory.split(":");
+    let opts: { id: string; name: string }[] = [];
+    if (kind === "e") opts = subCcs.filter((s: any) => s.cost_center_id === id).map((s: any) => ({ id: s.id, name: s.name }));
+    if (kind === "r") opts = rss.filter((s: any) => s.revenue_category_id === id).map((s: any) => ({ id: s.id, name: s.name }));
+    return opts.sort((a, b) => a.name.localeCompare(b.name));
+  }, [bulkCategory, subCcs, rss]);
+
+  async function applyBulkCategories() {
+    if (!bulkCategory) return toast.error("Selecione uma categoria.");
+    const [kind, id] = bulkCategory.split(":");
+    const targetType = kind === "e" ? "saida" : "entrada";
+    const ids = selectedRows.filter(t => t.type === targetType).map(t => t.id);
+    if (ids.length === 0) {
+      return toast.error(
+        `Nenhuma transação de ${kind === "e" ? "saída" : "entrada"} selecionada para esta categoria.`,
+      );
+    }
+    const patch =
+      kind === "e"
+        ? { cost_center_id: id, sub_cost_center_id: bulkSub || null, revenue_category_id: null, revenue_subcategory_id: null }
+        : { revenue_category_id: id, revenue_subcategory_id: bulkSub || null, cost_center_id: null, sub_cost_center_id: null };
+    setBulkSaving(true);
+    const { error } = await supabase.from("transactions").update(patch).in("id", ids);
+    setBulkSaving(false);
+    if (error) return toast.error(error.message);
+    const ignoradas = selectedRows.length - ids.length;
+    toast.success(
+      `${ids.length} transação(ões) atualizada(s).` +
+        (ignoradas > 0 ? ` ${ignoradas} ignorada(s) por tipo incompatível.` : ""),
+    );
+    setSelectedIds(new Set());
+    setBulkCategory("");
+    setBulkSub("");
+    await qc.invalidateQueries({ queryKey: ["dashboard"] });
+  }
 
   const byCC = ccs.map(cc => {
     const total = filteredTxs
@@ -509,6 +581,67 @@ function Dashboard() {
           </div>
         </CardHeader>
         <CardContent>
+          {isAdmin && selectedRows.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <div className="text-sm font-medium">
+                {selectedRows.length} {selectedRows.length === 1 ? "item selecionado" : "itens selecionados"}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Categoria</label>
+                <Select
+                  value={bulkCategory}
+                  onValueChange={(v) => { setBulkCategory(v); setBulkSub(""); }}
+                >
+                  <SelectTrigger className="h-9 w-[200px]"><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                  <SelectContent>
+                    {ccs.length > 0 && (
+                      <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">Despesas</div>
+                    )}
+                    {[...ccs].sort((a: any, b: any) => a.name.localeCompare(b.name)).map((c: any) => (
+                      <SelectItem key={`e:${c.id}`} value={`e:${c.id}`}>
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.color ?? "#94a3b8" }} />
+                          {c.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {rcs.length > 0 && (
+                      <div className="px-2 py-1 text-[10px] uppercase text-muted-foreground">Receitas</div>
+                    )}
+                    {[...rcs].sort((a: any, b: any) => a.name.localeCompare(b.name)).map((c: any) => (
+                      <SelectItem key={`r:${c.id}`} value={`r:${c.id}`}>
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.color ?? "#94a3b8" }} />
+                          {c.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Subcategoria</label>
+                <Select
+                  value={bulkSub}
+                  onValueChange={setBulkSub}
+                  disabled={!bulkCategory || bulkSubOptions.length === 0}
+                >
+                  <SelectTrigger className="h-9 w-[200px]"><SelectValue placeholder="Nenhuma" /></SelectTrigger>
+                  <SelectContent>
+                    {bulkSubOptions.map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button size="sm" onClick={applyBulkCategories} disabled={bulkSaving || !bulkCategory}>
+                {bulkSaving ? "Aplicando…" : "Aplicar Categorias"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} disabled={bulkSaving}>
+                Limpar seleção
+              </Button>
+            </div>
+          )}
           {tableRows.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma transação encontrada com os filtros selecionados.</p>
           ) : (
@@ -516,6 +649,15 @@ function Dashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    {isAdmin && (
+                      <th className="py-2 pr-3 w-8">
+                        <Checkbox
+                          checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                          onCheckedChange={(v) => toggleAllVisible(v === true)}
+                          aria-label="Selecionar tudo"
+                        />
+                      </th>
+                    )}
                     <th className="py-2 pr-4">Data</th>
                     <th className="py-2 pr-4">Descrição</th>
                     <th className="py-2 pr-4">Categoria</th>
@@ -538,11 +680,21 @@ function Dashboard() {
                     const needsCategory = isEntrada
                       ? !(t as any).revenue_category_id
                       : !t.cost_center_id;
+                    const isSelected = selectedIds.has(t.id);
                     return (
                       <tr
                         key={t.id}
-                        className={`group border-b border-border/50 last:border-0 ${needsCategory ? "bg-destructive/10 hover:bg-destructive/15" : ""}`}
+                        className={`group border-b border-border/50 last:border-0 ${isSelected ? "bg-primary/5" : needsCategory ? "bg-destructive/10 hover:bg-destructive/15" : ""}`}
                       >
+                        {isAdmin && (
+                          <td className="py-2 pr-3">
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(v) => toggleRow(t.id, v === true)}
+                              aria-label="Selecionar transação"
+                            />
+                          </td>
+                        )}
                         <td className="py-2 pr-4">{formatDateBR(t.date)}</td>
                         <td className="py-2 pr-4">{t.description}</td>
                         <td className="py-2 pr-4">
