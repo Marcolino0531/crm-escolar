@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 /*
- * Migração dos horários (escala de entrada/saída) do Diário do Aluno.
+ * Migração dos horários de ENTRADA/SAÍDA (check-in/check-out) do Diário do Aluno.
  *
- * Complementa a migração de planos: usa o MESMO CSV (nome do aluno, meal,
- * weekday) para preencher a tabela diario_schedules — 1 linha por (aluno, dia
- * da semana) com horário de entrada e saída.
+ * Lê o CSV horarios_entrada_saida.csv (nome do aluno, weekday, check_in_time,
+ * check_out_time) e preenche diario_schedules — 1 linha por (aluno, dia da
+ * semana) com o horário real de entrada e saída contratado. São esses dados que
+ * o sistema usa para calcular a cobrança de horas extras.
  *
- * Como o CSV não traz a hora exata, derivamos horários padrão por refeição
- * (breakfast=08:00, lunch=12:00, snack=15:00, dinner=18:00). Para cada aluno em
- * cada dia da semana, a ENTRADA é o horário da primeira refeição contratada e a
- * SAÍDA é o da última.
+ * IMPORTANTE: estes horários NÃO têm relação com as refeições. As refeições
+ * ficam em diario_meal_plans (apenas a associação refeição × dia, sem hora).
  *
  * Uso:
- *   node scripts/migrate-diario-horarios.cjs <caminho-do-csv> [--dry-run]
+ *   node scripts/migrate-diario-horarios.cjs <caminho-do-csv> [--dry-run] [--purge]
+ *
+ * --purge  apaga TODAS as linhas de diario_schedules antes de repopular
+ *          (usado para limpar dados incorretos de importações anteriores).
  *
  * Requer: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
@@ -21,26 +23,6 @@
  */
 const fs = require("fs");
 const { createClient } = require("@supabase/supabase-js");
-
-// Horário padrão por refeição (o CSV não tem hora exata).
-const MEAL_TIME = {
-  breakfast: "08:00",
-  lunch: "12:00",
-  snack: "15:00",
-  dinner: "18:00",
-};
-
-const MEAL_MAP = {
-  breakfast: "breakfast",
-  lunch: "lunch",
-  snack: "snack",
-  dinner: "dinner",
-  cafe: "breakfast",
-  "cafe da manha": "breakfast",
-  almoco: "lunch",
-  lanche: "snack",
-  jantar: "dinner",
-};
 
 function fail(msg) {
   console.error(`ERRO: ${msg}`);
@@ -54,6 +36,14 @@ function norm(s) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+}
+
+// Normaliza "8:5" → "08:05", "08:15:00" → "08:15".
+function normTime(s) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(s || "").trim());
+  if (!m) return null;
+  const hh = String(Math.min(23, parseInt(m[1], 10))).padStart(2, "0");
+  return `${hh}:${m[2]}`;
 }
 
 function parseCSV(text) {
@@ -119,6 +109,7 @@ function pickColumn(header, candidates) {
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
+  const purge = args.includes("--purge");
   const csvPath = args.find((a) => !a.startsWith("--"));
   if (!csvPath) fail("informe o caminho do CSV.");
   if (!fs.existsSync(csvPath)) fail(`arquivo não encontrado: ${csvPath}`);
@@ -136,39 +127,35 @@ async function main() {
   if (rows.length < 2) fail("CSV vazio ou sem linhas de dados.");
   const header = rows[0];
   const nameIdx = pickColumn(header, ["student_name", "nome", "name", "aluno", "nome do aluno"]);
-  const mealIdx = pickColumn(header, ["meal", "refeicao", "refeição", "plano"]);
   const wdIdx = pickColumn(header, ["weekday", "dia", "dia_semana", "dia da semana"]);
+  const inIdx = pickColumn(header, ["check_in_time", "check_in", "entrada", "entry", "checkin"]);
+  const outIdx = pickColumn(header, ["check_out_time", "check_out", "saida", "saída", "exit", "checkout"]);
   if (nameIdx < 0) fail(`não achei a coluna de nome: ${header.join(" | ")}`);
-  if (mealIdx < 0) fail(`não achei a coluna de refeição: ${header.join(" | ")}`);
   if (wdIdx < 0) fail(`não achei a coluna de dia da semana: ${header.join(" | ")}`);
+  if (inIdx < 0) fail(`não achei a coluna de entrada: ${header.join(" | ")}`);
+  if (outIdx < 0) fail(`não achei a coluna de saída: ${header.join(" | ")}`);
   console.log(
-    `Colunas → nome: "${header[nameIdx]}" | refeição: "${header[mealIdx]}" | dia: "${header[wdIdx]}"`,
+    `Colunas → nome: "${header[nameIdx]}" | dia: "${header[wdIdx]}" | entrada: "${header[inIdx]}" | saída: "${header[outIdx]}"`,
   );
 
-  // ── 2. Agrupa por (nome, weekday) coletando os horários das refeições. ──
-  // chave: `${nomeNormalizado}|${weekday}` → { name, weekday, times: Set }
-  const byNameWeekday = new Map();
-  const mealDesconhecida = new Set();
+  const entries = [];
+  let horaInvalida = 0;
   for (let i = 1; i < rows.length; i++) {
     const name = (rows[i][nameIdx] || "").trim();
-    const meal = MEAL_MAP[norm(rows[i][mealIdx])];
     const weekday = parseInt((rows[i][wdIdx] || "").trim(), 10);
+    const entry = normTime(rows[i][inIdx]);
+    const exit = normTime(rows[i][outIdx]);
     if (!name) continue;
-    if (!meal) {
-      mealDesconhecida.add(rows[i][mealIdx]);
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) continue;
+    if (!entry || !exit) {
+      horaInvalida++;
       continue;
     }
-    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) continue;
-    const time = MEAL_TIME[meal];
-    if (!time) continue;
-    const key = `${norm(name)}|${weekday}`;
-    const cur = byNameWeekday.get(key) || { name, weekday, times: new Set() };
-    cur.times.add(time);
-    byNameWeekday.set(key, cur);
+    entries.push({ name, weekday, entry, exit });
   }
-  console.log(`Combinações aluno×dia no CSV: ${byNameWeekday.size}`);
+  console.log(`Linhas de horário válidas no CSV: ${entries.length}`);
 
-  // ── 3. Índice de alunos por nome normalizado. ──
+  // ── 2. Índice de alunos por nome normalizado. ──
   const { data: students, error } = await supabase.from("diario_students").select("id, name");
   if (error) fail(`falha ao ler diario_students: ${error.message}`);
   const byName = new Map();
@@ -180,29 +167,38 @@ async function main() {
   }
   console.log(`Alunos no banco: ${students.length}`);
 
-  // ── 4. Monta as linhas de escala (entrada = 1ª refeição, saída = última). ──
+  // ── 3. Resolve os student_id e monta as linhas de escala. ──
   const scheduleRows = [];
   const semMatch = new Set();
   const ambiguos = new Set();
   const alunosComEscala = new Set();
-  for (const { name, weekday, times } of byNameWeekday.values()) {
-    const matches = byName.get(norm(name)) || [];
+  for (const e of entries) {
+    const matches = byName.get(norm(e.name)) || [];
     if (matches.length === 0) {
-      semMatch.add(name);
+      semMatch.add(e.name);
       continue;
     }
     if (matches.length > 1) {
-      ambiguos.add(name);
+      ambiguos.add(e.name);
       continue;
     }
-    const sorted = [...times].sort();
     scheduleRows.push({
       student_id: matches[0].id,
-      weekday,
-      entry: sorted[0],
-      exit: sorted[sorted.length - 1],
+      weekday: e.weekday,
+      entry: e.entry,
+      exit: e.exit,
     });
     alunosComEscala.add(matches[0].id);
+  }
+
+  // ── 4. (Opcional) limpa a tabela antes de repopular. ──
+  if (purge && !dryRun) {
+    const { error: delErr } = await supabase
+      .from("diario_schedules")
+      .delete()
+      .not("id", "is", null);
+    if (delErr) fail(`falha ao limpar diario_schedules: ${delErr.message}`);
+    console.log("diario_schedules limpo (--purge).");
   }
 
   let inserted = 0;
@@ -218,12 +214,11 @@ async function main() {
   }
 
   console.log("\n──────── RESUMO ────────");
-  console.log(`${dryRun ? "[DRY-RUN] " : ""}Agendamentos (aluno×dia) criados: ${scheduleRows.length}`);
+  console.log(`${dryRun ? "[DRY-RUN] " : ""}Horários (aluno×dia) gravados: ${scheduleRows.length}`);
   console.log(`Alunos com escala definida: ${alunosComEscala.size}`);
   console.log(`Sem correspondência no banco: ${semMatch.size}`);
   console.log(`Nomes ambíguos (pulados): ${ambiguos.size}`);
-  if (mealDesconhecida.size)
-    console.log(`Refeições não reconhecidas: ${[...mealDesconhecida].join(", ")}`);
+  if (horaInvalida) console.log(`Linhas com hora inválida (ignoradas): ${horaInvalida}`);
   if (semMatch.size) console.log(`\nSem match:\n  - ${[...semMatch].join("\n  - ")}`);
   if (ambiguos.size) console.log(`\nAmbíguos:\n  - ${[...ambiguos].join("\n  - ")}`);
 }
