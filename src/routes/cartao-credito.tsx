@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Plus, Trash2, CreditCard, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth, usePermissions } from "@/lib/app-context";
+import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -74,19 +74,24 @@ const STATUS_META: Record<ReceivableStatus, { label: string; className: string }
 function CartaoPage() {
   const { session } = useAuth();
   const { canEdit } = usePermissions();
+  const { selected, schoolFilterIds } = useSchool();
   const editable = canEdit("financeiro_cartao");
   const qc = useQueryClient();
   const today = todayISOLocal();
   const [showCreate, setShowCreate] = useState(false);
 
   const { data: receivables = [], isLoading } = useQuery({
-    queryKey: ["credit_card_receivables"],
+    queryKey: ["credit_card_receivables", schoolFilterIds ?? "all"],
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let rq = supabase
         .from("credit_card_receivables" as never)
-        .select("id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status")
+        .select(
+          "id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status, unit_id",
+        )
         .order("data_disponibilidade", { ascending: true });
+      if (schoolFilterIds) rq = rq.in("unit_id", schoolFilterIds as never);
+      const { data, error } = await rq;
       if (error) throw error;
       return (data ?? []) as unknown as Receivable[];
     },
@@ -99,8 +104,14 @@ function CartaoPage() {
       valor_bruto: number;
       valor_liquido: number;
     }) => {
+      if (selected === "all") {
+        throw new Error(
+          "Selecione uma unidade específica no seletor do topo para cadastrar um recebível.",
+        );
+      }
       const { error } = await supabase.from("credit_card_receivables" as never).insert({
         ...p,
+        unit_id: selected,
         created_by: session?.user?.id ?? null,
       } as never);
       if (error) throw error;
@@ -171,7 +182,17 @@ function CartaoPage() {
           </p>
         </div>
         {editable && (
-          <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
+          <Button
+            size="sm"
+            className="gap-1"
+            disabled={selected === "all"}
+            title={
+              selected === "all"
+                ? "Selecione uma unidade específica no topo para cadastrar"
+                : undefined
+            }
+            onClick={() => setShowCreate(true)}
+          >
             <Plus className="h-4 w-4" /> Novo Recebível
           </Button>
         )}
