@@ -26,6 +26,7 @@ import {
   HandCoins,
   Shirt,
   BookOpen,
+  PartyPopper,
   CreditCard,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
@@ -216,6 +217,7 @@ function AppShell() {
   const showTasks = canView("tasks");
   const showUniformes = canView("uniformes");
   const showDiario = canView("diario");
+  const showColonia = canView("colonia");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -262,7 +264,8 @@ function AppShell() {
             showRh ||
             showTasks ||
             showUniformes ||
-            showDiario) && (
+            showDiario ||
+            showColonia) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -274,6 +277,7 @@ function AppShell() {
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
           {showUniformes && <NavItem to="/uniformes" icon={Shirt} label="Uniformes" />}
           {showDiario && <NavItem to="/diario" icon={BookOpen} label="Diário do Aluno" />}
+          {showColonia && <NavItem to="/colonia" icon={PartyPopper} label="Colônia de Férias" />}
           {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
