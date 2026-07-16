@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -18,6 +18,7 @@ import {
   Receipt,
   Loader2,
   CheckCircle2,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -59,7 +60,12 @@ import {
   sponteAtivoNoMes,
   type WeekBilling,
 } from "@/lib/colonia-billing";
-import { fetchColoniaBeneficios, faturarColoniaSponte } from "@/lib/sponte.functions";
+import {
+  fetchColoniaBeneficios,
+  faturarColoniaSponte,
+  desvincularFaturamentoColonia,
+  verificarFaturamentosColonia,
+} from "@/lib/sponte.functions";
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
@@ -174,7 +180,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   // Permanência (diárias + horas) consumida nas semanas ANTERIORES do mesmo mês —
   // usada para o crédito de hora extra transitar entre semanas. Só faz sentido
   // quando o Sponte está ativo (Julho/Dezembro).
-  const { data: prevPermByStudent = {} } = useQuery({
+  const { data: prevPermByStudent = {}, isLoading: prevPermLoading } = useQuery({
     queryKey: ["colonia_prev_perm", schoolKey, monthStart.toISOString(), weekStart.toISOString()],
     enabled: sponteActive && weekStart.getTime() > monthStart.getTime(),
     queryFn: async () => {
@@ -263,6 +269,32 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     },
   });
 
+  const calcReady = !sponteActive || (!beneficiosLoading && !prevPermLoading);
+
+  // Extrato por aluno (também usado pelo watcher que invalida faturamentos cujo
+  // valor mudou depois de faturado).
+  const billingByStudent = useMemo(() => {
+    const m = new Map<string, WeekBilling>();
+    for (const s of students) {
+      const benefit = sponteActive && s.sponteAlunoId ? beneficios[s.sponteAlunoId] : undefined;
+      const exemptions = new Set<ColoniaRecordType>(
+        (benefit?.refeicoesIsentas ?? []) as ColoniaRecordType[],
+      );
+      const days = COLONIA_WEEKDAYS.map((d) =>
+        computeDayBilling(s.byDay[d.weekday], d.weekday, exemptions),
+      );
+      m.set(
+        s.studentId,
+        computeWeekBilling({
+          days,
+          permanenciaSemanasAnteriores: prevPermByStudent[s.studentId] ?? 0,
+          creditoHoraExtra: sponteActive ? (benefit?.creditoHoraExtra ?? 0) : 0,
+        }),
+      );
+    }
+    return m;
+  }, [students, beneficios, prevPermByStudent, sponteActive]);
+
   const remove = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
@@ -287,20 +319,130 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   // Alunos já faturados NESTA semana (para exibir o botão como "Faturado").
   const weekStartYMD = toYMD(weekStart);
   const weekEndYMD = toYMD(friday);
-  const { data: invoicedSet = new Set<string>() } = useQuery({
+  const { data: invoices = [] } = useQuery({
     queryKey: ["colonia_invoices", schoolKey, weekStartYMD],
     enabled: canFaturar,
     queryFn: async () => {
       let q = supabase
         .from("holiday_camp_invoices" as never)
-        .select("student_id")
+        .select("student_id, school_id, amount, sponte_aluno_id, sponte_conta_receber_id")
         .eq("week_start", weekStartYMD);
       if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
       const { data, error } = await q;
       if (error) throw error;
-      return new Set((data ?? []).map((r) => (r as { student_id: string }).student_id));
+      return (data ?? []).map((r) => {
+        const row = r as {
+          student_id: string;
+          school_id: string;
+          amount: number | string;
+          sponte_aluno_id: string | null;
+          sponte_conta_receber_id: string | null;
+        };
+        return {
+          studentId: row.student_id,
+          schoolId: row.school_id,
+          amount: Number(row.amount),
+          sponteAlunoId: row.sponte_aluno_id,
+          contaReceberId: row.sponte_conta_receber_id,
+        };
+      });
     },
   });
+  const invoicedSet = useMemo(() => new Set(invoices.map((i) => i.studentId)), [invoices]);
+
+  // Watcher (edição local): se o total da semana mudou depois de faturado, o
+  // faturamento não vale mais — desvincula automaticamente e reabilita o botão.
+  const desvincularFn = useServerFn(desvincularFaturamentoColonia);
+  const syncingRef = useRef(false);
+  useEffect(() => {
+    if (!canFaturar || invoices.length === 0 || !calcReady || syncingRef.current) return;
+    const stale = invoices.filter((inv) => {
+      const total = billingByStudent.get(inv.studentId)?.total ?? 0;
+      return Math.abs(total - inv.amount) > 0.005;
+    });
+    if (stale.length === 0) return;
+    syncingRef.current = true;
+    void (async () => {
+      for (const inv of stale) {
+        const unidade = schoolIdToName.get(inv.schoolId);
+        if (!unidade) continue;
+        try {
+          await desvincularFn({
+            data: { unidade, studentId: inv.studentId, weekStart: weekStartYMD },
+          });
+        } catch {
+          /* mantém como está; tenta de novo no próximo carregamento */
+        }
+      }
+      toast.info("Faturamento invalidado: os registros da semana foram alterados.");
+      await qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+      syncingRef.current = false;
+    })();
+  }, [
+    invoices,
+    billingByStudent,
+    calcReady,
+    canFaturar,
+    schoolIdToName,
+    weekStartYMD,
+    desvincularFn,
+    qc,
+  ]);
+
+  // Verificação silenciosa no Sponte: reverte faturamentos cujo título foi
+  // excluído/cancelado lá. Só verifica os que ainda batem com o total local.
+  const verificarFn = useServerFn(verificarFaturamentosColonia);
+  const verifyItens = useMemo(() => {
+    if (!canFaturar || !calcReady) return [];
+    return invoices
+      .map((inv) => ({
+        unidade: schoolIdToName.get(inv.schoolId) ?? "",
+        studentId: inv.studentId,
+        sponteAlunoId: inv.sponteAlunoId ?? "",
+        contaReceberId: inv.contaReceberId ?? "",
+        amount: inv.amount,
+      }))
+      .filter(
+        (it) =>
+          it.contaReceberId &&
+          it.sponteAlunoId &&
+          UNIDADES_SPONTE.includes(it.unidade) &&
+          Math.abs((billingByStudent.get(it.studentId)?.total ?? 0) - it.amount) <= 0.005,
+      );
+  }, [invoices, billingByStudent, calcReady, canFaturar, schoolIdToName]);
+
+  const { data: verifyResult } = useQuery({
+    queryKey: [
+      "colonia_invoice_verify",
+      weekStartYMD,
+      verifyItens
+        .map((i) => i.contaReceberId)
+        .sort()
+        .join(","),
+    ],
+    enabled: verifyItens.length > 0,
+    staleTime: 2 * 60_000,
+    queryFn: async () => {
+      const res = await verificarFn({
+        data: {
+          weekStart: weekStartYMD,
+          itens: verifyItens.map(({ unidade, studentId, sponteAlunoId, contaReceberId }) => ({
+            unidade,
+            studentId,
+            sponteAlunoId,
+            contaReceberId,
+          })),
+        },
+      });
+      return res;
+    },
+  });
+  useEffect(() => {
+    if (verifyResult && verifyResult.revertidos.length > 0) {
+      toast.info("Faturamento revertido: título excluído ou cancelado no Sponte.");
+      void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+    }
+  }, [verifyResult, qc]);
 
   const weekLabel = useMemo(
     () => `${fmtDayMonth(weekStart)} – ${fmtDayMonth(friday)}`,
@@ -361,19 +503,15 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       ) : (
         <Accordion type="multiple" className="space-y-2">
           {students.map((s) => {
-            const benefit =
-              sponteActive && s.sponteAlunoId ? beneficios[s.sponteAlunoId] : undefined;
-            const exemptions = new Set<ColoniaRecordType>(
-              (benefit?.refeicoesIsentas ?? []) as ColoniaRecordType[],
-            );
-            const days = COLONIA_WEEKDAYS.map((d) =>
-              computeDayBilling(s.byDay[d.weekday], d.weekday, exemptions),
-            );
-            const billing = computeWeekBilling({
-              days,
-              permanenciaSemanasAnteriores: prevPermByStudent[s.studentId] ?? 0,
-              creditoHoraExtra: sponteActive ? (benefit?.creditoHoraExtra ?? 0) : 0,
-            });
+            const billing =
+              billingByStudent.get(s.studentId) ??
+              computeWeekBilling({
+                days: COLONIA_WEEKDAYS.map((d) =>
+                  computeDayBilling(s.byDay[d.weekday], d.weekday, new Set()),
+                ),
+                permanenciaSemanasAnteriores: 0,
+                creditoHoraExtra: 0,
+              });
             const calculando = sponteActive && beneficiosLoading;
 
             return (
@@ -594,6 +732,7 @@ function FaturarBotao({
   onFaturado,
 }: FaturarBotaoProps) {
   const faturarFn = useServerFn(faturarColoniaSponte);
+  const desvincularFn = useServerFn(desvincularFaturamentoColonia);
   const [open, setOpen] = useState(false);
   const [vencimento, setVencimento] = useState(defaultVencimento);
   const [faturado, setFaturado] = useState(false);
@@ -635,15 +774,51 @@ function FaturarBotao({
     },
   });
 
+  const desvincular = useMutation({
+    mutationFn: async () => {
+      const res = await desvincularFn({
+        data: { unidade: unidade ?? "", studentId, weekStart: weekStartYMD },
+      });
+      if (!res.ok) throw new Error(res.error ?? "Falha ao desvincular o faturamento.");
+      return res;
+    },
+    onSuccess: () => {
+      setFaturado(false);
+      toast.success("Faturamento liberado. Você pode faturar novamente.");
+      onFaturado();
+    },
+    onError: (e: unknown) => {
+      toast.error("Erro ao desvincular", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
   if (jaFaturado || faturado) {
     return (
-      <Button
-        variant="outline"
-        disabled
-        className="mt-2 w-full border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
-      >
-        <CheckCircle2 className="h-4 w-4" /> Faturado
-      </Button>
+      <div className="mt-2 flex items-center gap-2">
+        <Button
+          variant="outline"
+          disabled
+          className="flex-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+        >
+          <CheckCircle2 className="h-4 w-4" /> Faturado
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => desvincular.mutate()}
+          disabled={desvincular.isPending}
+          title="Desfazer faturamento (liberar para refaturar)"
+          aria-label="Desfazer faturamento"
+        >
+          {desvincular.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RotateCcw className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
     );
   }
 
