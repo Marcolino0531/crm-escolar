@@ -83,19 +83,13 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
           // justificativa.
           const faltasDescontadas = (f.faltas ?? []).filter(
             (fa) =>
-              categoriaDe(fa.categoria) === "integral" && (fa.data ?? "").startsWith(mesReferencia),
+              categoriaDe(fa.categoria) === "integral" &&
+              (fa.data ?? "").startsWith(mesReferencia),
           ).length;
           const valorDiario = f.valorDiarioVt ?? 0;
           const diasUteis = diasDe(f.id);
           const total = Math.max(0, diasUteis - faltasDescontadas) * valorDiario;
-          return {
-            id: f.id,
-            nome: f.nomeCompleto,
-            valorDiario,
-            faltasDescontadas,
-            diasUteis,
-            total,
-          };
+          return { id: f.id, nome: f.nomeCompleto, valorDiario, faltasDescontadas, diasUteis, total };
         })
         .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
     [funcionarios, mesReferencia, diasTrabalhados, diasPorFunc],
@@ -147,10 +141,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
         .from("hr_transport_batch_items" as never)
         .insert(itens as never);
       if (iErr) {
-        await supabase
-          .from("hr_transport_batches" as never)
-          .delete()
-          .eq("id", batchId);
+        await supabase.from("hr_transport_batches" as never).delete().eq("id", batchId);
         toast.error(`Falha ao salvar os itens da folha: ${iErr.message}`);
         return;
       }
@@ -203,12 +194,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Exportar Excel/CSV
           </button>
@@ -219,12 +205,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg hover:from-emerald-700 hover:to-teal-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
             Salvar Folha de Pagamento
           </button>
@@ -307,9 +288,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
                       <input
                         type="number"
                         min={0}
-                        value={
-                          diasPorFunc[l.id] !== undefined ? diasPorFunc[l.id] : diasTrabalhados
-                        }
+                        value={diasPorFunc[l.id] !== undefined ? diasPorFunc[l.id] : diasTrabalhados}
                         onChange={(e) => editarLinha(l.id, e.target.value)}
                         className={`w-16 px-2 py-1 text-right tabular-nums border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 ${
                           diasPorFunc[l.id] !== undefined
@@ -335,10 +314,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
             {linhas.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td
-                    colSpan={4}
-                    className="px-3 py-2 text-sm font-semibold text-gray-700 text-right"
-                  >
+                  <td colSpan={4} className="px-3 py-2 text-sm font-semibold text-gray-700 text-right">
                     Total Geral
                   </td>
                   <td className="px-3 py-2 text-sm font-bold text-emerald-700 text-right tabular-nums">
