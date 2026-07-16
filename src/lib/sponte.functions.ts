@@ -1600,9 +1600,12 @@ export const fetchSponteAlunosAtivos = createServerFn({ method: "POST" })
 
 // ── Benefícios da Colônia de Férias (crédito de hora extra + isenção de refeição) ──
 // Consulta, por aluno, as parcelas do Sponte (GetParcelas por AlunoID) e extrai:
-//  • o valor mensal de "Hora Extra" pago na mensalidade → banco de crédito;
+//  • o valor de "Hora Extra" pago na mensalidade → banco de crédito;
 //  • quais refeições estão inclusas na mensalidade → isenção na colônia.
-// A trava de calendário (só Julho/Dezembro) é aplicada no cliente; aqui apenas
+// ISOLAMENTO MENSAL ESTRITO: só contam as parcelas cujo Vencimento cai no mês da
+// colônia (Julho ou Dezembro). Créditos/isenções NÃO são acumulativos entre
+// meses — o crédito de Julho jamais transita para Dezembro (e vice-versa). A
+// trava de calendário (só Julho/Dezembro) é aplicada no cliente; aqui apenas
 // devolvemos os dados brutos consultados por unidade.
 const REFEICAO_LABEL_TO_TYPE: { needle: string; type: string }[] = [
   { needle: "lanche da manha", type: "breakfast" },
@@ -1629,18 +1632,24 @@ const ColoniaBeneficiosInputSchema = z.object({
   alunoIds: z.array(z.string()).max(400),
 });
 
-// Extrai crédito de hora extra e refeições inclusas de UM conjunto de parcelas.
+// Extrai crédito de hora extra e refeições inclusas de UM conjunto de parcelas,
+// considerando SOMENTE as parcelas do mês da colônia (Vencimento em mes/ano).
+// Sem fallback para outros meses — o isolamento mensal é estrito.
 function extrairBeneficioParcelas(
   parcelaNodes: string[],
   mes: number,
   ano: number,
 ): ColoniaBeneficioAluno {
   const refeicoesIsentas = new Set<string>();
-  let creditoDoMes = 0;
-  let creditoFallback = 0;
-  let melhorYMD = "";
+  let creditoHoraExtra = 0;
 
   for (const p of parcelaNodes) {
+    // Filtro de isolamento mensal: descarta qualquer parcela fora do mês.
+    const ymd = paraYMD(parseXmlValue(p, "Vencimento"));
+    if (!ymd) continue;
+    const [y, m] = ymd.split("-").map(Number);
+    if (y !== ano || m !== mes) continue;
+
     const categoria = parseXmlValue(p, "Categoria");
     if (!categoria) continue;
     const cat = normalizarTexto(categoria);
@@ -1652,25 +1661,12 @@ function extrairBeneficioParcelas(
     }
 
     if (cat.includes("hora extra")) {
-      const valor = parseBrDecimal(parseXmlValue(p, "ValorParcela"));
-      const ymd = paraYMD(parseXmlValue(p, "Vencimento"));
-      if (ymd) {
-        const [y, m] = ymd.split("-").map(Number);
-        if (y === ano && m === mes) creditoDoMes = valor;
-        // Fallback: parcela de hora extra mais recente até o fim do mês de ref.
-        const fimRefYMD = `${ano}-${String(mes).padStart(2, "0")}-31`;
-        if (ymd <= fimRefYMD && ymd >= melhorYMD) {
-          melhorYMD = ymd;
-          creditoFallback = valor;
-        }
-      } else if (creditoFallback === 0) {
-        creditoFallback = valor;
-      }
+      creditoHoraExtra += parseBrDecimal(parseXmlValue(p, "ValorParcela"));
     }
   }
 
   return {
-    creditoHoraExtra: creditoDoMes > 0 ? creditoDoMes : creditoFallback,
+    creditoHoraExtra: Math.round(creditoHoraExtra * 100) / 100,
     refeicoesIsentas: [...refeicoesIsentas],
   };
 }
