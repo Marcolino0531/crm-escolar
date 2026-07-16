@@ -56,11 +56,18 @@ export const COLONIA_WEEKDAYS: { weekday: number; label: string }[] = [
 // passo (calculadora de valores) some facilmente o total diário e o da semana.
 export type ColoniaStudentWeek = {
   studentId: string;
+  schoolId: string;
+  sponteAlunoId: string | null;
   name: string;
   className: string;
   byDay: Record<number, ColoniaRecord[]>; // weekday (1..5) → registros do dia
   total: number; // total de registros na semana
 };
+
+// Primeiro dia do mês (00:00 local) que contém `d`.
+export function firstOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+}
 
 // Segunda-feira (00:00 local) da semana que contém `d`.
 export function mondayOf(d: Date): Date {

@@ -1598,6 +1598,124 @@ export const fetchSponteAlunosAtivos = createServerFn({ method: "POST" })
     return { total, porUnidade };
   });
 
+// ── Benefícios da Colônia de Férias (crédito de hora extra + isenção de refeição) ──
+// Consulta, por aluno, as parcelas do Sponte (GetParcelas por AlunoID) e extrai:
+//  • o valor mensal de "Hora Extra" pago na mensalidade → banco de crédito;
+//  • quais refeições estão inclusas na mensalidade → isenção na colônia.
+// A trava de calendário (só Julho/Dezembro) é aplicada no cliente; aqui apenas
+// devolvemos os dados brutos consultados por unidade.
+const REFEICAO_LABEL_TO_TYPE: { needle: string; type: string }[] = [
+  { needle: "lanche da manha", type: "breakfast" },
+  { needle: "lanche da tarde", type: "snack" },
+  { needle: "almoco", type: "lunch" },
+  { needle: "jantar", type: "dinner" },
+];
+
+export interface ColoniaBeneficioAluno {
+  creditoHoraExtra: number;
+  refeicoesIsentas: string[]; // record types: breakfast | lunch | snack | dinner
+}
+
+export interface ColoniaBeneficiosResult {
+  beneficios: Record<string, ColoniaBeneficioAluno>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const ColoniaBeneficiosInputSchema = z.object({
+  unidade: z.string(),
+  mes: z.number().int().min(1).max(12),
+  ano: z.number().int().min(2000).max(2100),
+  alunoIds: z.array(z.string()).max(400),
+});
+
+// Extrai crédito de hora extra e refeições inclusas de UM conjunto de parcelas.
+function extrairBeneficioParcelas(
+  parcelaNodes: string[],
+  mes: number,
+  ano: number,
+): ColoniaBeneficioAluno {
+  const refeicoesIsentas = new Set<string>();
+  let creditoDoMes = 0;
+  let creditoFallback = 0;
+  let melhorYMD = "";
+
+  for (const p of parcelaNodes) {
+    const categoria = parseXmlValue(p, "Categoria");
+    if (!categoria) continue;
+    const cat = normalizarTexto(categoria);
+
+    const refeicao = REFEICAO_LABEL_TO_TYPE.find((r) => cat.includes(r.needle));
+    if (refeicao) {
+      refeicoesIsentas.add(refeicao.type);
+      continue;
+    }
+
+    if (cat.includes("hora extra")) {
+      const valor = parseBrDecimal(parseXmlValue(p, "ValorParcela"));
+      const ymd = paraYMD(parseXmlValue(p, "Vencimento"));
+      if (ymd) {
+        const [y, m] = ymd.split("-").map(Number);
+        if (y === ano && m === mes) creditoDoMes = valor;
+        // Fallback: parcela de hora extra mais recente até o fim do mês de ref.
+        const fimRefYMD = `${ano}-${String(mes).padStart(2, "0")}-31`;
+        if (ymd <= fimRefYMD && ymd >= melhorYMD) {
+          melhorYMD = ymd;
+          creditoFallback = valor;
+        }
+      } else if (creditoFallback === 0) {
+        creditoFallback = valor;
+      }
+    }
+  }
+
+  return {
+    creditoHoraExtra: creditoDoMes > 0 ? creditoDoMes : creditoFallback,
+    refeicoesIsentas: [...refeicoesIsentas],
+  };
+}
+
+export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ColoniaBeneficiosInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ColoniaBeneficiosResult> => {
+    const { unidade, mes, ano, alunoIds } = data;
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { beneficios: {}, error: "Sem permissão para esta unidade." };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { beneficios: {}, indisponivel: true };
+
+    const beneficios: Record<string, ColoniaBeneficioAluno> = {};
+    const CONC = 8; // concorrência para não estourar o timeout da API
+    try {
+      for (let i = 0; i < alunoIds.length; i += CONC) {
+        const lote = alunoIds.slice(i, i + CONC);
+        const resultados = await Promise.allSettled(
+          lote.map((id) =>
+            callSponte("GetParcelas", `AlunoID=${id}`, creds.codigoCliente, creds.token),
+          ),
+        );
+        resultados.forEach((r, idx) => {
+          if (r.status !== "fulfilled") return;
+          if (checkFault(r.value)) return;
+          const nodes = parseXmlList(r.value, "wsParcela");
+          beneficios[lote[idx]] = extrairBeneficioParcelas(nodes, mes, ano);
+        });
+      }
+    } catch (e) {
+      return {
+        beneficios,
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    return { beneficios };
+  });
+
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
 // Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
 // verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são
