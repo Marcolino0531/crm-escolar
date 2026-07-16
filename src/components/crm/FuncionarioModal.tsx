@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Unidade,
   Funcionario,
@@ -13,6 +13,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const ATESTADOS_BUCKET = "rh-atestados";
+const HR_DOCS_BUCKET = "hr-documents";
+
+interface HrDocumento {
+  id: string;
+  file_name: string;
+  file_url: string;
+  storage_path: string | null;
+  created_at: string;
+}
 
 interface FuncionarioModalProps {
   unidadeSelecionada: Unidade;
@@ -238,6 +247,100 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     novoArquivo: null,
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+
+  // ----- Documentos do funcionário (contratos, TRCTs, atestados, etc.) -----
+  const [documentos, setDocumentos] = useState<HrDocumento[]>([]);
+  const [docsCarregando, setDocsCarregando] = useState(false);
+  const [docEnviando, setDocEnviando] = useState(false);
+
+  const carregarDocumentos = React.useCallback(async (employeeId: string) => {
+    setDocsCarregando(true);
+    const { data, error } = await supabase
+      .from("hr_employee_documents" as never)
+      .select("id, file_name, file_url, storage_path, created_at")
+      .eq("employee_id", employeeId)
+      .order("created_at", { ascending: false });
+    setDocsCarregando(false);
+    if (error) {
+      toast.error("Não foi possível carregar os documentos.");
+      return;
+    }
+    setDocumentos((data ?? []) as unknown as HrDocumento[]);
+  }, []);
+
+  useEffect(() => {
+    if (funcionarioExistente?.id) carregarDocumentos(funcionarioExistente.id);
+  }, [funcionarioExistente?.id, carregarDocumentos]);
+
+  const handleUploadDocumento = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !funcionarioExistente) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Envie um arquivo PDF.");
+      return;
+    }
+    setDocEnviando(true);
+    try {
+      const path = `${funcionarioExistente.id}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+      const { error: upErr } = await supabase.storage
+        .from(HR_DOCS_BUCKET)
+        .upload(path, file, { contentType: "application/pdf" });
+      if (upErr) {
+        toast.error(`Falha ao enviar o documento: ${upErr.message}`);
+        return;
+      }
+      const { data: pub } = supabase.storage.from(HR_DOCS_BUCKET).getPublicUrl(path);
+      const { error: insErr } = await supabase.from("hr_employee_documents" as never).insert({
+        employee_id: funcionarioExistente.id,
+        file_name: file.name,
+        file_url: pub.publicUrl,
+        storage_path: path,
+      } as never);
+      if (insErr) {
+        await supabase.storage.from(HR_DOCS_BUCKET).remove([path]);
+        toast.error(`Falha ao registrar o documento: ${insErr.message}`);
+        return;
+      }
+      toast.success("Documento enviado.");
+      await carregarDocumentos(funcionarioExistente.id);
+    } finally {
+      setDocEnviando(false);
+    }
+  };
+
+  // Bucket privado: abre via URL assinada temporária.
+  const abrirDocumento = async (doc: HrDocumento) => {
+    const path = doc.storage_path;
+    if (!path) {
+      window.open(doc.file_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const { data, error } = await supabase.storage.from(HR_DOCS_BUCKET).createSignedUrl(path, 60);
+    if (error || !data?.signedUrl) {
+      toast.error("Não foi possível abrir o documento.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const removerDocumento = async (doc: HrDocumento) => {
+    if (!funcionarioExistente) return;
+    if (!confirm(`Remover o documento "${doc.file_name}"?`)) return;
+    if (doc.storage_path) {
+      await supabase.storage.from(HR_DOCS_BUCKET).remove([doc.storage_path]);
+    }
+    const { error } = await supabase
+      .from("hr_employee_documents" as never)
+      .delete()
+      .eq("id", doc.id);
+    if (error) {
+      toast.error("Não foi possível remover o documento.");
+      return;
+    }
+    toast.success("Documento removido.");
+    await carregarDocumentos(funcionarioExistente.id);
+  };
 
   const abrirEdicaoFalta = (falta: Falta) => {
     setFaltaEditId(falta.id);
@@ -1065,6 +1168,80 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                         </div>
                       </div>
                     ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Documentos (somente no modo edição) */}
+          {isEdicao && funcionarioExistente && (
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  <span>📄</span> Documentos
+                </h3>
+                {isAdmin && (
+                  <label
+                    className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                      docEnviando
+                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 cursor-pointer"
+                    }`}
+                  >
+                    {docEnviando ? "Enviando…" : "+ Enviar PDF"}
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handleUploadDocumento}
+                      disabled={docEnviando}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
+              {docsCarregando ? (
+                <p className="text-xs text-gray-400 italic">Carregando documentos…</p>
+              ) : documentos.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">Nenhum documento enviado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {documentos.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => abrirDocumento(doc)}
+                        className="text-sm text-indigo-700 underline hover:text-indigo-900 text-left truncate min-w-0"
+                        title={doc.file_name}
+                      >
+                        📎 {doc.file_name}
+                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs text-gray-400">
+                          {converterParaBR(doc.created_at.slice(0, 10))}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => abrirDocumento(doc)}
+                          className="text-xs px-2 py-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 font-medium"
+                        >
+                          Ver / Baixar
+                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => removerDocumento(doc)}
+                            className="text-red-400 hover:text-red-600 text-xs"
+                          >
+                            Excluir
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
