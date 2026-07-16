@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
-import { usePermissions } from "@/lib/app-context";
+import { usePermissions, useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
 import FechamentoVT from "./FechamentoVT";
+import FolhasPagamentoVT from "./FolhasPagamentoVT";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -118,7 +119,9 @@ const downloadCSV = (csv: string, filename: string) => {
 
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { canEdit } = usePermissions();
+  const { selected } = useSchool();
   const isAdmin = canEdit("rh");
+  const schoolId = selected !== "all" ? selected : null;
   const {
     funcionarios,
     adicionarFuncionario,
@@ -136,6 +139,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [exportModalAberto, setExportModalAberto] = useState(false);
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
+  const [abaRh, setAbaRh] = useState<"funcionarios" | "folhas">("funcionarios");
+  const [folhasRefresh, setFolhasRefresh] = useState(0);
 
   const isAtivo = (f: Funcionario) => !f.dataRescisao;
   const funcionariosFiltrados = funcionarios.filter((f) =>
@@ -198,7 +203,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {isAdmin && abaRh === "funcionarios" && (
             <button
               onClick={() => setExportModalAberto(true)}
               disabled={funcionarios.length === 0}
@@ -221,7 +226,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
               Exportar Planilha
             </button>
           )}
-          {isAdmin && (
+          {isAdmin && abaRh === "funcionarios" && (
             <button
               onClick={() => setModalAberto(true)}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md"
@@ -233,7 +238,32 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </div>
       </div>
 
-      {funcionarios.length === 0 ? (
+      {/* Abas principais do RH */}
+      <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
+        {(
+          [
+            { id: "funcionarios", label: "Funcionários" },
+            { id: "folhas", label: "Folhas Salvas" },
+          ] as const
+        ).map((aba) => (
+          <button
+            key={aba.id}
+            type="button"
+            onClick={() => setAbaRh(aba.id)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+              abaRh === aba.id
+                ? "border-emerald-600 text-emerald-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            {aba.label}
+          </button>
+        ))}
+      </div>
+
+      {abaRh === "folhas" ? (
+        <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+      ) : funcionarios.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <span className="text-5xl mb-4">👤</span>
           <p className="text-lg font-medium">Nenhum funcionário cadastrado</p>
@@ -380,9 +410,13 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </>
       )}
 
-      {funcionarios.length > 0 && (
+      {abaRh === "funcionarios" && funcionarios.length > 0 && (
         <div className="mt-6">
-          <FechamentoVT funcionarios={funcionarios} />
+          <FechamentoVT
+            funcionarios={funcionarios}
+            schoolId={schoolId}
+            onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
+          />
         </div>
       )}
 
