@@ -624,6 +624,7 @@ function ForecastDialog({
   const [notes, setNotes] = useState<string>(forecast?.notes ?? "");
   // "Tipo de Despesa": fixa, nao_fixa ou parcelada
   const [tipo, setTipo] = useState<"fixa" | "nao_fixa" | "parcelada">(forecast?.series_id ? "fixa" : "nao_fixa");
+  const [status, setStatus] = useState<ForecastStatus>(forecast ? normalizeStatus(forecast.status) : "pending");
   const [parcelas, setParcelas] = useState<string>("2");
   const [saving, setSaving] = useState(false);
 
@@ -723,7 +724,7 @@ function ForecastDialog({
                 projected_amount: amt,
                 cost_center_id: costCenterId || null,
                 sub_cost_center_id: subCostCenterId || null,
-                status: "pending",
+                status,
                 series_id: series!.id,
                 normalized_key: `series:${series!.id}:${mIso}`,
                 notes: notes.trim() || null,
@@ -741,7 +742,7 @@ function ForecastDialog({
               projected_amount: amt,
               cost_center_id: costCenterId || null,
               sub_cost_center_id: subCostCenterId || null,
-              status: "pending",
+              status,
               series_id: series!.id,
               normalized_key: `series:${series!.id}:${monthOfDue}`,
               notes: notes.trim() || null,
@@ -758,7 +759,7 @@ function ForecastDialog({
             projected_amount: amt,
             cost_center_id: costCenterId || null,
             sub_cost_center_id: subCostCenterId || null,
-            status: "pending",
+            status,
             normalized_key: `manual:${crypto.randomUUID()}`,
             notes: notes.trim() || null,
           });
@@ -843,6 +844,19 @@ function ForecastDialog({
             <Label>Valor Previsto (R$)</Label>
             <Input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
           </div>
+          {!isEdit && (
+            <div>
+              <Label>Status</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as ForecastStatus)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {STATUS_ORDER.map((s) => (
+                    <SelectItem key={s} value={s}>{STATUS_META[s].label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label>Categoria</Label>
             <Select value={costCenterId} onValueChange={(v) => { setCostCenterId(v); setSubCostCenterId(""); }}>
