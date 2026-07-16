@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -20,7 +20,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
+type FluxoSearch = { focus?: string; month?: string };
+
 export const Route = createFileRoute("/fluxo-futuro")({
+  validateSearch: (search: Record<string, unknown>): FluxoSearch => ({
+    focus: typeof search.focus === "string" ? search.focus : undefined,
+    month: typeof search.month === "string" ? search.month : undefined,
+  }),
   component: FluxoFuturoGate,
 });
 
@@ -137,8 +143,17 @@ function FluxoFuturoPage() {
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
+  const { focus, month: monthParam } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const today = new Date();
   const [month, setMonth] = useState(() => monthKey(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // Ao chegar de uma notificação (query param `focus`), posiciona no mês da
+  // conta apontada para que a linha exista na listagem antes do highlight.
+  useEffect(() => {
+    if (focus && monthParam) setMonth(monthParam);
+  }, [focus, monthParam]);
   const [editing, setEditing] = useState<Forecast | null>(null);
   const [creating, setCreating] = useState(false);
   const [scopeDialog, setScopeDialog] = useState<{ kind: "edit" | "delete"; forecast: Forecast } | null>(null);
@@ -228,6 +243,21 @@ function FluxoFuturoPage() {
       });
     },
   });
+
+  // Rola até a despesa apontada pela notificação e aplica um destaque temporário.
+  // Só dispara quando a linha já existe na listagem carregada (mês/unidade certos).
+  useEffect(() => {
+    if (!focus) return;
+    if (!forecasts.some((f) => f.id === focus)) return;
+    const el = document.getElementById(`forecast-row-${focus}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(focus);
+    const clearHighlight = setTimeout(() => setHighlightId(null), 3000);
+    // Limpa o `focus` da URL para não redestacar em navegações futuras de mês.
+    navigate({ search: (prev) => ({ ...prev, focus: undefined }), replace: true });
+    return () => clearTimeout(clearHighlight);
+  }, [focus, forecasts, navigate]);
 
   // Despesas pagas já foram debitadas no extrato e saem da previsão futura.
   // Pendentes e Agendadas ainda não saíram do caixa, então continuam somando
@@ -460,7 +490,15 @@ function FluxoFuturoPage() {
                   const sub = f.sub_cost_center_id ? subCcMap[f.sub_cost_center_id] : null;
                   const status = normalizeStatus(f.status);
                   return (
-                    <TableRow key={f.id}>
+                    <TableRow
+                      key={f.id}
+                      id={`forecast-row-${f.id}`}
+                      className={
+                        highlightId === f.id
+                          ? "bg-amber-100 transition-colors duration-1000"
+                          : "transition-colors duration-1000"
+                      }
+                    >
                       <TableCell className="text-xs">{f.due_date ? formatDateBR(f.due_date) : "—"}</TableCell>
                       <TableCell className="font-medium">
                         <span className="inline-flex items-center gap-1.5">
