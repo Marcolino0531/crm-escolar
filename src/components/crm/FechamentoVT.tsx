@@ -73,8 +73,10 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
   const linhas: LinhaVT[] = useMemo(
     () =>
       funcionarios
-        // Só funcionários elegíveis ao VT entram no fechamento.
-        .filter((f) => f.recebeVt)
+        // Só funcionários ATIVOS e elegíveis ao VT entram no fechamento.
+        // Desligados (com data de rescisão) ficam de fora da listagem e de
+        // qualquer cálculo de folha/benefício.
+        .filter((f) => f.recebeVt && !f.dataRescisao)
         .map((f) => {
           // TODAS as Faltas Integrais do mês (com e sem atestado): qualquer
           // ausência integral abate o benefício do dia, independente de
