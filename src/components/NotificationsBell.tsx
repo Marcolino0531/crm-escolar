@@ -8,6 +8,7 @@ import {
   CreditCard,
   BookOpen,
 } from "lucide-react";
+import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
@@ -38,6 +39,7 @@ type Forecast = {
   projected_amount: number;
   status: string;
   school_id: string;
+  month: string;
 };
 
 type LowStockVariant = {
@@ -74,8 +76,9 @@ function fmtBRL(n: number) {
 export function NotificationsBell() {
   const { session } = useAuth();
   const { canView, canEdit } = usePermissions();
-  const { schools } = useSchool();
+  const { schools, setSelected } = useSchool();
   const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
   const userId = session?.user?.id;
   const canTasks = canView("tasks");
   const canFluxo = canView("financeiro_fluxo");
@@ -154,7 +157,7 @@ export function NotificationsBell() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("recurring_forecasts")
-        .select("id, description, due_date, projected_amount, status, school_id")
+        .select("id, description, due_date, projected_amount, status, school_id, month")
         .neq("status", "paid")
         .not("due_date", "is", null)
         .lte("due_date", today)
@@ -276,8 +279,10 @@ export function NotificationsBell() {
 
   return (
     <Popover
-      onOpenChange={(open) => {
-        if (open && unreadTasks.length > 0) markRead.mutate(unreadTasks.map((n) => n.id));
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o && unreadTasks.length > 0) markRead.mutate(unreadTasks.map((n) => n.id));
       }}
     >
       <PopoverTrigger asChild>
@@ -408,6 +413,11 @@ export function NotificationsBell() {
                 <Link
                   key={f.id}
                   to="/fluxo-futuro"
+                  search={{ focus: f.id, month: f.month }}
+                  onClick={() => {
+                    setSelected(f.school_id);
+                    setOpen(false);
+                  }}
                   className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
                   <div className="flex items-start gap-2">
@@ -429,6 +439,11 @@ export function NotificationsBell() {
                 <Link
                   key={f.id}
                   to="/fluxo-futuro"
+                  search={{ focus: f.id, month: f.month }}
+                  onClick={() => {
+                    setSelected(f.school_id);
+                    setOpen(false);
+                  }}
                   className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
                   <div className="flex items-start gap-2">
