@@ -19,6 +19,7 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { formatDateBR } from "@/lib/date-utils";
+import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -1098,13 +1099,15 @@ function InitialBalanceDialog({
   schoolId: string; referenceDate: string; current: any; onSaved: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState<string>(current?.amount?.toString() ?? "0");
+  const [amount, setAmount] = useState<string>(
+    current?.amount != null ? formatBRLInput(Number(current.amount)) : "0",
+  );
   const [refDate, setRefDate] = useState<string>(current?.reference_date ?? referenceDate);
   const disabled = schoolId === "all";
 
   async function save() {
     if (disabled) return toast.error("Selecione um colégio específico no topo.");
-    const v = Number(String(amount).replace(",", "."));
+    const v = parseBRLNumber(amount);
     if (isNaN(v)) return toast.error("Valor inválido.");
     const { error } = await supabase.from("initial_balances" as any).upsert({
       school_id: schoolId,
@@ -1134,7 +1137,16 @@ function InitialBalanceDialog({
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground block">Valor (R$)</label>
-            <Input value={amount} onChange={e => setAmount(e.target.value)} placeholder="0,00" />
+            <Input
+              inputMode="decimal"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              onBlur={() => {
+                const n = parseBRLNumber(amount);
+                if (Number.isFinite(n)) setAmount(formatBRLInput(n));
+              }}
+              placeholder="0,00"
+            />
           </div>
         </div>
         <DialogFooter>

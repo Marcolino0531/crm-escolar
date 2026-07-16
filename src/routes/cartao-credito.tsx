@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -339,8 +340,8 @@ function NovoRecebivelDialog({
     setValorLiquido("");
   };
 
-  const bruto = Number.parseFloat(valorBruto.replace(",", "."));
-  const liquido = Number.parseFloat(valorLiquido.replace(",", "."));
+  const bruto = parseBRLNumber(valorBruto);
+  const liquido = parseBRLNumber(valorLiquido);
   const valid = !!dataPagamento && !!dataDisp && Number.isFinite(bruto) && Number.isFinite(liquido);
 
   return (
@@ -386,6 +387,10 @@ function NovoRecebivelDialog({
                 inputMode="decimal"
                 value={valorBruto}
                 onChange={(e) => setValorBruto(e.target.value)}
+                onBlur={() => {
+                  const n = parseBRLNumber(valorBruto);
+                  if (Number.isFinite(n)) setValorBruto(formatBRLInput(n));
+                }}
                 placeholder="0,00"
               />
             </div>
@@ -396,6 +401,10 @@ function NovoRecebivelDialog({
                 inputMode="decimal"
                 value={valorLiquido}
                 onChange={(e) => setValorLiquido(e.target.value)}
+                onBlur={() => {
+                  const n = parseBRLNumber(valorLiquido);
+                  if (Number.isFinite(n)) setValorLiquido(formatBRLInput(n));
+                }}
                 placeholder="0,00"
               />
             </div>

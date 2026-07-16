@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Upload, CheckCircle2, AlertCircle, FileSpreadsheet, Building2, Trash2, Plus, Pencil, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { parseCSV, parseExcel, extractTransactions, type ParsedTx } from "@/lib/csv";
-import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
+import { autoReconcileSubcategorized, autoBaixaForecastsPorExtrato } from "@/lib/auto-reconcile";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -268,13 +268,27 @@ function UploadPage() {
     } catch (e) {
       console.error("[UPLOAD] Falha na conciliação automática por subcategoria:", e);
     }
+
+    // Conciliação bancária automática (Fluxo Futuro × Extrato): para cada SAÍDA,
+    // dá baixa em uma previsão de despesa com a mesma data de vencimento e valor.
+    let autoBaixa = 0;
+    try {
+      const saidas = rows
+        .filter((r) => r.type === "saida")
+        .map((r) => ({ date: r.date, amount: r.amount }));
+      autoBaixa = await autoBaixaForecastsPorExtrato(saidas, schoolId);
+    } catch (e) {
+      console.error("[UPLOAD] Falha na baixa automática do Fluxo Futuro:", e);
+    }
     setSaving(false);
     const semCategoria = rows.filter(r => !isCategorized(r)).length;
     toast.success(
       `${payload.length} transações salvas!` +
         (autoConc > 0 ? ` ${autoConc} já conciliada(s) por subcategoria.` : "") +
+        (autoBaixa > 0 ? ` ${autoBaixa} despesa(s) do Fluxo Futuro baixada(s) automaticamente.` : "") +
         (semCategoria > 0 ? ` ${semCategoria} sem categoria — defina no Extrato.` : ""),
     );
+    qc.invalidateQueries({ queryKey: ["recurring_forecasts"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["conc-recs"] });
     qc.invalidateQueries({ queryKey: ["conc-txs"] });
