@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -17,6 +17,12 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { StudentActionSheet } from "@/components/diario/StudentActionSheet";
@@ -133,6 +139,7 @@ function DiarioPage() {
   });
 
   const [busca, setBusca] = useState("");
+  const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [active, setActive] = useState<DiarioStudent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
@@ -159,6 +166,16 @@ function DiarioPage() {
     }
     return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR"));
   }, [filtered]);
+
+  // Turmas iniciam MINIMIZADAS. Durante uma busca ativa, expande as turmas que
+  // têm resultados para que os alunos filtrados fiquem visíveis; ao limpar a
+  // busca, volta ao estado padrão (todas fechadas).
+  const groupKeys = grouped.map(([className]) => className).join("|");
+  useEffect(() => {
+    const q = busca.trim();
+    setOpenGroups(q ? grouped.map(([className]) => className) : []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busca, groupKeys]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -223,23 +240,43 @@ function DiarioPage() {
               </p>
             </div>
           ) : (
-            grouped.map(([className, alunos]) => (
-              <div key={className} className="space-y-2">
-                <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {className} · {alunos.length}
-                </h2>
-                {alunos.map((s) => (
-                  <StudentCard
-                    key={s.id}
-                    student={s}
-                    onClick={() => {
-                      setActive(s);
-                      setSheetOpen(true);
-                    }}
-                  />
-                ))}
-              </div>
-            ))
+            <Accordion
+              type="multiple"
+              value={openGroups}
+              onValueChange={setOpenGroups}
+              className="space-y-2"
+            >
+              {grouped.map(([className, alunos]) => (
+                <AccordionItem
+                  key={className}
+                  value={className}
+                  className="overflow-hidden rounded-2xl border border-border bg-card px-3"
+                >
+                  <AccordionTrigger className="py-3 hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">
+                        {className || "Sem turma"}
+                      </span>
+                      <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                        {alunos.length} {alunos.length === 1 ? "aluno" : "alunos"}
+                      </span>
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-2">
+                    {alunos.map((s) => (
+                      <StudentCard
+                        key={s.id}
+                        student={s}
+                        onClick={() => {
+                          setActive(s);
+                          setSheetOpen(true);
+                        }}
+                      />
+                    ))}
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
           )}
         </TabsContent>
 
