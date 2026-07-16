@@ -1,0 +1,21 @@
+-- Divide o módulo "Colônia de Férias" em dois níveis de acesso distintos:
+--
+--   • 'colonia'            → Acesso OPERACIONAL: aba "Registrar Consumos" e o
+--                            histórico simples (linha do tempo de registros),
+--                            SEM qualquer valor/tarifa/cálculo financeiro.
+--   • 'colonia_financeiro' → Acesso FINANCEIRO: aba exclusiva "Fechamento
+--                            Semanal" (diárias, horas extras, extrato, crédito e
+--                            isenção do Sponte) e o botão de Faturar no Sponte.
+--
+-- Um novo valor de enum não pode ser referenciado na MESMA transação em que é
+-- criado, então esta migration só ESTENDE o enum. As policies que passam a
+-- considerar 'colonia_financeiro' ficam na migration companheira seguinte.
+--
+-- VISIBILIDADE (DEFAULT DENY): como can_view_module só libera via
+-- user_permissions (ou admin), o nível Financeiro nasce 100% invisível para
+-- usuários comuns — inclusive para quem já tinha o nível Operacional. Isso
+-- garante, por padrão, que professores/monitores fiquem só no Operacional e que
+-- o Financeiro permaneça restrito a administradores e perfis de gestão (a quem
+-- o Administrador conceder explicitamente na Gestão de Acessos).
+
+ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'colonia_financeiro';

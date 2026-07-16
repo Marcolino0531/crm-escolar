@@ -115,6 +115,24 @@ async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
   return ((schools ?? []) as any[]).map((s) => s.name as string);
 }
 
+// Defesa em profundidade: só quem tem o nível FINANCEIRO da Colônia
+// ('colonia_financeiro') — ou é admin — pode ler os benefícios do Sponte usados
+// na calculadora (crédito de hora extra + isenção de refeição).
+async function podeVerFinanceiroColonia(userId: string): Promise<boolean> {
+  const { data: roles } = await supabaseAdmin
+    .from("user_roles" as any)
+    .select("role")
+    .eq("user_id", userId);
+  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return true;
+
+  const { data: perms } = await supabaseAdmin
+    .from("user_permissions" as any)
+    .select("can_view, can_edit")
+    .eq("user_id", userId)
+    .eq("module", "colonia_financeiro");
+  return ((perms ?? []) as any[]).some((p) => p.can_view || p.can_edit);
+}
+
 // Casa o nome da Conta Creditada (ex.: "Caixa - 489426") com a conta-caixa da
 // unidade usando .includes — tanto no texto cru ("011311") quanto só nos
 // dígitos. NÃO removemos zeros à esquerda: a conta do CEC Baby ("011311")
@@ -1676,6 +1694,10 @@ export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ColoniaBeneficiosInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<ColoniaBeneficiosResult> => {
     const { unidade, mes, ano, alunoIds } = data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { beneficios: {}, error: "Sem permissão para o Fechamento Financeiro da Colônia." };
+    }
 
     const allowed = await allowedSponteUnidades(context.userId);
     if (allowed !== null && !allowed.includes(unidade)) {

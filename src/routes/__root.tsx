@@ -220,7 +220,7 @@ function AppShell() {
   const showTasks = canView("tasks");
   const showUniformes = canView("uniformes");
   const showDiario = canView("diario");
-  const showColonia = canView("colonia");
+  const showColonia = canView("colonia") || canView("colonia_financeiro");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
