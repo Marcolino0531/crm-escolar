@@ -25,7 +25,7 @@ export const Route = createFileRoute("/colonia")({
 function ColoniaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("colonia"))
+  if (!canView("colonia") && !canView("colonia_financeiro"))
     return <AccessDenied message="Você não tem permissão para visualizar a Colônia de Férias." />;
   return <ColoniaPage />;
 }
@@ -65,13 +65,18 @@ function useColoniaStudents(schoolFilterIds: string[] | null) {
 }
 
 function ColoniaPage() {
-  const { canEdit } = usePermissions();
+  const { canView, canEdit } = usePermissions();
   const podeEditar = canEdit("colonia");
+  // Dois níveis de acesso: Operacional (registros) e Financeiro (fechamento).
+  const podeOperacional = canView("colonia");
+  const podeFinanceiro = canView("colonia_financeiro");
   const { selected, schools, schoolFilterIds } = useSchool();
 
   const specificSchoolId = selected !== "all" ? selected : null;
   const specificSchoolName =
     schools.find((s) => s.id === specificSchoolId)?.name ?? "Todas as Unidades";
+
+  const defaultTab = podeOperacional ? "registro" : "fechamento";
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -87,19 +92,23 @@ function ColoniaPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="registro" className="w-full">
+      <Tabs defaultValue={defaultTab} className="w-full">
         <TabsList>
-          <TabsTrigger value="registro">Registrar Consumos</TabsTrigger>
-          <TabsTrigger value="fechamento">Fechamento Semanal</TabsTrigger>
+          {podeOperacional && <TabsTrigger value="registro">Registrar Consumos</TabsTrigger>}
+          {podeFinanceiro && <TabsTrigger value="fechamento">Fechamento Semanal</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="registro" className="space-y-4 pt-4">
-          <RegistrarConsumos schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
-        </TabsContent>
+        {podeOperacional && (
+          <TabsContent value="registro" className="space-y-4 pt-4">
+            <RegistrarConsumos schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+          </TabsContent>
+        )}
 
-        <TabsContent value="fechamento" className="pt-4">
-          <FechamentoSemanal schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
-        </TabsContent>
+        {podeFinanceiro && (
+          <TabsContent value="fechamento" className="pt-4">
+            <FechamentoSemanal schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
