@@ -9,6 +9,7 @@ import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
+import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -501,9 +502,18 @@ function FluxoFuturoPage() {
                     >
                       <TableCell className="text-xs">{f.due_date ? formatDateBR(f.due_date) : "—"}</TableCell>
                       <TableCell className="font-medium">
-                        <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
                           {f.description}
                           {f.series_id && <Repeat className="h-3 w-3 text-muted-foreground" aria-label="Despesa fixa" />}
+                          {(f.notes ?? "").includes("Baixado automaticamente via importação de extrato") && (
+                            <Badge
+                              variant="outline"
+                              className="border-green-200 bg-green-50 text-[10px] font-medium text-green-700"
+                              title="Baixado automaticamente via importação de extrato"
+                            >
+                              Baixa automática
+                            </Badge>
+                          )}
                         </span>
                       </TableCell>
                       <TableCell>
@@ -656,7 +666,9 @@ function ForecastDialog({
   const defaultDue = forecast?.due_date ?? month;
   const [dueDate, setDueDate] = useState(defaultDue);
   const [description, setDescription] = useState(forecast?.description ?? "");
-  const [amount, setAmount] = useState<string>(forecast ? String(forecast.projected_amount) : "");
+  const [amount, setAmount] = useState<string>(
+    forecast ? formatBRLInput(Number(forecast.projected_amount)) : "",
+  );
   const [costCenterId, setCostCenterId] = useState<string>(forecast?.cost_center_id ?? "");
   const [subCostCenterId, setSubCostCenterId] = useState<string>(forecast?.sub_cost_center_id ?? "");
   const [notes, setNotes] = useState<string>(forecast?.notes ?? "");
@@ -673,7 +685,7 @@ function ForecastDialog({
 
   async function handleSave() {
     if (!description.trim()) { toast.error("Informe a descrição."); return; }
-    const amt = Number(String(amount).replace(",", "."));
+    const amt = parseBRLNumber(amount);
     if (!Number.isFinite(amt) || amt <= 0) { toast.error("Informe um valor válido."); return; }
     if (!dueDate) { toast.error("Informe a data de vencimento."); return; }
 
@@ -880,7 +892,16 @@ function ForecastDialog({
           </div>
           <div>
             <Label>Valor Previsto (R$)</Label>
-            <Input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
+            <Input
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onBlur={() => {
+                const n = parseBRLNumber(amount);
+                if (Number.isFinite(n)) setAmount(formatBRLInput(n));
+              }}
+              placeholder="0,00"
+            />
           </div>
           {!isEdit && (
             <div>
