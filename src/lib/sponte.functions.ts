@@ -1803,9 +1803,13 @@ interface BuscaSponte {
 }
 
 // Extrai pares (id, nome) da resposta de um endpoint de listagem do Sponte.
+// IMPORTANTE: os IDs padrão do Sponte são NEGATIVOS (ex.: -4 = "Cobrança
+// Bancária", -1 = "Dinheiro"); só as formas criadas pela conta têm ID positivo.
+// Por isso o id precisa aceitar o sinal (`-?`), senão todos os itens negativos
+// seriam ignorados e sobraria apenas o último positivo.
 function parseOpcoesSponte(xml: string, idTag: string, nomeTag: string): SponteOpcao[] {
   const out: SponteOpcao[] = [];
-  const re = new RegExp(`<${idTag}>(\\d+)</${idTag}>\\s*<${nomeTag}>([^<]*)</${nomeTag}>`, "gi");
+  const re = new RegExp(`<${idTag}>(-?\\d+)</${idTag}>\\s*<${nomeTag}>([^<]*)</${nomeTag}>`, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) {
     out.push({ id: parseInt(m[1], 10), nome: m[2].trim() });
@@ -1835,6 +1839,7 @@ async function buscarFormaCobranca(
   token: string,
 ): Promise<BuscaSponte> {
   const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
+  console.info("[Colônia][Sponte] RAW GetFormasCobrancas:", xml);
   if (checkFault(xml)) return { match: null, opcoes: [] };
   const opcoes = parseOpcoesSponte(xml, "FormaCobrancaID", "Descricao");
   return { match: acharOpcaoSponte(opcoes, nome), opcoes };
@@ -1847,6 +1852,7 @@ async function buscarCategoria(
   token: string,
 ): Promise<BuscaSponte> {
   const xml = await callSponteMethod("GetCategorias", "", codigoCliente, token);
+  console.info("[Colônia][Sponte] RAW GetCategorias:", xml);
   if (checkFault(xml)) return { match: null, opcoes: [] };
   const opcoes = parseOpcoesSponte(xml, "CategoriaID", "Nome");
   return { match: acharOpcaoSponte(opcoes, nome), opcoes };
