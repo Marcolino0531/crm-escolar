@@ -84,6 +84,15 @@ export function fmtDayMonth(d: Date): string {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
+// Data local (00:00) → "YYYY-MM-DD". TIMEZONE-SAFE: usa os componentes locais,
+// sem toISOString() (que converteria para UTC e poderia deslocar o dia).
+export function toYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
