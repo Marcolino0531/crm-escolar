@@ -235,6 +235,8 @@ function Dashboard() {
   const [bulkCategory, setBulkCategory] = useState<string>(""); // "" | "e:<ccId>" | "r:<rcId>"
   const [bulkSub, setBulkSub] = useState<string>("");
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // Só contam os selecionados que continuam visíveis na tabela atual.
   const selectedRows = useMemo(
@@ -295,6 +297,21 @@ function Dashboard() {
       `${ids.length} transação(ões) atualizada(s).` +
         (ignoradas > 0 ? ` ${ignoradas} ignorada(s) por tipo incompatível.` : ""),
     );
+    setSelectedIds(new Set());
+    setBulkCategory("");
+    setBulkSub("");
+    await qc.invalidateQueries({ queryKey: ["dashboard"] });
+  }
+
+  async function bulkDelete() {
+    const ids = selectedRows.map(t => t.id);
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    const { error } = await supabase.from("transactions").delete().in("id", ids);
+    setBulkDeleting(false);
+    if (error) return toast.error(error.message);
+    toast.success(`${ids.length} transação(ões) excluída(s).`);
+    setBulkDeleteOpen(false);
     setSelectedIds(new Set());
     setBulkCategory("");
     setBulkSub("");
@@ -706,11 +723,39 @@ function Dashboard() {
               <Button size="sm" onClick={applyBulkCategories} disabled={bulkSaving || !bulkCategory}>
                 {bulkSaving ? "Aplicando…" : "Aplicar Categorias"}
               </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={bulkSaving || bulkDeleting}
+              >
+                <Trash2 className="h-4 w-4" /> Excluir Selecionados
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())} disabled={bulkSaving}>
                 Limpar seleção
               </Button>
             </div>
           )}
+          <Dialog open={bulkDeleteOpen} onOpenChange={(o) => { if (!bulkDeleting) setBulkDeleteOpen(o); }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Excluir transações selecionadas</DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                Tem certeza que deseja excluir {selectedRows.length} registro
+                {selectedRows.length === 1 ? "" : "s"} selecionado
+                {selectedRows.length === 1 ? "" : "s"}? Esta ação não pode ser desfeita.
+              </p>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={bulkDeleting}>
+                  Cancelar
+                </Button>
+                <Button variant="destructive" onClick={bulkDelete} disabled={bulkDeleting}>
+                  {bulkDeleting ? "Excluindo…" : "Excluir"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {tableRows.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma transação encontrada com os filtros selecionados.</p>
           ) : (
