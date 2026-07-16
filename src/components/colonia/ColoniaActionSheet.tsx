@@ -1,7 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { Coffee, Sun, Cookie, Moon, LogIn, LogOut, UserCircle2 } from "lucide-react";
+import { Coffee, Sun, Cookie, Moon, LogIn, LogOut, UserCircle2, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
 import {
@@ -21,6 +21,23 @@ const ICONS: Record<ColoniaRecordType, React.ComponentType<{ className?: string 
   exit: LogOut,
 };
 
+type CampRecord = {
+  id: string;
+  record_type: ColoniaRecordType;
+  occurred_at: string;
+};
+
+function todayRange(): { start: string; end: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
 type Props = {
   student: ColoniaStudent | null;
   open: boolean;
@@ -32,6 +49,23 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
   const { session } = useAuth();
   const qc = useQueryClient();
   const userId = session?.user?.id;
+
+  const { start, end } = todayRange();
+  const { data: records = [], isLoading } = useQuery({
+    queryKey: ["colonia_records", student?.id ?? "none", start],
+    enabled: open && !!student,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("holiday_camp_records" as never)
+        .select("id, record_type, occurred_at")
+        .eq("student_id", student!.id)
+        .gte("occurred_at", start)
+        .lte("occurred_at", end)
+        .order("occurred_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as unknown as CampRecord[];
+    },
+  });
 
   const register = useMutation({
     mutationFn: async (type: ColoniaRecordType) => {
@@ -52,11 +86,29 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
         description: `${student?.name} • ${hora}`,
       });
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
-      onOpenChange(false);
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Tente novamente.";
       toast.error("Erro ao registrar", { description: msg });
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("holiday_camp_records" as never)
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => {
+      toast.success("Registro removido");
+      qc.invalidateQueries({ queryKey: ["colonia_records"] });
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Tente novamente.";
+      toast.error("Erro ao remover", { description: msg });
     },
   });
 
@@ -129,6 +181,49 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
                 </button>
               );
             })}
+          </div>
+
+          <div className="mt-4 border-t border-border pt-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Histórico de hoje
+            </h3>
+            {isLoading ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">Carregando…</p>
+            ) : records.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                Nenhum registro hoje.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {records.map((rec) => {
+                  const Icon = ICONS[rec.record_type];
+                  return (
+                    <li
+                      key={rec.id}
+                      className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2"
+                    >
+                      <Icon className="h-5 w-5 flex-shrink-0 text-primary" />
+                      <span className="flex-1 text-sm font-medium text-foreground">
+                        {COLONIA_RECORD_LABEL[rec.record_type]}
+                      </span>
+                      <span className="text-sm tabular-nums text-muted-foreground">
+                        {fmtTime(rec.occurred_at)}
+                      </span>
+                      {canEdit && (
+                        <button
+                          onClick={() => remove.mutate(rec.id)}
+                          disabled={remove.isPending}
+                          aria-label="Remover registro"
+                          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         </div>
       </SheetContent>
