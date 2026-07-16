@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -44,6 +45,9 @@ const FolhasPagamentoVT: React.FC<FolhasPagamentoVTProps> = ({ schoolId, isAdmin
   const [aberta, setAberta] = useState<Batch | null>(null);
   const [itens, setItens] = useState<BatchItem[]>([]);
   const [itensCarregando, setItensCarregando] = useState(false);
+  const [editando, setEditando] = useState<Batch | null>(null);
+  const [novoNome, setNovoNome] = useState("");
+  const [salvandoNome, setSalvandoNome] = useState(false);
 
   const carregarBatches = useCallback(async () => {
     setCarregando(true);
@@ -92,6 +96,34 @@ const FolhasPagamentoVT: React.FC<FolhasPagamentoVTProps> = ({ schoolId, isAdmin
       setItens((prev) => prev.map((i) => (i.id === item.id ? { ...i, is_paid: !novo } : i)));
       toast.error("Não foi possível atualizar o status.");
     }
+  };
+
+  const abrirEdicao = (batch: Batch) => {
+    setEditando(batch);
+    setNovoNome(batch.title);
+  };
+
+  const salvarNome = async () => {
+    if (!editando) return;
+    const nome = novoNome.trim();
+    if (!nome) {
+      toast.error("Informe um nome para a folha.");
+      return;
+    }
+    setSalvandoNome(true);
+    const { error } = await supabase
+      .from("hr_transport_batches" as never)
+      .update({ title: nome } as never)
+      .eq("id", editando.id);
+    setSalvandoNome(false);
+    if (error) {
+      toast.error("Não foi possível renomear a folha.");
+      return;
+    }
+    setBatches((prev) => prev.map((b) => (b.id === editando.id ? { ...b, title: nome } : b)));
+    setAberta((prev) => (prev?.id === editando.id ? { ...prev, title: nome } : prev));
+    toast.success("Folha renomeada.");
+    setEditando(null);
   };
 
   const excluirFolha = async (batch: Batch) => {
@@ -145,6 +177,17 @@ const FolhasPagamentoVT: React.FC<FolhasPagamentoVTProps> = ({ schoolId, isAdmin
                     <span className="text-sm font-bold text-emerald-700 tabular-nums">
                       {fmtBRL(b.total_amount)}
                     </span>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => abrirEdicao(b)}
+                        title="Editar nome"
+                        aria-label="Editar nome"
+                        className="text-gray-400 hover:text-gray-700"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {isAdmin && (
                       <button
                         type="button"
@@ -245,6 +288,49 @@ const FolhasPagamentoVT: React.FC<FolhasPagamentoVTProps> = ({ schoolId, isAdmin
           </div>
         )}
       </div>
+
+      {editando && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !salvandoNome && setEditando(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-sm font-bold text-gray-800">Renomear folha</h4>
+            <input
+              type="text"
+              value={novoNome}
+              autoFocus
+              onChange={(e) => setNovoNome(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !salvandoNome) salvarNome();
+              }}
+              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              placeholder="Nome da folha"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditando(null)}
+                disabled={salvandoNome}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={salvarNome}
+                disabled={salvandoNome}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {salvandoNome ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
