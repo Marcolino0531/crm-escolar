@@ -1792,38 +1792,64 @@ async function callSponteMethod(
   return response.text();
 }
 
-// Resolve o ID numérico da Forma de Cobrança pelo nome (ex.: "Cobrança Bancária").
-async function resolverFormaCobrancaId(
-  nome: string,
-  codigoCliente: string,
-  token: string,
-): Promise<number | null> {
-  const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
-  if (checkFault(xml)) return null;
-  const alvo = normalizarTexto(nome);
-  const re = /<FormaCobrancaID>(\d+)<\/FormaCobrancaID>\s*<Descricao>([^<]*)<\/Descricao>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
-    if (normalizarTexto(m[2]) === alvo) return parseInt(m[1], 10);
-  }
-  return null;
+interface SponteOpcao {
+  id: number;
+  nome: string;
 }
 
-// Resolve o ID numérico da Categoria financeira pelo nome (ex.: "Colônia de Férias").
-async function resolverCategoriaId(
+interface BuscaSponte {
+  match: SponteOpcao | null;
+  opcoes: SponteOpcao[];
+}
+
+// Extrai pares (id, nome) da resposta de um endpoint de listagem do Sponte.
+function parseOpcoesSponte(xml: string, idTag: string, nomeTag: string): SponteOpcao[] {
+  const out: SponteOpcao[] = [];
+  const re = new RegExp(`<${idTag}>(\\d+)</${idTag}>\\s*<${nomeTag}>([^<]*)</${nomeTag}>`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    out.push({ id: parseInt(m[1], 10), nome: m[2].trim() });
+  }
+  return out;
+}
+
+// Busca flexível (insensível a maiúsculas/acentos): primeiro tenta igualdade
+// exata normalizada; se não achar, aceita correspondência por "contém" em
+// qualquer direção (ex.: alvo "Cobrança Bancária" ⊂ "Cobrança Bancária - Boleto").
+function acharOpcaoSponte(opcoes: SponteOpcao[], alvo: string): SponteOpcao | null {
+  const a = normalizarTexto(alvo);
+  const exata = opcoes.find((o) => normalizarTexto(o.nome) === a);
+  if (exata) return exata;
+  return (
+    opcoes.find((o) => {
+      const n = normalizarTexto(o.nome);
+      return n.length > 0 && (n.includes(a) || a.includes(n));
+    }) ?? null
+  );
+}
+
+// Lista as Formas de Cobrança do Sponte e tenta casar com `nome`.
+async function buscarFormaCobranca(
   nome: string,
   codigoCliente: string,
   token: string,
-): Promise<number | null> {
+): Promise<BuscaSponte> {
+  const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
+  if (checkFault(xml)) return { match: null, opcoes: [] };
+  const opcoes = parseOpcoesSponte(xml, "FormaCobrancaID", "Descricao");
+  return { match: acharOpcaoSponte(opcoes, nome), opcoes };
+}
+
+// Lista as Categorias financeiras do Sponte e tenta casar com `nome`.
+async function buscarCategoria(
+  nome: string,
+  codigoCliente: string,
+  token: string,
+): Promise<BuscaSponte> {
   const xml = await callSponteMethod("GetCategorias", "", codigoCliente, token);
-  if (checkFault(xml)) return null;
-  const alvo = normalizarTexto(nome);
-  const re = /<CategoriaID>(\d+)<\/CategoriaID>\s*<Nome>([^<]*)<\/Nome>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
-    if (normalizarTexto(m[2]) === alvo) return parseInt(m[1], 10);
-  }
-  return null;
+  if (checkFault(xml)) return { match: null, opcoes: [] };
+  const opcoes = parseOpcoesSponte(xml, "CategoriaID", "Nome");
+  return { match: acharOpcaoSponte(opcoes, nome), opcoes };
 }
 
 export const faturarColoniaSponte = createServerFn({ method: "POST" })
@@ -1860,29 +1886,42 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     const creds = resolverCredenciais(unidade);
     if (!creds) return { ok: false, indisponivel: true };
 
-    let formaId: number | null;
-    let categoriaId: number | null;
+    let forma: BuscaSponte;
+    let categoria: BuscaSponte;
     try {
-      [formaId, categoriaId] = await Promise.all([
-        resolverFormaCobrancaId(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token),
-        resolverCategoriaId(CATEGORIA_COLONIA, creds.codigoCliente, creds.token),
+      [forma, categoria] = await Promise.all([
+        buscarFormaCobranca(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token),
+        buscarCategoria(CATEGORIA_COLONIA, creds.codigoCliente, creds.token),
       ]);
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
     }
 
-    if (formaId == null) {
+    if (!forma.match) {
+      // Fallback: registra as opções retornadas pelo Sponte para identificarmos
+      // o nome exato configurado na conta.
+      const disponiveis = forma.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
+      console.warn(
+        `[Colônia][Sponte] Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
+      );
       return {
         ok: false,
-        error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte.`,
+        error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte. Formas disponíveis: ${forma.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
       };
     }
-    if (categoriaId == null) {
+    if (!categoria.match) {
+      const disponiveis = categoria.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
+      console.warn(
+        `[Colônia][Sponte] Categoria "${CATEGORIA_COLONIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
+      );
       return {
         ok: false,
-        error: `Categoria "${CATEGORIA_COLONIA}" não encontrada no Sponte. Crie-a no Sponte antes de faturar.`,
+        error: `Categoria "${CATEGORIA_COLONIA}" não encontrada no Sponte. Categorias disponíveis: ${categoria.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
       };
     }
+
+    const formaId = forma.match.id;
+    const categoriaId = categoria.match.id;
 
     const inicioBr = ymdParaBr(weekStart);
     const fimBr = ymdParaBr(weekEnd);
