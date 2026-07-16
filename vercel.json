@@ -2,5 +2,19 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "npm run build",
-  "installCommand": "bun install"
+  "installCommand": "bun install || (sleep 5 && bun install) || (sleep 20 && bun install)",
+  "crons": [
+    {
+      "path": "/api/nuvemshop/cron",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/receivables/cron",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/diario/cron",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }

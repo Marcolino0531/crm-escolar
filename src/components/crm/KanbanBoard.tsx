@@ -11,11 +11,16 @@ import MatriculaModal from "./MatriculaModal";
 interface KanbanBoardProps {
   leadsHook: ReturnType<typeof useLeads>;
   onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
+  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   consolidado?: boolean;
   schoolNameById?: Record<string, string>;
   unidadeNome?: string;
+  // Filtro opcional por data de criação (YYYY-MM-DD). null = mostra todos.
+  periodo?: { start: string; end: string } | null;
+  // Quando true, exibe também os cartões arquivados em suas colunas.
+  mostrarArquivados?: boolean;
 }
 
 interface PendingAction {
@@ -27,11 +32,14 @@ interface PendingAction {
 const KanbanBoard: React.FC<KanbanBoardProps> = ({
   leadsHook,
   onMatriculaConfirmada,
+  onAvancarParaOnboarding,
   onEditar,
   isAdmin = false,
   consolidado = false,
   schoolNameById,
   unidadeNome,
+  periodo = null,
+  mostrarArquivados = false,
 }) => {
   const {
     leads,
@@ -130,27 +138,46 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
     setPendingMatricula(null);
   };
 
+  // Filtro opcional por data de criação do lead (compara apenas a parte AAAA-MM-DD).
+  const filtrarPeriodo = (ls: Lead[]) => {
+    if (!periodo) return ls;
+    return ls.filter((l) => {
+      const dia = (l.criadoEm ?? "").slice(0, 10);
+      return dia >= periodo.start && dia <= periodo.end;
+    });
+  };
+
   return (
     <>
       <DragDropContext onDragEnd={onDragEnd}>
         <div className="flex gap-4 p-4 sm:p-6 overflow-x-auto h-full">
-          {COLUNAS.map((coluna) => (
-            <KanbanColumn
-              key={coluna.id}
-              coluna={coluna}
-              leads={leadsporColuna(coluna.id)}
-              onRemover={removerLead}
-              onMover={moverLead}
-              onSolicitarVisita={handleSolicitarVisita}
-              onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
-              onSolicitarMatricula={handleSolicitarMatricula}
-              onEditar={onEditar}
-              isAdmin={isAdmin}
-              consolidado={consolidado}
-              schoolNameById={schoolNameById}
-              unidadeNome={unidadeNome}
-            />
-          ))}
+          {COLUNAS.map((coluna) => {
+            // Total do status no período (inclui arquivados) — alimenta o
+            // contador do cabeçalho, que não pode diminuir ao arquivar.
+            const totalColuna = filtrarPeriodo(leadsporColuna(coluna.id));
+            const visiveis = mostrarArquivados
+              ? totalColuna
+              : totalColuna.filter((l) => !l.arquivado);
+            return (
+              <KanbanColumn
+                key={coluna.id}
+                coluna={coluna}
+                leads={visiveis}
+                total={totalColuna.length}
+                onRemover={removerLead}
+                onMover={moverLead}
+                onSolicitarVisita={handleSolicitarVisita}
+                onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
+                onSolicitarMatricula={handleSolicitarMatricula}
+                onAvancarParaOnboarding={onAvancarParaOnboarding}
+                onEditar={onEditar}
+                isAdmin={isAdmin}
+                consolidado={consolidado}
+                schoolNameById={schoolNameById}
+                unidadeNome={unidadeNome}
+              />
+            );
+          })}
         </div>
       </DragDropContext>
 

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -9,6 +9,7 @@ import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
+import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -20,7 +21,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
+type FluxoSearch = { focus?: string; month?: string };
+
 export const Route = createFileRoute("/fluxo-futuro")({
+  validateSearch: (search: Record<string, unknown>): FluxoSearch => ({
+    focus: typeof search.focus === "string" ? search.focus : undefined,
+    month: typeof search.month === "string" ? search.month : undefined,
+  }),
   component: FluxoFuturoGate,
 });
 
@@ -137,8 +144,17 @@ function FluxoFuturoPage() {
   const { canEdit } = usePermissions();
   const isAdmin = canEdit("financeiro");
   const qc = useQueryClient();
+  const { focus, month: monthParam } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const today = new Date();
   const [month, setMonth] = useState(() => monthKey(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // Ao chegar de uma notificação (query param `focus`), posiciona no mês da
+  // conta apontada para que a linha exista na listagem antes do highlight.
+  useEffect(() => {
+    if (focus && monthParam) setMonth(monthParam);
+  }, [focus, monthParam]);
   const [editing, setEditing] = useState<Forecast | null>(null);
   const [creating, setCreating] = useState(false);
   const [scopeDialog, setScopeDialog] = useState<{ kind: "edit" | "delete"; forecast: Forecast } | null>(null);
@@ -228,6 +244,21 @@ function FluxoFuturoPage() {
       });
     },
   });
+
+  // Rola até a despesa apontada pela notificação e aplica um destaque temporário.
+  // Só dispara quando a linha já existe na listagem carregada (mês/unidade certos).
+  useEffect(() => {
+    if (!focus) return;
+    if (!forecasts.some((f) => f.id === focus)) return;
+    const el = document.getElementById(`forecast-row-${focus}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(focus);
+    const clearHighlight = setTimeout(() => setHighlightId(null), 3000);
+    // Limpa o `focus` da URL para não redestacar em navegações futuras de mês.
+    navigate({ search: (prev) => ({ ...prev, focus: undefined }), replace: true });
+    return () => clearTimeout(clearHighlight);
+  }, [focus, forecasts, navigate]);
 
   // Despesas pagas já foram debitadas no extrato e saem da previsão futura.
   // Pendentes e Agendadas ainda não saíram do caixa, então continuam somando
@@ -460,12 +491,29 @@ function FluxoFuturoPage() {
                   const sub = f.sub_cost_center_id ? subCcMap[f.sub_cost_center_id] : null;
                   const status = normalizeStatus(f.status);
                   return (
-                    <TableRow key={f.id}>
+                    <TableRow
+                      key={f.id}
+                      id={`forecast-row-${f.id}`}
+                      className={
+                        highlightId === f.id
+                          ? "bg-amber-100 transition-colors duration-1000"
+                          : "transition-colors duration-1000"
+                      }
+                    >
                       <TableCell className="text-xs">{f.due_date ? formatDateBR(f.due_date) : "—"}</TableCell>
                       <TableCell className="font-medium">
-                        <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
                           {f.description}
                           {f.series_id && <Repeat className="h-3 w-3 text-muted-foreground" aria-label="Despesa fixa" />}
+                          {(f.notes ?? "").includes("Baixado automaticamente via importação de extrato") && (
+                            <Badge
+                              variant="outline"
+                              className="border-green-200 bg-green-50 text-[10px] font-medium text-green-700"
+                              title="Baixado automaticamente via importação de extrato"
+                            >
+                              Baixa automática
+                            </Badge>
+                          )}
                         </span>
                       </TableCell>
                       <TableCell>
@@ -618,12 +666,15 @@ function ForecastDialog({
   const defaultDue = forecast?.due_date ?? month;
   const [dueDate, setDueDate] = useState(defaultDue);
   const [description, setDescription] = useState(forecast?.description ?? "");
-  const [amount, setAmount] = useState<string>(forecast ? String(forecast.projected_amount) : "");
+  const [amount, setAmount] = useState<string>(
+    forecast ? formatBRLInput(Number(forecast.projected_amount)) : "",
+  );
   const [costCenterId, setCostCenterId] = useState<string>(forecast?.cost_center_id ?? "");
   const [subCostCenterId, setSubCostCenterId] = useState<string>(forecast?.sub_cost_center_id ?? "");
   const [notes, setNotes] = useState<string>(forecast?.notes ?? "");
   // "Tipo de Despesa": fixa, nao_fixa ou parcelada
   const [tipo, setTipo] = useState<"fixa" | "nao_fixa" | "parcelada">(forecast?.series_id ? "fixa" : "nao_fixa");
+  const [status, setStatus] = useState<ForecastStatus>(forecast ? normalizeStatus(forecast.status) : "pending");
   const [parcelas, setParcelas] = useState<string>("2");
   const [saving, setSaving] = useState(false);
 
@@ -634,7 +685,7 @@ function ForecastDialog({
 
   async function handleSave() {
     if (!description.trim()) { toast.error("Informe a descrição."); return; }
-    const amt = Number(String(amount).replace(",", "."));
+    const amt = parseBRLNumber(amount);
     if (!Number.isFinite(amt) || amt <= 0) { toast.error("Informe um valor válido."); return; }
     if (!dueDate) { toast.error("Informe a data de vencimento."); return; }
 
@@ -723,7 +774,7 @@ function ForecastDialog({
                 projected_amount: amt,
                 cost_center_id: costCenterId || null,
                 sub_cost_center_id: subCostCenterId || null,
-                status: "pending",
+                status,
                 series_id: series!.id,
                 normalized_key: `series:${series!.id}:${mIso}`,
                 notes: notes.trim() || null,
@@ -741,7 +792,7 @@ function ForecastDialog({
               projected_amount: amt,
               cost_center_id: costCenterId || null,
               sub_cost_center_id: subCostCenterId || null,
-              status: "pending",
+              status,
               series_id: series!.id,
               normalized_key: `series:${series!.id}:${monthOfDue}`,
               notes: notes.trim() || null,
@@ -758,7 +809,7 @@ function ForecastDialog({
             projected_amount: amt,
             cost_center_id: costCenterId || null,
             sub_cost_center_id: subCostCenterId || null,
-            status: "pending",
+            status,
             normalized_key: `manual:${crypto.randomUUID()}`,
             notes: notes.trim() || null,
           });
@@ -841,8 +892,30 @@ function ForecastDialog({
           </div>
           <div>
             <Label>Valor Previsto (R$)</Label>
-            <Input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
+            <Input
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onBlur={() => {
+                const n = parseBRLNumber(amount);
+                if (Number.isFinite(n)) setAmount(formatBRLInput(n));
+              }}
+              placeholder="0,00"
+            />
           </div>
+          {!isEdit && (
+            <div>
+              <Label>Status</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as ForecastStatus)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {STATUS_ORDER.map((s) => (
+                    <SelectItem key={s} value={s}>{STATUS_META[s].label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label>Categoria</Label>
             <Select value={costCenterId} onValueChange={(v) => { setCostCenterId(v); setSubCostCenterId(""); }}>

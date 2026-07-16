@@ -67,3 +67,71 @@ export async function autoReconcileSubcategorized(
 
   return elegiveis.length;
 }
+
+// Despesa (saída) do extrato usada para dar baixa em uma previsão do Fluxo Futuro.
+export interface ExpenseTx {
+  date: string; // vencimento/lançamento no formato YYYY-MM-DD
+  amount: number; // magnitude positiva (sem sinal)
+}
+
+const centavos = (n: number): number => Math.round(Number(n) * 100);
+
+/**
+ * Conciliação bancária automática (Fluxo Futuro × Extrato).
+ *
+ * Para cada SAÍDA importada, procura no Fluxo Futuro (`recurring_forecasts`) uma
+ * previsão AINDA NÃO paga da mesma escola com a MESMA data de vencimento
+ * (`due_date`) e o MESMO valor (`projected_amount`). Havendo correspondência
+ * exata, marca a previsão como "Pago" e registra uma nota de auditoria
+ * ("Baixado automaticamente via importação de extrato em DD/MM/AAAA").
+ *
+ * Cada previsão é baixada no máximo uma vez por chamada (uma saída → uma
+ * previsão), evitando quitar duas previsões idênticas com uma única transação.
+ * Retorna a quantidade de previsões baixadas.
+ */
+export async function autoBaixaForecastsPorExtrato(
+  expenses: ExpenseTx[],
+  schoolId: string,
+): Promise<number> {
+  const datas = [...new Set(expenses.map((e) => e.date).filter(Boolean))];
+  if (datas.length === 0) return 0;
+
+  const { data: forecasts, error } = await supabase
+    .from("recurring_forecasts")
+    .select("id, due_date, projected_amount, status, notes")
+    .eq("school_id", schoolId)
+    .neq("status", "paid")
+    .in("due_date", datas);
+  if (error) throw new Error(error.message);
+  if (!forecasts || forecasts.length === 0) return 0;
+
+  const disponiveis = forecasts.map((f) => ({ ...f, consumido: false }));
+  const hoje = new Date().toLocaleDateString("pt-BR");
+  const notaAuditoria = `Baixado automaticamente via importação de extrato em ${hoje}`;
+
+  const aBaixar: Array<{ id: string; notes: string | null }> = [];
+  for (const e of expenses) {
+    const alvo = centavos(e.amount);
+    const match = disponiveis.find(
+      (f) => !f.consumido && f.due_date === e.date && centavos(f.projected_amount) === alvo,
+    );
+    if (!match) continue;
+    match.consumido = true;
+    const notesAtual = (match.notes ?? "").trim();
+    aBaixar.push({
+      id: match.id,
+      notes: notesAtual ? `${notesAtual}\n${notaAuditoria}` : notaAuditoria,
+    });
+  }
+  if (aBaixar.length === 0) return 0;
+
+  await Promise.all(
+    aBaixar.map((f) =>
+      supabase
+        .from("recurring_forecasts")
+        .update({ status: "paid", notes: f.notes })
+        .eq("id", f.id),
+    ),
+  );
+  return aBaixar.length;
+}

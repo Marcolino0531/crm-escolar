@@ -12,6 +12,7 @@ interface LeadCardProps {
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
   onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
   onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
+  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   // Visão Consolidada: exibe a etiqueta da unidade do lead. Nas visões
@@ -29,6 +30,7 @@ const LeadCard: React.FC<LeadCardProps> = ({
   onSolicitarVisita,
   onSolicitarNaoMatricula,
   onSolicitarMatricula,
+  onAvancarParaOnboarding,
   onEditar,
   isAdmin = false,
   consolidado = false,
@@ -84,17 +86,31 @@ const LeadCard: React.FC<LeadCardProps> = ({
 
   const isTerminal = lead.coluna === "matricula" || lead.coluna === "nao-matricula";
 
+  const handleAvancarOnboarding = () => {
+    if (!onAvancarParaOnboarding) return;
+    const ok = window.confirm(
+      `Avançar ${lead.nomeAluno} para o Onboarding? O cartão será arquivado e sairá do funil (o histórico é preservado).`,
+    );
+    if (ok) onAvancarParaOnboarding(lead.id, lead.nomeAluno);
+  };
+
   return (
-    <Draggable draggableId={lead.id} index={index} isDragDisabled={!isAdmin}>
+    <Draggable draggableId={lead.id} index={index} isDragDisabled={!isAdmin || lead.arquivado}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
           {...provided.dragHandleProps}
-          className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-3 transition-shadow ${
-            snapshot.isDragging ? "shadow-xl ring-2 ring-indigo-300 rotate-2" : "hover:shadow-md"
-          }`}
+          className={`bg-white rounded-xl shadow-sm border p-4 mb-3 transition-shadow ${
+            lead.arquivado ? "border-dashed border-gray-300 opacity-60" : "border-gray-100"
+          } ${snapshot.isDragging ? "shadow-xl ring-2 ring-indigo-300 rotate-2" : "hover:shadow-md"}`}
         >
+          {/* Etiqueta de lead arquivado */}
+          {lead.arquivado && (
+            <div className="mb-2 inline-flex items-center gap-1 bg-gray-200 border border-gray-300 text-gray-600 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
+              <span>📦</span> Arquivado
+            </div>
+          )}
           {/* Etiqueta de Unidade (somente na visão Consolidada) */}
           {consolidado && unidadeNomeBadge && (
             <div className="mb-2 inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full">
@@ -320,7 +336,19 @@ const LeadCard: React.FC<LeadCardProps> = ({
             </div>
           )}
 
-          {!isTerminal && isAdmin && (
+          {lead.coluna === "matricula" && isAdmin && !lead.arquivado && onAvancarParaOnboarding && (
+            <div className="mt-3 pt-2 border-t border-gray-50">
+              <button
+                onClick={handleAvancarOnboarding}
+                className="w-full text-xs py-1.5 px-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-semibold"
+                title="Enviar para o Onboarding e arquivar o cartão"
+              >
+                Avançar para Onboarding →
+              </button>
+            </div>
+          )}
+
+          {!isTerminal && isAdmin && !lead.arquivado && (
             <div className="flex gap-1 mt-3 pt-2 border-t border-gray-50">
               {colunaAtualIndex > 0 && (
                 <button

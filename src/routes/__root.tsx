@@ -5,11 +5,13 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
 import {
   LayoutDashboard,
+  Landmark,
   Upload,
   Settings,
   LogOut,
@@ -23,10 +25,15 @@ import {
   PiggyBank,
   ListTodo,
   HandCoins,
+  Shirt,
+  BookOpen,
+  PartyPopper,
+  CreditCard,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
+import { UpdatePasswordScreen } from "@/components/UpdatePasswordScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
@@ -175,7 +182,7 @@ function RootComponent() {
 }
 
 function AuthGate() {
-  const { session, loading } = useAuth();
+  const { session, loading, recovery } = useAuth();
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
@@ -183,6 +190,7 @@ function AuthGate() {
       </div>
     );
   }
+  if (recovery) return <UpdatePasswordScreen />;
   if (!session) return <LoginScreen />;
   return <AppShell />;
 }
@@ -190,21 +198,29 @@ function AuthGate() {
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
   const router = useRouter();
-  // On every app open / login, land the user on the Dashboard ("/") — the
-  // consolidated "Todas as Unidades" view (school filter defaults to "all").
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Preserva a rota exata em recarregamentos (F5) e deep links: só redireciona
+  // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
+  // para a primeira tela permitida. Quem já está numa rota profunda permanece
+  // nela. Aguarda a confirmação das permissões (que por sua vez só resolvem
+  // após a sessão do Supabase carregar) antes de qualquer decisão.
   const didRedirect = useRef(false);
   useEffect(() => {
     if (permsLoading || didRedirect.current) return;
     didRedirect.current = true;
-    if (canView("financeiro_dashboard")) {
-      router.navigate({ to: "/" });
+    if (pathname === "/" && !canView("dashboard") && canView("financeiro_dashboard")) {
+      router.navigate({ to: "/extrato-bancario" });
     }
-  }, [permsLoading, canView, router]);
+  }, [permsLoading, canView, router, pathname]);
+  const showMainDashboard = canView("dashboard");
   const showAgenda = canView("agenda");
   const showAdmissoes = canView("admissoes");
   const showOnboarding = canView("onboarding");
   const showRh = canView("rh");
   const showTasks = canView("tasks");
+  const showUniformes = canView("uniformes");
+  const showDiario = canView("diario");
+  const showColonia = canView("colonia") || canView("colonia_financeiro");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -213,6 +229,7 @@ function AppShell() {
   const showInadimplencia = canView("financeiro_inadimplencia");
   // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
   const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
+  const showCartao = canView("financeiro") && canView("financeiro_cartao");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
   // sub-tab is visible.
@@ -224,6 +241,7 @@ function AppShell() {
       showFluxo ||
       showInadimplencia ||
       showCobranca ||
+      showCartao ||
       showFundos);
   const showConfig = canView("configuracoes");
   return (
@@ -231,14 +249,26 @@ function AppShell() {
       <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
         <div className="mb-8 flex items-center gap-2 px-2">
           <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
-            <img src="/school-hub-logo.svg" alt="School Hub" className="h-full w-full object-contain" />
+            <img
+              src="/school-hub-logo.svg"
+              alt="School Hub"
+              className="h-full w-full object-contain"
+            />
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight">School Hub</div>
           </div>
         </div>
         <nav className="flex flex-col gap-1">
-          {(showAgenda || showAdmissoes || showOnboarding || showRh || showTasks) && (
+          {showMainDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
+          {(showAgenda ||
+            showAdmissoes ||
+            showOnboarding ||
+            showRh ||
+            showTasks ||
+            showUniformes ||
+            showDiario ||
+            showColonia) && (
             <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
               Módulos
             </div>
@@ -248,12 +278,17 @@ function AppShell() {
           {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
           {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
           {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
+          {showUniformes && <NavItem to="/uniformes" icon={Shirt} label="Uniformes" />}
+          {showDiario && <NavItem to="/diario" icon={BookOpen} label="Diário do Aluno" />}
+          {showColonia && <NavItem to="/colonia" icon={PartyPopper} label="Colônia de Férias" />}
           {showFinanceiro && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 Financeiro
               </div>
-              {showDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
+              {showDashboard && (
+                <NavItem to="/extrato-bancario" icon={Landmark} label="Extrato Bancário" />
+              )}
               {showUpload && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
               {showConciliacao && (
                 <NavItem to="/conciliacao" icon={FileCheck2} label="Faturamento" />
@@ -264,6 +299,9 @@ function AppShell() {
               )}
               {/* Cobrança aparece logo abaixo de Inadimplência (gated por cobranca). */}
               {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
+              {showCartao && (
+                <NavItem to="/cartao-credito" icon={CreditCard} label="Cartão de Crédito" />
+              )}
               {showFundos && <NavItem to="/fundos" icon={PiggyBank} label="Fundos" />}
             </>
           )}

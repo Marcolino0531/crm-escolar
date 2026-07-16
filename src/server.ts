@@ -2,6 +2,11 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { handleNuvemshopApi } from "./lib/nuvemshop.api";
+import { handleUniformesApi } from "./lib/uniformes.api";
+import { handleCobrancasApi } from "./lib/cobrancas.api";
+import { handleReceivablesApi } from "./lib/receivables.api";
+import { handleDiarioApi } from "./lib/diario.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -12,7 +17,7 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 async function getServerEntry(): Promise<ServerEntry> {
   if (!serverEntryPromise) {
     serverEntryPromise = import("@tanstack/react-start/server-entry").then(
-      (m) => ((m as { default?: ServerEntry }).default ?? (m as unknown as ServerEntry)),
+      (m) => (m as { default?: ServerEntry }).default ?? (m as unknown as ServerEntry),
     );
   }
   return serverEntryPromise;
@@ -69,6 +74,28 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      // Endpoints nativos da integração Nuvemshop (sync/webhook/cron). Tratados
+      // aqui, antes do roteador da aplicação, por serem chamadas externas
+      // (webhook/cron) que não passam pelo fluxo de RPC do front.
+      const nuvemshopResponse = await handleNuvemshopApi(request);
+      if (nuvemshopResponse) return nuvemshopResponse;
+
+      // Exportação de pedidos de uniformes (.xlsx).
+      const uniformesResponse = await handleUniformesApi(request);
+      if (uniformesResponse) return uniformesResponse;
+
+      // Histórico de envios de WhatsApp da Cobrança.
+      const cobrancasResponse = await handleCobrancasApi(request);
+      if (cobrancasResponse) return cobrancasResponse;
+
+      // Verificação diária dos recebíveis de cartão (Vercel Cron).
+      const receivablesResponse = await handleReceivablesApi(request);
+      if (receivablesResponse) return receivablesResponse;
+
+      // Sincronização diária do Diário do Aluno com o Sponte (Vercel Cron).
+      const diarioResponse = await handleDiarioApi(request);
+      if (diarioResponse) return diarioResponse;
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

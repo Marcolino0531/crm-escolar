@@ -115,6 +115,24 @@ async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
   return ((schools ?? []) as any[]).map((s) => s.name as string);
 }
 
+// Defesa em profundidade: só quem tem o nível FINANCEIRO da Colônia
+// ('colonia_financeiro') — ou é admin — pode ler os benefícios do Sponte usados
+// na calculadora (crédito de hora extra + isenção de refeição).
+async function podeVerFinanceiroColonia(userId: string): Promise<boolean> {
+  const { data: roles } = await supabaseAdmin
+    .from("user_roles" as any)
+    .select("role")
+    .eq("user_id", userId);
+  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return true;
+
+  const { data: perms } = await supabaseAdmin
+    .from("user_permissions" as any)
+    .select("can_view, can_edit")
+    .eq("user_id", userId)
+    .eq("module", "colonia_financeiro");
+  return ((perms ?? []) as any[]).some((p) => p.can_view || p.can_edit);
+}
+
 // Casa o nome da Conta Creditada (ex.: "Caixa - 489426") com a conta-caixa da
 // unidade usando .includes — tanto no texto cru ("011311") quanto só nos
 // dígitos. NÃO removemos zeros à esquerda: a conta do CEC Baby ("011311")
@@ -405,7 +423,12 @@ async function coletarPendencias(
     const lote = dias.slice(i, i + DIAS_CONC);
     const resultados = await Promise.allSettled(
       lote.map((dia) =>
-        callSponte("GetParcelas", `DataVencimento=${ymdParaBr(dia)};Situacao=Aberta`, codigoCliente, token),
+        callSponte(
+          "GetParcelas",
+          `DataVencimento=${ymdParaBr(dia)};Situacao=Aberta`,
+          codigoCliente,
+          token,
+        ),
       ),
     );
     for (const r of resultados) {
@@ -1181,9 +1204,7 @@ async function coletarInadimplenciaPorEscopo(
     const valeSerenoAllowed = isAllowed("Núcleo Vale do Sereno");
     const cecCreds = cecAllowed ? resolverCredenciais("CEC") : null;
     const belvedereCreds = belvedereAllowed ? resolverCredenciais("Núcleo Belvedere") : null;
-    const valeSerenoCreds = valeSerenoAllowed
-      ? resolverCredenciais("Núcleo Vale do Sereno")
-      : null;
+    const valeSerenoCreds = valeSerenoAllowed ? resolverCredenciais("Núcleo Vale do Sereno") : null;
     if (!cecCreds && !belvedereCreds && !valeSerenoCreds) {
       // Usuário restrito sem nenhuma unidade Sponte permitida → lista vazia.
       if (allowed !== null) return { pendencias: [] };
@@ -1449,7 +1470,12 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
 
     try {
       const [respXml, alunoXml] = await Promise.all([
-        callSponte("GetResponsavelFinanceiro", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+        callSponte(
+          "GetResponsavelFinanceiro",
+          `AlunoID=${alunoId}`,
+          creds.codigoCliente,
+          creds.token,
+        ),
         callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
       ]);
 
@@ -1484,4 +1510,781 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
     } catch (e) {
       return { ...vazio, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
     }
+  });
+
+// ── Alunos Matriculados Ativos (Dashboard) ──────────────────────────────────
+// Consulta o número REAL de alunos com Situação "Ativo" no Sponte, por unidade.
+// GetAlunos com `Situacao=-1` (ID da situação "Ativo", ver GetSituacoesAlunos)
+// devolve apenas os matriculados ativos, cada um com seu `TurmaAtual`. Para o
+// token CEC/CEC Baby (compartilhado), separamos por turma (Berçário/Maternal →
+// CEC Baby; Período/Ano → CEC). Belvedere e Vale do Sereno têm token próprio e
+// contam todos. RBAC por unidade aplicado (server-side).
+export interface AlunosAtivosResult {
+  total: number;
+  porUnidade: Record<string, number>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const AlunosAtivosInputSchema = z.object({
+  unidade: z.string().optional(),
+});
+
+// ID da situação "Ativo" no Sponte (negativo, conforme GetSituacoesAlunos).
+const SITUACAO_ATIVO = "-1";
+
+// Conta os alunos ativos de UM par de credenciais. Quando `segmentaPorTurma`,
+// devolve a separação CEC × CEC Baby; caso contrário, tudo em `total`.
+async function contarAtivosPorToken(
+  codigoCliente: string,
+  token: string,
+): Promise<{ cec: number; cecBaby: number; total: number }> {
+  const xml = await callSponte("GetAlunos", `Situacao=${SITUACAO_ATIVO}`, codigoCliente, token);
+  const fault = checkFault(xml);
+  if (fault) throw new Error(fault);
+  const nodes = parseXmlList(xml, "wsAluno");
+  let cec = 0;
+  let cecBaby = 0;
+  let total = 0;
+  for (const node of nodes) {
+    const alunoId = parseXmlValue(node, "AlunoID");
+    // O nó de status (RetornoOperacao) vem com AlunoID=0 quando não há registros.
+    if (!alunoId || alunoId === "0") continue;
+    total++;
+    const unidade = classificarUnidade(parseXmlValue(node, "TurmaAtual"));
+    if (unidade === "CEC Baby") cecBaby++;
+    else cec++; // null (sem turma classificável) cai na unidade-mãe CEC
+  }
+  return { cec, cecBaby, total };
+}
+
+export const fetchSponteAlunosAtivos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => AlunosAtivosInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<AlunosAtivosResult> => {
+    const unidadeKey = data.unidade ?? null;
+
+    // RBAC por unidade (server-side). `null` = acesso global (admin).
+    const allowed = await allowedSponteUnidades(context.userId);
+    const isAllowed = (u: string) => allowed === null || allowed.includes(u);
+
+    const porUnidade: Record<string, number> = {};
+
+    try {
+      if (unidadeKey === null) {
+        // ── Consolidado: CEC token (CEC + CEC Baby) + Belvedere + Vale do Sereno.
+        if (isAllowed("CEC") || isAllowed("CEC Baby")) {
+          const creds = resolverCredenciais("CEC");
+          if (creds) {
+            const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+            if (isAllowed("CEC")) porUnidade["CEC"] = c.cec;
+            if (isAllowed("CEC Baby")) porUnidade["CEC Baby"] = c.cecBaby;
+          }
+        }
+        for (const u of ["Núcleo Belvedere", "Núcleo Vale do Sereno"]) {
+          if (!isAllowed(u)) continue;
+          const creds = resolverCredenciais(u);
+          if (!creds) continue;
+          const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+          porUnidade[u] = c.total;
+        }
+      } else {
+        if (!isAllowed(unidadeKey)) {
+          return { total: 0, porUnidade: {}, error: "Sem permissão para esta unidade." };
+        }
+        const creds = resolverCredenciais(unidadeKey);
+        if (!creds) return { total: 0, porUnidade: {}, indisponivel: true };
+        const c = await contarAtivosPorToken(creds.codigoCliente, creds.token);
+        if (creds.segmentaPorTurma) {
+          porUnidade[unidadeKey] = unidadeKey === "CEC Baby" ? c.cecBaby : c.cec;
+        } else {
+          porUnidade[unidadeKey] = c.total;
+        }
+      }
+    } catch (e) {
+      return {
+        total: 0,
+        porUnidade: {},
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    if (Object.keys(porUnidade).length === 0) {
+      return { total: 0, porUnidade: {}, indisponivel: true };
+    }
+    const total = Object.values(porUnidade).reduce((s, n) => s + n, 0);
+    return { total, porUnidade };
+  });
+
+// ── Benefícios da Colônia de Férias (crédito de hora extra + isenção de refeição) ──
+// Consulta, por aluno, as parcelas do Sponte (GetParcelas por AlunoID) e extrai:
+//  • o valor de "Hora Extra" pago na mensalidade → banco de crédito;
+//  • quais refeições estão inclusas na mensalidade → isenção na colônia.
+// ISOLAMENTO MENSAL ESTRITO: só contam as parcelas cujo Vencimento cai no mês da
+// colônia (Julho ou Dezembro). Créditos/isenções NÃO são acumulativos entre
+// meses — o crédito de Julho jamais transita para Dezembro (e vice-versa). A
+// trava de calendário (só Julho/Dezembro) é aplicada no cliente; aqui apenas
+// devolvemos os dados brutos consultados por unidade.
+const REFEICAO_LABEL_TO_TYPE: { needle: string; type: string }[] = [
+  { needle: "lanche da manha", type: "breakfast" },
+  { needle: "lanche da tarde", type: "snack" },
+  { needle: "almoco", type: "lunch" },
+  { needle: "jantar", type: "dinner" },
+];
+
+export interface ColoniaBeneficioAluno {
+  creditoHoraExtra: number;
+  refeicoesIsentas: string[]; // record types: breakfast | lunch | snack | dinner
+}
+
+export interface ColoniaBeneficiosResult {
+  beneficios: Record<string, ColoniaBeneficioAluno>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const ColoniaBeneficiosInputSchema = z.object({
+  unidade: z.string(),
+  mes: z.number().int().min(1).max(12),
+  ano: z.number().int().min(2000).max(2100),
+  alunoIds: z.array(z.string()).max(400),
+});
+
+// Extrai crédito de hora extra e refeições inclusas de UM conjunto de parcelas,
+// considerando SOMENTE as parcelas do mês da colônia (Vencimento em mes/ano).
+// Sem fallback para outros meses — o isolamento mensal é estrito.
+function extrairBeneficioParcelas(
+  parcelaNodes: string[],
+  mes: number,
+  ano: number,
+): ColoniaBeneficioAluno {
+  const refeicoesIsentas = new Set<string>();
+  let creditoHoraExtra = 0;
+
+  for (const p of parcelaNodes) {
+    // Filtro de isolamento mensal: descarta qualquer parcela fora do mês.
+    const ymd = paraYMD(parseXmlValue(p, "Vencimento"));
+    if (!ymd) continue;
+    const [y, m] = ymd.split("-").map(Number);
+    if (y !== ano || m !== mes) continue;
+
+    const categoria = parseXmlValue(p, "Categoria");
+    if (!categoria) continue;
+    const cat = normalizarTexto(categoria);
+
+    const refeicao = REFEICAO_LABEL_TO_TYPE.find((r) => cat.includes(r.needle));
+    if (refeicao) {
+      refeicoesIsentas.add(refeicao.type);
+      continue;
+    }
+
+    if (cat.includes("hora extra")) {
+      creditoHoraExtra += parseBrDecimal(parseXmlValue(p, "ValorParcela"));
+    }
+  }
+
+  return {
+    creditoHoraExtra: Math.round(creditoHoraExtra * 100) / 100,
+    refeicoesIsentas: [...refeicoesIsentas],
+  };
+}
+
+export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ColoniaBeneficiosInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ColoniaBeneficiosResult> => {
+    const { unidade, mes, ano, alunoIds } = data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { beneficios: {}, error: "Sem permissão para o Fechamento Financeiro da Colônia." };
+    }
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { beneficios: {}, error: "Sem permissão para esta unidade." };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { beneficios: {}, indisponivel: true };
+
+    const beneficios: Record<string, ColoniaBeneficioAluno> = {};
+    const CONC = 8; // concorrência para não estourar o timeout da API
+    try {
+      for (let i = 0; i < alunoIds.length; i += CONC) {
+        const lote = alunoIds.slice(i, i + CONC);
+        const resultados = await Promise.allSettled(
+          lote.map((id) =>
+            callSponte("GetParcelas", `AlunoID=${id}`, creds.codigoCliente, creds.token),
+          ),
+        );
+        resultados.forEach((r, idx) => {
+          if (r.status !== "fulfilled") return;
+          if (checkFault(r.value)) return;
+          const nodes = parseXmlList(r.value, "wsParcela");
+          beneficios[lote[idx]] = extrairBeneficioParcelas(nodes, mes, ano);
+        });
+      }
+    } catch (e) {
+      return {
+        beneficios,
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    return { beneficios };
+  });
+
+// ── Faturamento da Colônia de Férias no Sponte (InsertPlano) ─────────────────
+// Cria UMA conta a receber (título de 1 parcela) para o aluno, com o valor exato
+// do extrato semanal, categoria "Colônia de Férias" e forma "Cobrança Bancária".
+// Anti-duplicidade: um aluno só pode ser faturado uma vez por semana (unique em
+// holiday_camp_invoices). Só usuários com o nível Financeiro da Colônia podem
+// disparar (defesa em profundidade no servidor).
+
+const FaturarColoniaInputSchema = z.object({
+  unidade: z.string(),
+  studentId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  sponteAlunoId: z.string().min(1),
+  valor: z.number().positive(),
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export interface FaturarColoniaResult {
+  ok: boolean;
+  contaReceberID?: string;
+  retornoOperacao?: string;
+  jaFaturado?: boolean;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const CATEGORIA_COLONIA = "Colônia de Férias";
+const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// POST de um método SOAP do Sponte com parâmetros arbitrários (extraParams já
+// serializados na ordem do WSDL). callSponte é específico de sParametrosBusca.
+async function callSponteMethod(
+  method: string,
+  extraParams: string,
+  codigoCliente: string,
+  token: string,
+): Promise<string> {
+  const soapBody = buildSoapEnvelope(method, extraParams, codigoCliente, token);
+  const response = await fetch(SPONTE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      SOAPAction: `${SPONTE_NS}${method}`,
+    },
+    body: soapBody,
+  });
+  return response.text();
+}
+
+interface SponteOpcao {
+  id: number;
+  nome: string;
+}
+
+interface BuscaSponte {
+  match: SponteOpcao | null;
+  opcoes: SponteOpcao[];
+}
+
+// Extrai pares (id, nome) da resposta de um endpoint de listagem do Sponte.
+// IMPORTANTE: os IDs padrão do Sponte são NEGATIVOS (ex.: -4 = "Cobrança
+// Bancária", -1 = "Dinheiro"); só as formas criadas pela conta têm ID positivo.
+// Por isso o id precisa aceitar o sinal (`-?`), senão todos os itens negativos
+// seriam ignorados e sobraria apenas o último positivo.
+function parseOpcoesSponte(xml: string, idTag: string, nomeTag: string): SponteOpcao[] {
+  const out: SponteOpcao[] = [];
+  const re = new RegExp(`<${idTag}>(-?\\d+)</${idTag}>\\s*<${nomeTag}>([^<]*)</${nomeTag}>`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    out.push({ id: parseInt(m[1], 10), nome: m[2].trim() });
+  }
+  return out;
+}
+
+// Busca flexível (insensível a maiúsculas/acentos): primeiro tenta igualdade
+// exata normalizada; se não achar, aceita correspondência por "contém" em
+// qualquer direção (ex.: alvo "Cobrança Bancária" ⊂ "Cobrança Bancária - Boleto").
+function acharOpcaoSponte(opcoes: SponteOpcao[], alvo: string): SponteOpcao | null {
+  const a = normalizarTexto(alvo);
+  const exata = opcoes.find((o) => normalizarTexto(o.nome) === a);
+  if (exata) return exata;
+  return (
+    opcoes.find((o) => {
+      const n = normalizarTexto(o.nome);
+      return n.length > 0 && (n.includes(a) || a.includes(n));
+    }) ?? null
+  );
+}
+
+// Lista as Formas de Cobrança do Sponte e tenta casar com `nome`.
+async function buscarFormaCobranca(
+  nome: string,
+  codigoCliente: string,
+  token: string,
+): Promise<BuscaSponte> {
+  const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
+  console.info("[Colônia][Sponte] RAW GetFormasCobrancas:", xml);
+  if (checkFault(xml)) return { match: null, opcoes: [] };
+  const opcoes = parseOpcoesSponte(xml, "FormaCobrancaID", "Descricao");
+  return { match: acharOpcaoSponte(opcoes, nome), opcoes };
+}
+
+// Lista as Categorias financeiras do Sponte e tenta casar com `nome`.
+async function buscarCategoria(
+  nome: string,
+  codigoCliente: string,
+  token: string,
+): Promise<BuscaSponte> {
+  const xml = await callSponteMethod("GetCategorias", "", codigoCliente, token);
+  console.info("[Colônia][Sponte] RAW GetCategorias:", xml);
+  if (checkFault(xml)) return { match: null, opcoes: [] };
+  const opcoes = parseOpcoesSponte(xml, "CategoriaID", "Nome");
+  return { match: acharOpcaoSponte(opcoes, nome), opcoes };
+}
+
+export const faturarColoniaSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => FaturarColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<FaturarColoniaResult> => {
+    const { unidade, studentId, schoolId, sponteAlunoId, valor, weekStart, weekEnd, vencimento } =
+      data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, error: "Sem permissão para faturar a Colônia." };
+    }
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+
+    // Anti-duplicidade: já faturado nesta semana? Curto-circuita sem chamar o Sponte.
+    const { data: existente } = await supabaseAdmin
+      .from("holiday_camp_invoices" as any)
+      .select("sponte_conta_receber_id")
+      .eq("student_id", studentId)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (existente) {
+      return {
+        ok: true,
+        jaFaturado: true,
+        contaReceberID: (existente as any).sponte_conta_receber_id ?? undefined,
+      };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { ok: false, indisponivel: true };
+
+    let forma: BuscaSponte;
+    let categoria: BuscaSponte;
+    try {
+      [forma, categoria] = await Promise.all([
+        buscarFormaCobranca(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token),
+        buscarCategoria(CATEGORIA_COLONIA, creds.codigoCliente, creds.token),
+      ]);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+    }
+
+    if (!forma.match) {
+      // Fallback: registra as opções retornadas pelo Sponte para identificarmos
+      // o nome exato configurado na conta.
+      const disponiveis = forma.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
+      console.warn(
+        `[Colônia][Sponte] Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
+      );
+      return {
+        ok: false,
+        error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte. Formas disponíveis: ${forma.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
+      };
+    }
+    if (!categoria.match) {
+      const disponiveis = categoria.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
+      console.warn(
+        `[Colônia][Sponte] Categoria "${CATEGORIA_COLONIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
+      );
+      return {
+        ok: false,
+        error: `Categoria "${CATEGORIA_COLONIA}" não encontrada no Sponte. Categorias disponíveis: ${categoria.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
+      };
+    }
+
+    const formaId = forma.match.id;
+    const categoriaId = categoria.match.id;
+
+    const inicioBr = ymdParaBr(weekStart);
+    const fimBr = ymdParaBr(weekEnd);
+    const observacao = `Colônia de Férias: Semana de ${inicioBr} a ${fimBr}`;
+
+    const extra =
+      `<nContratoID>0</nContratoID>` +
+      `<nContratoAulaLivreID>0</nContratoAulaLivreID>` +
+      `<nAlunoID>${escapeXml(sponteAlunoId)}</nAlunoID>` +
+      `<nTipoPlano>1</nTipoPlano>` +
+      `<nBolsaID>0</nBolsaID>` +
+      `<dDataPrimeiroVencimento>${vencimento}T00:00:00</dDataPrimeiroVencimento>` +
+      `<nNumeroParcelas>1</nNumeroParcelas>` +
+      `<nValorParcelas>${valor.toFixed(2)}</nValorParcelas>` +
+      `<nFormaCobrancaID>${formaId}</nFormaCobrancaID>` +
+      `<nCategoriaID>${categoriaId}</nCategoriaID>` +
+      `<sObservacao>${escapeXml(observacao)}</sObservacao>` +
+      `<nClienteID>0</nClienteID>` +
+      `<nContaID>0</nContaID>`;
+
+    let xml: string;
+    try {
+      xml = await callSponteMethod("InsertPlano", extra, creds.codigoCliente, creds.token);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Falha ao faturar no Sponte." };
+    }
+
+    const fault = checkFault(xml);
+    if (fault) return { ok: false, error: fault };
+
+    const retornoOperacao = parseXmlValue(xml, "RetornoOperacao");
+    const contaReceberID = parseXmlValue(xml, "ContaReceberID");
+    const contaNum = parseInt(contaReceberID, 10);
+    const sucesso =
+      (Number.isFinite(contaNum) && contaNum > 0) ||
+      normalizarTexto(retornoOperacao).includes("sucesso");
+
+    if (!sucesso) {
+      return {
+        ok: false,
+        retornoOperacao,
+        error: retornoOperacao || "O Sponte não confirmou a criação da cobrança.",
+      };
+    }
+
+    // Persiste o faturamento (idempotente): trava a duplicidade e alimenta o
+    // estado "Faturado" no Fechamento Semanal.
+    await supabaseAdmin.from("holiday_camp_invoices" as any).insert({
+      student_id: studentId,
+      school_id: schoolId,
+      week_start: weekStart,
+      week_end: weekEnd,
+      amount: valor,
+      due_date: vencimento,
+      sponte_aluno_id: sponteAlunoId,
+      sponte_conta_receber_id: contaReceberID || null,
+      observacao,
+      invoiced_by: context.userId,
+    });
+
+    return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
+  });
+
+// ── Sincronização de status do faturamento da Colônia (two-way bind) ─────────
+
+const DesvincularColoniaInputSchema = z.object({
+  unidade: z.string(),
+  studentId: z.string().uuid(),
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export interface DesvincularColoniaResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Remove o vínculo local de faturamento (o botão volta a "Pendente" e libera o
+// refaturamento). NÃO exclui o título no Sponte — apenas desfaz o registro local.
+export const desvincularFaturamentoColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DesvincularColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DesvincularColoniaResult> => {
+    const { unidade, studentId, weekStart } = data;
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+    const { error } = await supabaseAdmin
+      .from("holiday_camp_invoices" as any)
+      .delete()
+      .eq("student_id", studentId)
+      .eq("week_start", weekStart);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  });
+
+const VerificarColoniaInputSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  itens: z
+    .array(
+      z.object({
+        unidade: z.string(),
+        studentId: z.string().uuid(),
+        sponteAlunoId: z.string().min(1),
+        contaReceberId: z.string().min(1),
+      }),
+    )
+    .max(200),
+});
+
+export interface VerificarColoniaResult {
+  ok: boolean;
+  revertidos: string[];
+  error?: string;
+}
+
+// Verificação silenciosa: confere no Sponte (GetParcelas por aluno) se cada
+// título faturado ainda existe e não está cancelado/estornado. Os títulos que
+// não existirem mais têm o vínculo local removido (revertidos → "Pendente").
+// Conservador: falha de rede/resposta vazia NÃO reverte, para evitar liberar o
+// botão de um título válido e permitir cobrança em duplicidade.
+export const verificarFaturamentosColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => VerificarColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<VerificarColoniaResult> => {
+    const { weekStart, itens } = data;
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, revertidos: [], error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    const permitidos = itens.filter((it) => allowed === null || allowed.includes(it.unidade));
+
+    // Cache de ContaReceberIDs ativos por (unidade, aluno) para não repetir o
+    // GetParcelas quando o mesmo aluno tem múltiplos títulos.
+    const ativosPorAluno = new Map<string, Set<string> | null>();
+    const revertidos: string[] = [];
+
+    for (const it of permitidos) {
+      const creds = resolverCredenciais(it.unidade);
+      if (!creds) continue;
+      const chave = `${it.unidade}|${it.sponteAlunoId}`;
+      let ativos = ativosPorAluno.get(chave);
+      if (ativos === undefined) {
+        ativos = null;
+        try {
+          const xml = await callSponte(
+            "GetParcelas",
+            `AlunoID=${it.sponteAlunoId}`,
+            creds.codigoCliente,
+            creds.token,
+          );
+          const nodes = checkFault(xml) ? [] : parseXmlList(xml, "wsParcela");
+          if (nodes.length > 0) {
+            const set = new Set<string>();
+            for (const node of nodes) {
+              const id = parseXmlValue(node, "ContaReceberID");
+              const sit = normalizarTexto(parseXmlValue(node, "SituacaoParcela"));
+              const cancelada = sit.includes("cancel") || sit.includes("estorn");
+              if (id && !cancelada) set.add(id);
+            }
+            ativos = set;
+          }
+        } catch {
+          ativos = null;
+        }
+        ativosPorAluno.set(chave, ativos);
+      }
+      // Só reverte quando temos uma lista válida (não-nula) que NÃO contém o ID.
+      if (ativos && !ativos.has(it.contaReceberId)) {
+        const { error } = await supabaseAdmin
+          .from("holiday_camp_invoices" as any)
+          .delete()
+          .eq("student_id", it.studentId)
+          .eq("week_start", weekStart);
+        if (!error) revertidos.push(it.studentId);
+      }
+    }
+    return { ok: true, revertidos };
+  });
+
+// ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
+// Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
+// verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são
+// casados por (school_id, sponte_aluno_id); as fotos existentes nunca são
+// sobrescritas. Somente administradores podem executar (escreve em TODAS as
+// unidades via service role).
+
+export interface DiarioSyncResult {
+  turmas: number;
+  alunos: number;
+  porUnidade: Record<string, number>;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+interface AlunoAtivo {
+  sponteId: string;
+  nome: string;
+  turma: string;
+}
+
+// Lista os alunos ativos de UM par de credenciais (Nome, AlunoID, TurmaAtual).
+async function listarAlunosAtivos(codigoCliente: string, token: string): Promise<AlunoAtivo[]> {
+  const xml = await callSponte("GetAlunos", `Situacao=${SITUACAO_ATIVO}`, codigoCliente, token);
+  const fault = checkFault(xml);
+  if (fault) throw new Error(fault);
+  const nodes = parseXmlList(xml, "wsAluno");
+  const alunos: AlunoAtivo[] = [];
+  for (const node of nodes) {
+    const sponteId = parseXmlValue(node, "AlunoID");
+    if (!sponteId || sponteId === "0") continue;
+    alunos.push({
+      sponteId,
+      nome: parseXmlValue(node, "Nome").trim(),
+      turma: parseXmlValue(node, "TurmaAtual").trim(),
+    });
+  }
+  return alunos;
+}
+
+// Regra estrita de distribuição do token compartilhado CEC/CEC Baby: turmas de
+// Berçário até Maternal 3 vão obrigatoriamente para "CEC Baby"; todas as demais
+// (Jardim, Períodos, Anos etc.) vão para "CEC".
+function unidadeDestinoDiario(turma: string): "CEC" | "CEC Baby" {
+  const t = normalizar(turma);
+  if (t.includes("bercario") || t.includes("maternal")) return "CEC Baby";
+  return "CEC";
+}
+
+// Núcleo do sync do Diário (sem auth) — reutilizado pelo botão manual (admin) e
+// pelo cron diário (/api/diario/cron). Escreve via service role.
+export async function runDiarioSponteSync(): Promise<DiarioSyncResult> {
+  {
+    // Mapa nome da unidade → school_id (as unidades Sponte casam com schools.name).
+    const { data: schoolRows } = await supabaseAdmin.from("schools" as any).select("id, name");
+    const schoolIdByName: Record<string, string> = {};
+    for (const s of (schoolRows ?? []) as any[]) schoolIdByName[s.name as string] = s.id as string;
+
+    // Coleta os alunos ativos por unidade de destino (school name).
+    // Cada aluno: { schoolName, className, name, sponteId }.
+    const coletados: { schoolName: string; className: string; name: string; sponteId: string }[] =
+      [];
+    const porUnidade: Record<string, number> = {};
+
+    try {
+      // CEC token (compartilhado): separa CEC × CEC Baby por TurmaAtual.
+      const credsCec = resolverCredenciais("CEC");
+      if (credsCec) {
+        const alunos = await listarAlunosAtivos(credsCec.codigoCliente, credsCec.token);
+        for (const a of alunos) {
+          const unidade = unidadeDestinoDiario(a.turma);
+          coletados.push({
+            schoolName: unidade,
+            className: a.turma,
+            name: a.nome,
+            sponteId: a.sponteId,
+          });
+        }
+      }
+      // Belvedere e Vale do Sereno: token próprio, todos os alunos na sua unidade.
+      for (const unidade of ["Núcleo Belvedere", "Núcleo Vale do Sereno"]) {
+        const creds = resolverCredenciais(unidade);
+        if (!creds) continue;
+        const alunos = await listarAlunosAtivos(creds.codigoCliente, creds.token);
+        for (const a of alunos) {
+          coletados.push({
+            schoolName: unidade,
+            className: a.turma,
+            name: a.nome,
+            sponteId: a.sponteId,
+          });
+        }
+      }
+    } catch (e) {
+      return {
+        turmas: 0,
+        alunos: 0,
+        porUnidade: {},
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+
+    // Filtra alunos de unidades que não existem em schools (sem destino válido).
+    const validos = coletados.filter((c) => schoolIdByName[c.schoolName]);
+    if (validos.length === 0) {
+      return { turmas: 0, alunos: 0, porUnidade: {}, indisponivel: true };
+    }
+
+    // ── Upsert das turmas (distinct por school_id + nome, ignorando vazios). ──
+    const turmaKeys = new Set<string>();
+    const turmaRows: { school_id: string; name: string }[] = [];
+    for (const c of validos) {
+      if (!c.className) continue;
+      const schoolId = schoolIdByName[c.schoolName];
+      const key = `${schoolId}::${c.className}`;
+      if (turmaKeys.has(key)) continue;
+      turmaKeys.add(key);
+      turmaRows.push({ school_id: schoolId, name: c.className });
+    }
+    if (turmaRows.length > 0) {
+      const { error: upErr } = await supabaseAdmin
+        .from("diario_classes" as any)
+        .upsert(turmaRows, { onConflict: "school_id,name", ignoreDuplicates: true });
+      if (upErr) return { turmas: 0, alunos: 0, porUnidade: {}, error: upErr.message };
+    }
+
+    // Recarrega as turmas para montar o mapa (school_id, name) → class_id.
+    const schoolIds = Array.from(new Set(validos.map((c) => schoolIdByName[c.schoolName])));
+    const { data: classRows } = await supabaseAdmin
+      .from("diario_classes" as any)
+      .select("id, school_id, name")
+      .in("school_id", schoolIds);
+    const classIdByKey: Record<string, string> = {};
+    for (const r of (classRows ?? []) as any[]) {
+      classIdByKey[`${r.school_id}::${r.name}`] = r.id as string;
+    }
+
+    // ── Upsert dos alunos por (school_id, sponte_aluno_id). NÃO envia `photo`
+    // (preserva a foto existente no update). O trigger sincroniza class_name a
+    // partir do class_id quando presente. ──
+    const studentRows = validos.map((c) => {
+      const schoolId = schoolIdByName[c.schoolName];
+      const classId = c.className ? (classIdByKey[`${schoolId}::${c.className}`] ?? null) : null;
+      porUnidade[c.schoolName] = (porUnidade[c.schoolName] ?? 0) + 1;
+      return {
+        school_id: schoolId,
+        sponte_aluno_id: c.sponteId,
+        name: c.name,
+        class_id: classId,
+        class_name: c.className,
+      };
+    });
+
+    const { error: stErr } = await supabaseAdmin
+      .from("diario_students" as any)
+      .upsert(studentRows, { onConflict: "school_id,sponte_aluno_id" });
+    if (stErr) return { turmas: turmaRows.length, alunos: 0, porUnidade: {}, error: stErr.message };
+
+    return { turmas: turmaRows.length, alunos: studentRows.length, porUnidade };
+  }
+}
+
+export const syncDiarioSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<DiarioSyncResult> => {
+    // Somente admin (allowedSponteUnidades retorna null para admin).
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null) {
+      return {
+        turmas: 0,
+        alunos: 0,
+        porUnidade: {},
+        error: "Apenas administradores podem sincronizar.",
+      };
+    }
+    return runDiarioSponteSync();
   });

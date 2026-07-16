@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -14,11 +14,31 @@ import {
   FileText,
   CalendarCheck,
   AlertTriangle,
+  History,
+  Send,
+  Inbox,
 } from "lucide-react";
 import { useSchool, usePermissions, useAuth } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import {
   fetchSponteInadimplencia,
@@ -27,7 +47,7 @@ import {
   type ResponsavelCobranca,
 } from "@/lib/sponte.functions";
 import { parseISODateLocal, formatDateBR, monthKeyFromISO, todayISOLocal } from "@/lib/date-utils";
-import { toWhatsAppNumber } from "@/lib/phone";
+import { toWhatsAppNumber, displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca")({
   head: () => ({ meta: [{ title: "Cobrança — School Hub" }] }),
@@ -143,7 +163,9 @@ function CobrancaPage() {
     enabled: integracaoDisponivel,
     staleTime: 60_000,
     queryFn: () =>
-      fetchFn({ data: { dataInicio: janela.inicio, dataFim: janela.fim, unidade: unidadeNome ?? undefined } }),
+      fetchFn({
+        data: { dataInicio: janela.inicio, dataFim: janela.fim, unidade: unidadeNome ?? undefined },
+      }),
   });
 
   const serverError = data?.error ?? null;
@@ -175,7 +197,8 @@ function CobrancaPage() {
           competencia: monthKeyFromISO(venc),
         });
       } else {
-        if (p.nomeAluno && !existing.alunos.includes(p.nomeAluno)) existing.alunos.push(p.nomeAluno);
+        if (p.nomeAluno && !existing.alunos.includes(p.nomeAluno))
+          existing.alunos.push(p.nomeAluno);
         existing.boletos.push(p);
         existing.valorTotal += p.valorTotalBoleto;
         if (atraso > existing.maxDiasAtraso) {
@@ -246,20 +269,35 @@ function CobrancaPage() {
       canal: "regua" | "extrajudicial";
     }) => {
       const { perfil, tickDia, canal } = args;
-      const { error } = await supabase.from("cobranca_envios" as never).insert(
-        {
-          perfil_key: perfil.perfilKey,
-          aluno_id: perfil.alunoIdPrincipal,
-          responsavel_nome: perfil.nomeResponsavel,
-          competencia: perfil.competencia,
-          tick_dia: tickDia,
-          canal,
-          enviado_por: session?.user?.id ?? null,
-        } as never,
-      );
+      const { error } = await supabase.from("cobranca_envios" as never).insert({
+        perfil_key: perfil.perfilKey,
+        aluno_id: perfil.alunoIdPrincipal,
+        responsavel_nome: perfil.nomeResponsavel,
+        competencia: perfil.competencia,
+        tick_dia: tickDia,
+        canal,
+        enviado_por: session?.user?.id ?? null,
+      } as never);
       if (error) throw error;
+      // Registra o disparo de WhatsApp da régua no Histórico de Envios. O envio
+      // é manual (link wa.me), portanto status sempre 'sucesso'; o campo de erro
+      // fica reservado para a futura integração com a WhatsApp Cloud API.
+      if (canal === "regua") {
+        const { error: logErr } = await supabase.from("whatsapp_billing_logs" as never).insert({
+          responsavel_name: perfil.nomeResponsavel,
+          telefone: perfil.telefone,
+          unidade: perfil.unidade,
+          status: "sucesso",
+          fatura_id: perfil.alunoIdPrincipal,
+          enviado_por: session?.user?.id ?? null,
+        } as never);
+        if (logErr) console.warn("[cobranca] falha ao gravar log de WhatsApp:", logErr.message);
+      }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cobranca-envios"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["cobranca-envios"] });
+      qc.invalidateQueries({ queryKey: ["cobranca-whatsapp-logs"] });
+    },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao registrar o envio."),
   });
 
@@ -301,55 +339,72 @@ function CobrancaPage() {
     <div className="space-y-6">
       <CabecalhoCobranca onRefresh={() => refetch()} isFetching={isFetching} />
 
-      {/* Card de Checklist Operacional do Mês */}
-      <ChecklistCard
-        competencia={competenciaAtual}
-        boletosEnviados={boletosEnviados}
-        marcadoEm={checklist?.marcado_em ?? null}
-        podeEditar={podeEditar}
-        saving={toggleChecklist.isPending}
-        onToggle={(v) => toggleChecklist.mutate(v)}
-      />
+      <Tabs defaultValue="regua" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="regua">
+            <HandCoins className="mr-2 h-4 w-4" /> Régua de Cobrança
+          </TabsTrigger>
+          <TabsTrigger value="historico">
+            <History className="mr-2 h-4 w-4" /> Histórico de Envios
+          </TabsTrigger>
+        </TabsList>
 
-      {serverError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {serverError}
-        </div>
-      )}
+        <TabsContent value="regua" className="space-y-6">
+          {/* Card de Checklist Operacional do Mês */}
+          <ChecklistCard
+            competencia={competenciaAtual}
+            boletosEnviados={boletosEnviados}
+            marcadoEm={checklist?.marcado_em ?? null}
+            podeEditar={podeEditar}
+            saving={toggleChecklist.isPending}
+            onToggle={(v) => toggleChecklist.mutate(v)}
+          />
 
-      {/* Lista de inadimplentes em formato de "Cards de Perfil" (estilo Netflix) */}
-      {isFetching && perfis.length === 0 ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-56 w-full rounded-xl" />
-          ))}
-        </div>
-      ) : perfis.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-10 text-center">
-          <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
-          <p className="mt-3 text-sm font-medium">Nenhum inadimplente no período.</p>
-          <p className="text-xs text-muted-foreground">
-            Não há boletos vencidos na janela monitorada.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {perfis.map((perfil) => (
-            <PerfilCard
-              key={perfil.perfilKey}
-              perfil={perfil}
-              enviosSet={enviosSet}
-              podeEditar={podeEditar}
-              registrando={registrarEnvio.isPending}
-              gerando={gerandoKey === perfil.perfilKey}
-              onRegistrar={(tickDia) =>
-                registrarEnvio.mutate({ perfil, tickDia, canal: "regua" })
-              }
-              onExtrajudicial={() => gerarExtrajudicial(perfil)}
-            />
-          ))}
-        </div>
-      )}
+          {serverError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {serverError}
+            </div>
+          )}
+
+          {/* Lista de inadimplentes em formato de "Cards de Perfil" (estilo Netflix) */}
+          {isFetching && perfis.length === 0 ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-56 w-full rounded-xl" />
+              ))}
+            </div>
+          ) : perfis.length === 0 ? (
+            <div className="rounded-xl border border-border bg-card p-10 text-center">
+              <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
+              <p className="mt-3 text-sm font-medium">Nenhum inadimplente no período.</p>
+              <p className="text-xs text-muted-foreground">
+                Não há boletos vencidos na janela monitorada.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {perfis.map((perfil) => (
+                <PerfilCard
+                  key={perfil.perfilKey}
+                  perfil={perfil}
+                  enviosSet={enviosSet}
+                  podeEditar={podeEditar}
+                  registrando={registrarEnvio.isPending}
+                  gerando={gerandoKey === perfil.perfilKey}
+                  onRegistrar={(tickDia) =>
+                    registrarEnvio.mutate({ perfil, tickDia, canal: "regua" })
+                  }
+                  onExtrajudicial={() => gerarExtrajudicial(perfil)}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="historico">
+          <HistoricoEnvios />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -530,9 +585,7 @@ function PerfilCard({
           cobrança amigável como prova (ação líquida e certa). Em casos de longo
           atraso, todo o ciclo D+2→D+60 fica marcado. */}
       <div className="mt-3">
-        <div className="mb-1 text-[11px] font-medium text-muted-foreground">
-          Régua de cobrança
-        </div>
+        <div className="mb-1 text-[11px] font-medium text-muted-foreground">Régua de cobrança</div>
         <div className="grid grid-cols-10 gap-1">
           {TODOS_TICKS.map((t) => {
             const enviado = enviosSet.has(`${perfil.perfilKey}|${perfil.competencia}|${t}|regua`);
@@ -644,7 +697,8 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
     })
     .join("");
 
-  const esc = (s: string) => (s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
+  const esc = (s: string) =>
+    (s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
 
   const html = `<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8" />
@@ -711,4 +765,316 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
   }
   win.document.write(html);
   win.document.close();
+}
+
+// ─── Aba "Histórico de Envios" (Dashboard de logs de WhatsApp) ───────────────
+
+const STATUS_FILTROS = [
+  { value: "todos", label: "Todos os status" },
+  { value: "sucesso", label: "Sucesso" },
+  { value: "erro", label: "Erro" },
+] as const;
+
+type BillingLog = {
+  id: string;
+  data_envio: string;
+  responsavel_name: string;
+  telefone: string;
+  unidade: string;
+  status: "sucesso" | "erro";
+  erro_mensagem: string | null;
+  fatura_id: string | null;
+};
+
+type LogsResponse = {
+  ok: boolean;
+  data: BillingLog[];
+  page: number;
+  per_page: number;
+  total: number;
+  summary: { hoje: number; falhas: number; mes: number };
+  error?: string;
+};
+
+const PER_PAGE = 20;
+
+function formatDataHora(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function HistoricoEnvios() {
+  const [unidade, setUnidade] = useState<string>("todas");
+  const [status, setStatus] = useState<string>("todos");
+  const [date, setDate] = useState<string>("");
+  const [page, setPage] = useState<number>(1);
+
+  const { data, isFetching, isError, error } = useQuery({
+    queryKey: ["cobranca-whatsapp-logs", unidade, status, date, page],
+    queryFn: async (): Promise<LogsResponse> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+
+      const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
+      if (unidade !== "todas") params.set("unidade", unidade);
+      if (status !== "todos") params.set("status", status);
+      if (date) params.set("date", date);
+
+      const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as LogsResponse;
+      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar os logs.");
+      return body;
+    },
+  });
+
+  const summary = data?.summary ?? { hoje: 0, falhas: 0, mes: 0 };
+  const rows = data?.data ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  function resetFilter(setter: (v: string) => void, value: string) {
+    setter(value);
+    setPage(1);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Mini-cards de resumo */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <ResumoCard
+          icon={<Send className="h-5 w-5 text-sky-600" />}
+          label="Envios de Hoje"
+          value={summary.hoje}
+          tone="sky"
+        />
+        <ResumoCard
+          icon={<AlertTriangle className="h-5 w-5 text-red-600" />}
+          label="Falhas Ativas (mês)"
+          value={summary.falhas}
+          tone="red"
+        />
+        <ResumoCard
+          icon={<CalendarCheck className="h-5 w-5 text-emerald-600" />}
+          label="Total do Mês"
+          value={summary.mes}
+          tone="emerald"
+        />
+      </div>
+
+      {/* Filtros */}
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Unidade</label>
+          <Select value={unidade} onValueChange={(v) => resetFilter(setUnidade, v)}>
+            <SelectTrigger className="h-9 w-52">
+              <SelectValue placeholder="Unidade" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todas">Todas as unidades</SelectItem>
+              {UNIDADES_SPONTE.map((u) => (
+                <SelectItem key={u} value={u}>
+                  {u}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Status</label>
+          <Select value={status} onValueChange={(v) => resetFilter(setStatus, v)}>
+            <SelectTrigger className="h-9 w-44">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTROS.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Data</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              setDate(e.target.value);
+              setPage(1);
+            }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        {(unidade !== "todas" || status !== "todos" || date) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setUnidade("todas");
+              setStatus("todos");
+              setDate("");
+              setPage(1);
+            }}
+          >
+            Limpar filtros
+          </Button>
+        )}
+      </div>
+
+      {/* Tabela */}
+      <div className="rounded-xl border border-border bg-card">
+        {isError ? (
+          <div className="px-4 py-6 text-sm text-red-600">
+            {error instanceof Error ? error.message : "Falha ao carregar os logs."}
+          </div>
+        ) : isFetching && rows.length === 0 ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+            <Inbox className="h-8 w-8 text-muted-foreground/60" />
+            <p className="text-sm font-medium">Nenhum disparo registrado.</p>
+            <p className="text-xs text-muted-foreground">
+              Os envios de WhatsApp da régua aparecem aqui assim que registrados.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Data do envio</TableHead>
+                <TableHead>Responsável</TableHead>
+                <TableHead>Telefone</TableHead>
+                <TableHead>Unidade</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Ação</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {formatDataHora(log.data_envio)}
+                  </TableCell>
+                  <TableCell className="text-sm font-medium">
+                    {log.responsavel_name || "—"}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    {displayPhoneBR(log.telefone) || "—"}
+                  </TableCell>
+                  <TableCell className="text-sm">{log.unidade || "—"}</TableCell>
+                  <TableCell>
+                    {log.status === "erro" ? (
+                      <TooltipProvider delayDuration={150}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                              <AlertTriangle className="h-3 w-3" /> Erro
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs whitespace-pre-wrap">
+                            {log.erro_mensagem || "Falha no envio (sem detalhes)."}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                        <CheckCircle2 className="h-3 w-3" /> Sucesso
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {log.status === "erro" ? (
+                      <TooltipProvider delayDuration={150}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {/* Reenvio individual fica disponível após a integração
+                                com a WhatsApp Cloud API da Meta. */}
+                            <span tabIndex={0}>
+                              <Button variant="outline" size="sm" disabled>
+                                <RefreshCw className="mr-1 h-3.5 w-3.5" /> Reenviar
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            Disponível após a integração com a WhatsApp Cloud API da Meta.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      {/* Paginação */}
+      {total > 0 && (
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            {total} registro(s) · página {page} de {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || isFetching}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages || isFetching}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Próxima
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResumoCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  tone: "sky" | "red" | "emerald";
+}) {
+  const ring =
+    tone === "red" ? "ring-red-100" : tone === "emerald" ? "ring-emerald-100" : "ring-sky-100";
+  return (
+    <div className={`rounded-xl border border-border bg-card p-4 ring-1 ${ring}`}>
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {icon} {label}
+      </div>
+      <div className="mt-2 text-2xl font-bold">{value}</div>
+    </div>
+  );
 }

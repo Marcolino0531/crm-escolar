@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Unidade,
   Funcionario,
@@ -13,17 +13,36 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const ATESTADOS_BUCKET = "rh-atestados";
+const HR_DOCS_BUCKET = "hr-documents";
+
+interface HrDocumento {
+  id: string;
+  file_name: string;
+  file_url: string;
+  storage_path: string | null;
+  created_at: string;
+}
 
 interface FuncionarioModalProps {
   unidadeSelecionada: Unidade;
   funcionarioExistente?: Funcionario;
-  onSalvar: (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => void;
+  onSalvar: (
+    dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">,
+  ) => void;
   onFechar: () => void;
   onAdicionarFerias?: (funcionarioId: string, dataInicio: string, dataFim: string) => void;
   onRemoverFerias?: (funcionarioId: string, feriasId: string) => void;
   onAdicionarFalta?: (
     funcionarioId: string,
     data: string,
+    tipo: TipoFalta,
+    categoria: CategoriaFalta,
+    duracaoMinutos?: number,
+  ) => void;
+  onAdicionarFaltasPeriodo?: (
+    funcionarioId: string,
+    dataInicio: string,
+    numeroDias: number,
     tipo: TipoFalta,
     categoria: CategoriaFalta,
     duracaoMinutos?: number,
@@ -150,6 +169,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   onAdicionarFerias,
   onRemoverFerias,
   onAdicionarFalta,
+  onAdicionarFaltasPeriodo,
   onEditarFalta,
   onRemoverFalta,
   isAdmin = true,
@@ -191,12 +211,14 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   const [faltaForm, setFaltaForm] = useState<{
     dataDisplay: string;
     data: string;
+    numeroDias: string;
     tipo: TipoFalta;
     categoria: CategoriaFalta;
     duracao: string;
   }>({
     dataDisplay: "",
     data: "",
+    numeroDias: "1",
     tipo: "sem_atestado",
     categoria: "integral",
     duracao: "",
@@ -226,6 +248,100 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
 
+  // ----- Documentos do funcionário (contratos, TRCTs, atestados, etc.) -----
+  const [documentos, setDocumentos] = useState<HrDocumento[]>([]);
+  const [docsCarregando, setDocsCarregando] = useState(false);
+  const [docEnviando, setDocEnviando] = useState(false);
+
+  const carregarDocumentos = React.useCallback(async (employeeId: string) => {
+    setDocsCarregando(true);
+    const { data, error } = await supabase
+      .from("hr_employee_documents" as never)
+      .select("id, file_name, file_url, storage_path, created_at")
+      .eq("employee_id", employeeId)
+      .order("created_at", { ascending: false });
+    setDocsCarregando(false);
+    if (error) {
+      toast.error("Não foi possível carregar os documentos.");
+      return;
+    }
+    setDocumentos((data ?? []) as unknown as HrDocumento[]);
+  }, []);
+
+  useEffect(() => {
+    if (funcionarioExistente?.id) carregarDocumentos(funcionarioExistente.id);
+  }, [funcionarioExistente?.id, carregarDocumentos]);
+
+  const handleUploadDocumento = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !funcionarioExistente) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Envie um arquivo PDF.");
+      return;
+    }
+    setDocEnviando(true);
+    try {
+      const path = `${funcionarioExistente.id}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+      const { error: upErr } = await supabase.storage
+        .from(HR_DOCS_BUCKET)
+        .upload(path, file, { contentType: "application/pdf" });
+      if (upErr) {
+        toast.error(`Falha ao enviar o documento: ${upErr.message}`);
+        return;
+      }
+      const { data: pub } = supabase.storage.from(HR_DOCS_BUCKET).getPublicUrl(path);
+      const { error: insErr } = await supabase.from("hr_employee_documents" as never).insert({
+        employee_id: funcionarioExistente.id,
+        file_name: file.name,
+        file_url: pub.publicUrl,
+        storage_path: path,
+      } as never);
+      if (insErr) {
+        await supabase.storage.from(HR_DOCS_BUCKET).remove([path]);
+        toast.error(`Falha ao registrar o documento: ${insErr.message}`);
+        return;
+      }
+      toast.success("Documento enviado.");
+      await carregarDocumentos(funcionarioExistente.id);
+    } finally {
+      setDocEnviando(false);
+    }
+  };
+
+  // Bucket privado: abre via URL assinada temporária.
+  const abrirDocumento = async (doc: HrDocumento) => {
+    const path = doc.storage_path;
+    if (!path) {
+      window.open(doc.file_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const { data, error } = await supabase.storage.from(HR_DOCS_BUCKET).createSignedUrl(path, 60);
+    if (error || !data?.signedUrl) {
+      toast.error("Não foi possível abrir o documento.");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const removerDocumento = async (doc: HrDocumento) => {
+    if (!funcionarioExistente) return;
+    if (!confirm(`Remover o documento "${doc.file_name}"?`)) return;
+    if (doc.storage_path) {
+      await supabase.storage.from(HR_DOCS_BUCKET).remove([doc.storage_path]);
+    }
+    const { error } = await supabase
+      .from("hr_employee_documents" as never)
+      .delete()
+      .eq("id", doc.id);
+    if (error) {
+      toast.error("Não foi possível remover o documento.");
+      return;
+    }
+    toast.success("Documento removido.");
+    await carregarDocumentos(funcionarioExistente.id);
+  };
+
   const abrirEdicaoFalta = (falta: Falta) => {
     setFaltaEditId(falta.id);
     setEditForm({
@@ -252,9 +368,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
 
   // Abre o atestado (bucket privado) via URL assinada temporária.
   const abrirAtestado = async (path: string) => {
-    const { data, error } = await supabase.storage
-      .from(ATESTADOS_BUCKET)
-      .createSignedUrl(path, 60);
+    const { data, error } = await supabase.storage.from(ATESTADOS_BUCKET).createSignedUrl(path, 60);
     if (error || !data?.signedUrl) {
       toast.error("Não foi possível abrir o atestado.");
       return;
@@ -290,9 +404,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       }
 
       const duracaoMinutos =
-        editForm.categoria === "integral"
-          ? undefined
-          : parseInt(editForm.duracao, 10) || undefined;
+        editForm.categoria === "integral" ? undefined : parseInt(editForm.duracao, 10) || undefined;
 
       onEditarFalta(funcionarioExistente.id, faltaEditId, {
         data: editForm.data,
@@ -330,20 +442,51 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     }
   };
 
+  // Nº de dias efetivo: só é multiplicável para falta integral (atestado).
+  // Atraso/saída antecipada são sempre uma única ocorrência.
+  const numeroDiasFalta =
+    faltaForm.categoria === "integral" ? Math.max(1, parseInt(faltaForm.numeroDias, 10) || 1) : 1;
+
+  // Data de término = início + (nº de dias − 1), inclusiva. Só exibida (readonly).
+  const dataTerminoFaltaISO = (() => {
+    if (!faltaForm.data) return "";
+    const d = new Date(`${faltaForm.data}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + numeroDiasFalta - 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
   const handleAdicionarFalta = () => {
-    if (funcionarioExistente && onAdicionarFalta && faltaForm.data) {
+    if (funcionarioExistente && faltaForm.data) {
       const duracaoMinutos =
         faltaForm.categoria === "integral"
           ? undefined
           : parseInt(faltaForm.duracao, 10) || undefined;
-      onAdicionarFalta(
-        funcionarioExistente.id,
-        faltaForm.data,
-        faltaForm.tipo,
-        faltaForm.categoria,
-        duracaoMinutos,
-      );
-      setFaltaForm({ dataDisplay: "", data: "", tipo: "sem_atestado", categoria: "integral", duracao: "" });
+      if (onAdicionarFaltasPeriodo) {
+        onAdicionarFaltasPeriodo(
+          funcionarioExistente.id,
+          faltaForm.data,
+          numeroDiasFalta,
+          faltaForm.tipo,
+          faltaForm.categoria,
+          duracaoMinutos,
+        );
+      } else if (onAdicionarFalta) {
+        onAdicionarFalta(
+          funcionarioExistente.id,
+          faltaForm.data,
+          faltaForm.tipo,
+          faltaForm.categoria,
+          duracaoMinutos,
+        );
+      }
+      setFaltaForm({
+        dataDisplay: "",
+        data: "",
+        numeroDias: "1",
+        tipo: "sem_atestado",
+        categoria: "integral",
+        duracao: "",
+      });
       setMostrarFaltaForm(false);
     }
   };
@@ -704,7 +847,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                   Valor Diário do VT <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">R$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
+                    R$
+                  </span>
                   <input
                     type="text"
                     inputMode="decimal"
@@ -714,7 +859,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                     className={`${inputClass} pl-9`}
                   />
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Valor por dia usado no Fechamento de Vale-Transporte.</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Valor por dia usado no Fechamento de Vale-Transporte.
+                </p>
               </div>
             )}
           </div>
@@ -834,7 +981,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 <div className="bg-amber-50 rounded-lg p-3 mb-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-gray-600 mb-1">Data</label>
+                      <label className="block text-xs text-gray-600 mb-1">Data de Início</label>
                       <input
                         type="text"
                         value={faltaForm.dataDisplay}
@@ -853,6 +1000,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                             ...prev,
                             categoria: e.target.value as CategoriaFalta,
                             duracao: e.target.value === "integral" ? "" : prev.duracao,
+                            numeroDias: e.target.value === "integral" ? prev.numeroDias : "1",
                           }))
                         }
                         className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
@@ -865,6 +1013,33 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                       </select>
                     </div>
                   </div>
+                  {faltaForm.categoria === "integral" && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Número de Dias</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={faltaForm.numeroDias}
+                          onChange={(e) =>
+                            setFaltaForm((prev) => ({ ...prev, numeroDias: e.target.value }))
+                          }
+                          placeholder="Ex: 3"
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Data de Término</label>
+                        <input
+                          type="text"
+                          value={converterParaBR(dataTerminoFaltaISO)}
+                          readOnly
+                          placeholder="—"
+                          className="w-full px-2 py-1.5 border border-gray-200 bg-gray-100 text-gray-600 rounded text-sm cursor-not-allowed"
+                        />
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Tipo</label>
@@ -998,6 +1173,80 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
             </div>
           )}
 
+          {/* Documentos (somente no modo edição) */}
+          {isEdicao && funcionarioExistente && (
+            <div className="border-t pt-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  <span>📄</span> Documentos
+                </h3>
+                {isAdmin && (
+                  <label
+                    className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                      docEnviando
+                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 cursor-pointer"
+                    }`}
+                  >
+                    {docEnviando ? "Enviando…" : "+ Enviar PDF"}
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handleUploadDocumento}
+                      disabled={docEnviando}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
+              {docsCarregando ? (
+                <p className="text-xs text-gray-400 italic">Carregando documentos…</p>
+              ) : documentos.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">Nenhum documento enviado.</p>
+              ) : (
+                <div className="space-y-2">
+                  {documentos.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => abrirDocumento(doc)}
+                        className="text-sm text-indigo-700 underline hover:text-indigo-900 text-left truncate min-w-0"
+                        title={doc.file_name}
+                      >
+                        📎 {doc.file_name}
+                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs text-gray-400">
+                          {converterParaBR(doc.created_at.slice(0, 10))}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => abrirDocumento(doc)}
+                          className="text-xs px-2 py-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 font-medium"
+                        >
+                          Ver / Baixar
+                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => removerDocumento(doc)}
+                            className="text-red-400 hover:text-red-600 text-xs"
+                          >
+                            Excluir
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-2">
             <button
               type="button"
@@ -1111,9 +1360,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 <label className="block text-xs text-gray-600 mb-1">Observação</label>
                 <textarea
                   value={editForm.observacao}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({ ...prev, observacao: e.target.value }))
-                  }
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, observacao: e.target.value }))}
                   rows={2}
                   placeholder="Ex: atestado médico entregue em 12/05."
                   className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm resize-none"
@@ -1121,9 +1368,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  Atestado (foto ou PDF)
-                </label>
+                <label className="block text-xs text-gray-600 mb-1">Atestado (foto ou PDF)</label>
                 {editForm.novoArquivo ? (
                   <div className="flex items-center justify-between bg-indigo-50 rounded px-2 py-1.5 text-sm text-indigo-700">
                     <span className="truncate">📎 {editForm.novoArquivo.name}</span>

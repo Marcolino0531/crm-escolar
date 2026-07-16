@@ -10,15 +10,20 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FundosRouteImport } from './routes/fundos'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
+import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
+import { Route as DiarioRouteImport } from './routes/diario'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
+import { Route as ColoniaRouteImport } from './routes/colonia'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
+import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
@@ -26,6 +31,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UniformesRoute = UniformesRouteImport.update({
+  id: '/uniformes',
+  path: '/uniformes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TasksRoute = TasksRouteImport.update({
@@ -58,6 +68,16 @@ const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
   path: '/fluxo-futuro',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ExtratoBancarioRoute = ExtratoBancarioRouteImport.update({
+  id: '/extrato-bancario',
+  path: '/extrato-bancario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DiarioRoute = DiarioRouteImport.update({
+  id: '/diario',
+  path: '/diario',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
   id: '/configuracoes',
   path: '/configuracoes',
@@ -68,9 +88,19 @@ const ConciliacaoRoute = ConciliacaoRouteImport.update({
   path: '/conciliacao',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ColoniaRoute = ColoniaRouteImport.update({
+  id: '/colonia',
+  path: '/colonia',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CobrancaRoute = CobrancaRouteImport.update({
   id: '/cobranca',
   path: '/cobranca',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
+  id: '/cartao-credito',
+  path: '/cartao-credito',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgendaRoute = AgendaRouteImport.update({
@@ -93,30 +123,40 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
+  '/colonia': typeof ColoniaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/diario': typeof DiarioRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
+  '/colonia': typeof ColoniaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/diario': typeof DiarioRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRoutesById {
@@ -124,15 +164,20 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
+  '/colonia': typeof ColoniaRoute
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/diario': typeof DiarioRoute
+  '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
+  '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
 }
 export interface FileRouteTypes {
@@ -141,45 +186,60 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
+    | '/colonia'
     | '/conciliacao'
     | '/configuracoes'
+    | '/diario'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
+    | '/colonia'
     | '/conciliacao'
     | '/configuracoes'
+    | '/diario'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   id:
     | '__root__'
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/cartao-credito'
     | '/cobranca'
+    | '/colonia'
     | '/conciliacao'
     | '/configuracoes'
+    | '/diario'
+    | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
     | '/onboarding'
     | '/rh'
     | '/tasks'
+    | '/uniformes'
     | '/upload'
   fileRoutesById: FileRoutesById
 }
@@ -187,15 +247,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdmissoesRoute: typeof AdmissoesRoute
   AgendaRoute: typeof AgendaRoute
+  CartaoCreditoRoute: typeof CartaoCreditoRoute
   CobrancaRoute: typeof CobrancaRoute
+  ColoniaRoute: typeof ColoniaRoute
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
+  DiarioRoute: typeof DiarioRoute
+  ExtratoBancarioRoute: typeof ExtratoBancarioRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
   FundosRoute: typeof FundosRoute
   InadimplenciaRoute: typeof InadimplenciaRoute
   OnboardingRoute: typeof OnboardingRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
+  UniformesRoute: typeof UniformesRoute
   UploadRoute: typeof UploadRoute
 }
 
@@ -206,6 +271,13 @@ declare module '@tanstack/react-router' {
       path: '/upload'
       fullPath: '/upload'
       preLoaderRoute: typeof UploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/uniformes': {
+      id: '/uniformes'
+      path: '/uniformes'
+      fullPath: '/uniformes'
+      preLoaderRoute: typeof UniformesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/tasks': {
@@ -250,6 +322,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FluxoFuturoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/extrato-bancario': {
+      id: '/extrato-bancario'
+      path: '/extrato-bancario'
+      fullPath: '/extrato-bancario'
+      preLoaderRoute: typeof ExtratoBancarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/diario': {
+      id: '/diario'
+      path: '/diario'
+      fullPath: '/diario'
+      preLoaderRoute: typeof DiarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/configuracoes': {
       id: '/configuracoes'
       path: '/configuracoes'
@@ -264,11 +350,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConciliacaoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/colonia': {
+      id: '/colonia'
+      path: '/colonia'
+      fullPath: '/colonia'
+      preLoaderRoute: typeof ColoniaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cobranca': {
       id: '/cobranca'
       path: '/cobranca'
       fullPath: '/cobranca'
       preLoaderRoute: typeof CobrancaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cartao-credito': {
+      id: '/cartao-credito'
+      path: '/cartao-credito'
+      fullPath: '/cartao-credito'
+      preLoaderRoute: typeof CartaoCreditoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agenda': {
@@ -299,15 +399,20 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdmissoesRoute: AdmissoesRoute,
   AgendaRoute: AgendaRoute,
+  CartaoCreditoRoute: CartaoCreditoRoute,
   CobrancaRoute: CobrancaRoute,
+  ColoniaRoute: ColoniaRoute,
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
+  DiarioRoute: DiarioRoute,
+  ExtratoBancarioRoute: ExtratoBancarioRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
   FundosRoute: FundosRoute,
   InadimplenciaRoute: InadimplenciaRoute,
   OnboardingRoute: OnboardingRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
+  UniformesRoute: UniformesRoute,
   UploadRoute: UploadRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
-import { usePermissions } from "@/lib/app-context";
+import { usePermissions, useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
 import FechamentoVT from "./FechamentoVT";
+import FolhasPagamentoVT from "./FolhasPagamentoVT";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -118,7 +119,9 @@ const downloadCSV = (csv: string, filename: string) => {
 
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { canEdit } = usePermissions();
+  const { selected } = useSchool();
   const isAdmin = canEdit("rh");
+  const schoolId = selected !== "all" ? selected : null;
   const {
     funcionarios,
     adicionarFuncionario,
@@ -127,6 +130,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     adicionarFerias,
     removerFerias,
     adicionarFalta,
+    adicionarFaltasPeriodo,
     editarFalta,
     removerFalta,
   } = rhHook;
@@ -134,12 +138,24 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [funcionarioSelecionadoId, setFuncionarioSelecionadoId] = useState<string | null>(null);
   const [exportModalAberto, setExportModalAberto] = useState(false);
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
+  const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
+  const [abaRh, setAbaRh] = useState<"funcionarios" | "folhas">("funcionarios");
+  const [folhasRefresh, setFolhasRefresh] = useState(0);
+
+  const isAtivo = (f: Funcionario) => !f.dataRescisao;
+  const funcionariosFiltrados = funcionarios.filter((f) =>
+    abaStatus === "ativos" ? isAtivo(f) : !isAtivo(f),
+  );
+  const totalAtivos = funcionarios.filter(isAtivo).length;
+  const totalDesligados = funcionarios.length - totalAtivos;
 
   const funcionarioSelecionado = funcionarioSelecionadoId
     ? funcionarios.find((f) => f.id === funcionarioSelecionadoId) || null
     : null;
 
-  const handleSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => {
+  const handleSalvar = (
+    dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">,
+  ) => {
     adicionarFuncionario(dados);
     setModalAberto(false);
   };
@@ -152,7 +168,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     setFuncionarioSelecionadoId(null);
   };
 
-  const handleEditarSalvar = (dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">) => {
+  const handleEditarSalvar = (
+    dados: Omit<Funcionario, "id" | "ferias" | "faltas" | "criadoEm" | "schoolId">,
+  ) => {
     if (!funcionarioSelecionadoId) return;
     editarFuncionario(funcionarioSelecionadoId, dados);
     setFuncionarioSelecionadoId(null);
@@ -185,7 +203,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {isAdmin && abaRh === "funcionarios" && (
             <button
               onClick={() => setExportModalAberto(true)}
               disabled={funcionarios.length === 0}
@@ -208,7 +226,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
               Exportar Planilha
             </button>
           )}
-          {isAdmin && (
+          {isAdmin && abaRh === "funcionarios" && (
             <button
               onClick={() => setModalAberto(true)}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md"
@@ -220,112 +238,185 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </div>
       </div>
 
-      {funcionarios.length === 0 ? (
+      {/* Abas principais do RH */}
+      <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
+        {(
+          [
+            { id: "funcionarios", label: "Funcionários" },
+            { id: "folhas", label: "Folhas Salvas" },
+          ] as const
+        ).map((aba) => (
+          <button
+            key={aba.id}
+            type="button"
+            onClick={() => setAbaRh(aba.id)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+              abaRh === aba.id
+                ? "border-emerald-600 text-emerald-700"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            {aba.label}
+          </button>
+        ))}
+      </div>
+
+      {abaRh === "folhas" ? (
+        <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+      ) : funcionarios.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <span className="text-5xl mb-4">👤</span>
           <p className="text-lg font-medium">Nenhum funcionário cadastrado</p>
           <p className="text-sm">Clique em "Novo Funcionário" para começar.</p>
         </div>
       ) : (
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
-        <div className="flex-1 min-w-0 w-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Nome
-                  </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    CPF
-                  </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Cargo
-                  </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Admissão
-                  </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Horário
-                  </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  {isAdmin && (
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Ações
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {funcionarios.map((func) => (
-                  <tr
-                    key={func.id}
-                    onClick={() => handleClickFuncionario(func)}
-                    className="hover:bg-gray-50 cursor-pointer transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                          <span className="text-emerald-600 text-sm font-bold">
-                            {func.nomeCompleto.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <span className="text-sm font-medium text-gray-800">
-                          {func.nomeCompleto}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{func.cpf || "—"}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{func.cargo || "—"}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {converterParaBR(func.dataAdmissao || "")}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
-                    </td>
-                    <td className="px-4 py-3">
-                      {func.dataRescisao ? (
-                        <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">
-                          Desligado
-                        </span>
-                      ) : (
-                        <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium">
-                          Ativo
-                        </span>
-                      )}
-                    </td>
-                    {isAdmin && (
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
-                              removerFuncionario(func.id);
-                            }
-                          }}
-                          className="text-red-400 hover:text-red-600 text-xs font-medium"
-                        >
-                          Remover
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <>
+          <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
+            {(
+              [
+                { id: "ativos", label: "Ativos", total: totalAtivos },
+                { id: "desligados", label: "Desligados", total: totalDesligados },
+              ] as const
+            ).map((aba) => (
+              <button
+                key={aba.id}
+                type="button"
+                onClick={() => setAbaStatus(aba.id)}
+                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                  abaStatus === aba.id
+                    ? "border-emerald-600 text-emerald-700"
+                    : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {aba.label}
+                <span
+                  className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${
+                    abaStatus === aba.id
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
+                  {aba.total}
+                </span>
+              </button>
+            ))}
           </div>
-        </div>
-        <div className="w-full lg:w-80 lg:flex-shrink-0">
-          <RankingFaltas funcionarios={funcionarios} />
-        </div>
-        </div>
+          <div className="flex flex-col lg:flex-row gap-4 items-start">
+            <div className="flex-1 min-w-0 w-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Nome
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        CPF
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Cargo
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Admissão
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Horário
+                      </th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                      {isAdmin && (
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Ações
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {funcionariosFiltrados.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={isAdmin ? 7 : 6}
+                          className="px-4 py-10 text-center text-sm text-gray-400"
+                        >
+                          {abaStatus === "ativos"
+                            ? "Nenhum funcionário ativo."
+                            : "Nenhum funcionário desligado."}
+                        </td>
+                      </tr>
+                    )}
+                    {funcionariosFiltrados.map((func) => (
+                      <tr
+                        key={func.id}
+                        onClick={() => handleClickFuncionario(func)}
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                              <span className="text-emerald-600 text-sm font-bold">
+                                {func.nomeCompleto.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <span className="text-sm font-medium text-gray-800">
+                              {func.nomeCompleto}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{func.cpf || "—"}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{func.cargo || "—"}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {converterParaBR(func.dataAdmissao || "")}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
+                        </td>
+                        <td className="px-4 py-3">
+                          {func.dataRescisao ? (
+                            <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">
+                              Desligado
+                            </span>
+                          ) : (
+                            <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium">
+                              Ativo
+                            </span>
+                          )}
+                        </td>
+                        {isAdmin && (
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
+                                  removerFuncionario(func.id);
+                                }
+                              }}
+                              className="text-red-400 hover:text-red-600 text-xs font-medium"
+                            >
+                              Remover
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="w-full lg:w-80 lg:flex-shrink-0">
+              <RankingFaltas funcionarios={funcionarios.filter(isAtivo)} />
+            </div>
+          </div>
+        </>
       )}
 
-      {funcionarios.length > 0 && (
+      {abaRh === "funcionarios" && funcionarios.length > 0 && (
         <div className="mt-6">
-          <FechamentoVT funcionarios={funcionarios} />
+          <FechamentoVT
+            funcionarios={funcionarios}
+            schoolId={schoolId}
+            onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
+          />
         </div>
       )}
 
@@ -346,6 +437,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           onAdicionarFerias={isAdmin ? adicionarFerias : undefined}
           onRemoverFerias={isAdmin ? removerFerias : undefined}
           onAdicionarFalta={isAdmin ? adicionarFalta : undefined}
+          onAdicionarFaltasPeriodo={isAdmin ? adicionarFaltasPeriodo : undefined}
           onEditarFalta={isAdmin ? editarFalta : undefined}
           onRemoverFalta={isAdmin ? removerFalta : undefined}
           isAdmin={isAdmin}

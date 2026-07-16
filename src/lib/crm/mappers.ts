@@ -47,6 +47,7 @@ export function rowToLead(r: Tables<"leads">): Lead {
     motivoPerda: r.motivo_perda ?? undefined,
     observacaoPerda: r.observacao_perda ?? undefined,
     itensMatricula: (r.itens_matricula as unknown as ItemMatricula[]) ?? [],
+    arquivado: r.arquivado ?? false,
   };
 }
 

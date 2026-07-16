@@ -1,9 +1,15 @@
 import React, { useMemo, useState } from "react";
 import { Funcionario, CategoriaFalta } from "@/lib/crm/types";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface FechamentoVTProps {
   // Já filtrados pelo filtro global de unidade (mesma lista da tabela de RH).
   funcionarios: Funcionario[];
+  // Unidade ativa no seletor global (null em "Todas as Unidades").
+  schoolId: string | null;
+  // Chamado após salvar uma folha, para atualizar a aba "Folhas Salvas".
+  onFolhaSalva?: () => void;
 }
 
 const categoriaDe = (c?: CategoriaFalta): CategoriaFalta => c ?? "integral";
@@ -37,8 +43,12 @@ const parseDias = (v: string): number => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
-const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
+const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onFolhaSalva }) => {
   const [mesReferencia, setMesReferencia] = useState<string>(mesAtualIso);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [folhaTitulo, setFolhaTitulo] = useState("");
+  const [folhaData, setFolhaData] = useState("");
+  const [salvando, setSalvando] = useState(false);
   // Preenchedor em massa: valor padrão aplicado a todos os funcionários.
   const [diasTrabalhados, setDiasTrabalhados] = useState<string>("22");
   // Exceções por funcionário (férias/recessos): sobrescrevem o valor em massa.
@@ -63,8 +73,10 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
   const linhas: LinhaVT[] = useMemo(
     () =>
       funcionarios
-        // Só funcionários elegíveis ao VT entram no fechamento.
-        .filter((f) => f.recebeVt)
+        // Só funcionários ATIVOS e elegíveis ao VT entram no fechamento.
+        // Desligados (com data de rescisão) ficam de fora da listagem e de
+        // qualquer cálculo de folha/benefício.
+        .filter((f) => f.recebeVt && !f.dataRescisao)
         .map((f) => {
           // TODAS as Faltas Integrais do mês (com e sem atestado): qualquer
           // ausência integral abate o benefício do dia, independente de
@@ -84,6 +96,69 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
   );
 
   const totalGeral = linhas.reduce((acc, l) => acc + l.total, 0);
+
+  const abrirModalSalvar = () => {
+    if (linhas.length === 0) return;
+    if (!schoolId) {
+      toast.error("Selecione uma unidade específica para salvar a folha.");
+      return;
+    }
+    setFolhaTitulo("");
+    setFolhaData("");
+    setModalAberto(true);
+  };
+
+  const salvarFolha = async () => {
+    if (!schoolId || !folhaTitulo.trim() || linhas.length === 0) return;
+    // Só entram na folha colaboradores com pagamento efetivo: Total > 0 e Dias > 0.
+    const linhasValidas = linhas.filter((l) => l.total > 0 && l.diasUteis > 0);
+    if (linhasValidas.length === 0) {
+      toast.error("Nenhum colaborador com valor a pagar (Total e Dias maiores que zero).");
+      return;
+    }
+    const totalValido = linhasValidas.reduce((acc, l) => acc + l.total, 0);
+    setSalvando(true);
+    try {
+      const { data: batch, error: bErr } = await supabase
+        .from("hr_transport_batches" as never)
+        .insert({
+          school_id: schoolId,
+          title: folhaTitulo.trim(),
+          payment_date: folhaData || null,
+          reference_month: mesReferencia || null,
+          total_amount: totalValido,
+        } as never)
+        .select("id")
+        .single();
+      if (bErr || !batch) {
+        toast.error(`Falha ao salvar a folha: ${bErr?.message ?? "erro desconhecido"}`);
+        return;
+      }
+      const batchId = (batch as { id: string }).id;
+      const itens = linhasValidas.map((l) => ({
+        batch_id: batchId,
+        employee_id: l.id,
+        employee_name: l.nome,
+        daily_value: l.valorDiario,
+        working_days: l.diasUteis,
+        absences: l.faltasDescontadas,
+        total_amount: l.total,
+      }));
+      const { error: iErr } = await supabase
+        .from("hr_transport_batch_items" as never)
+        .insert(itens as never);
+      if (iErr) {
+        await supabase.from("hr_transport_batches" as never).delete().eq("id", batchId);
+        toast.error(`Falha ao salvar os itens da folha: ${iErr.message}`);
+        return;
+      }
+      toast.success("Folha de pagamento salva.");
+      setModalAberto(false);
+      onFolhaSalva?.();
+    } finally {
+      setSalvando(false);
+    }
+  };
 
   const exportarCSV = () => {
     if (linhas.length === 0) return;
@@ -118,17 +193,30 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
           <span>🚌</span>
           <h3 className="text-sm font-bold text-gray-700">Fechamento de Vale-Transporte</h3>
         </div>
-        <button
-          type="button"
-          onClick={exportarCSV}
-          disabled={linhas.length === 0}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          Exportar Excel/CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={exportarCSV}
+            disabled={linhas.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Exportar Excel/CSV
+          </button>
+          <button
+            type="button"
+            onClick={abrirModalSalvar}
+            disabled={linhas.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg hover:from-emerald-700 hover:to-teal-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Salvar Folha de Pagamento
+          </button>
+        </div>
       </div>
 
       <div className="p-4 space-y-4">
@@ -245,6 +333,70 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios }) => {
           </table>
         </div>
       </div>
+
+      {modalAberto && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 rounded-t-2xl flex items-center justify-between">
+              <h2 className="text-white text-lg font-bold">Salvar Folha de Pagamento</h2>
+              <button
+                type="button"
+                onClick={() => setModalAberto(false)}
+                className="text-white/80 hover:text-white transition-colors text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500">
+                Congela {linhas.length} funcionário(s) com os dias e valores atuais da tela. Total:{" "}
+                <span className="font-semibold text-emerald-700">{fmtBRL(totalGeral)}</span>.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome da Folha <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={folhaTitulo}
+                  onChange={(e) => setFolhaTitulo(e.target.value)}
+                  placeholder="Ex: 1ª Quinzena Julho"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Data Programada do Pagamento
+                </label>
+                <input
+                  type="date"
+                  value={folhaData}
+                  onChange={(e) => setFolhaData(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalAberto(false)}
+                  disabled={salvando}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={salvarFolha}
+                  disabled={!folhaTitulo.trim() || salvando}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {salvando ? "Salvando…" : "Salvar Folha"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -4,18 +4,33 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // ---------- Auth ----------
-type AuthCtx = { session: Session | null; loading: boolean };
-const AuthContext = createContext<AuthCtx>({ session: null, loading: true });
+type AuthCtx = {
+  session: Session | null;
+  loading: boolean;
+  // True while the user is in a password-recovery flow (arrived via the
+  // "Esqueci minha senha" e-mail link). The app must show the new-password
+  // form instead of the normal shell until the password is updated.
+  recovery: boolean;
+  clearRecovery: () => void;
+};
+const AuthContext = createContext<AuthCtx>({
+  session: null,
+  loading: true,
+  recovery: false,
+  clearRecovery: () => {},
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
     });
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -24,7 +39,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
+  const clearRecovery = () => setRecovery(false);
+
+  return (
+    <AuthContext.Provider value={{ session, loading, recovery, clearRecovery }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 export const useAuth = () => useContext(AuthContext);
 
@@ -166,11 +187,16 @@ export function useRole() {
 
 // ---------- Granular module permissions ----------
 export const APP_MODULES = [
+  "dashboard",
   "agenda",
   "admissoes",
   "onboarding",
   "rh",
   "tasks",
+  "uniformes",
+  "diario",
+  "colonia",
+  "colonia_financeiro",
   "financeiro",
   "configuracoes",
 ] as const;
@@ -183,6 +209,7 @@ export const FINANCEIRO_SUBMODULES = [
   "financeiro_fluxo",
   "financeiro_inadimplencia",
   "financeiro_cobranca",
+  "financeiro_cartao",
   "financeiro_fundos",
 ] as const;
 
@@ -193,11 +220,16 @@ export type AppModule = (typeof ALL_MODULES)[number];
 export type FinanceiroSubmodule = (typeof FINANCEIRO_SUBMODULES)[number];
 
 export const MODULE_LABELS: Record<AppModule, string> = {
+  dashboard: "Dashboard",
   agenda: "Agenda",
   admissoes: "Admissões",
   onboarding: "Onboarding",
   rh: "Recursos Humanos",
   tasks: "Tasks",
+  uniformes: "Uniformes",
+  diario: "Diário do Aluno",
+  colonia: "Colônia — Registros (Operacional)",
+  colonia_financeiro: "Colônia — Fechamento Financeiro",
   financeiro: "Financeiro",
   configuracoes: "Configurações",
   financeiro_dashboard: "Dashboard",
@@ -206,6 +238,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   financeiro_fluxo: "Fluxo Futuro",
   financeiro_inadimplencia: "Inadimplência",
   financeiro_cobranca: "Cobrança",
+  financeiro_cartao: "Cartão de Crédito",
   financeiro_fundos: "Fundos",
 };
 

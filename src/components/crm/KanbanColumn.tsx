@@ -6,11 +6,15 @@ import LeadCard from "./LeadCard";
 interface KanbanColumnProps {
   coluna: ColunaConfig;
   leads: Lead[];
+  // Contagem total do status no período (inclui arquivados). Se ausente, usa
+  // o tamanho de `leads`.
+  total?: number;
   onRemover: (id: string) => void;
   onMover: (id: string, coluna: ColunaKanban) => void;
   onSolicitarVisita: (leadId: string, nomeAluno: string) => void;
   onSolicitarNaoMatricula: (leadId: string, nomeAluno: string) => void;
   onSolicitarMatricula: (leadId: string, nomeAluno: string) => void;
+  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   consolidado?: boolean;
@@ -21,11 +25,13 @@ interface KanbanColumnProps {
 const KanbanColumn: React.FC<KanbanColumnProps> = ({
   coluna,
   leads,
+  total,
   onRemover,
   onMover,
   onSolicitarVisita,
   onSolicitarNaoMatricula,
   onSolicitarMatricula,
+  onAvancarParaOnboarding,
   onEditar,
   isAdmin = false,
   consolidado = false,
@@ -42,7 +48,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
           <h2 className={`font-bold text-sm ${coluna.cor}`}>{coluna.titulo}</h2>
         </div>
         <span className={`${coluna.cor} bg-white/80 text-xs font-bold px-2 py-0.5 rounded-full`}>
-          {leads.length}
+          {total ?? leads.length}
         </span>
       </div>
 
@@ -86,6 +92,7 @@ const KanbanColumn: React.FC<KanbanColumnProps> = ({
                 onSolicitarVisita={onSolicitarVisita}
                 onSolicitarNaoMatricula={onSolicitarNaoMatricula}
                 onSolicitarMatricula={onSolicitarMatricula}
+                onAvancarParaOnboarding={onAvancarParaOnboarding}
                 onEditar={onEditar}
                 isAdmin={isAdmin}
                 consolidado={consolidado}
