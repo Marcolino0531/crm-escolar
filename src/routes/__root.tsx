@@ -5,6 +5,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -197,18 +198,20 @@ function AuthGate() {
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
   const router = useRouter();
-  // On every app open / login, land the user on the Dashboard ("/") — the
-  // consolidated "Todas as Unidades" view (school filter defaults to "all").
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Preserva a rota exata em recarregamentos (F5) e deep links: só redireciona
+  // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
+  // para a primeira tela permitida. Quem já está numa rota profunda permanece
+  // nela. Aguarda a confirmação das permissões (que por sua vez só resolvem
+  // após a sessão do Supabase carregar) antes de qualquer decisão.
   const didRedirect = useRef(false);
   useEffect(() => {
     if (permsLoading || didRedirect.current) return;
     didRedirect.current = true;
-    if (canView("dashboard")) {
-      router.navigate({ to: "/" });
-    } else if (canView("financeiro_dashboard")) {
+    if (pathname === "/" && !canView("dashboard") && canView("financeiro_dashboard")) {
       router.navigate({ to: "/extrato-bancario" });
     }
-  }, [permsLoading, canView, router]);
+  }, [permsLoading, canView, router, pathname]);
   const showMainDashboard = canView("dashboard");
   const showAgenda = canView("agenda");
   const showAdmissoes = canView("admissoes");
