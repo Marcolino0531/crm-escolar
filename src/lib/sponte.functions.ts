@@ -1734,6 +1734,218 @@ export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
     return { beneficios };
   });
 
+// ── Faturamento da Colônia de Férias no Sponte (InsertPlano) ─────────────────
+// Cria UMA conta a receber (título de 1 parcela) para o aluno, com o valor exato
+// do extrato semanal, categoria "Colônia de Férias" e forma "Cobrança Bancária".
+// Anti-duplicidade: um aluno só pode ser faturado uma vez por semana (unique em
+// holiday_camp_invoices). Só usuários com o nível Financeiro da Colônia podem
+// disparar (defesa em profundidade no servidor).
+
+const FaturarColoniaInputSchema = z.object({
+  unidade: z.string(),
+  studentId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  sponteAlunoId: z.string().min(1),
+  valor: z.number().positive(),
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export interface FaturarColoniaResult {
+  ok: boolean;
+  contaReceberID?: string;
+  retornoOperacao?: string;
+  jaFaturado?: boolean;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const CATEGORIA_COLONIA = "Colônia de Férias";
+const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// POST de um método SOAP do Sponte com parâmetros arbitrários (extraParams já
+// serializados na ordem do WSDL). callSponte é específico de sParametrosBusca.
+async function callSponteMethod(
+  method: string,
+  extraParams: string,
+  codigoCliente: string,
+  token: string,
+): Promise<string> {
+  const soapBody = buildSoapEnvelope(method, extraParams, codigoCliente, token);
+  const response = await fetch(SPONTE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      SOAPAction: `${SPONTE_NS}${method}`,
+    },
+    body: soapBody,
+  });
+  return response.text();
+}
+
+// Resolve o ID numérico da Forma de Cobrança pelo nome (ex.: "Cobrança Bancária").
+async function resolverFormaCobrancaId(
+  nome: string,
+  codigoCliente: string,
+  token: string,
+): Promise<number | null> {
+  const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
+  if (checkFault(xml)) return null;
+  const alvo = normalizarTexto(nome);
+  const re = /<FormaCobrancaID>(\d+)<\/FormaCobrancaID>\s*<Descricao>([^<]*)<\/Descricao>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    if (normalizarTexto(m[2]) === alvo) return parseInt(m[1], 10);
+  }
+  return null;
+}
+
+// Resolve o ID numérico da Categoria financeira pelo nome (ex.: "Colônia de Férias").
+async function resolverCategoriaId(
+  nome: string,
+  codigoCliente: string,
+  token: string,
+): Promise<number | null> {
+  const xml = await callSponteMethod("GetCategorias", "", codigoCliente, token);
+  if (checkFault(xml)) return null;
+  const alvo = normalizarTexto(nome);
+  const re = /<CategoriaID>(\d+)<\/CategoriaID>\s*<Nome>([^<]*)<\/Nome>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    if (normalizarTexto(m[2]) === alvo) return parseInt(m[1], 10);
+  }
+  return null;
+}
+
+export const faturarColoniaSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => FaturarColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<FaturarColoniaResult> => {
+    const { unidade, studentId, schoolId, sponteAlunoId, valor, weekStart, weekEnd, vencimento } =
+      data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, error: "Sem permissão para faturar a Colônia." };
+    }
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+
+    // Anti-duplicidade: já faturado nesta semana? Curto-circuita sem chamar o Sponte.
+    const { data: existente } = await supabaseAdmin
+      .from("holiday_camp_invoices" as any)
+      .select("sponte_conta_receber_id")
+      .eq("student_id", studentId)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (existente) {
+      return {
+        ok: true,
+        jaFaturado: true,
+        contaReceberID: (existente as any).sponte_conta_receber_id ?? undefined,
+      };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { ok: false, indisponivel: true };
+
+    let formaId: number | null;
+    let categoriaId: number | null;
+    try {
+      [formaId, categoriaId] = await Promise.all([
+        resolverFormaCobrancaId(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token),
+        resolverCategoriaId(CATEGORIA_COLONIA, creds.codigoCliente, creds.token),
+      ]);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+    }
+
+    if (formaId == null) {
+      return {
+        ok: false,
+        error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte.`,
+      };
+    }
+    if (categoriaId == null) {
+      return {
+        ok: false,
+        error: `Categoria "${CATEGORIA_COLONIA}" não encontrada no Sponte. Crie-a no Sponte antes de faturar.`,
+      };
+    }
+
+    const inicioBr = ymdParaBr(weekStart);
+    const fimBr = ymdParaBr(weekEnd);
+    const observacao = `Colônia de Férias: Semana de ${inicioBr} a ${fimBr}`;
+
+    const extra =
+      `<nContratoID>0</nContratoID>` +
+      `<nContratoAulaLivreID>0</nContratoAulaLivreID>` +
+      `<nAlunoID>${escapeXml(sponteAlunoId)}</nAlunoID>` +
+      `<nTipoPlano>1</nTipoPlano>` +
+      `<nBolsaID>0</nBolsaID>` +
+      `<dDataPrimeiroVencimento>${vencimento}T00:00:00</dDataPrimeiroVencimento>` +
+      `<nNumeroParcelas>1</nNumeroParcelas>` +
+      `<nValorParcelas>${valor.toFixed(2)}</nValorParcelas>` +
+      `<nFormaCobrancaID>${formaId}</nFormaCobrancaID>` +
+      `<nCategoriaID>${categoriaId}</nCategoriaID>` +
+      `<sObservacao>${escapeXml(observacao)}</sObservacao>` +
+      `<nClienteID>0</nClienteID>` +
+      `<nContaID>0</nContaID>`;
+
+    let xml: string;
+    try {
+      xml = await callSponteMethod("InsertPlano", extra, creds.codigoCliente, creds.token);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Falha ao faturar no Sponte." };
+    }
+
+    const fault = checkFault(xml);
+    if (fault) return { ok: false, error: fault };
+
+    const retornoOperacao = parseXmlValue(xml, "RetornoOperacao");
+    const contaReceberID = parseXmlValue(xml, "ContaReceberID");
+    const contaNum = parseInt(contaReceberID, 10);
+    const sucesso =
+      (Number.isFinite(contaNum) && contaNum > 0) ||
+      normalizarTexto(retornoOperacao).includes("sucesso");
+
+    if (!sucesso) {
+      return {
+        ok: false,
+        retornoOperacao,
+        error: retornoOperacao || "O Sponte não confirmou a criação da cobrança.",
+      };
+    }
+
+    // Persiste o faturamento (idempotente): trava a duplicidade e alimenta o
+    // estado "Faturado" no Fechamento Semanal.
+    await supabaseAdmin.from("holiday_camp_invoices" as any).insert({
+      student_id: studentId,
+      school_id: schoolId,
+      week_start: weekStart,
+      week_end: weekEnd,
+      amount: valor,
+      due_date: vencimento,
+      sponte_aluno_id: sponteAlunoId,
+      sponte_conta_receber_id: contaReceberID || null,
+      observacao,
+      invoiced_by: context.userId,
+    });
+
+    return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
+  });
+
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
 // Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
 // verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são

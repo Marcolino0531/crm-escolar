@@ -15,11 +15,24 @@ import {
   UserCircle2,
   Info,
   Wallet,
+  Receipt,
+  Loader2,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useSchool } from "@/lib/app-context";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Accordion,
   AccordionContent,
@@ -34,6 +47,7 @@ import {
   fmtDayMonth,
   fmtTime,
   mondayOf,
+  toYMD,
   type ColoniaRecord,
   type ColoniaRecordType,
   type ColoniaStudentWeek,
@@ -45,7 +59,7 @@ import {
   sponteAtivoNoMes,
   type WeekBilling,
 } from "@/lib/colonia-billing";
-import { fetchColoniaBeneficios } from "@/lib/sponte.functions";
+import { fetchColoniaBeneficios, faturarColoniaSponte } from "@/lib/sponte.functions";
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
@@ -88,13 +102,15 @@ const RECORD_SELECT =
 type Props = {
   schoolFilterIds: string[] | null;
   canEdit: boolean;
+  canFaturar?: boolean;
 };
 
-export function FechamentoSemanal({ schoolFilterIds, canEdit }: Props) {
+export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false }: Props) {
   const qc = useQueryClient();
   const { schools } = useSchool();
   const beneficiosFn = useServerFn(fetchColoniaBeneficios);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
+  const schoolIdToName = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
 
   const rangeStart = weekStart;
   const rangeEndExclusive = addDays(weekStart, 5); // sábado 00:00 → cobre seg–sex
@@ -223,7 +239,6 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit }: Props) {
     enabled: sponteActive && sponteIds.length > 0,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const schoolIdToName = new Map(schools.map((s) => [s.id, s.name]));
       // Agrupa os sponte_aluno_id por unidade Sponte.
       const porUnidade = new Map<string, string[]>();
       for (const s of students) {
@@ -266,6 +281,24 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit }: Props) {
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Tente novamente.";
       toast.error("Erro ao remover", { description: msg });
+    },
+  });
+
+  // Alunos já faturados NESTA semana (para exibir o botão como "Faturado").
+  const weekStartYMD = toYMD(weekStart);
+  const weekEndYMD = toYMD(friday);
+  const { data: invoicedSet = new Set<string>() } = useQuery({
+    queryKey: ["colonia_invoices", schoolKey, weekStartYMD],
+    enabled: canFaturar,
+    queryFn: async () => {
+      let q = supabase
+        .from("holiday_camp_invoices" as never)
+        .select("student_id")
+        .eq("week_start", weekStartYMD);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
+      const { data, error } = await q;
+      if (error) throw error;
+      return new Set((data ?? []).map((r) => (r as { student_id: string }).student_id));
     },
   });
 
@@ -413,6 +446,24 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit }: Props) {
                   })}
 
                   <ExtratoFinanceiro billing={billing} loading={calculando} />
+
+                  {canFaturar && (
+                    <FaturarBotao
+                      studentId={s.studentId}
+                      schoolId={s.schoolId}
+                      studentName={s.name}
+                      sponteAlunoId={s.sponteAlunoId}
+                      unidade={schoolIdToName.get(s.schoolId) ?? null}
+                      valor={billing.total}
+                      weekStartYMD={weekStartYMD}
+                      weekEndYMD={weekEndYMD}
+                      weekLabel={weekLabel}
+                      defaultVencimento={weekEndYMD}
+                      jaFaturado={invoicedSet.has(s.studentId)}
+                      disabled={calculando}
+                      onFaturado={() => qc.invalidateQueries({ queryKey: ["colonia_invoices"] })}
+                    />
+                  )}
                 </AccordionContent>
               </AccordionItem>
             );
@@ -508,5 +559,153 @@ function ExtratoFinanceiro({ billing, loading }: { billing: WeekBilling; loading
         </>
       )}
     </div>
+  );
+}
+
+type FaturarBotaoProps = {
+  studentId: string;
+  schoolId: string;
+  studentName: string;
+  sponteAlunoId: string | null;
+  unidade: string | null;
+  valor: number;
+  weekStartYMD: string;
+  weekEndYMD: string;
+  weekLabel: string;
+  defaultVencimento: string;
+  jaFaturado: boolean;
+  disabled: boolean;
+  onFaturado: () => void;
+};
+
+function FaturarBotao({
+  studentId,
+  schoolId,
+  studentName,
+  sponteAlunoId,
+  unidade,
+  valor,
+  weekStartYMD,
+  weekEndYMD,
+  weekLabel,
+  defaultVencimento,
+  jaFaturado,
+  disabled,
+  onFaturado,
+}: FaturarBotaoProps) {
+  const faturarFn = useServerFn(faturarColoniaSponte);
+  const [open, setOpen] = useState(false);
+  const [vencimento, setVencimento] = useState(defaultVencimento);
+  const [faturado, setFaturado] = useState(false);
+
+  const unidadeValida = !!unidade && UNIDADES_SPONTE.includes(unidade);
+  const podeFaturar = !!sponteAlunoId && unidadeValida && valor > 0;
+
+  const faturar = useMutation({
+    mutationFn: async () => {
+      const res = await faturarFn({
+        data: {
+          unidade: unidade as string,
+          studentId,
+          schoolId,
+          sponteAlunoId: sponteAlunoId as string,
+          valor,
+          weekStart: weekStartYMD,
+          weekEnd: weekEndYMD,
+          vencimento,
+        },
+      });
+      if (!res.ok) throw new Error(res.error ?? "Falha ao faturar no Sponte.");
+      return res;
+    },
+    onSuccess: (res) => {
+      setFaturado(true);
+      setOpen(false);
+      toast.success(
+        res.jaFaturado
+          ? "Este aluno já estava faturado nesta semana."
+          : "Faturado com sucesso no Sponte",
+      );
+      onFaturado();
+    },
+    onError: (e: unknown) => {
+      toast.error("Erro ao faturar", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
+  if (jaFaturado || faturado) {
+    return (
+      <Button
+        variant="outline"
+        disabled
+        className="mt-2 w-full border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+      >
+        <CheckCircle2 className="h-4 w-4" /> Faturado
+      </Button>
+    );
+  }
+
+  return (
+    <>
+      <Button
+        onClick={() => setOpen(true)}
+        disabled={!podeFaturar || disabled}
+        className="mt-2 w-full"
+        title={
+          !sponteAlunoId
+            ? "Aluno sem vínculo com o Sponte"
+            : !unidadeValida
+              ? "Selecione uma unidade com integração Sponte"
+              : undefined
+        }
+      >
+        <Receipt className="h-4 w-4" /> Faturar no Sponte
+      </Button>
+
+      <Dialog open={open} onOpenChange={(v) => (faturar.isPending ? null : setOpen(v))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Faturar no Sponte</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border bg-secondary/40 p-3 text-sm">
+              <div className="font-semibold text-foreground">{studentName}</div>
+              <div className="text-muted-foreground">Semana de {weekLabel}</div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-muted-foreground">Valor total</span>
+                <span className="font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {brl(valor)}
+                </span>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`venc-${studentId}`}>Data de Vencimento</Label>
+              <Input
+                id={`venc-${studentId}`}
+                type="date"
+                value={vencimento}
+                onChange={(e) => setVencimento(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={faturar.isPending}>
+              Cancelar
+            </Button>
+            <Button onClick={() => faturar.mutate()} disabled={faturar.isPending || !vencimento}>
+              {faturar.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Faturando…
+                </>
+              ) : (
+                "Confirmar Faturamento"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

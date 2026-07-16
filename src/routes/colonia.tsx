@@ -106,7 +106,11 @@ function ColoniaPage() {
 
         {podeFinanceiro && (
           <TabsContent value="fechamento" className="pt-4">
-            <FechamentoSemanal schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+            <FechamentoSemanal
+              schoolFilterIds={schoolFilterIds}
+              canEdit={podeEditar}
+              canFaturar={podeFinanceiro}
+            />
           </TabsContent>
         )}
       </Tabs>
