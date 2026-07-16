@@ -110,6 +110,13 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
 
   const salvarFolha = async () => {
     if (!schoolId || !folhaTitulo.trim() || linhas.length === 0) return;
+    // Só entram na folha colaboradores com pagamento efetivo: Total > 0 e Dias > 0.
+    const linhasValidas = linhas.filter((l) => l.total > 0 && l.diasUteis > 0);
+    if (linhasValidas.length === 0) {
+      toast.error("Nenhum colaborador com valor a pagar (Total e Dias maiores que zero).");
+      return;
+    }
+    const totalValido = linhasValidas.reduce((acc, l) => acc + l.total, 0);
     setSalvando(true);
     try {
       const { data: batch, error: bErr } = await supabase
@@ -119,7 +126,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
           title: folhaTitulo.trim(),
           payment_date: folhaData || null,
           reference_month: mesReferencia || null,
-          total_amount: totalGeral,
+          total_amount: totalValido,
         } as never)
         .select("id")
         .single();
@@ -128,7 +135,7 @@ const FechamentoVT: React.FC<FechamentoVTProps> = ({ funcionarios, schoolId, onF
         return;
       }
       const batchId = (batch as { id: string }).id;
-      const itens = linhas.map((l) => ({
+      const itens = linhasValidas.map((l) => ({
         batch_id: batchId,
         employee_id: l.id,
         employee_name: l.nome,
