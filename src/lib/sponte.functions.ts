@@ -1991,6 +1991,126 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
   });
 
+// ── Sincronização de status do faturamento da Colônia (two-way bind) ─────────
+
+const DesvincularColoniaInputSchema = z.object({
+  unidade: z.string(),
+  studentId: z.string().uuid(),
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export interface DesvincularColoniaResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Remove o vínculo local de faturamento (o botão volta a "Pendente" e libera o
+// refaturamento). NÃO exclui o título no Sponte — apenas desfaz o registro local.
+export const desvincularFaturamentoColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DesvincularColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DesvincularColoniaResult> => {
+    const { unidade, studentId, weekStart } = data;
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+    const { error } = await supabaseAdmin
+      .from("holiday_camp_invoices" as any)
+      .delete()
+      .eq("student_id", studentId)
+      .eq("week_start", weekStart);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  });
+
+const VerificarColoniaInputSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  itens: z
+    .array(
+      z.object({
+        unidade: z.string(),
+        studentId: z.string().uuid(),
+        sponteAlunoId: z.string().min(1),
+        contaReceberId: z.string().min(1),
+      }),
+    )
+    .max(200),
+});
+
+export interface VerificarColoniaResult {
+  ok: boolean;
+  revertidos: string[];
+  error?: string;
+}
+
+// Verificação silenciosa: confere no Sponte (GetParcelas por aluno) se cada
+// título faturado ainda existe e não está cancelado/estornado. Os títulos que
+// não existirem mais têm o vínculo local removido (revertidos → "Pendente").
+// Conservador: falha de rede/resposta vazia NÃO reverte, para evitar liberar o
+// botão de um título válido e permitir cobrança em duplicidade.
+export const verificarFaturamentosColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => VerificarColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<VerificarColoniaResult> => {
+    const { weekStart, itens } = data;
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, revertidos: [], error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    const permitidos = itens.filter((it) => allowed === null || allowed.includes(it.unidade));
+
+    // Cache de ContaReceberIDs ativos por (unidade, aluno) para não repetir o
+    // GetParcelas quando o mesmo aluno tem múltiplos títulos.
+    const ativosPorAluno = new Map<string, Set<string> | null>();
+    const revertidos: string[] = [];
+
+    for (const it of permitidos) {
+      const creds = resolverCredenciais(it.unidade);
+      if (!creds) continue;
+      const chave = `${it.unidade}|${it.sponteAlunoId}`;
+      let ativos = ativosPorAluno.get(chave);
+      if (ativos === undefined) {
+        ativos = null;
+        try {
+          const xml = await callSponte(
+            "GetParcelas",
+            `AlunoID=${it.sponteAlunoId}`,
+            creds.codigoCliente,
+            creds.token,
+          );
+          const nodes = checkFault(xml) ? [] : parseXmlList(xml, "wsParcela");
+          if (nodes.length > 0) {
+            const set = new Set<string>();
+            for (const node of nodes) {
+              const id = parseXmlValue(node, "ContaReceberID");
+              const sit = normalizarTexto(parseXmlValue(node, "SituacaoParcela"));
+              const cancelada = sit.includes("cancel") || sit.includes("estorn");
+              if (id && !cancelada) set.add(id);
+            }
+            ativos = set;
+          }
+        } catch {
+          ativos = null;
+        }
+        ativosPorAluno.set(chave, ativos);
+      }
+      // Só reverte quando temos uma lista válida (não-nula) que NÃO contém o ID.
+      if (ativos && !ativos.has(it.contaReceberId)) {
+        const { error } = await supabaseAdmin
+          .from("holiday_camp_invoices" as any)
+          .delete()
+          .eq("student_id", it.studentId)
+          .eq("week_start", weekStart);
+        if (!error) revertidos.push(it.studentId);
+      }
+    }
+    return { ok: true, revertidos };
+  });
+
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
 // Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
 // verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são
