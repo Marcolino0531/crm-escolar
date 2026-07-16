@@ -11,8 +11,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { ColoniaActionSheet } from "@/components/colonia/ColoniaActionSheet";
+import { FechamentoSemanal } from "@/components/colonia/FechamentoSemanal";
 import { type ColoniaStudent } from "@/lib/colonia";
 
 export const Route = createFileRoute("/colonia")({
@@ -66,16 +68,56 @@ function ColoniaPage() {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("colonia");
   const { selected, schools, schoolFilterIds } = useSchool();
+
+  const specificSchoolId = selected !== "all" ? selected : null;
+  const specificSchoolName =
+    schools.find((s) => s.id === specificSchoolId)?.name ?? "Todas as Unidades";
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <PartyPopper className="h-6 w-6 text-primary" />
+          <div>
+            <h1 className="text-xl font-bold text-foreground">Colônia de Férias</h1>
+            <p className="text-sm text-muted-foreground">
+              Registro avulso de refeições e portaria · {specificSchoolName}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <Tabs defaultValue="registro" className="w-full">
+        <TabsList>
+          <TabsTrigger value="registro">Registrar Consumos</TabsTrigger>
+          <TabsTrigger value="fechamento">Fechamento Semanal</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="registro" className="space-y-4 pt-4">
+          <RegistrarConsumos schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+        </TabsContent>
+
+        <TabsContent value="fechamento" className="pt-4">
+          <FechamentoSemanal schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function RegistrarConsumos({
+  schoolFilterIds,
+  canEdit,
+}: {
+  schoolFilterIds: string[] | null;
+  canEdit: boolean;
+}) {
   const { data: students = [], isLoading } = useColoniaStudents(schoolFilterIds);
 
   const [busca, setBusca] = useState("");
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [active, setActive] = useState<ColoniaStudent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-
-  const specificSchoolId = selected !== "all" ? selected : null;
-  const specificSchoolName =
-    schools.find((s) => s.id === specificSchoolId)?.name ?? "Todas as Unidades";
 
   const filtered = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -106,19 +148,7 @@ function ColoniaPage() {
   }, [busca, groupKeys]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <PartyPopper className="h-6 w-6 text-primary" />
-          <div>
-            <h1 className="text-xl font-bold text-foreground">Colônia de Férias</h1>
-            <p className="text-sm text-muted-foreground">
-              Registro avulso de refeições e portaria · {specificSchoolName}
-            </p>
-          </div>
-        </div>
-      </div>
-
+    <>
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -184,9 +214,9 @@ function ColoniaPage() {
         student={active}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        canEdit={podeEditar}
+        canEdit={canEdit}
       />
-    </div>
+    </>
   );
 }
 
