@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Outlet,
   Link,
@@ -29,6 +29,7 @@ import {
   BookOpen,
   PartyPopper,
   CreditCard,
+  Menu,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
@@ -38,6 +39,7 @@ import { SchoolFilter } from "@/components/SchoolFilter";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 import appCss from "../styles.css?url";
 
@@ -142,18 +144,19 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function NavItem({
-  to,
-  icon: Icon,
-  label,
-}: {
+type NavEntry = {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
-}) {
+};
+
+type NavSection = { heading?: string; items: NavEntry[] };
+
+function NavItem({ to, icon: Icon, label, onNavigate }: NavEntry & { onNavigate?: () => void }) {
   return (
     <Link
       to={to}
+      onClick={onNavigate}
       className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       activeProps={{
         className:
@@ -164,6 +167,57 @@ function NavItem({
       <Icon className="h-4 w-4" />
       {label}
     </Link>
+  );
+}
+
+// Conteúdo da sidebar reutilizado no painel fixo (desktop) e no drawer
+// (tablet/mobile). `onNavigate` fecha o drawer ao clicar num item.
+function SidebarContent({
+  sections,
+  onNavigate,
+}: {
+  sections: NavSection[];
+  onNavigate?: () => void;
+}) {
+  return (
+    <>
+      <div className="mb-8 flex items-center gap-2 px-2">
+        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
+          <img
+            src="/school-hub-logo.svg"
+            alt="School Hub"
+            className="h-full w-full object-contain"
+          />
+        </div>
+        <div>
+          <div className="text-sm font-semibold leading-tight">School Hub</div>
+        </div>
+      </div>
+      <nav className="flex flex-col gap-1">
+        {sections.map((section, i) =>
+          section.items.length === 0 ? null : (
+            <div key={section.heading ?? `sec-${i}`} className="flex flex-col gap-1">
+              {section.heading && (
+                <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+                  {section.heading}
+                </div>
+              )}
+              {section.items.map((item) => (
+                <NavItem key={item.to} {...item} onNavigate={onNavigate} />
+              ))}
+            </div>
+          ),
+        )}
+      </nav>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-auto justify-start gap-2 text-sidebar-foreground/70"
+        onClick={() => supabase.auth.signOut()}
+      >
+        <LogOut className="h-4 w-4" /> Sair
+      </Button>
+    </>
   );
 }
 
@@ -199,19 +253,8 @@ function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  // Preserva a rota exata em recarregamentos (F5) e deep links: só redireciona
-  // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
-  // para a primeira tela permitida. Quem já está numa rota profunda permanece
-  // nela. Aguarda a confirmação das permissões (que por sua vez só resolvem
-  // após a sessão do Supabase carregar) antes de qualquer decisão.
-  const didRedirect = useRef(false);
-  useEffect(() => {
-    if (permsLoading || didRedirect.current) return;
-    didRedirect.current = true;
-    if (pathname === "/" && !canView("dashboard") && canView("financeiro_dashboard")) {
-      router.navigate({ to: "/extrato-bancario" });
-    }
-  }, [permsLoading, canView, router, pathname]);
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const showMainDashboard = canView("dashboard");
   const showAgenda = canView("agenda");
   const showAdmissoes = canView("admissoes");
@@ -244,146 +287,140 @@ function AppShell() {
       showCartao ||
       showFundos);
   const showConfig = canView("configuracoes");
+
+  // Modelo de navegação (mesma ordem do menu), usado tanto para renderizar a
+  // sidebar/drawer quanto para achar a primeira rota permitida.
+  const sections = useMemo<NavSection[]>(() => {
+    const gate = (show: boolean, item: NavEntry) => (show ? [item] : []);
+    return [
+      { items: gate(showMainDashboard, { to: "/", icon: LayoutDashboard, label: "Dashboard" }) },
+      {
+        heading: "Módulos",
+        items: [
+          ...gate(showAgenda, { to: "/agenda", icon: CalendarDays, label: "Agenda" }),
+          ...gate(showAdmissoes, { to: "/admissoes", icon: KanbanSquare, label: "Admissões" }),
+          ...gate(showOnboarding, {
+            to: "/onboarding",
+            icon: ClipboardCheck,
+            label: "Onboarding",
+          }),
+          ...gate(showRh, { to: "/rh", icon: Users, label: "Recursos Humanos" }),
+          ...gate(showTasks, { to: "/tasks", icon: ListTodo, label: "Tasks" }),
+          ...gate(showUniformes, { to: "/uniformes", icon: Shirt, label: "Uniformes" }),
+          ...gate(showDiario, { to: "/diario", icon: BookOpen, label: "Diário do Aluno" }),
+          ...gate(showColonia, {
+            to: "/colonia",
+            icon: PartyPopper,
+            label: "Colônia de Férias",
+          }),
+        ],
+      },
+      {
+        heading: "Financeiro",
+        items: showFinanceiro
+          ? [
+              ...gate(showDashboard, {
+                to: "/extrato-bancario",
+                icon: Landmark,
+                label: "Extrato Bancário",
+              }),
+              ...gate(showUpload, { to: "/upload", icon: Upload, label: "Importar Extrato" }),
+              ...gate(showConciliacao, {
+                to: "/conciliacao",
+                icon: FileCheck2,
+                label: "Faturamento",
+              }),
+              ...gate(showFluxo, {
+                to: "/fluxo-futuro",
+                icon: TrendingUp,
+                label: "Fluxo Futuro",
+              }),
+              ...gate(showInadimplencia, {
+                to: "/inadimplencia",
+                icon: AlertCircle,
+                label: "Inadimplência",
+              }),
+              ...gate(showCobranca, { to: "/cobranca", icon: HandCoins, label: "Cobrança" }),
+              ...gate(showCartao, {
+                to: "/cartao-credito",
+                icon: CreditCard,
+                label: "Cartão de Crédito",
+              }),
+              ...gate(showFundos, { to: "/fundos", icon: PiggyBank, label: "Fundos" }),
+            ]
+          : [],
+      },
+      {
+        items: gate(showConfig, { to: "/configuracoes", icon: Settings, label: "Configurações" }),
+      },
+    ];
+  }, [
+    showMainDashboard,
+    showAgenda,
+    showAdmissoes,
+    showOnboarding,
+    showRh,
+    showTasks,
+    showUniformes,
+    showDiario,
+    showColonia,
+    showFinanceiro,
+    showDashboard,
+    showUpload,
+    showConciliacao,
+    showFluxo,
+    showInadimplencia,
+    showCobranca,
+    showCartao,
+    showFundos,
+    showConfig,
+  ]);
+
+  const firstAllowed = useMemo(() => sections.flatMap((s) => s.items)[0]?.to ?? null, [sections]);
+
+  // Preserva a rota exata em recarregamentos (F5) e deep links. Só redireciona
+  // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
+  // para a PRIMEIRA rota permitida (ex.: acesso só à Colônia → /colonia). Quem
+  // já está numa rota profunda permanece nela. Aguarda a confirmação das
+  // permissões antes de qualquer decisão.
+  const didRedirect = useRef(false);
+  useEffect(() => {
+    if (permsLoading || didRedirect.current) return;
+    didRedirect.current = true;
+    if (pathname === "/" && !showMainDashboard && firstAllowed && firstAllowed !== "/") {
+      router.navigate({ to: firstAllowed });
+    }
+  }, [permsLoading, showMainDashboard, firstAllowed, router, pathname]);
+
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
-        <div className="mb-8 flex items-center gap-2 px-2">
-          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-primary/10">
-            <img
-              src="/school-hub-logo.svg"
-              alt="School Hub"
-              className="h-full w-full object-contain"
-            />
-          </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight">School Hub</div>
-          </div>
-        </div>
-        <nav className="flex flex-col gap-1">
-          {showMainDashboard && <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />}
-          {(showAgenda ||
-            showAdmissoes ||
-            showOnboarding ||
-            showRh ||
-            showTasks ||
-            showUniformes ||
-            showDiario ||
-            showColonia) && (
-            <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-              Módulos
-            </div>
-          )}
-          {showAgenda && <NavItem to="/agenda" icon={CalendarDays} label="Agenda" />}
-          {showAdmissoes && <NavItem to="/admissoes" icon={KanbanSquare} label="Admissões" />}
-          {showOnboarding && <NavItem to="/onboarding" icon={ClipboardCheck} label="Onboarding" />}
-          {showRh && <NavItem to="/rh" icon={Users} label="Recursos Humanos" />}
-          {showTasks && <NavItem to="/tasks" icon={ListTodo} label="Tasks" />}
-          {showUniformes && <NavItem to="/uniformes" icon={Shirt} label="Uniformes" />}
-          {showDiario && <NavItem to="/diario" icon={BookOpen} label="Diário do Aluno" />}
-          {showColonia && <NavItem to="/colonia" icon={PartyPopper} label="Colônia de Férias" />}
-          {showFinanceiro && (
-            <>
-              <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-                Financeiro
-              </div>
-              {showDashboard && (
-                <NavItem to="/extrato-bancario" icon={Landmark} label="Extrato Bancário" />
-              )}
-              {showUpload && <NavItem to="/upload" icon={Upload} label="Importar Extrato" />}
-              {showConciliacao && (
-                <NavItem to="/conciliacao" icon={FileCheck2} label="Faturamento" />
-              )}
-              {showFluxo && <NavItem to="/fluxo-futuro" icon={TrendingUp} label="Fluxo Futuro" />}
-              {showInadimplencia && (
-                <NavItem to="/inadimplencia" icon={AlertCircle} label="Inadimplência" />
-              )}
-              {/* Cobrança aparece logo abaixo de Inadimplência (gated por cobranca). */}
-              {showCobranca && <NavItem to="/cobranca" icon={HandCoins} label="Cobrança" />}
-              {showCartao && (
-                <NavItem to="/cartao-credito" icon={CreditCard} label="Cartão de Crédito" />
-              )}
-              {showFundos && <NavItem to="/fundos" icon={PiggyBank} label="Fundos" />}
-            </>
-          )}
-          {showConfig && <NavItem to="/configuracoes" icon={Settings} label="Configurações" />}
-        </nav>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="mt-auto justify-start gap-2 text-sidebar-foreground/70"
-          onClick={() => supabase.auth.signOut()}
-        >
-          <LogOut className="h-4 w-4" /> Sair
-        </Button>
+      <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
+        <SidebarContent sections={sections} />
       </aside>
+
+      {/* Drawer de navegação para tablet/mobile. */}
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent
+          side="left"
+          className="flex w-64 flex-col border-sidebar-border bg-sidebar p-4"
+        >
+          <SheetTitle className="sr-only">Menu de navegação</SheetTitle>
+          <SidebarContent sections={sections} onNavigate={() => setMenuOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
       <div className="flex flex-1 flex-col">
-        <header className="md:hidden flex items-center gap-2 border-b border-border bg-card px-4 py-3">
+        <header className="lg:hidden flex items-center gap-2 border-b border-border bg-card px-4 py-3">
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Abrir menu"
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-foreground transition hover:bg-accent"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
           <img src="/school-hub-logo.svg" alt="School Hub" className="h-8 w-8 object-contain" />
           <span className="font-semibold">School Hub</span>
-          <nav className="ml-auto flex gap-1">
-            {showFinanceiro && showDashboard && (
-              <Link
-                to="/"
-                className="rounded-md px-2 py-1 text-xs"
-                activeProps={{
-                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-                }}
-                activeOptions={{ exact: true }}
-              >
-                Painel
-              </Link>
-            )}
-            {showFinanceiro && showUpload && (
-              <Link
-                to="/upload"
-                className="rounded-md px-2 py-1 text-xs"
-                activeProps={{
-                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-                }}
-              >
-                Upload
-              </Link>
-            )}
-            {showFinanceiro && showConciliacao && (
-              <Link
-                to="/conciliacao"
-                className="rounded-md px-2 py-1 text-xs"
-                activeProps={{
-                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-                }}
-              >
-                Faturamento
-              </Link>
-            )}
-            {showFinanceiro && showFluxo && (
-              <Link
-                to="/fluxo-futuro"
-                className="rounded-md px-2 py-1 text-xs"
-                activeProps={{
-                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-                }}
-              >
-                Futuro
-              </Link>
-            )}
-            {showConfig && (
-              <Link
-                to="/configuracoes"
-                className="rounded-md px-2 py-1 text-xs"
-                activeProps={{
-                  className: "rounded-md px-2 py-1 text-xs bg-primary text-primary-foreground",
-                }}
-              >
-                Config
-              </Link>
-            )}
-            <button
-              onClick={() => supabase.auth.signOut()}
-              className="rounded-md px-2 py-1 text-xs"
-            >
-              Sair
-            </button>
-          </nav>
         </header>
         <div className="flex items-center gap-2 border-b border-border bg-card/50 px-4 py-3 md:px-8">
           <SchoolFilter />
