@@ -7,6 +7,7 @@ import { handleUniformesApi } from "./lib/uniformes.api";
 import { handleCobrancasApi } from "./lib/cobrancas.api";
 import { handleReceivablesApi } from "./lib/receivables.api";
 import { handleDiarioApi } from "./lib/diario.api";
+import { handleWhatsAppApi } from "./lib/whatsapp.api";
 import { handleAgendaApi } from "./lib/agenda.api";
 
 type ServerEntry = {
@@ -96,6 +97,10 @@ export default {
       // Sincronização diária do Diário do Aluno com o Sponte (Vercel Cron).
       const diarioResponse = await handleDiarioApi(request);
       if (diarioResponse) return diarioResponse;
+
+      // Automação de Cobrança por WhatsApp (Cloud API da Meta): cron + webhook.
+      const whatsappResponse = await handleWhatsAppApi(request);
+      if (whatsappResponse) return whatsappResponse;
 
       // Lembrete matinal por email das reuniões da Agenda (Vercel Cron).
       const agendaResponse = await handleAgendaApi(request);
