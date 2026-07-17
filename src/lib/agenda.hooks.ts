@@ -11,6 +11,7 @@ export type Reuniao = {
   alunoNome: string;
   colaboradores: string[];
   participanteIds: string[];
+  unitId: string | null;
 };
 
 export type ReuniaoInput = {
@@ -22,6 +23,8 @@ export type ReuniaoInput = {
   colaboradores: string[];
   // IDs dos usuários do sistema selecionados na Equipe (fonte das notificações).
   participanteIds: string[];
+  // Unidade (escola) da reunião.
+  unitId: string;
 };
 
 type ReuniaoRow = {
@@ -32,6 +35,7 @@ type ReuniaoRow = {
   aluno_nome: string | null;
   colaboradores: string[] | null;
   participante_ids: string[] | null;
+  unit_id: string | null;
 };
 
 function rowToReuniao(r: ReuniaoRow): Reuniao {
@@ -43,6 +47,7 @@ function rowToReuniao(r: ReuniaoRow): Reuniao {
     alunoNome: r.aluno_nome ?? "",
     colaboradores: r.colaboradores ?? [],
     participanteIds: r.participante_ids ?? [],
+    unitId: r.unit_id ?? null,
   };
 }
 
@@ -80,6 +85,7 @@ export function useReunioes() {
         aluno_nome: toTitleCase(input.alunoNome) || null,
         colaboradores: input.colaboradores,
         participante_ids: input.participanteIds,
+        unit_id: input.unitId,
         created_by: auth.user?.id ?? null,
       } as never);
       if (error) throw error;

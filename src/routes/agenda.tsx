@@ -13,6 +13,7 @@ import {
   Plus,
   Trash2,
   UserRound,
+  Building2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLeads } from "@/lib/crm/hooks";
@@ -34,6 +35,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatDateBR } from "@/lib/date-utils";
 import { displayPhoneBR } from "@/lib/phone";
 import { toTitleCase } from "@/lib/name-format";
@@ -94,7 +102,12 @@ type CalEvent = {
   colunaLabel?: string;
   // reuniao
   colaboradores?: string[];
+  unitId?: string | null;
 };
+
+// CEC e CEC Baby compartilham a mesma coordenação: uma reunião marcada em uma
+// aparece também na agenda da outra.
+const SHARED_UNIT_NAMES = ["CEC", "CEC Baby"];
 
 function toISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -134,14 +147,30 @@ function leadToEvent(lead: Lead, unidade: string): CalEvent {
 function AgendaPage() {
   const { leads, isLoading } = useLeads();
   const { reunioes, isLoading: loadingReunioes, adicionarReuniao, removerReuniao } = useReunioes();
-  const { schools } = useSchool();
+  const { schools, selected, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("agenda");
   const [mode, setMode] = useState<"mes" | "semana">("mes");
   const [cursor, setCursor] = useState(() => new Date());
   const [novaOpen, setNovaOpen] = useState(false);
 
-  const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "—";
+  const schoolName = (id: string | null | undefined) =>
+    (id && schools.find((s) => s.id === id)?.name) || "—";
+
+  const cecId = useMemo(() => schools.find((s) => s.name === "CEC")?.id ?? null, [schools]);
+
+  // Unidades cujas reuniões devem aparecer para a seleção atual do filtro do
+  // topo. `null` = todas (respeitando a permissão do usuário via schoolFilterIds).
+  // Ao filtrar por CEC ou CEC Baby, mostra as reuniões de AMBAS (coordenação
+  // compartilhada); as demais unidades são estritas.
+  const reuniaoUnitIds = useMemo<string[] | null>(() => {
+    if (selected === "all") return schoolFilterIds;
+    const name = schools.find((s) => s.id === selected)?.name ?? "";
+    if (SHARED_UNIT_NAMES.includes(name)) {
+      return schools.filter((s) => SHARED_UNIT_NAMES.includes(s.name)).map((s) => s.id);
+    }
+    return [selected];
+  }, [selected, schools, schoolFilterIds]);
 
   // Eventos agrupados por dia (YYYY-MM-DD), já ordenados por horário. Reúne as
   // visitas do funil de Admissões e as reuniões manuais.
@@ -158,6 +187,9 @@ function AgendaPage() {
       push(leadToEvent(lead, schoolName(lead.schoolId)));
     }
     for (const r of reunioes) {
+      // Reuniões antigas sem unidade contam como CEC (ver migração).
+      const unit = r.unitId ?? cecId;
+      if (reuniaoUnitIds && (!unit || !reuniaoUnitIds.includes(unit))) continue;
       push({
         id: `reuniao:${r.id}`,
         kind: "reuniao",
@@ -166,6 +198,8 @@ function AgendaPage() {
         responsavel: r.responsavelNome || "Responsável",
         alunos: r.alunoNome ? [r.alunoNome] : [],
         colaboradores: r.colaboradores,
+        unitId: unit,
+        unidade: schoolName(unit),
       });
     }
     for (const arr of map.values()) {
@@ -173,7 +207,7 @@ function AgendaPage() {
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads, reunioes, schools]);
+  }, [leads, reunioes, schools, reuniaoUnitIds, cecId]);
 
   const totalAgendados = useMemo(
     () => Array.from(eventsByDay.values()).reduce((acc, a) => acc + a.length, 0),
@@ -455,7 +489,10 @@ function EventChip({
           <Row icon={Clock} text={`${formatDateBR(ev.iso)}${ev.time ? ` · ${ev.time}` : ""}`} />
           {ev.alunos.length > 0 && <Row icon={GraduationCap} text={ev.alunos.join(", ")} />}
           {isReuniao ? (
-            <Row icon={Users} text={`Equipe: ${ev.colaboradores?.join(", ") || "—"}`} />
+            <>
+              {ev.unidade && ev.unidade !== "—" && <Row icon={Building2} text={ev.unidade} />}
+              <Row icon={Users} text={`Equipe: ${ev.colaboradores?.join(", ") || "—"}`} />
+            </>
           ) : (
             <>
               {ev.turma && <Row icon={GraduationCap} text={`Turma: ${ev.turma}`} />}
@@ -511,21 +548,26 @@ function NovaReuniaoDialog({
     alunoNome: string;
     colaboradores: string[];
     participanteIds: string[];
+    unitId: string;
   }) => void;
 }) {
+  const { schools, selected } = useSchool();
   const [data, setData] = useState(defaultDate);
   const [horario, setHorario] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [aluno, setAluno] = useState("");
   const [participantes, setParticipantes] = useState<AgendaUser[]>([]);
+  const [unitId, setUnitId] = useState("");
 
-  // Reseta o formulário sempre que o modal (re)abre.
+  // Reseta o formulário sempre que o modal (re)abre. Pré-seleciona a unidade
+  // ativa no filtro do topo, quando houver uma específica.
   const reset = () => {
     setData(defaultDate);
     setHorario("");
     setResponsavel("");
     setAluno("");
     setParticipantes([]);
+    setUnitId(selected !== "all" && schools.some((s) => s.id === selected) ? selected : "");
   };
 
   const handleOpenChange = (v: boolean) => {
@@ -541,6 +583,7 @@ function NovaReuniaoDialog({
       alunoNome: aluno,
       colaboradores: participantes.map((u) => u.name || u.email),
       participanteIds: participantes.map((u) => u.id),
+      unitId,
     });
   };
 
@@ -590,6 +633,21 @@ function NovaReuniaoDialog({
             />
           </div>
           <div className="space-y-1">
+            <Label>Unidade</Label>
+            <Select value={unitId} onValueChange={setUnitId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione a unidade" />
+              </SelectTrigger>
+              <SelectContent>
+                {schools.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
             <Label>Equipe</Label>
             <EquipePicker value={participantes} onChange={setParticipantes} />
           </div>
@@ -598,7 +656,7 @@ function NovaReuniaoDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={submit} disabled={!data}>
+          <Button onClick={submit} disabled={!data || !unitId}>
             Agendar
           </Button>
         </DialogFooter>
