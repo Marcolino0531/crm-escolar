@@ -2,6 +2,7 @@ import {
   Bell,
   AlertTriangle,
   CalendarClock,
+  CalendarDays,
   ClipboardList,
   HandCoins,
   Shirt,
@@ -29,6 +30,13 @@ type Notification = {
 type OpenTask = {
   id: string;
   title: string;
+  created_at: string;
+};
+
+type AgendaNotification = {
+  id: string;
+  message: string;
+  read: boolean;
   created_at: string;
 };
 
@@ -85,6 +93,7 @@ export function NotificationsBell() {
   const canUniformes = canView("uniformes");
   const canCartao = canView("financeiro_cartao");
   const canDiario = canView("diario");
+  const canAgenda = canView("agenda");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -237,6 +246,23 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Agenda notifications (dismissible: clear on open) — geradas quando o
+  // usuário é incluído no campo "Equipe" de uma reunião. ---
+  const { data: agendaNotifications = [] } = useQuery({
+    queryKey: ["agenda_notifications", userId ?? "anon"],
+    enabled: !!userId && canAgenda,
+    refetchInterval: 30000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agenda_notifications" as any)
+        .select("id, message, read, created_at")
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) return [] as AgendaNotification[];
+      return (data ?? []) as unknown as AgendaNotification[];
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -249,9 +275,27 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task_notifications"] }),
   });
 
+  const markAgendaRead = useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return;
+      const { error } = await supabase
+        .from("agenda_notifications" as any)
+        .update({ read: true })
+        .in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agenda_notifications"] }),
+  });
+
   if (
     !userId ||
-    (!canTasks && !canFluxo && !canCobranca && !canUniformes && !canCartao && !canDiario)
+    (!canTasks &&
+      !canFluxo &&
+      !canCobranca &&
+      !canUniformes &&
+      !canCartao &&
+      !canDiario &&
+      !canAgenda)
   )
     return null;
 
@@ -265,6 +309,7 @@ export function NotificationsBell() {
   const overdue = forecasts.filter((f) => (f.due_date ?? "") < today);
   const dueToday = forecasts.filter((f) => (f.due_date ?? "") === today);
   const unreadTasks = notifications.filter((n) => !n.read);
+  const unreadAgenda = agendaNotifications.filter((n) => !n.read);
 
   // Fluxo alerts + persistent new-task alerts always count as active; the
   // dismissible task notices count only while unread.
@@ -275,6 +320,7 @@ export function NotificationsBell() {
     lowStockStores.length +
     availableReceivables.length +
     extraEvents.length +
+    unreadAgenda.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -283,6 +329,7 @@ export function NotificationsBell() {
       onOpenChange={(o) => {
         setOpen(o);
         if (o && unreadTasks.length > 0) markRead.mutate(unreadTasks.map((n) => n.id));
+        if (o && unreadAgenda.length > 0) markAgendaRead.mutate(unreadAgenda.map((n) => n.id));
       }}
     >
       <PopoverTrigger asChild>
@@ -403,6 +450,34 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* Agenda: você foi incluído na Equipe de uma reunião. */}
+          {canAgenda && agendaNotifications.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Agenda
+              </div>
+              {agendaNotifications.map((n) => (
+                <Link
+                  key={n.id}
+                  to="/agenda"
+                  className={`block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent ${
+                    n.read ? "text-muted-foreground" : "font-medium"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+                    <div className="min-w-0">
+                      <div>{n.message}</div>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                        {formatDateBR(n.created_at)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Accounts payable: overdue first (red), then due today. */}
           {canFluxo && (overdue.length > 0 || dueToday.length > 0) && (
             <div>
@@ -516,6 +591,7 @@ export function NotificationsBell() {
 
           {badge === 0 &&
             notifications.length === 0 &&
+            agendaNotifications.length === 0 &&
             forecasts.length === 0 &&
             openTasks.length === 0 &&
             lowStockStores.length === 0 &&
