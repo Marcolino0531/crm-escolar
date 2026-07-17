@@ -8,6 +8,7 @@ import { handleCobrancasApi } from "./lib/cobrancas.api";
 import { handleReceivablesApi } from "./lib/receivables.api";
 import { handleDiarioApi } from "./lib/diario.api";
 import { handleWhatsAppApi } from "./lib/whatsapp.api";
+import { handleAgendaApi } from "./lib/agenda.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -100,6 +101,10 @@ export default {
       // Automação de Cobrança por WhatsApp (Cloud API da Meta): cron + webhook.
       const whatsappResponse = await handleWhatsAppApi(request);
       if (whatsappResponse) return whatsappResponse;
+
+      // Lembrete matinal por email das reuniões da Agenda (Vercel Cron).
+      const agendaResponse = await handleAgendaApi(request);
+      if (agendaResponse) return agendaResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
