@@ -15,6 +15,10 @@
     {
       "path": "/api/diario/cron",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/agenda/cron",
+      "schedule": "0 10 * * *"
     }
   ]
 }

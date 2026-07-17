@@ -14,8 +14,10 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useLeads } from "@/lib/crm/hooks";
-import { useReunioes, useColaboradores } from "@/lib/agenda.hooks";
+import { useReunioes } from "@/lib/agenda.hooks";
+import { listAgendaUsers, type AgendaUser } from "@/lib/agenda.functions";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
@@ -508,13 +510,14 @@ function NovaReuniaoDialog({
     responsavelNome: string;
     alunoNome: string;
     colaboradores: string[];
+    participanteIds: string[];
   }) => void;
 }) {
   const [data, setData] = useState(defaultDate);
   const [horario, setHorario] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [aluno, setAluno] = useState("");
-  const [colaboradores, setColaboradores] = useState<string[]>([]);
+  const [participantes, setParticipantes] = useState<AgendaUser[]>([]);
 
   // Reseta o formulário sempre que o modal (re)abre.
   const reset = () => {
@@ -522,7 +525,7 @@ function NovaReuniaoDialog({
     setHorario("");
     setResponsavel("");
     setAluno("");
-    setColaboradores([]);
+    setParticipantes([]);
   };
 
   const handleOpenChange = (v: boolean) => {
@@ -531,7 +534,14 @@ function NovaReuniaoDialog({
   };
 
   const submit = () => {
-    onSubmit({ data, horario, responsavelNome: responsavel, alunoNome: aluno, colaboradores });
+    onSubmit({
+      data,
+      horario,
+      responsavelNome: responsavel,
+      alunoNome: aluno,
+      colaboradores: participantes.map((u) => u.name || u.email),
+      participanteIds: participantes.map((u) => u.id),
+    });
   };
 
   return (
@@ -580,8 +590,8 @@ function NovaReuniaoDialog({
             />
           </div>
           <div className="space-y-1">
-            <Label>Colaboradores</Label>
-            <ColaboradoresPicker value={colaboradores} onChange={setColaboradores} />
+            <Label>Equipe</Label>
+            <EquipePicker value={participantes} onChange={setParticipantes} />
           </div>
         </div>
         <DialogFooter>
@@ -597,39 +607,33 @@ function NovaReuniaoDialog({
   );
 }
 
-function ColaboradoresPicker({
+function EquipePicker({
   value,
   onChange,
 }: {
-  value: string[];
-  onChange: (v: string[]) => void;
+  value: AgendaUser[];
+  onChange: (v: AgendaUser[]) => void;
 }) {
-  const { colaboradores, adicionarColaborador } = useColaboradores();
-  const [novo, setNovo] = useState("");
-  const [saving, setSaving] = useState(false);
+  const { data: users = [], isLoading } = useQuery({
+    queryKey: ["agenda_users"],
+    queryFn: () => listAgendaUsers(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const [busca, setBusca] = useState("");
 
-  const toggle = (nome: string) => {
-    onChange(value.includes(nome) ? value.filter((c) => c !== nome) : [...value, nome]);
+  const selectedIds = useMemo(() => new Set(value.map((u) => u.id)), [value]);
+
+  const toggle = (u: AgendaUser) => {
+    onChange(selectedIds.has(u.id) ? value.filter((x) => x.id !== u.id) : [...value, u]);
   };
 
-  const adicionar = async () => {
-    const nome = novo.trim();
-    if (!nome) return;
-    setSaving(true);
-    try {
-      const clean = await adicionarColaborador(nome);
-      if (clean && !value.includes(clean)) onChange([...value, clean]);
-      setNovo("");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // União: opções cadastradas + quaisquer já selecionadas que ainda não constem.
-  const opcoes = useMemo(() => {
-    const set = new Set<string>([...colaboradores, ...value]);
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
-  }, [colaboradores, value]);
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(
+      (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+    );
+  }, [users, busca]);
 
   return (
     <Popover>
@@ -637,51 +641,43 @@ function ColaboradoresPicker({
         <Button variant="outline" className="w-full justify-start font-normal">
           <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="truncate">
-            {value.length > 0 ? value.join(", ") : "Selecione os participantes"}
+            {value.length > 0
+              ? value.map((u) => u.name || u.email).join(", ")
+              : "Selecione os participantes"}
           </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 space-y-2">
+        <Input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar usuário"
+          className="h-8"
+        />
         <div className="max-h-52 space-y-1 overflow-y-auto">
-          {opcoes.length === 0 && (
-            <p className="px-1 py-2 text-xs text-muted-foreground">
-              Nenhum colaborador cadastrado.
-            </p>
+          {isLoading && (
+            <p className="px-1 py-2 text-xs text-muted-foreground">Carregando usuários…</p>
           )}
-          {opcoes.map((nome) => (
+          {!isLoading && filtrados.length === 0 && (
+            <p className="px-1 py-2 text-xs text-muted-foreground">Nenhum usuário encontrado.</p>
+          )}
+          {filtrados.map((u) => (
             <label
-              key={nome}
+              key={u.id}
               className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-accent"
             >
-              <Checkbox checked={value.includes(nome)} onCheckedChange={() => toggle(nome)} />
-              <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>{nome}</span>
+              <Checkbox checked={selectedIds.has(u.id)} onCheckedChange={() => toggle(u)} />
+              <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0">
+                <span className="block truncate">{u.name || u.email}</span>
+                {u.name && u.email && (
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {u.email}
+                  </span>
+                )}
+              </span>
             </label>
           ))}
-        </div>
-        <div className="flex items-center gap-1 border-t pt-2">
-          <Input
-            value={novo}
-            onChange={(e) => setNovo(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void adicionar();
-              }
-            }}
-            placeholder="Adicionar colaborador"
-            className="h-8"
-          />
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-8 w-8 shrink-0"
-            disabled={saving || !novo.trim()}
-            onClick={() => void adicionar()}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
         </div>
       </PopoverContent>
     </Popover>

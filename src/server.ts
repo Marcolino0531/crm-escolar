@@ -7,6 +7,7 @@ import { handleUniformesApi } from "./lib/uniformes.api";
 import { handleCobrancasApi } from "./lib/cobrancas.api";
 import { handleReceivablesApi } from "./lib/receivables.api";
 import { handleDiarioApi } from "./lib/diario.api";
+import { handleAgendaApi } from "./lib/agenda.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -95,6 +96,10 @@ export default {
       // Sincronização diária do Diário do Aluno com o Sponte (Vercel Cron).
       const diarioResponse = await handleDiarioApi(request);
       if (diarioResponse) return diarioResponse;
+
+      // Lembrete matinal por email das reuniões da Agenda (Vercel Cron).
+      const agendaResponse = await handleAgendaApi(request);
+      if (agendaResponse) return agendaResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
