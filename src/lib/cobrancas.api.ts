@@ -33,16 +33,31 @@ async function isAuthenticated(request: Request): Promise<boolean> {
   return !error && !!data?.user;
 }
 
+type BillingStatus = "sucesso" | "erro" | "pendente" | "enviado" | "entregue" | "lido" | "falha";
+
 type BillingLog = {
   id: string;
   data_envio: string;
   responsavel_name: string;
+  aluno_name: string;
   telefone: string;
   unidade: string;
-  status: "sucesso" | "erro";
+  valor: number;
+  vencimento: string | null;
+  status: BillingStatus;
   erro_mensagem: string | null;
   fatura_id: string | null;
 };
+
+const STATUS_VALIDOS: BillingStatus[] = [
+  "sucesso",
+  "erro",
+  "pendente",
+  "enviado",
+  "entregue",
+  "lido",
+  "falha",
+];
 
 export async function handleCobrancasApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
@@ -81,6 +96,9 @@ async function listLogs(url: URL): Promise<Response> {
   const unidade = params.get("unidade")?.trim() || null;
   const status = params.get("status")?.trim() || null;
   const date = params.get("date")?.trim() || null;
+  const dateStart = params.get("date_start")?.trim() || null;
+  const dateEnd = params.get("date_end")?.trim() || null;
+  const q = params.get("q")?.trim() || null;
 
   const page = Math.max(1, Number.parseInt(params.get("page") ?? "1", 10) || 1);
   const perPageRaw = Number.parseInt(params.get("per_page") ?? String(DEFAULT_PER_PAGE), 10);
@@ -91,7 +109,7 @@ async function listLogs(url: URL): Promise<Response> {
   let query = supabaseAdmin
     .from("whatsapp_billing_logs" as never)
     .select(
-      "id, data_envio, responsavel_name, telefone, unidade, status, erro_mensagem, fatura_id",
+      "id, data_envio, responsavel_name, aluno_name, telefone, unidade, valor, vencimento, status, erro_mensagem, fatura_id",
       {
         count: "exact",
       },
@@ -100,13 +118,27 @@ async function listLogs(url: URL): Promise<Response> {
     .range(from, to);
 
   if (unidade) query = query.eq("unidade", unidade);
-  if (status === "sucesso" || status === "erro") query = query.eq("status", status);
+  if (status && STATUS_VALIDOS.includes(status as BillingStatus)) {
+    query = query.eq("status", status);
+  }
+  if (q) {
+    const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    query = query.or(`responsavel_name.ilike.${like},aluno_name.ilike.${like}`);
+  }
   if (date) {
     // Janela [date 00:00, próximo dia 00:00).
     const start = new Date(`${date}T00:00:00`);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
     query = query.gte("data_envio", start.toISOString()).lt("data_envio", end.toISOString());
+  } else {
+    // Filtro por período (data de envio): [date_start 00:00, date_end +1 00:00).
+    if (dateStart) query = query.gte("data_envio", new Date(`${dateStart}T00:00:00`).toISOString());
+    if (dateEnd) {
+      const end = new Date(`${dateEnd}T00:00:00`);
+      end.setDate(end.getDate() + 1);
+      query = query.lt("data_envio", end.toISOString());
+    }
   }
 
   const { data, error, count } = await query;

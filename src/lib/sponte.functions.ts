@@ -1358,6 +1358,45 @@ export interface InadimplenciaAnualResult {
   dataFim: string;
 }
 
+// ─── Cron de Cobrança por WhatsApp ──────────────────────────────────────────
+// Coleta as pendências cujo VENCIMENTO cai em UM dia específico (ex.: "vencidas
+// há exatamente 2 dias"), em TODAS as unidades com integração Sponte. Sem RBAC:
+// roda no cron do servidor (sistema), não numa sessão de usuário. Reutiliza a
+// mesma coleta da tela de Cobrança e atribui a unidade a cada pendência.
+export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<PendenciaAgrupada[]> {
+  const cecCreds = resolverCredenciais("CEC");
+  const belvedereCreds = resolverCredenciais("Núcleo Belvedere");
+  const valeSerenoCreds = resolverCredenciais("Núcleo Vale do Sereno");
+
+  const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
+  const [cecRes, belvedereRes, valeSerenoRes] = await Promise.all([
+    cecCreds
+      ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, diaYMD, diaYMD)
+      : Promise.resolve(vazio),
+    belvedereCreds
+      ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, diaYMD, diaYMD)
+      : Promise.resolve(vazio),
+    valeSerenoCreds
+      ? coletarPendencias(valeSerenoCreds.codigoCliente, valeSerenoCreds.token, diaYMD, diaYMD)
+      : Promise.resolve(vazio),
+  ]);
+
+  const cec = cecRes.pendencias.map((p) => ({
+    ...p,
+    unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
+  }));
+  const belvedere = belvedereRes.pendencias.map((p) => ({
+    ...p,
+    unidade: "Núcleo Belvedere",
+  }));
+  const valeSereno = valeSerenoRes.pendencias.map((p) => ({
+    ...p,
+    unidade: "Núcleo Vale do Sereno",
+  }));
+
+  return [...cec, ...belvedere, ...valeSereno];
+}
+
 export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => InputSchema.parse(input))

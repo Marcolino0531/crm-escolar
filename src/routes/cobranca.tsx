@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -771,19 +771,40 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
 
 const STATUS_FILTROS = [
   { value: "todos", label: "Todos os status" },
-  { value: "sucesso", label: "Sucesso" },
-  { value: "erro", label: "Erro" },
+  { value: "pendente", label: "Pendente" },
+  { value: "enviado", label: "Enviado" },
+  { value: "entregue", label: "Entregue" },
+  { value: "lido", label: "Lido" },
+  { value: "falha", label: "Falha" },
+  { value: "sucesso", label: "Sucesso (manual)" },
+  { value: "erro", label: "Erro (manual)" },
 ] as const;
+
+type BillingStatus = "sucesso" | "erro" | "pendente" | "enviado" | "entregue" | "lido" | "falha";
 
 type BillingLog = {
   id: string;
   data_envio: string;
   responsavel_name: string;
+  aluno_name: string;
   telefone: string;
   unidade: string;
-  status: "sucesso" | "erro";
+  valor: number;
+  vencimento: string | null;
+  status: BillingStatus;
   erro_mensagem: string | null;
   fatura_id: string | null;
+};
+
+// Tag visual por status (verde = entregue/lido, vermelho = falha, etc.).
+const STATUS_STYLE: Record<BillingStatus, { label: string; cls: string }> = {
+  pendente: { label: "Pendente", cls: "bg-slate-100 text-slate-600" },
+  enviado: { label: "Enviado", cls: "bg-sky-100 text-sky-700" },
+  entregue: { label: "Entregue", cls: "bg-emerald-100 text-emerald-700" },
+  lido: { label: "Lido", cls: "bg-emerald-200 text-emerald-800" },
+  falha: { label: "Falha", cls: "bg-red-100 text-red-700" },
+  sucesso: { label: "Sucesso", cls: "bg-emerald-100 text-emerald-700" },
+  erro: { label: "Erro", cls: "bg-red-100 text-red-700" },
 };
 
 type LogsResponse = {
@@ -813,11 +834,22 @@ function formatDataHora(iso: string): string {
 function HistoricoEnvios() {
   const [unidade, setUnidade] = useState<string>("todas");
   const [status, setStatus] = useState<string>("todos");
-  const [date, setDate] = useState<string>("");
+  const [dateStart, setDateStart] = useState<string>("");
+  const [dateEnd, setDateEnd] = useState<string>("");
+  const [busca, setBusca] = useState<string>("");
+  const [buscaDebounced, setBuscaDebounced] = useState<string>("");
   const [page, setPage] = useState<number>(1);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setBuscaDebounced(busca.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [busca]);
+
   const { data, isFetching, isError, error } = useQuery({
-    queryKey: ["cobranca-whatsapp-logs", unidade, status, date, page],
+    queryKey: ["cobranca-whatsapp-logs", unidade, status, dateStart, dateEnd, buscaDebounced, page],
     queryFn: async (): Promise<LogsResponse> => {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -826,7 +858,9 @@ function HistoricoEnvios() {
       const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
       if (unidade !== "todas") params.set("unidade", unidade);
       if (status !== "todos") params.set("status", status);
-      if (date) params.set("date", date);
+      if (dateStart) params.set("date_start", dateStart);
+      if (dateEnd) params.set("date_end", dateEnd);
+      if (buscaDebounced) params.set("q", buscaDebounced);
 
       const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -905,25 +939,51 @@ function HistoricoEnvios() {
           </Select>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Data</label>
+          <label className="text-[11px] font-medium text-muted-foreground">Período (de)</label>
           <input
             type="date"
-            value={date}
+            value={dateStart}
             onChange={(e) => {
-              setDate(e.target.value);
+              setDateStart(e.target.value);
               setPage(1);
             }}
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
           />
         </div>
-        {(unidade !== "todas" || status !== "todos" || date) && (
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Período (até)</label>
+          <input
+            type="date"
+            value={dateEnd}
+            onChange={(e) => {
+              setDateEnd(e.target.value);
+              setPage(1);
+            }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        <div className="flex flex-1 flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">
+            Buscar por nome (responsável ou aluno)
+          </label>
+          <input
+            type="text"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Digite um nome…"
+            className="h-9 min-w-48 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        {(unidade !== "todas" || status !== "todos" || dateStart || dateEnd || busca) && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
               setUnidade("todas");
               setStatus("todos");
-              setDate("");
+              setDateStart("");
+              setDateEnd("");
+              setBusca("");
               setPage(1);
             }}
           >
@@ -956,71 +1016,65 @@ function HistoricoEnvios() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Data do envio</TableHead>
+                <TableHead>Data e Hora</TableHead>
                 <TableHead>Responsável</TableHead>
+                <TableHead>Aluno</TableHead>
                 <TableHead>Telefone</TableHead>
                 <TableHead>Unidade</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Ação</TableHead>
+                <TableHead className="text-right">Valor</TableHead>
+                <TableHead>Status do Envio</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell className="whitespace-nowrap text-sm">
-                    {formatDataHora(log.data_envio)}
-                  </TableCell>
-                  <TableCell className="text-sm font-medium">
-                    {log.responsavel_name || "—"}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                    {displayPhoneBR(log.telefone) || "—"}
-                  </TableCell>
-                  <TableCell className="text-sm">{log.unidade || "—"}</TableCell>
-                  <TableCell>
-                    {log.status === "erro" ? (
-                      <TooltipProvider delayDuration={150}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="inline-flex cursor-help items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                              <AlertTriangle className="h-3 w-3" /> Erro
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs whitespace-pre-wrap">
-                            {log.erro_mensagem || "Falha no envio (sem detalhes)."}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+              {rows.map((log) => {
+                const style = STATUS_STYLE[log.status] ?? STATUS_STYLE.pendente;
+                const badge = (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}
+                  >
+                    {log.status === "falha" || log.status === "erro" ? (
+                      <AlertTriangle className="h-3 w-3" />
                     ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                        <CheckCircle2 className="h-3 w-3" /> Sucesso
-                      </span>
+                      <CheckCircle2 className="h-3 w-3" />
                     )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {log.status === "erro" ? (
-                      <TooltipProvider delayDuration={150}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            {/* Reenvio individual fica disponível após a integração
-                                com a WhatsApp Cloud API da Meta. */}
-                            <span tabIndex={0}>
-                              <Button variant="outline" size="sm" disabled>
-                                <RefreshCw className="mr-1 h-3.5 w-3.5" /> Reenviar
-                              </Button>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            Disponível após a integração com a WhatsApp Cloud API da Meta.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                    {style.label}
+                  </span>
+                );
+                return (
+                  <TableRow key={log.id}>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {formatDataHora(log.data_envio)}
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">
+                      {log.responsavel_name || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm">{log.aluno_name || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {displayPhoneBR(log.telefone) || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm">{log.unidade || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right text-sm">
+                      {log.valor ? formatarMoeda(log.valor) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      {log.status === "falha" || log.status === "erro" ? (
+                        <TooltipProvider delayDuration={150}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help">{badge}</span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs whitespace-pre-wrap">
+                              {log.erro_mensagem || "Falha no envio (sem detalhes)."}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        badge
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}
