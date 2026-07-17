@@ -1,7 +1,19 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { Coffee, Sun, Cookie, Moon, LogIn, LogOut, UserCircle2, Trash2 } from "lucide-react";
+import {
+  Coffee,
+  Sun,
+  Cookie,
+  Moon,
+  LogIn,
+  LogOut,
+  UserCircle2,
+  Trash2,
+  Check,
+  X,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
 import {
@@ -38,6 +50,11 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function nowHHMM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 type Props = {
   student: ColoniaStudent | null;
   open: boolean;
@@ -49,6 +66,11 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
   const { session } = useAuth();
   const qc = useQueryClient();
   const userId = session?.user?.id;
+
+  // Registro de portaria (Entrada/Saída) com horário editável (retroativo):
+  // qual botão virou formulário e o horário HH:MM escolhido.
+  const [gateForm, setGateForm] = useState<ColoniaRecordType | null>(null);
+  const [gateTime, setGateTime] = useState("");
 
   const { start, end } = todayRange();
   const { data: records = [], isLoading } = useQuery({
@@ -68,23 +90,28 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
   });
 
   const register = useMutation({
-    mutationFn: async (type: ColoniaRecordType) => {
+    mutationFn: async ({ type, occurredAt }: { type: ColoniaRecordType; occurredAt: string }) => {
       if (!student) throw new Error("Aluno não selecionado");
       if (!userId) throw new Error("Sessão expirada");
       const { error } = await supabase.from("holiday_camp_records" as never).insert({
         student_id: student.id,
         school_id: student.schoolId,
         record_type: type,
+        occurred_at: occurredAt,
         recorded_by: userId,
       } as never);
       if (error) throw error;
-      return type;
+      return { type, occurredAt };
     },
-    onSuccess: (type) => {
-      const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    onSuccess: ({ type, occurredAt }) => {
+      const hora = new Date(occurredAt).toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
       toast.success(`${COLONIA_RECORD_LABEL[type]} registrado`, {
         description: `${student?.name} • ${hora}`,
       });
+      setGateForm(null);
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
     },
     onError: (e: unknown) => {
@@ -114,16 +141,47 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
 
   if (!student) return null;
 
-  const handle = (type: ColoniaRecordType) => {
+  const ensureCanEdit = (): boolean => {
     if (!canEdit) {
       toast.error("Você não tem permissão para registrar na Colônia de Férias.");
+      return false;
+    }
+    return true;
+  };
+
+  // Refeições continuam com registro imediato (horário atual).
+  const handleMeal = (type: ColoniaRecordType) => {
+    if (!ensureCanEdit()) return;
+    register.mutate({ type, occurredAt: new Date().toISOString() });
+  };
+
+  // Entrada/Saída abrem um mini-formulário com o horário atual pré-preenchido.
+  const openGate = (type: ColoniaRecordType) => {
+    if (!ensureCanEdit()) return;
+    setGateTime(nowHHMM());
+    setGateForm(type);
+  };
+
+  const confirmGate = () => {
+    if (!gateForm) return;
+    const [h, m] = gateTime.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) {
+      toast.error("Horário inválido");
       return;
     }
-    register.mutate(type);
+    // O horário confirmado é aplicado ao dia de hoje (registro retroativo do dia).
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    register.mutate({ type: gateForm, occurredAt: d.toISOString() });
+  };
+
+  const handleSheetOpenChange = (v: boolean) => {
+    if (!v) setGateForm(null);
+    onOpenChange(v);
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleSheetOpenChange}>
       <SheetContent
         side="bottom"
         className="max-h-[92vh] overflow-y-auto rounded-t-3xl border-t-0 p-0"
@@ -156,7 +214,7 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
             return (
               <button
                 key={r.key}
-                onClick={() => handle(r.key)}
+                onClick={() => handleMeal(r.key)}
                 disabled={register.isPending}
                 className="flex h-16 w-full items-center gap-4 rounded-2xl bg-primary px-5 text-left text-base font-semibold text-primary-foreground shadow-sm transition-all active:scale-[0.98] disabled:opacity-60"
               >
@@ -169,10 +227,46 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
           <div className="mt-1 grid grid-cols-2 gap-2.5">
             {COLONIA_GATE.map((r) => {
               const Icon = ICONS[r.key];
+              if (gateForm === r.key) {
+                return (
+                  <div
+                    key={r.key}
+                    className="col-span-2 rounded-2xl border border-primary/40 bg-card p-3 shadow-sm"
+                  >
+                    <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <Icon className="h-5 w-5 flex-shrink-0 text-primary" />
+                      <span>{r.label} — confirme o horário</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={gateTime}
+                        onChange={(e) => setGateTime(e.target.value)}
+                        className="h-12 flex-1 rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-primary/60"
+                      />
+                      <button
+                        onClick={confirmGate}
+                        disabled={register.isPending || !gateTime}
+                        className="flex h-12 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-60"
+                      >
+                        <Check className="h-4 w-4" /> Confirmar
+                      </button>
+                      <button
+                        onClick={() => setGateForm(null)}
+                        disabled={register.isPending}
+                        aria-label="Cancelar"
+                        className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <button
                   key={r.key}
-                  onClick={() => handle(r.key)}
+                  onClick={() => openGate(r.key)}
                   disabled={register.isPending}
                   className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-5 text-left text-base font-semibold text-foreground shadow-sm transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
                 >
