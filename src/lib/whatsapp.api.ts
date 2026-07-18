@@ -158,6 +158,13 @@ async function runCron(): Promise<Response> {
       continue;
     }
 
+    // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
+    // mensagem direciona o responsável à secretaria.
+    const linhaDigitavel =
+      p.linhaDigitavel && p.linhaDigitavel.trim()
+        ? p.linhaDigitavel
+        : "Entre em contato com a secretaria da escola";
+
     try {
       const { messageId } = await sendBillingTemplate(cfg, {
         to: p.telefone,
@@ -165,6 +172,7 @@ async function runCron(): Promise<Response> {
         aluno: p.nomeAluno,
         valor: formatBRL(p.valorTotalBoleto),
         vencimento: formatVencBR(vencYMD),
+        linhaDigitavel,
       });
       enviados++;
       await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
