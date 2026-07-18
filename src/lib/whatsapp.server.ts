@@ -49,6 +49,7 @@ export interface BillingTemplateVars {
   aluno: string;
   valor: string; // já formatado (ex.: "R$ 350,00")
   vencimento: string; // já formatado (ex.: "10/07/2025")
+  linhaDigitavel: string; // linha digitável do boleto ou fallback textual
 }
 
 export interface SendResult {
@@ -85,6 +86,7 @@ export async function sendBillingTemplate(
             textParam(vars.aluno),
             textParam(vars.valor),
             textParam(vars.vencimento),
+            textParam(vars.linhaDigitavel),
           ],
         },
       ],

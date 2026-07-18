@@ -324,6 +324,8 @@ interface ParcelaRaw {
   saldo: number;
   status: string;
   numeroBoleto: string;
+  contaReceberID: string;
+  numeroParcela: string;
   categoria: string;
   bolsaAssociada: string;
 }
@@ -347,6 +349,12 @@ export interface PendenciaAgrupada {
   // Unidade pedagógica do boleto (CEC, CEC Baby ou Núcleo Belvedere). Preenchida
   // sobretudo na visão Consolidada para identificar a origem de cada registro.
   unidade?: string;
+  // Identificadores do boleto usados para puxar a Linha Digitável no cron de
+  // Cobrança por WhatsApp (GetLinhaDigitavelBoletos). Só o cron os preenche.
+  numeroBoleto?: string;
+  contaReceberID?: string;
+  numeroParcela?: string;
+  linhaDigitavel?: string;
 }
 
 export interface SponteBatchResult {
@@ -476,6 +484,8 @@ async function coletarPendencias(
       saldo,
       status: situacao,
       numeroBoleto: parseXmlValue(parcela, "NumeroBoleto"),
+      contaReceberID: parseXmlValue(parcela, "ContaReceberID"),
+      numeroParcela: parseXmlValue(parcela, "NumeroParcela"),
       categoria: parseXmlValue(parcela, "Categoria"),
       bolsaAssociada: parseXmlValue(parcela, "BolsaAssociada"),
     });
@@ -579,6 +589,9 @@ async function coletarPendencias(
       descontoBolsa: maxBolsaPct,
       categorias,
       qtdParcelas: items.length,
+      numeroBoleto: first.numeroBoleto,
+      contaReceberID: first.contaReceberID,
+      numeroParcela: first.numeroParcela,
     });
   }
 
@@ -1358,6 +1371,68 @@ export interface InadimplenciaAnualResult {
   dataFim: string;
 }
 
+// Puxa a Linha Digitável de um boleto JÁ GERADO (GetLinhaDigitavelBoletos).
+// Diferente das demais chamadas, este método não usa `sParametrosBusca`: recebe
+// nContaReceberID + nNumeroParcela diretamente. Qualquer parcela do boleto
+// devolve a mesma linha. Retorna "" quando indisponível (ex.: boleto ainda não
+// gerado, caso em que a API responde "0").
+async function buscarLinhaDigitavel(
+  codigoCliente: string,
+  token: string,
+  contaReceberID: string,
+  numeroParcela: string,
+): Promise<string> {
+  if (!contaReceberID) return "";
+  const extraParams =
+    `<nContaReceberID>${contaReceberID}</nContaReceberID>` +
+    `<nNumeroParcela>${numeroParcela}</nNumeroParcela>`;
+  const soapBody = buildSoapEnvelope("GetLinhaDigitavelBoletos", extraParams, codigoCliente, token);
+  try {
+    const response = await fetch(SPONTE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: `${SPONTE_NS}GetLinhaDigitavelBoletos`,
+      },
+      body: soapBody,
+    });
+    const xml = await response.text();
+    const linha = parseXmlValue(xml, "LinhaDigitavel");
+    return linha && linha !== "0" ? linha : "";
+  } catch {
+    return "";
+  }
+}
+
+// Preenche a Linha Digitável de cada pendência (só boletos gerados). Roda em
+// lotes para não estourar a API. Boletos não gerados ficam com linha vazia — o
+// cron aplica um fallback textual na mensagem.
+async function enriquecerLinhaDigitavel(
+  creds: SponteCreds | null,
+  pendencias: PendenciaAgrupada[],
+): Promise<PendenciaAgrupada[]> {
+  if (!creds) return pendencias;
+  const CONC = 5;
+  const resultado: PendenciaAgrupada[] = [];
+  for (let i = 0; i < pendencias.length; i += CONC) {
+    const lote = pendencias.slice(i, i + CONC);
+    const linhas = await Promise.all(
+      lote.map((p) =>
+        p.numeroBoleto && p.numeroBoleto !== "0" && p.contaReceberID
+          ? buscarLinhaDigitavel(
+              creds.codigoCliente,
+              creds.token,
+              p.contaReceberID,
+              p.numeroParcela ?? "",
+            )
+          : Promise.resolve(""),
+      ),
+    );
+    lote.forEach((p, idx) => resultado.push({ ...p, linhaDigitavel: linhas[idx] }));
+  }
+  return resultado;
+}
+
 // ─── Cron de Cobrança por WhatsApp ──────────────────────────────────────────
 // Coleta as pendências cujo VENCIMENTO cai em UM dia específico (ex.: "vencidas
 // há exatamente 2 dias"), em TODAS as unidades com integração Sponte. Sem RBAC:
@@ -1381,15 +1456,23 @@ export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<Pe
       : Promise.resolve(vazio),
   ]);
 
-  const cec = cecRes.pendencias.map((p) => ({
+  // Enriquece cada pendência com a Linha Digitável do boleto, usando as
+  // credenciais da respectiva unidade (necessárias para o GetLinhaDigitavelBoletos).
+  const [cecLinhas, belvedereLinhas, valeSerenoLinhas] = await Promise.all([
+    enriquecerLinhaDigitavel(cecCreds, cecRes.pendencias),
+    enriquecerLinhaDigitavel(belvedereCreds, belvedereRes.pendencias),
+    enriquecerLinhaDigitavel(valeSerenoCreds, valeSerenoRes.pendencias),
+  ]);
+
+  const cec = cecLinhas.map((p) => ({
     ...p,
     unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
   }));
-  const belvedere = belvedereRes.pendencias.map((p) => ({
+  const belvedere = belvedereLinhas.map((p) => ({
     ...p,
     unidade: "Núcleo Belvedere",
   }));
-  const valeSereno = valeSerenoRes.pendencias.map((p) => ({
+  const valeSereno = valeSerenoLinhas.map((p) => ({
     ...p,
     unidade: "Núcleo Vale do Sereno",
   }));
