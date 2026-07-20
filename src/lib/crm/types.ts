@@ -120,6 +120,37 @@ export interface Falta {
   atestadoNome?: string;
 }
 
+// ── Terceirizados ──────────────────────────────────────────────────────────
+// Profissionais externos (professores de balé, capoeira, robótica, ...) com
+// jornada por TURNOS (Manhã/Tarde) de segunda a sexta, em vez de relógio.
+export type DiaSemana = "seg" | "ter" | "qua" | "qui" | "sex";
+export type Turno = "manha" | "tarde";
+// Turno da falta: um turno isolado ou o dia completo (ambos os turnos).
+export type TurnoFalta = "manha" | "tarde" | "dia";
+
+export type GradeTurnos = Record<DiaSemana, Record<Turno, boolean>>;
+
+export interface FaltaTerceirizado {
+  id: string;
+  data: string; // ISO (YYYY-MM-DD)
+  turno: TurnoFalta;
+  observacao?: string;
+}
+
+export interface Terceirizado {
+  id: string;
+  schoolId: string;
+  unidade: string; // school name (display); resolved from schoolId
+  nomeCompleto: string;
+  especialidade: string; // atividade (Balé, Capoeira, Robótica, ...)
+  telefone?: string;
+  valorTurno: number; // valor por turno, base para desconto por falta
+  grade: GradeTurnos;
+  faltas: FaltaTerceirizado[];
+  ativo: boolean;
+  criadoEm: string;
+}
+
 export type Genero = "feminino" | "masculino" | "outro" | "prefiro-nao-informar";
 export type EstadoCivil = "solteiro" | "casado" | "divorciado" | "viuvo" | "outro";
 
