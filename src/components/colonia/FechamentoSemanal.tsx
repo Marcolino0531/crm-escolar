@@ -117,6 +117,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const qc = useQueryClient();
   const { schools } = useSchool();
   const beneficiosFn = useServerFn(fetchColoniaBeneficios);
+  const faturarTodosFn = useServerFn(faturarColoniaSponte);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const schoolIdToName = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
 
@@ -460,6 +461,76 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     [weekStart, friday],
   );
 
+  // Faturamento em lote: alunos com valor pendente que ainda NÃO foram resolvidos
+  // (invoicedSet já cobre faturados no Sponte E acordos manuais → ambos ignorados)
+  // e que têm vínculo Sponte + unidade integrada.
+  const faturaveis = useMemo(() => {
+    if (!canFaturar || !calcReady) return [];
+    return students
+      .map((s) => ({
+        s,
+        unidade: schoolIdToName.get(s.schoolId) ?? null,
+        total: billingByStudent.get(s.studentId)?.total ?? 0,
+      }))
+      .filter(
+        ({ s, unidade, total }) =>
+          !invoicedSet.has(s.studentId) &&
+          !!s.sponteAlunoId &&
+          !!unidade &&
+          UNIDADES_SPONTE.includes(unidade) &&
+          total > 0,
+      );
+  }, [students, billingByStudent, invoicedSet, schoolIdToName, canFaturar, calcReady]);
+
+  const faturarTodos = useMutation({
+    mutationFn: async () => {
+      let sucesso = 0;
+      let jaFaturado = 0;
+      const falhas: string[] = [];
+      // Sequencial de propósito: evita rajada de chamadas simultâneas ao Sponte.
+      for (const { s, unidade, total } of faturaveis) {
+        try {
+          const res = await faturarTodosFn({
+            data: {
+              unidade: unidade as string,
+              studentId: s.studentId,
+              schoolId: s.schoolId,
+              sponteAlunoId: s.sponteAlunoId as string,
+              valor: total,
+              weekStart: weekStartYMD,
+              weekEnd: weekEndYMD,
+              vencimento: weekEndYMD,
+            },
+          });
+          if (!res.ok) falhas.push(s.name);
+          else if (res.jaFaturado) jaFaturado += 1;
+          else sucesso += 1;
+        } catch {
+          falhas.push(s.name);
+        }
+      }
+      return { sucesso, jaFaturado, falhas };
+    },
+    onSuccess: ({ sucesso, jaFaturado, falhas }) => {
+      void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+      const partes = [`${sucesso} faturado(s) com sucesso`];
+      if (jaFaturado > 0) partes.push(`${jaFaturado} já estava(m) faturado(s)`);
+      const resumo = `Faturamento em lote concluído: ${partes.join(", ")}.`;
+      if (falhas.length > 0) {
+        toast.warning(resumo, {
+          description: `Falha em ${falhas.length}: ${falhas.join(", ")}`,
+        });
+      } else {
+        toast.success(resumo);
+      }
+    },
+    onError: (e: unknown) => {
+      toast.error("Erro no faturamento em lote", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-3 py-2.5">
@@ -488,6 +559,28 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
           <ChevronRight className="h-5 w-5" />
         </button>
       </div>
+
+      {canFaturar && students.length > 0 && (
+        <Button
+          onClick={() => faturarTodos.mutate()}
+          disabled={faturarTodos.isPending || !calcReady || faturaveis.length === 0}
+          className="w-full"
+          title={
+            faturaveis.length === 0 ? "Nenhum aluno pendente para faturar nesta semana" : undefined
+          }
+        >
+          {faturarTodos.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Faturando {faturaveis.length} aluno(s)…
+            </>
+          ) : (
+            <>
+              <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
+              {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
+            </>
+          )}
+        </Button>
+      )}
 
       {!sponteActive && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
