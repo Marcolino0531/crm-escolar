@@ -392,7 +392,10 @@ function ExtraChargesTab({
     const lines = events.map((e) => {
       const info = nameById.get(e.student_id);
       const tipo = e.event_type === "meal" ? "Refeição" : "Entrada/Saída";
-      const dt = new Date(e.created_at).toLocaleString("pt-BR");
+      const dt =
+        e.event_type === "meal"
+          ? formatDateBR(e.created_at)
+          : new Date(e.created_at).toLocaleString("pt-BR");
       return [dt, info?.name ?? "—", info?.className ?? "—", tipo, e.label, e.reason ?? ""].map(
         (c) => `"${String(c).replace(/"/g, '""')}"`,
       );
@@ -468,11 +471,16 @@ function ExtraChargesTab({
                 return (
                   <tr key={e.id} className="hover:bg-accent/40">
                     <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                      {formatDateBR(e.created_at)}{" "}
-                      {new Date(e.created_at).toLocaleTimeString("pt-BR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {formatDateBR(e.created_at)}
+                      {e.event_type !== "meal" && (
+                        <>
+                          {" "}
+                          {new Date(e.created_at).toLocaleTimeString("pt-BR", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <div className="font-medium text-foreground">{info?.name ?? "—"}</div>

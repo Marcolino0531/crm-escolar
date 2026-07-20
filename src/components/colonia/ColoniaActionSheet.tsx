@@ -104,12 +104,13 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
       return { type, occurredAt };
     },
     onSuccess: ({ type, occurredAt }) => {
+      const isGate = type === "entry" || type === "exit";
       const hora = new Date(occurredAt).toLocaleTimeString("pt-BR", {
         hour: "2-digit",
         minute: "2-digit",
       });
-      toast.success(`${COLONIA_RECORD_LABEL[type]} registrado`, {
-        description: `${student?.name} • ${hora}`,
+      toast.success(`${COLONIA_RECORD_LABEL[type]} ${isGate ? "registrado" : "marcado"}`, {
+        description: `${student?.name} • ${isGate ? hora : "Realizado"}`,
       });
       setGateForm(null);
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
@@ -149,10 +150,19 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
     return true;
   };
 
-  // Refeições continuam com registro imediato (horário atual).
-  const handleMeal = (type: ColoniaRecordType) => {
+  // Refeições viraram um status realizado/não realizado (sem hora exata):
+  // marcar cria o registro; clicar de novo desmarca (remove o registro do dia).
+  // Grava ao meio-dia para representar apenas a data, não a hora do evento.
+  const toggleMeal = (type: ColoniaRecordType) => {
     if (!ensureCanEdit()) return;
-    register.mutate({ type, occurredAt: new Date().toISOString() });
+    const existente = records.find((rec) => rec.record_type === type);
+    if (existente) {
+      remove.mutate(existente.id);
+      return;
+    }
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    register.mutate({ type, occurredAt: d.toISOString() });
   };
 
   // Entrada/Saída abrem um mini-formulário com o horário atual pré-preenchido.
@@ -211,15 +221,35 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
         <div className="grid gap-2.5 p-5 pb-8 pt-4">
           {COLONIA_MEALS.map((r) => {
             const Icon = ICONS[r.key];
+            const done = records.some((rec) => rec.record_type === r.key);
             return (
               <button
                 key={r.key}
-                onClick={() => handleMeal(r.key)}
-                disabled={register.isPending}
-                className="flex h-16 w-full items-center gap-4 rounded-2xl bg-primary px-5 text-left text-base font-semibold text-primary-foreground shadow-sm transition-all active:scale-[0.98] disabled:opacity-60"
+                onClick={() => toggleMeal(r.key)}
+                disabled={register.isPending || remove.isPending}
+                className={[
+                  "flex h-16 w-full items-center gap-4 rounded-2xl px-5 text-left text-base font-semibold shadow-sm transition-all active:scale-[0.98] disabled:opacity-60",
+                  done
+                    ? "bg-emerald-500 text-white"
+                    : "border border-border bg-card text-foreground hover:border-primary/40",
+                ].join(" ")}
               >
-                <Icon className="h-6 w-6 flex-shrink-0" />
-                <span>Registrar {r.label}</span>
+                <Icon className={["h-6 w-6 flex-shrink-0", done ? "" : "text-primary"].join(" ")} />
+                <span className="flex-1">{r.label}</span>
+                <span
+                  className={[
+                    "flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold",
+                    done ? "bg-white/20 text-white" : "bg-secondary text-muted-foreground",
+                  ].join(" ")}
+                >
+                  {done ? (
+                    <>
+                      <Check className="h-3.5 w-3.5" /> Realizado
+                    </>
+                  ) : (
+                    "Não realizado"
+                  )}
+                </span>
               </button>
             );
           })}
@@ -300,9 +330,15 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
                       <span className="flex-1 text-sm font-medium text-foreground">
                         {COLONIA_RECORD_LABEL[rec.record_type]}
                       </span>
-                      <span className="text-sm tabular-nums text-muted-foreground">
-                        {fmtTime(rec.occurred_at)}
-                      </span>
+                      {rec.record_type === "entry" || rec.record_type === "exit" ? (
+                        <span className="text-sm tabular-nums text-muted-foreground">
+                          {fmtTime(rec.occurred_at)}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                          <Check className="h-4 w-4" /> Realizado
+                        </span>
+                      )}
                       {canEdit && (
                         <button
                           onClick={() => remove.mutate(rec.id)}
