@@ -2113,6 +2113,81 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
   });
 
+// ── Checagem de duplicidade antes do faturamento em lote ─────────────────────
+// Dado uma data de vencimento e a lista de alunos que serão faturados, consulta
+// o Sponte (GetParcelas por aluno) e retorna os que JÁ possuem um título de
+// categoria "Colônia de Férias" com essa MESMA data de vencimento — para o
+// usuário confirmar antes de gerar cobranças em duplicidade. Best-effort: falha
+// de rede num aluno não o sinaliza como duplicado (não bloqueia o lote).
+
+const DuplicidadeColoniaInputSchema = z.object({
+  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  itens: z
+    .array(
+      z.object({
+        unidade: z.string(),
+        sponteAlunoId: z.string().min(1),
+        studentName: z.string(),
+      }),
+    )
+    .max(200),
+});
+
+export interface DuplicidadeColoniaResult {
+  ok: boolean;
+  duplicados: string[];
+  error?: string;
+}
+
+export const verificarDuplicidadeColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DuplicidadeColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DuplicidadeColoniaResult> => {
+    const { vencimento, itens } = data;
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, duplicados: [], error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    const permitidos = itens.filter((it) => allowed === null || allowed.includes(it.unidade));
+
+    // Cache por (unidade, aluno): datas de vencimento (YMD) dos títulos de
+    // categoria "Colônia de Férias" não cancelados desse aluno.
+    const vencimentosColoniaPorAluno = new Map<string, Set<string>>();
+    const duplicados: string[] = [];
+
+    for (const it of permitidos) {
+      const creds = resolverCredenciais(it.unidade);
+      if (!creds) continue;
+      const chave = `${it.unidade}|${it.sponteAlunoId}`;
+      let vencs = vencimentosColoniaPorAluno.get(chave);
+      if (vencs === undefined) {
+        vencs = new Set<string>();
+        try {
+          const xml = await callSponte(
+            "GetParcelas",
+            `AlunoID=${it.sponteAlunoId}`,
+            creds.codigoCliente,
+            creds.token,
+          );
+          const nodes = checkFault(xml) ? [] : parseXmlList(xml, "wsParcela");
+          for (const node of nodes) {
+            const sit = normalizarTexto(parseXmlValue(node, "SituacaoParcela"));
+            if (sit.includes("cancel") || sit.includes("estorn")) continue;
+            const cat = normalizarTexto(parseXmlValue(node, "Categoria"));
+            if (!cat.includes("colonia")) continue;
+            const venc = paraYMD(parseXmlValue(node, "Vencimento"));
+            if (venc) vencs.add(venc);
+          }
+        } catch {
+          // Best-effort: falha de rede não sinaliza duplicidade.
+        }
+        vencimentosColoniaPorAluno.set(chave, vencs);
+      }
+      if (vencs.has(vencimento)) duplicados.push(it.studentName);
+    }
+    return { ok: true, duplicados };
+  });
+
 // ── Acordo manual / "Já lançado" ─────────────────────────────────────────────
 // Resolve o fechamento semanal de um aluno SEM faturar no Sponte (negociação
 // avulsa com o responsável, ignorando o cálculo automático). Grava uma linha em

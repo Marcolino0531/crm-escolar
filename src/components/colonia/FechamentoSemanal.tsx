@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   RotateCcw,
   Handshake,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,6 +67,7 @@ import {
   faturarColoniaSponte,
   desvincularFaturamentoColonia,
   verificarFaturamentosColonia,
+  verificarDuplicidadeColonia,
   marcarAcordoManualColonia,
 } from "@/lib/sponte.functions";
 
@@ -118,7 +120,11 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const { schools } = useSchool();
   const beneficiosFn = useServerFn(fetchColoniaBeneficios);
   const faturarTodosFn = useServerFn(faturarColoniaSponte);
+  const checarDuplicidadeFn = useServerFn(verificarDuplicidadeColonia);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
+  const [loteOpen, setLoteOpen] = useState(false);
+  const [loteVencimento, setLoteVencimento] = useState("");
+  const [loteDuplicados, setLoteDuplicados] = useState<string[] | null>(null);
   const schoolIdToName = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
 
   const rangeStart = weekStart;
@@ -499,7 +505,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
               valor: total,
               weekStart: weekStartYMD,
               weekEnd: weekEndYMD,
-              vencimento: weekEndYMD,
+              vencimento: loteVencimento,
             },
           });
           if (!res.ok) falhas.push(s.name);
@@ -513,6 +519,8 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     },
     onSuccess: ({ sucesso, jaFaturado, falhas }) => {
       void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+      setLoteOpen(false);
+      setLoteDuplicados(null);
       const partes = [`${sucesso} faturado(s) com sucesso`];
       if (jaFaturado > 0) partes.push(`${jaFaturado} já estava(m) faturado(s)`);
       const resumo = `Faturamento em lote concluído: ${partes.join(", ")}.`;
@@ -530,6 +538,43 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       });
     },
   });
+
+  // Antes de faturar, checa no Sponte se algum aluno do lote já tem título de
+  // Colônia com essa mesma data de vencimento. Se houver, para no passo de
+  // confirmação; se não, dispara o lote direto.
+  const checarDuplicidade = useMutation({
+    mutationFn: async () => {
+      const res = await checarDuplicidadeFn({
+        data: {
+          vencimento: loteVencimento,
+          itens: faturaveis.map(({ s, unidade }) => ({
+            unidade: unidade as string,
+            sponteAlunoId: s.sponteAlunoId as string,
+            studentName: s.name,
+          })),
+        },
+      });
+      if (!res.ok) throw new Error(res.error ?? "Falha ao verificar duplicidade.");
+      return res.duplicados;
+    },
+    onSuccess: (dups) => {
+      if (dups.length > 0) setLoteDuplicados(dups);
+      else faturarTodos.mutate();
+    },
+    onError: (e: unknown) => {
+      toast.error("Erro ao verificar duplicidade", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
+  const loteBusy = checarDuplicidade.isPending || faturarTodos.isPending;
+
+  const abrirLote = () => {
+    setLoteDuplicados(null);
+    setLoteVencimento(weekEndYMD);
+    setLoteOpen(true);
+  };
 
   return (
     <div className="space-y-4">
@@ -562,25 +607,111 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
       {canFaturar && students.length > 0 && (
         <Button
-          onClick={() => faturarTodos.mutate()}
-          disabled={faturarTodos.isPending || !calcReady || faturaveis.length === 0}
+          onClick={abrirLote}
+          disabled={!calcReady || faturaveis.length === 0}
           className="w-full"
           title={
             faturaveis.length === 0 ? "Nenhum aluno pendente para faturar nesta semana" : undefined
           }
         >
-          {faturarTodos.isPending ? (
+          <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
+          {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
+        </Button>
+      )}
+
+      <Dialog open={loteOpen} onOpenChange={(v) => (loteBusy ? null : setLoteOpen(v))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Faturar Todos no Sponte</DialogTitle>
+          </DialogHeader>
+
+          {loteDuplicados && loteDuplicados.length > 0 ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Faturando {faturaveis.length} aluno(s)…
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-medium">
+                      Já identificamos boletos de Colônia de Férias com vencimento nesta data.
+                    </p>
+                    <p className="mt-1 text-muted-foreground">
+                      Aluno(s): {loteDuplicados.join(", ")}.
+                    </p>
+                    <p className="mt-2">
+                      Tem certeza que deseja faturar novamente e gerar cobranças duplicadas?
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setLoteOpen(false)}
+                  disabled={faturarTodos.isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => faturarTodos.mutate()}
+                  disabled={faturarTodos.isPending}
+                >
+                  {faturarTodos.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Faturando…
+                    </>
+                  ) : (
+                    "Faturar mesmo assim"
+                  )}
+                </Button>
+              </DialogFooter>
             </>
           ) : (
             <>
-              <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
-              {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  {faturaveis.length} aluno(s) pendente(s) serão faturados no Sponte com a data de
+                  vencimento abaixo. Alunos já faturados ou marcados como acordo manual são
+                  ignorados.
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="lote-venc">Data de Vencimento</Label>
+                  <Input
+                    id="lote-venc"
+                    type="date"
+                    value={loteVencimento}
+                    onChange={(e) => setLoteVencimento(e.target.value)}
+                    disabled={loteBusy}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setLoteOpen(false)} disabled={loteBusy}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => checarDuplicidade.mutate()}
+                  disabled={loteBusy || !loteVencimento}
+                >
+                  {faturarTodos.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Faturando…
+                    </>
+                  ) : checarDuplicidade.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Verificando…
+                    </>
+                  ) : (
+                    <>
+                      <Receipt className="h-4 w-4" /> Faturar Todos
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
             </>
           )}
-        </Button>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {!sponteActive && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
