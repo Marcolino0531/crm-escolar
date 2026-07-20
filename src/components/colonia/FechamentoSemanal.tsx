@@ -19,6 +19,7 @@ import {
   Loader2,
   CheckCircle2,
   RotateCcw,
+  Handshake,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -65,6 +66,7 @@ import {
   faturarColoniaSponte,
   desvincularFaturamentoColonia,
   verificarFaturamentosColonia,
+  marcarAcordoManualColonia,
 } from "@/lib/sponte.functions";
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
@@ -325,7 +327,9 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     queryFn: async () => {
       let q = supabase
         .from("holiday_camp_invoices" as never)
-        .select("student_id, school_id, amount, sponte_aluno_id, sponte_conta_receber_id")
+        .select(
+          "student_id, school_id, amount, sponte_aluno_id, sponte_conta_receber_id, manual_settlement",
+        )
         .eq("week_start", weekStartYMD);
       if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
       const { data, error } = await q;
@@ -337,6 +341,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
           amount: number | string;
           sponte_aluno_id: string | null;
           sponte_conta_receber_id: string | null;
+          manual_settlement: boolean | null;
         };
         return {
           studentId: row.student_id,
@@ -344,11 +349,16 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
           amount: Number(row.amount),
           sponteAlunoId: row.sponte_aluno_id,
           contaReceberId: row.sponte_conta_receber_id,
+          manual: Boolean(row.manual_settlement),
         };
       });
     },
   });
   const invoicedSet = useMemo(() => new Set(invoices.map((i) => i.studentId)), [invoices]);
+  const manualSet = useMemo(
+    () => new Set(invoices.filter((i) => i.manual).map((i) => i.studentId)),
+    [invoices],
+  );
 
   // Watcher (edição local): se o total da semana mudou depois de faturado, o
   // faturamento não vale mais — desvincula automaticamente e reabilita o botão.
@@ -357,6 +367,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   useEffect(() => {
     if (!canFaturar || invoices.length === 0 || !calcReady || syncingRef.current) return;
     const stale = invoices.filter((inv) => {
+      if (inv.manual) return false;
       const total = billingByStudent.get(inv.studentId)?.total ?? 0;
       return Math.abs(total - inv.amount) > 0.005;
     });
@@ -604,6 +615,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                       weekLabel={weekLabel}
                       defaultVencimento={weekEndYMD}
                       jaFaturado={invoicedSet.has(s.studentId)}
+                      manualSettled={manualSet.has(s.studentId)}
                       disabled={calculando}
                       onFaturado={() => qc.invalidateQueries({ queryKey: ["colonia_invoices"] })}
                     />
@@ -718,6 +730,7 @@ type FaturarBotaoProps = {
   weekLabel: string;
   defaultVencimento: string;
   jaFaturado: boolean;
+  manualSettled: boolean;
   disabled: boolean;
   onFaturado: () => void;
 };
@@ -734,14 +747,18 @@ function FaturarBotao({
   weekLabel,
   defaultVencimento,
   jaFaturado,
+  manualSettled,
   disabled,
   onFaturado,
 }: FaturarBotaoProps) {
   const faturarFn = useServerFn(faturarColoniaSponte);
   const desvincularFn = useServerFn(desvincularFaturamentoColonia);
+  const acordoFn = useServerFn(marcarAcordoManualColonia);
   const [open, setOpen] = useState(false);
   const [vencimento, setVencimento] = useState(defaultVencimento);
   const [faturado, setFaturado] = useState(false);
+  const [acordoLocal, setAcordoLocal] = useState(false);
+  const [acordoOpen, setAcordoOpen] = useState(false);
 
   const unidadeValida = !!unidade && UNIDADES_SPONTE.includes(unidade);
   const podeFaturar = !!sponteAlunoId && unidadeValida && valor > 0;
@@ -790,7 +807,8 @@ function FaturarBotao({
     },
     onSuccess: () => {
       setFaturado(false);
-      toast.success("Faturamento liberado. Você pode faturar novamente.");
+      setAcordoLocal(false);
+      toast.success("Registro liberado. Você pode faturar novamente.");
       onFaturado();
     },
     onError: (e: unknown) => {
@@ -800,23 +818,70 @@ function FaturarBotao({
     },
   });
 
-  if (jaFaturado || faturado) {
+  const acordo = useMutation({
+    mutationFn: async () => {
+      const res = await acordoFn({
+        data: {
+          unidade: unidade ?? "",
+          studentId,
+          schoolId,
+          sponteAlunoId,
+          valor,
+          weekStart: weekStartYMD,
+          weekEnd: weekEndYMD,
+        },
+      });
+      if (!res.ok) throw new Error(res.error ?? "Falha ao marcar como já lançado.");
+      return res;
+    },
+    onSuccess: () => {
+      setAcordoLocal(true);
+      setAcordoOpen(false);
+      toast.success("Marcado como já lançado / acordo manual.");
+      onFaturado();
+    },
+    onError: (e: unknown) => {
+      toast.error("Erro ao marcar como já lançado", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
+  const resolvidoManual = (manualSettled || acordoLocal) && !faturado;
+
+  if (jaFaturado || faturado || manualSettled || acordoLocal) {
     return (
       <div className="mt-2 flex items-center gap-2">
         <Button
           variant="outline"
           disabled
-          className="flex-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+          className={
+            resolvidoManual
+              ? "flex-1 border-sky-500/40 text-sky-600 dark:text-sky-400"
+              : "flex-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+          }
         >
-          <CheckCircle2 className="h-4 w-4" /> Faturado
+          {resolvidoManual ? (
+            <>
+              <Handshake className="h-4 w-4" /> Já lançado / Acordo manual
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-4 w-4" /> Faturado
+            </>
+          )}
         </Button>
         <Button
           variant="ghost"
           size="icon"
           onClick={() => desvincular.mutate()}
           disabled={desvincular.isPending}
-          title="Desfazer faturamento (liberar para refaturar)"
-          aria-label="Desfazer faturamento"
+          title={
+            resolvidoManual
+              ? "Desfazer acordo manual (voltar para pendente)"
+              : "Desfazer faturamento (liberar para refaturar)"
+          }
+          aria-label="Desfazer"
         >
           {desvincular.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -844,6 +909,53 @@ function FaturarBotao({
       >
         <Receipt className="h-4 w-4" /> Faturar no Sponte
       </Button>
+
+      <button
+        type="button"
+        onClick={() => setAcordoOpen(true)}
+        disabled={disabled || acordo.isPending}
+        className="mt-1.5 w-full text-center text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Marcar como Já Lançado / Acordo Manual
+      </button>
+
+      <Dialog open={acordoOpen} onOpenChange={(v) => (acordo.isPending ? null : setAcordoOpen(v))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Marcar como já lançado / acordo manual</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border border-border bg-secondary/40 p-3">
+              <div className="font-semibold text-foreground">{studentName}</div>
+              <div className="text-muted-foreground">Semana de {weekLabel}</div>
+            </div>
+            <p className="text-muted-foreground">
+              Isso resolve o fechamento desta semana{" "}
+              <strong className="text-foreground">sem faturar no Sponte</strong> e remove o aluno da
+              lista de pendências. Use quando o valor foi negociado ou lançado manualmente com o
+              responsável.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAcordoOpen(false)}
+              disabled={acordo.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={() => acordo.mutate()} disabled={acordo.isPending}>
+              {acordo.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Salvando…
+                </>
+              ) : (
+                "Confirmar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={(v) => (faturar.isPending ? null : setOpen(v))}>
         <DialogContent>

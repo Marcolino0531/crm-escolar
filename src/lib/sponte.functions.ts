@@ -2113,6 +2113,69 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
   });
 
+// ── Acordo manual / "Já lançado" ─────────────────────────────────────────────
+// Resolve o fechamento semanal de um aluno SEM faturar no Sponte (negociação
+// avulsa com o responsável, ignorando o cálculo automático). Grava uma linha em
+// holiday_camp_invoices com manual_settlement=true e sem conta a receber — o
+// aluno some da pendência do Fechamento. Não exige vínculo Sponte (funciona para
+// acordos offline). O desfazer reutiliza desvincularFaturamentoColonia.
+
+const AcordoManualColoniaInputSchema = z.object({
+  unidade: z.string(),
+  studentId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  sponteAlunoId: z.string().nullable().optional(),
+  valor: z.number().min(0),
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export interface AcordoManualColoniaResult {
+  ok: boolean;
+  jaResolvido?: boolean;
+  error?: string;
+}
+
+export const marcarAcordoManualColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => AcordoManualColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<AcordoManualColoniaResult> => {
+    const { unidade, studentId, schoolId, sponteAlunoId, valor, weekStart, weekEnd } = data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, error: "Sem permissão para faturar a Colônia." };
+    }
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+
+    // Anti-duplicidade: já resolvido (faturado ou acordo manual) nesta semana?
+    const { data: existente } = await supabaseAdmin
+      .from("holiday_camp_invoices" as any)
+      .select("id")
+      .eq("student_id", studentId)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (existente) return { ok: true, jaResolvido: true };
+
+    const { error } = await supabaseAdmin.from("holiday_camp_invoices" as any).insert({
+      student_id: studentId,
+      school_id: schoolId,
+      week_start: weekStart,
+      week_end: weekEnd,
+      amount: valor,
+      due_date: weekEnd,
+      sponte_aluno_id: sponteAlunoId ?? null,
+      sponte_conta_receber_id: null,
+      observacao: "Acordo manual / já lançado",
+      manual_settlement: true,
+      invoiced_by: context.userId,
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  });
+
 // ── Sincronização de status do faturamento da Colônia (two-way bind) ─────────
 
 const DesvincularColoniaInputSchema = z.object({
