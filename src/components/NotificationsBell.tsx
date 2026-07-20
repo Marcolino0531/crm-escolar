@@ -8,6 +8,7 @@ import {
   Shirt,
   CreditCard,
   BookOpen,
+  PartyPopper,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -18,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
 import { STORES, isValeDoSerenoProductName, type StoreKey } from "@/lib/nuvemshop.stores";
+import { mondayOf, addDays, toYMD } from "@/lib/colonia";
 
 type Notification = {
   id: string;
@@ -71,6 +73,11 @@ type ExtraEvent = {
   student: { name: string } | null;
 };
 
+type ColoniaPendencia = {
+  studentId: string;
+  name: string;
+};
+
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
   belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
@@ -94,6 +101,7 @@ export function NotificationsBell() {
   const canCartao = canView("financeiro_cartao");
   const canDiario = canView("diario");
   const canAgenda = canView("agenda");
+  const canColoniaFin = canView("colonia_financeiro");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -200,10 +208,14 @@ export function NotificationsBell() {
       }[]) {
         nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
       }
-      return ((vRes.data ?? []) as unknown as LowStockVariant[])
-        .filter((v) => v.stock <= v.min_stock)
-        // Vale do Sereno em descontinuação: não dispara alerta no sininho.
-        .filter((v) => !isValeDoSerenoProductName(nameByKey.get(`${v.store_key}:${v.ns_product_id}`)));
+      return (
+        ((vRes.data ?? []) as unknown as LowStockVariant[])
+          .filter((v) => v.stock <= v.min_stock)
+          // Vale do Sereno em descontinuação: não dispara alerta no sininho.
+          .filter(
+            (v) => !isValeDoSerenoProductName(nameByKey.get(`${v.store_key}:${v.ns_product_id}`)),
+          )
+      );
     },
   });
 
@@ -263,6 +275,53 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Colônia de Férias: verificação de fim de semana. Lista os alunos que
+  // têm consumos registrados na semana Mon–Fri encerrada mas cujo fechamento
+  // NÃO foi resolvido (nem "Faturar no Sponte" nem "Já lançado / Acordo
+  // manual"). O alerta aparece a partir do sábado e persiste pela semana
+  // seguinte até ser resolvido. NÃO dismissível — some ao resolver. ---
+  const coloniaNow = new Date();
+  const coloniaDow = coloniaNow.getDay();
+  const coloniaThisMonday = mondayOf(coloniaNow);
+  // No fim de semana (sáb/dom) referencia a semana atual (que acabou na sexta);
+  // de seg a sex ainda referencia a semana anterior — janela rolante de 7 dias.
+  const coloniaWeekMonday =
+    coloniaDow === 0 || coloniaDow === 6 ? coloniaThisMonday : addDays(coloniaThisMonday, -7);
+  const coloniaWeekSaturday = addDays(coloniaWeekMonday, 5);
+  const coloniaWeekStartYMD = toYMD(coloniaWeekMonday);
+  const { data: coloniaPendencias = [] } = useQuery({
+    queryKey: ["colonia_pendencias_semana", coloniaWeekStartYMD, userId ?? "anon"],
+    enabled: !!userId && canColoniaFin,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const [recRes, invRes] = await Promise.all([
+        supabase
+          .from("holiday_camp_records" as never)
+          .select("student_id, diario_students(name)")
+          .gte("occurred_at", coloniaWeekMonday.toISOString())
+          .lt("occurred_at", coloniaWeekSaturday.toISOString()),
+        supabase
+          .from("holiday_camp_invoices" as never)
+          .select("student_id")
+          .eq("week_start", coloniaWeekStartYMD),
+      ]);
+      if (recRes.error) return [] as ColoniaPendencia[];
+      const resolved = new Set(
+        ((invRes.data ?? []) as unknown as { student_id: string }[]).map((r) => r.student_id),
+      );
+      const pendentes = new Map<string, string>();
+      for (const r of (recRes.data ?? []) as unknown as {
+        student_id: string;
+        diario_students: { name: string } | { name: string }[] | null;
+      }[]) {
+        if (resolved.has(r.student_id) || pendentes.has(r.student_id)) continue;
+        const st = Array.isArray(r.diario_students) ? r.diario_students[0] : r.diario_students;
+        pendentes.set(r.student_id, st?.name ?? "Aluno");
+      }
+      return [...pendentes.entries()].map(([studentId, name]) => ({ studentId, name }));
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -295,7 +354,8 @@ export function NotificationsBell() {
       !canUniformes &&
       !canCartao &&
       !canDiario &&
-      !canAgenda)
+      !canAgenda &&
+      !canColoniaFin)
   )
     return null;
 
@@ -321,6 +381,7 @@ export function NotificationsBell() {
     availableReceivables.length +
     extraEvents.length +
     unreadAgenda.length +
+    coloniaPendencias.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -442,6 +503,35 @@ export function NotificationsBell() {
                       </div>
                       <div className="text-[11px] text-muted-foreground">
                         {e.label} — cobrança extra gerada para a família.
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Colônia de Férias: fechamento semanal pendente (verificação de fim de semana). */}
+          {canColoniaFin && coloniaPendencias.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Colônia de Férias
+              </div>
+              {coloniaPendencias.map((p) => (
+                <Link
+                  key={p.studentId}
+                  to="/colonia"
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <PartyPopper className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">
+                        Fechamento pendente: {p.name}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Há consumos na semana sem faturamento resolvido (Faturar no Sponte ou Já
+                        lançado).
                       </div>
                     </div>
                   </div>
@@ -597,6 +687,7 @@ export function NotificationsBell() {
             lowStockStores.length === 0 &&
             availableReceivables.length === 0 &&
             extraEvents.length === 0 &&
+            coloniaPendencias.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
