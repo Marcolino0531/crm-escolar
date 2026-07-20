@@ -562,9 +562,15 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                                 <span className="flex-1 text-sm font-medium text-foreground">
                                   {COLONIA_RECORD_LABEL[rec.record_type]}
                                 </span>
-                                <span className="text-sm tabular-nums text-muted-foreground">
-                                  {fmtTime(rec.occurred_at)}
-                                </span>
+                                {rec.record_type === "entry" || rec.record_type === "exit" ? (
+                                  <span className="text-sm tabular-nums text-muted-foreground">
+                                    {fmtTime(rec.occurred_at)}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                    Realizado
+                                  </span>
+                                )}
                                 {canEdit && (
                                   <button
                                     onClick={() => remove.mutate(rec.id)}

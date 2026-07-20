@@ -78,9 +78,11 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
       return p;
     },
     onSuccess: (p) => {
+      const isMeal = p.key !== "checkinout";
       const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const detalhe = isMeal ? "Realizado" : hora;
       toast.success(`${p.label} registrado`, {
-        description: `${student?.name} • ${hora}${p.charge ? " • Cobrança extra gerada" : ""}`,
+        description: `${student?.name} • ${detalhe}${p.charge ? " • Cobrança extra gerada" : ""}`,
       });
       qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
       setPending(null);
