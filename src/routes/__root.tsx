@@ -26,6 +26,7 @@ import {
   ListTodo,
   HandCoins,
   Bot,
+  MessageSquare,
   Shirt,
   BookOpen,
   PartyPopper,
@@ -346,6 +347,11 @@ function AppShell() {
                 to: "/cobranca-automatica",
                 icon: Bot,
                 label: "Cobrança Automática",
+              }),
+              ...gate(showCobranca, {
+                to: "/atendimento",
+                icon: MessageSquare,
+                label: "Atendimento",
               }),
               ...gate(showCartao, {
                 to: "/cartao-credito",

@@ -35,6 +35,72 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
   };
 }
 
+// Config mínima para ENVIAR mensagens de texto livre (chat de atendimento):
+// não depende de template aprovado, apenas do token + Phone Number ID.
+export interface WhatsAppSendConfig {
+  token: string;
+  phoneNumberId: string;
+  graphVersion: string;
+}
+
+export function getWhatsAppSendConfig(): WhatsAppSendConfig | null {
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!token || !phoneNumberId) return null;
+  return {
+    token,
+    phoneNumberId,
+    graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
+  };
+}
+
+// Envia uma mensagem de TEXTO LIVRE pelo endpoint padrão da Cloud API. Só
+// funciona dentro da janela de atendimento de 24h (após uma mensagem do
+// contato); fora dela a Meta exige template. Lança em caso de erro.
+export async function sendTextMessage(
+  cfg: WhatsAppSendConfig,
+  to: string,
+  body: string,
+): Promise<SendResult> {
+  const dest = toMetaPhone(to);
+  if (!dest) throw new Error("Telefone do destinatário ausente ou inválido.");
+  const text = body.trim();
+  if (!text) throw new Error("Mensagem vazia.");
+
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: dest,
+    type: "text",
+    text: { preview_url: false, body: text },
+  };
+
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const respBody = (await resp.json().catch(() => null)) as {
+    messages?: { id: string }[];
+    error?: { message?: string; code?: number; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !respBody?.messages?.[0]?.id) {
+    const detail =
+      respBody?.error?.error_data?.details ||
+      respBody?.error?.message ||
+      `HTTP ${resp.status} ao chamar a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+
+  return { messageId: respBody.messages[0].id };
+}
+
 // Normaliza para o formato exigido pela Meta: DDI (55) + DDD + número, só dígitos.
 // A Meta espera E.164 sem o "+". Números brasileiros sem DDI recebem o 55.
 export function toMetaPhone(v: string | null | undefined): string {
