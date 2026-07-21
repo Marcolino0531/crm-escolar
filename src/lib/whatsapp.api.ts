@@ -10,6 +10,7 @@
 // o status por `wa_message_id` (wamid retornado no envio).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { onlyDigits } from "@/lib/phone";
 import { coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
 import {
   getWhatsAppConfig,
@@ -202,18 +203,186 @@ async function runCron(): Promise<Response> {
   return json({ ok: true, alvo, total: pendencias.length, enviados, falhas, pulados });
 }
 
-// ─── Webhook: atualiza o status por wa_message_id ────────────────────────────
+// ─── Webhook: status dos disparos + mensagens recebidas (atendimento) ─────────
 interface WebhookStatus {
   id?: string;
   status?: string;
   errors?: { title?: string; message?: string; error_data?: { details?: string } }[];
 }
+interface WebhookContact {
+  wa_id?: string;
+  profile?: { name?: string };
+}
+interface WebhookMessage {
+  id?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+  button?: { text?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string };
+  };
+}
 interface WebhookPayload {
   entry?: {
     changes?: {
-      value?: { statuses?: WebhookStatus[] };
+      value?: {
+        statuses?: WebhookStatus[];
+        messages?: WebhookMessage[];
+        contacts?: WebhookContact[];
+      };
     }[];
   }[];
+}
+
+// Extrai o texto legível de uma mensagem recebida (texto, botão ou resposta
+// interativa). Mídias/localização caem num rótulo genérico.
+function extrairTexto(msg: WebhookMessage): string {
+  if (msg.type === "text") return msg.text?.body ?? "";
+  if (msg.type === "button") return msg.button?.text ?? "";
+  if (msg.type === "interactive")
+    return msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
+  return `[${msg.type ?? "mensagem"} não suportada]`;
+}
+
+// Resolve o cadastro do aluno a partir do telefone: casa pelos últimos 8 dígitos
+// (independe de formatação/DDI e do "9" adicional) com o disparo de cobrança
+// mais recente para aquele número.
+async function vincularAlunoPorTelefone(digits: string): Promise<{
+  aluno_id: string | null;
+  aluno_name: string;
+  responsavel_name: string;
+  unidade: string;
+} | null> {
+  const suffix = digits.slice(-8);
+  if (suffix.length < 8) return null;
+  const { data } = await supabaseAdmin
+    .from("whatsapp_billing_logs" as never)
+    .select("aluno_name, responsavel_name, unidade, fatura_id, data_envio")
+    .ilike("telefone", `%${suffix}%`)
+    .order("data_envio", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const row = data as unknown as {
+    aluno_name: string | null;
+    responsavel_name: string | null;
+    unidade: string | null;
+    fatura_id: string | null;
+  } | null;
+  if (!row) return null;
+  return {
+    aluno_id: row.fatura_id ?? null,
+    aluno_name: row.aluno_name ?? "",
+    responsavel_name: row.responsavel_name ?? "",
+    unidade: row.unidade ?? "",
+  };
+}
+
+interface ConversaRow {
+  id: string;
+  aluno_id: string | null;
+  aluno_name: string;
+}
+
+// Garante a conversa da telefone (cria se não existir) e, na criação, tenta
+// vincular ao cadastro do aluno. Retorna a linha para uso posterior.
+async function getOrCreateConversa(
+  waPhone: string,
+  contactName: string,
+): Promise<ConversaRow | null> {
+  const { data: existente } = await supabaseAdmin
+    .from("whatsapp_conversations" as never)
+    .select("id, aluno_id, aluno_name")
+    .eq("wa_phone", waPhone)
+    .maybeSingle();
+  const atual = existente as unknown as ConversaRow | null;
+  if (atual) {
+    if (contactName && !atual.aluno_name) {
+      await supabaseAdmin
+        .from("whatsapp_conversations" as never)
+        .update({ contact_name: contactName } as never)
+        .eq("id", atual.id);
+    }
+    return atual;
+  }
+
+  const vinculo = await vincularAlunoPorTelefone(waPhone);
+  const { data: criada, error } = await supabaseAdmin
+    .from("whatsapp_conversations" as never)
+    .insert({
+      wa_phone: waPhone,
+      contact_name: contactName || "",
+      aluno_id: vinculo?.aluno_id ?? null,
+      aluno_name: vinculo?.aluno_name ?? "",
+      responsavel_name: vinculo?.responsavel_name ?? "",
+      unidade: vinculo?.unidade ?? "",
+    } as never)
+    .select("id, aluno_id, aluno_name")
+    .single();
+  if (error) {
+    console.warn("[whatsapp] criar conversa falhou:", error.message);
+    return null;
+  }
+  return criada as unknown as ConversaRow;
+}
+
+// Processa as mensagens RECEBIDAS de um bloco de webhook: grava cada mensagem,
+// cria/atualiza a conversa e incrementa o não-lidas.
+async function processarMensagensRecebidas(
+  messages: WebhookMessage[],
+  contacts: WebhookContact[],
+): Promise<void> {
+  const nomePorWaId = new Map<string, string>();
+  for (const c of contacts) {
+    if (c.wa_id) nomePorWaId.set(onlyDigits(c.wa_id), c.profile?.name ?? "");
+  }
+
+  for (const msg of messages) {
+    const from = onlyDigits(msg.from);
+    if (!from || !msg.id) continue;
+
+    const conversa = await getOrCreateConversa(from, nomePorWaId.get(from) ?? "");
+    if (!conversa) continue;
+
+    const body = extrairTexto(msg);
+    const waTs = msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : null;
+
+    // Idempotência: não regrava a mesma mensagem se a Meta reenviar o evento.
+    const { data: jaExiste } = await supabaseAdmin
+      .from("whatsapp_messages" as never)
+      .select("id")
+      .eq("wa_message_id", msg.id)
+      .maybeSingle();
+    if (jaExiste) continue;
+
+    await supabaseAdmin.from("whatsapp_messages" as never).insert({
+      conversation_id: conversa.id,
+      wa_message_id: msg.id,
+      direction: "in",
+      body,
+      status: "recebido",
+      wa_timestamp: waTs,
+    } as never);
+
+    const { data: conv } = await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .select("unread_count")
+      .eq("id", conversa.id)
+      .maybeSingle();
+    const unread = (conv as unknown as { unread_count: number } | null)?.unread_count ?? 0;
+
+    await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .update({
+        last_message_at: waTs ?? new Date().toISOString(),
+        last_message_preview: body.slice(0, 200),
+        last_message_direction: "in",
+        unread_count: unread + 1,
+      } as never)
+      .eq("id", conversa.id);
+  }
 }
 
 const STATUS_MAP: Record<string, string> = {
@@ -232,14 +401,50 @@ const STATUS_RANK: Record<string, number> = {
   lido: 3,
 };
 
+// Atualiza o status de uma mensagem 'out' do chat de atendimento por wamid,
+// respeitando a não-regressão do ciclo (mesma regra dos disparos de cobrança).
+async function atualizarStatusChat(
+  wamid: string,
+  mapped: string,
+  st: WebhookStatus,
+): Promise<void> {
+  const { data } = await supabaseAdmin
+    .from("whatsapp_messages" as never)
+    .select("id, status")
+    .eq("wa_message_id", wamid)
+    .maybeSingle();
+  const row = data as unknown as { id: string; status: string } | null;
+  if (!row) return;
+  if (mapped !== "falha" && (STATUS_RANK[mapped] ?? 0) <= (STATUS_RANK[row.status] ?? -1)) return;
+
+  const patch: { status: string; erro_mensagem?: string } = { status: mapped };
+  if (mapped === "falha") {
+    const err = st.errors?.[0];
+    patch.erro_mensagem =
+      err?.error_data?.details || err?.message || err?.title || "Falha reportada pela Meta.";
+  }
+  await supabaseAdmin
+    .from("whatsapp_messages" as never)
+    .update(patch as never)
+    .eq("id", row.id);
+}
+
 async function processarWebhook(payload: WebhookPayload | null): Promise<void> {
   if (!payload?.entry) return;
   for (const entry of payload.entry) {
     for (const change of entry.changes ?? []) {
-      for (const st of change.value?.statuses ?? []) {
+      const value = change.value;
+      if (value?.messages?.length) {
+        await processarMensagensRecebidas(value.messages, value.contacts ?? []);
+      }
+      for (const st of value?.statuses ?? []) {
         const wamid = st.id;
         const mapped = st.status ? STATUS_MAP[st.status] : undefined;
         if (!wamid || !mapped) continue;
+
+        // Status pode se referir a um disparo de cobrança e/ou a uma resposta do
+        // chat — atualiza ambos (o wamid casa em uma das tabelas).
+        await atualizarStatusChat(wamid, mapped, st);
 
         const { data: atual } = await supabaseAdmin
           .from("whatsapp_billing_logs" as never)
