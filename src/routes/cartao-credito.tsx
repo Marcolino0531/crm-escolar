@@ -53,6 +53,7 @@ type Receivable = {
   valor_bruto: number;
   valor_liquido: number;
   status: ReceivableStatus;
+  unit_id: string | null;
 };
 
 function fmtBRL(n: number) {
@@ -75,10 +76,11 @@ const STATUS_META: Record<ReceivableStatus, { label: string; className: string }
 function CartaoPage() {
   const { session } = useAuth();
   const { canEdit } = usePermissions();
-  const { selected, schoolFilterIds } = useSchool();
+  const { selected, schoolFilterIds, schools } = useSchool();
   const editable = canEdit("financeiro_cartao");
   const qc = useQueryClient();
   const today = todayISOLocal();
+  const schoolNameById = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
   const [showCreate, setShowCreate] = useState(false);
 
   const { data: receivables = [], isLoading } = useQuery({
@@ -235,6 +237,7 @@ function CartaoPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Unidade</TableHead>
                   <TableHead>Pagamento</TableHead>
                   <TableHead>Disponibilidade</TableHead>
                   <TableHead className="text-right">Valor Bruto</TableHead>
@@ -249,6 +252,9 @@ function CartaoPage() {
                   const meta = STATUS_META[st];
                   return (
                     <TableRow key={r.id}>
+                      <TableCell className="font-medium">
+                        {(r.unit_id && schoolNameById.get(r.unit_id)) || "—"}
+                      </TableCell>
                       <TableCell>{formatDateBR(r.data_pagamento)}</TableCell>
                       <TableCell>{formatDateBR(r.data_disponibilidade)}</TableCell>
                       <TableCell className="text-right tabular-nums">
