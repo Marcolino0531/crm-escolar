@@ -2,6 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  getWhatsAppConfig,
+  renderBillingMessage,
+  sendBillingTemplate,
+} from "@/lib/whatsapp.server";
 
 // ─── Phase 6 (Option C migration) ───────────────────────────────────────────
 // Sponte inadimplência integration ported from the CRA app's api/sponte-batch.ts
@@ -1479,6 +1484,245 @@ export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<Pe
 
   return [...cec, ...belvedere, ...valeSereno];
 }
+
+// ─── Cobrança Automática — disparo de teste por AlunoID ──────────────────────
+// Aciona MANUALMENTE o fluxo de cobrança para UM aluno do Sponte, validando a
+// integração ponta a ponta (Sponte → linha digitável → WhatsApp Cloud API →
+// log) antes de habilitar o cron em lote. Consulta o boleto em aberto do aluno
+// (GetParcelas por AlunoID), monta as 5 variáveis do template, dispara e grava
+// o log fiel em `whatsapp_billing_logs` (com o conteúdo exato em message_body).
+
+const CobrancaTesteInputSchema = z.object({
+  alunoId: z.string().trim().min(1),
+  unidade: z.string().trim().min(1),
+});
+
+export interface CobrancaTesteResult {
+  ok: boolean;
+  status?: "enviado" | "falha";
+  alunoNome?: string;
+  responsavel?: string;
+  telefone?: string;
+  valor?: number;
+  vencimento?: string; // YYYY-MM-DD
+  mensagem?: string; // conteúdo exato enviado
+  waMessageId?: string;
+  error?: string;
+}
+
+function formatBRLValor(n: number): string {
+  return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function ymdParaBrData(ymd: string): string {
+  if (!ymd) return "";
+  const [y, m, d] = ymd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+export const enviarCobrancaTeste = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => CobrancaTesteInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<CobrancaTesteResult> => {
+    const { alunoId, unidade } = data;
+
+    // RBAC por unidade (server-side): impede disparo fora da permissão.
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { ok: false, error: "Unidade sem integração Sponte." };
+
+    const cfg = getWhatsAppConfig();
+    if (!cfg) {
+      return {
+        ok: false,
+        error:
+          "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
+      };
+    }
+
+    // 1. Boleto em aberto do aluno: GetParcelas por AlunoID, agrupado por boleto.
+    let parcelaNodes: string[];
+    try {
+      const xml = await callSponte(
+        "GetParcelas",
+        `AlunoID=${alunoId};Situacao=Aberta`,
+        creds.codigoCliente,
+        creds.token,
+      );
+      const fault = checkFault(xml);
+      if (fault) return { ok: false, error: `Sponte: ${fault}` };
+      parcelaNodes = parseXmlList(xml, "wsParcela");
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+    }
+
+    const parcelas: ParcelaRaw[] = [];
+    for (const node of parcelaNodes) {
+      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+      const situacao = parseXmlValue(node, "SituacaoParcela");
+      if (situacao === "Quitada" || situacao === "Cancelada") continue;
+      const valor = parseBrDecimal(parseXmlValue(node, "ValorParcela"));
+      const valorPago = parseBrDecimal(parseXmlValue(node, "ValorPago"));
+      const saldo = valor - valorPago;
+      if (saldo <= 0) continue;
+      parcelas.push({
+        alunoId,
+        nomeAluno: parseXmlValue(node, "Sacado") || "-",
+        vencimento: parseXmlValue(node, "Vencimento"),
+        valor,
+        valorPago,
+        saldo,
+        status: situacao,
+        numeroBoleto: parseXmlValue(node, "NumeroBoleto"),
+        contaReceberID: parseXmlValue(node, "ContaReceberID"),
+        numeroParcela: parseXmlValue(node, "NumeroParcela"),
+        categoria: parseXmlValue(node, "Categoria"),
+        bolsaAssociada: parseXmlValue(node, "BolsaAssociada"),
+      });
+    }
+
+    if (parcelas.length === 0) {
+      return { ok: false, error: "Nenhum boleto em aberto encontrado para este aluno." };
+    }
+
+    // Agrupa por boleto e escolhe o mais antigo (menor vencimento) — o alvo
+    // natural da cobrança. Soma as parcelas do mesmo boleto para o valor total.
+    const grupos = new Map<string, ParcelaRaw[]>();
+    for (const p of parcelas) {
+      const key =
+        p.numeroBoleto && p.numeroBoleto !== "0" ? `bol_${p.numeroBoleto}` : `${p.vencimento}`;
+      const arr = grupos.get(key);
+      if (arr) arr.push(p);
+      else grupos.set(key, [p]);
+    }
+    const boletos = [...grupos.values()].sort((a, b) =>
+      (paraYMD(a[0].vencimento) ?? "").localeCompare(paraYMD(b[0].vencimento) ?? ""),
+    );
+    const alvo = boletos[0];
+    const first = alvo[0];
+    const valorTotal = alvo.reduce((s, it) => s + it.saldo, 0);
+    const vencYMD = paraYMD(first.vencimento) ?? "";
+
+    // 2. Responsável financeiro + nome do aluno.
+    let responsavelNome = "";
+    let telefone = "";
+    let alunoNome = first.nomeAluno;
+    try {
+      const [respXml, alunoXml] = await Promise.all([
+        callSponte(
+          "GetResponsavelFinanceiro",
+          `AlunoID=${alunoId}`,
+          creds.codigoCliente,
+          creds.token,
+        ),
+        callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+      ]);
+      const r = parseXmlList(respXml, "wsResponsavel")[0] ?? "";
+      responsavelNome = parseXmlValue(r, "Nome");
+      telefone = parseXmlValue(r, "Celular") || parseXmlValue(r, "Telefone");
+      const a = parseXmlList(alunoXml, "wsAluno")[0] ?? "";
+      alunoNome = parseXmlValue(a, "Nome") || alunoNome;
+    } catch {
+      // Segue com o que foi possível obter; telefone ausente vira falha abaixo.
+    }
+
+    // 3. Linha digitável (só boletos gerados). Fallback textual quando ausente.
+    const linhaBruta =
+      first.numeroBoleto && first.numeroBoleto !== "0" && first.contaReceberID
+        ? await buscarLinhaDigitavel(
+            creds.codigoCliente,
+            creds.token,
+            first.contaReceberID,
+            first.numeroParcela ?? "",
+          )
+        : "";
+    const linhaDigitavel =
+      linhaBruta && linhaBruta.trim() ? linhaBruta : "Entre em contato com a secretaria da escola";
+
+    const vars = {
+      to: telefone,
+      responsavel: responsavelNome,
+      aluno: alunoNome,
+      valor: formatBRLValor(valorTotal),
+      vencimento: ymdParaBrData(vencYMD),
+      linhaDigitavel,
+    };
+    const mensagem = renderBillingMessage(vars);
+
+    const base = {
+      responsavel_name: responsavelNome || "",
+      aluno_name: alunoNome || "",
+      telefone: telefone || "",
+      unidade,
+      valor: valorTotal,
+      vencimento: vencYMD || null,
+      template_name: cfg.templateName,
+      fatura_id: alunoId,
+      message_body: mensagem,
+      enviado_por: context.userId,
+    };
+
+    if (!telefone || telefone === "-") {
+      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+        ...base,
+        status: "falha",
+        erro_mensagem: "Responsável sem telefone cadastrado no Sponte.",
+      } as never);
+      return {
+        ok: false,
+        status: "falha",
+        alunoNome,
+        responsavel: responsavelNome,
+        telefone,
+        valor: valorTotal,
+        vencimento: vencYMD,
+        mensagem,
+        error: "Responsável sem telefone cadastrado no Sponte.",
+      };
+    }
+
+    try {
+      const { messageId } = await sendBillingTemplate(cfg, vars);
+      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+        ...base,
+        status: "enviado",
+        wa_message_id: messageId,
+      } as never);
+      return {
+        ok: true,
+        status: "enviado",
+        alunoNome,
+        responsavel: responsavelNome,
+        telefone,
+        valor: valorTotal,
+        vencimento: vencYMD,
+        mensagem,
+        waMessageId: messageId,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+        ...base,
+        status: "falha",
+        erro_mensagem: msg,
+      } as never);
+      return {
+        ok: false,
+        status: "falha",
+        alunoNome,
+        responsavel: responsavelNome,
+        telefone,
+        valor: valorTotal,
+        vencimento: vencYMD,
+        mensagem,
+        error: msg,
+      };
+    }
+  });
 
 export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
