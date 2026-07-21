@@ -25,6 +25,7 @@ import {
   PiggyBank,
   ListTodo,
   HandCoins,
+  Bot,
   Shirt,
   BookOpen,
   PartyPopper,
@@ -341,6 +342,11 @@ function AppShell() {
                 label: "Inadimplência",
               }),
               ...gate(showCobranca, { to: "/cobranca", icon: HandCoins, label: "Cobrança" }),
+              ...gate(showCobranca, {
+                to: "/cobranca-automatica",
+                icon: Bot,
+                label: "Cobrança Automática",
+              }),
               ...gate(showCartao, {
                 to: "/cartao-credito",
                 icon: CreditCard,

@@ -47,6 +47,7 @@ type BillingLog = {
   status: BillingStatus;
   erro_mensagem: string | null;
   fatura_id: string | null;
+  message_body: string | null;
 };
 
 const STATUS_VALIDOS: BillingStatus[] = [
@@ -109,7 +110,7 @@ async function listLogs(url: URL): Promise<Response> {
   let query = supabaseAdmin
     .from("whatsapp_billing_logs" as never)
     .select(
-      "id, data_envio, responsavel_name, aluno_name, telefone, unidade, valor, vencimento, status, erro_mensagem, fatura_id",
+      "id, data_envio, responsavel_name, aluno_name, telefone, unidade, valor, vencimento, status, erro_mensagem, fatura_id, message_body",
       {
         count: "exact",
       },

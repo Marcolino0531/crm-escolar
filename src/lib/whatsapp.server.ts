@@ -56,6 +56,20 @@ export interface SendResult {
   messageId: string;
 }
 
+// Renderiza o TEXTO da mensagem de cobrança a partir das 5 variáveis, espelhando
+// o corpo do template aprovado na Meta (Utility, pt_BR):
+//   {{1}} Responsável · {{2}} Aluno · {{3}} Valor · {{4}} Vencimento · {{5}} Linha Digitável
+// Usado para gravar o conteúdo exato enviado em `whatsapp_billing_logs.message_body`
+// (registro fiel / prova de cobrança). Deve refletir o texto do template da Meta.
+export function renderBillingMessage(vars: BillingTemplateVars): string {
+  return (
+    `Olá ${vars.responsavel}, identificamos que a mensalidade do(a) aluno(a) ${vars.aluno} ` +
+    `no valor de ${vars.valor} venceu em ${vars.vencimento}. ` +
+    `Para regularizar, utilize a linha digitável: ${vars.linhaDigitavel}. ` +
+    `Caso o pagamento já tenha sido efetuado, desconsidere esta mensagem. Estamos à disposição.`
+  );
+}
+
 function textParam(value: string) {
   // A Meta rejeita parâmetros vazios; usa um traço como fallback seguro.
   return { type: "text" as const, text: value && value.trim() ? value : "-" };

@@ -11,7 +11,11 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
-import { getWhatsAppConfig, sendBillingTemplate } from "@/lib/whatsapp.server";
+import {
+  getWhatsAppConfig,
+  renderBillingMessage,
+  sendBillingTemplate,
+} from "@/lib/whatsapp.server";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -136,6 +140,21 @@ async function runCron(): Promise<Response> {
     }
     enviadosSet.add(p.alunoId);
 
+    // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
+    // mensagem direciona o responsável à secretaria.
+    const linhaDigitavel =
+      p.linhaDigitavel && p.linhaDigitavel.trim()
+        ? p.linhaDigitavel
+        : "Entre em contato com a secretaria da escola";
+    const vars = {
+      to: p.telefone,
+      responsavel: p.nomeResponsavel,
+      aluno: p.nomeAluno,
+      valor: formatBRL(p.valorTotalBoleto),
+      vencimento: formatVencBR(vencYMD),
+      linhaDigitavel,
+    };
+
     const base = {
       responsavel_name: p.nomeResponsavel || "",
       aluno_name: p.nomeAluno || "",
@@ -145,6 +164,7 @@ async function runCron(): Promise<Response> {
       vencimento: vencYMD,
       template_name: cfg.templateName,
       fatura_id: p.alunoId,
+      message_body: renderBillingMessage(vars),
     };
 
     const semTelefone = !p.telefone || p.telefone === "-";
@@ -158,22 +178,8 @@ async function runCron(): Promise<Response> {
       continue;
     }
 
-    // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
-    // mensagem direciona o responsável à secretaria.
-    const linhaDigitavel =
-      p.linhaDigitavel && p.linhaDigitavel.trim()
-        ? p.linhaDigitavel
-        : "Entre em contato com a secretaria da escola";
-
     try {
-      const { messageId } = await sendBillingTemplate(cfg, {
-        to: p.telefone,
-        responsavel: p.nomeResponsavel,
-        aluno: p.nomeAluno,
-        valor: formatBRL(p.valorTotalBoleto),
-        vencimento: formatVencBR(vencYMD),
-        linhaDigitavel,
-      });
+      const { messageId } = await sendBillingTemplate(cfg, vars);
       enviados++;
       await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
         ...base,
