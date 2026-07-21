@@ -667,6 +667,35 @@ function PerfilCard({
   );
 }
 
+// Dados fiscais/de contato do emissor (colégio) por unidade, usados no
+// cabeçalho e na assinatura da Notificação Extrajudicial.
+type EmissorNotificacao = { razao: string; cnpj: string; endereco: string; email: string };
+
+const EMISSORES_NOTIFICACAO: Record<string, EmissorNotificacao> = {
+  CEC: {
+    razao: "MMM Centro de Ensino da Criança EIRELLI",
+    cnpj: "26.326.388/0001-09",
+    endereco: "Avenida Miguel Perrela, 309, Castelo, Belo Horizonte/MG, CEP 31.330-290",
+    email: "centroensinocastelo@gmail.com",
+  },
+  "CEC Baby": {
+    razao: "Nucleo de Ensino Castelo LTDA",
+    cnpj: "51.195.730/0001-26",
+    endereco: "Rua Castelo Santo Ângelo, 94, Castelo, Belo Horizonte/MG, CEP 31330-190",
+    email: "centroensinocastelo@gmail.com",
+  },
+};
+
+// Atualiza o valor de um boleto até a data de emissão: multa fixa de 2% pelo
+// atraso + juros de mora de 1% ao mês (proporcional aos dias de atraso, base
+// 30 dias). Sem atraso (dias <= 0), devolve o valor original.
+function atualizarDebito(valor: number, vencYMD: string, hojeYMD: string) {
+  const dias = Math.max(0, diasDeAtraso(vencYMD, hojeYMD));
+  const multa = dias > 0 ? valor * 0.02 : 0;
+  const juros = dias > 0 ? valor * 0.01 * (dias / 30) : 0;
+  return { dias, multa, juros, atualizado: valor + multa + juros };
+}
+
 // Monta e abre o documento de Notificação Extrajudicial em uma nova janela,
 // pronta para "Salvar como PDF" / imprimir.
 function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCobranca) {
@@ -680,25 +709,42 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
     .filter(Boolean)
     .join(" · ");
 
+  const hojeYMD = todayISOLocal();
   const hojeFmt = new Date().toLocaleDateString("pt-BR", {
     day: "2-digit",
     month: "long",
     year: "numeric",
   });
 
+  const emissor = EMISSORES_NOTIFICACAO[perfil.unidade] ?? null;
+
+  let totalAtualizado = 0;
   const linhas = perfil.boletos
     .map((b) => {
       const venc = vencToYMD(b.vencimento);
+      const { atualizado } = atualizarDebito(b.valorTotalBoleto, venc, hojeYMD);
+      totalAtualizado += atualizado;
       return `<tr>
         <td>${(b.categorias ?? []).join(", ") || "Mensalidade/Taxas"}</td>
         <td>${formatDateBR(venc)}</td>
-        <td style="text-align:right">${formatarMoeda(b.valorTotalBoleto)}</td>
+        <td style="text-align:right">${formatarMoeda(atualizado)}</td>
       </tr>`;
     })
     .join("");
 
   const esc = (s: string) =>
     (s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
+
+  const cabecalhoEmissor = emissor
+    ? `<div class="emissor">
+    <div class="emissor-razao">${esc(emissor.razao)}</div>
+    <div>CNPJ: ${esc(emissor.cnpj)}</div>
+    <div>${esc(emissor.endereco)}</div>
+    <div>${esc(emissor.email)}</div>
+  </div>`
+    : "";
+
+  const assinaturaNome = emissor ? esc(emissor.razao) : `Setor Financeiro — ${esc(perfil.unidade)}`;
 
   const html = `<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8" />
@@ -707,18 +753,22 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
   * { box-sizing: border-box; }
   body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; max-width: 760px; margin: 40px auto; padding: 0 32px; line-height: 1.6; }
   h1 { text-align: center; font-size: 18px; text-transform: uppercase; letter-spacing: 1px; }
+  .emissor { text-align: center; font-size: 12px; color: #333; border-bottom: 1px solid #999; padding-bottom: 12px; margin-bottom: 8px; }
+  .emissor-razao { font-weight: bold; font-size: 13px; text-transform: uppercase; }
   .meta { margin: 24px 0; font-size: 14px; }
   .meta strong { display: inline-block; min-width: 120px; }
   table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
   th, td { border: 1px solid #999; padding: 6px 8px; }
   th { background: #f0f0f0; text-align: left; }
   .total { text-align: right; font-weight: bold; font-size: 15px; margin-top: 8px; }
+  .nota-atualizacao { font-size: 12px; font-style: italic; color: #333; margin-top: 4px; }
   p { font-size: 14px; text-align: justify; }
   .assinatura { margin-top: 56px; text-align: center; font-size: 14px; }
   .hr { border-top: 1px solid #333; width: 280px; margin: 48px auto 4px; }
   @media print { body { margin: 0; } }
 </style></head>
 <body onload="window.print()">
+  ${cabecalhoEmissor}
   <h1>Notificação Extrajudicial<br/>(Comunicação Pré-Judicial de Débito)</h1>
   <div class="meta">
     <div><strong>Notificado(a):</strong> ${esc(resp.nomeResponsavel) || "—"}</div>
@@ -739,13 +789,14 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
     <thead><tr><th>Descrição</th><th>Vencimento</th><th>Valor</th></tr></thead>
     <tbody>${linhas}</tbody>
   </table>
-  <div class="total">Total em aberto: ${formatarMoeda(perfil.valorTotal)}</div>
+  <div class="total">Total em aberto: ${formatarMoeda(totalAtualizado)}</div>
+  <div class="nota-atualizacao">
+    O valor apresentado encontra-se atualizado com juros e multa até a data de emissão
+    deste documento.
+  </div>
   <p>
-    Solicitamos a regularização do(s) valor(es) acima no prazo improrrogável de
-    <strong>05 (cinco) dias úteis</strong> a contar do recebimento desta. O não
-    atendimento ensejará a adoção das medidas cabíveis para a cobrança do crédito,
-    incluindo a inscrição nos órgãos de proteção ao crédito e o ajuizamento da ação
-    competente, com os acréscimos legais (juros, correção e honorários).
+    Solicitamos a regularização do débito ou formalização de um acordo no prazo de 5
+    dias a contar o recebimento deste.
   </p>
   <p>
     Caso o pagamento já tenha sido efetuado, favor desconsiderar esta comunicação e
@@ -754,7 +805,7 @@ function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCo
   <div class="assinatura">
     <div>${hojeFmt}</div>
     <div class="hr"></div>
-    <div>Setor Financeiro — ${esc(perfil.unidade)}</div>
+    <div>${assinaturaNome}</div>
   </div>
 </body></html>`;
 
