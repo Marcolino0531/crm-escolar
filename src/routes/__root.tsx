@@ -414,7 +414,7 @@ function AppShell() {
       <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
         <SheetContent
           side="left"
-          className="flex w-64 flex-col border-sidebar-border bg-sidebar p-4"
+          className="flex max-h-[100dvh] w-64 flex-col overflow-y-auto border-sidebar-border bg-sidebar p-4"
         >
           <SheetTitle className="sr-only">Menu de navegação</SheetTitle>
           <SidebarContent sections={sections} onNavigate={() => setMenuOpen(false)} />
