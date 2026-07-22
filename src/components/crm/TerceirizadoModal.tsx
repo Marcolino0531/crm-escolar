@@ -218,16 +218,6 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Telefone</label>
-                <input
-                  type="text"
-                  value={form.telefone}
-                  onChange={(e) => setForm((p) => ({ ...p, telefone: e.target.value }))}
-                  disabled={!isAdmin}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none disabled:bg-gray-100"
-                />
-              </div>
-              <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Unidade</label>
                 <select
                   value={form.unidade}
@@ -241,23 +231,6 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
                     </option>
                   ))}
                 </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Valor por turno (R$)
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={form.valorTurno}
-                  onChange={(e) => setForm((p) => ({ ...p, valorTurno: e.target.value }))}
-                  disabled={!isAdmin}
-                  placeholder="0,00"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none disabled:bg-gray-100"
-                />
-                <p className="mt-1 text-xs text-gray-400">
-                  Usado para calcular o desconto por falta.
-                </p>
               </div>
             </div>
 
