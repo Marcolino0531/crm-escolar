@@ -40,6 +40,7 @@ type AgendaNotification = {
   message: string;
   read: boolean;
   created_at: string;
+  reuniao: { data: string | null } | null;
 };
 
 type Forecast = {
@@ -267,11 +268,16 @@ export function NotificationsBell() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("agenda_notifications" as any)
-        .select("id, message, read, created_at")
+        .select("id, message, read, created_at, reuniao:reuniao_id(data)")
         .order("created_at", { ascending: false })
         .limit(30);
       if (error) return [] as AgendaNotification[];
-      return (data ?? []) as unknown as AgendaNotification[];
+      const hoje = todayISOLocal();
+      // Oculta avisos de reuniões já ocorridas (data anterior à data atual).
+      return ((data ?? []) as unknown as AgendaNotification[]).filter((n) => {
+        const dataReuniao = n.reuniao?.data;
+        return !dataReuniao || dataReuniao >= hoje;
+      });
     },
   });
 
