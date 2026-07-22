@@ -576,6 +576,7 @@ export type Database = {
           due_day: number;
           end_month: string | null;
           id: string;
+          incidence_months: number[] | null;
           notes: string | null;
           projected_amount: number;
           school_id: string;
@@ -591,6 +592,7 @@ export type Database = {
           due_day: number;
           end_month?: string | null;
           id?: string;
+          incidence_months?: number[] | null;
           notes?: string | null;
           projected_amount?: number;
           school_id: string;
@@ -606,6 +608,7 @@ export type Database = {
           due_day?: number;
           end_month?: string | null;
           id?: string;
+          incidence_months?: number[] | null;
           notes?: string | null;
           projected_amount?: number;
           school_id?: string;

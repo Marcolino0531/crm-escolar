@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -64,7 +65,19 @@ type Series = {
   start_month: string;
   end_month: string | null;
   skipped_months: string[];
+  incidence_months: number[] | null;
 };
+
+// Nomes curtos dos 12 meses para os checkboxes da Despesa Fixa Sazonal.
+const MESES_CURTOS = [
+  "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+  "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+];
+
+// Mês de calendário (1..12) de um mês ISO "YYYY-MM-01".
+function calendarMonthOf(iso: string): number {
+  return Number(iso.split("-")[1]);
+}
 
 type ForecastStatus = "pending" | "scheduled" | "paid";
 
@@ -190,10 +203,15 @@ function FluxoFuturoPage() {
         .eq("school_id", schoolId)
         .lte("start_month", month);
       if (cancelled || !series) return;
+      const monthNum = calendarMonthOf(month);
       const active = (series as Series[]).filter(
         (s) =>
           (s.end_month == null || s.end_month >= month) &&
-          !(s.skipped_months ?? []).includes(month),
+          !(s.skipped_months ?? []).includes(month) &&
+          // Despesa Fixa Sazonal: só materializa nos meses de incidência.
+          (!s.incidence_months ||
+            s.incidence_months.length === 0 ||
+            s.incidence_months.includes(monthNum)),
       );
       if (active.length === 0) return;
       const { data: existing } = await supabase
@@ -672,11 +690,44 @@ function ForecastDialog({
   const [costCenterId, setCostCenterId] = useState<string>(forecast?.cost_center_id ?? "");
   const [subCostCenterId, setSubCostCenterId] = useState<string>(forecast?.sub_cost_center_id ?? "");
   const [notes, setNotes] = useState<string>(forecast?.notes ?? "");
-  // "Tipo de Despesa": fixa, nao_fixa ou parcelada
-  const [tipo, setTipo] = useState<"fixa" | "nao_fixa" | "parcelada">(forecast?.series_id ? "fixa" : "nao_fixa");
+  // "Tipo de Despesa": fixa, nao_fixa, parcelada ou sazonal
+  const [tipo, setTipo] = useState<"fixa" | "nao_fixa" | "parcelada" | "sazonal">(
+    forecast?.series_id ? "fixa" : "nao_fixa",
+  );
   const [status, setStatus] = useState<ForecastStatus>(forecast ? normalizeStatus(forecast.status) : "pending");
   const [parcelas, setParcelas] = useState<string>("2");
+  // Meses de incidência (1..12) da Despesa Fixa Sazonal.
+  const [incidenceMonths, setIncidenceMonths] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
+
+  // Ao editar uma série existente, detecta se é sazonal e carrega os meses
+  // marcados (apenas informativo — o tipo não pode ser alterado na edição).
+  useEffect(() => {
+    if (!forecast?.series_id) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("recurring_series")
+        .select("incidence_months")
+        .eq("id", forecast.series_id)
+        .single();
+      if (cancelled || !data) return;
+      const inc = (data.incidence_months ?? []) as number[];
+      if (inc.length > 0) {
+        setTipo("sazonal");
+        setIncidenceMonths([...inc].sort((a, b) => a - b));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [forecast?.series_id]);
+
+  function toggleIncidenceMonth(m: number) {
+    setIncidenceMonths((prev) =>
+      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m].sort((a, b) => a - b),
+    );
+  }
 
   const subOptions = useMemo(
     () => subCostCenters.filter((s) => s.cost_center_id === costCenterId),
@@ -688,6 +739,10 @@ function ForecastDialog({
     const amt = parseBRLNumber(amount);
     if (!Number.isFinite(amt) || amt <= 0) { toast.error("Informe um valor válido."); return; }
     if (!dueDate) { toast.error("Informe a data de vencimento."); return; }
+    if (!isEdit && tipo === "sazonal" && incidenceMonths.length === 0) {
+      toast.error("Selecione ao menos um mês de incidência.");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -740,7 +795,7 @@ function ForecastDialog({
         }
       } else {
         // Create new
-        if (tipo === "fixa" || tipo === "parcelada") {
+        if (tipo === "fixa" || tipo === "parcelada" || tipo === "sazonal") {
           const nParc = tipo === "parcelada" ? Math.floor(Number(parcelas)) : 0;
           if (tipo === "parcelada" && (!Number.isFinite(nParc) || nParc < 1)) {
             toast.error("Informe a quantidade de parcelas (mínimo 1).");
@@ -758,6 +813,7 @@ function ForecastDialog({
             due_day: dueDay,
             start_month: monthOfDue,
             end_month: endMonth,
+            incidence_months: tipo === "sazonal" ? incidenceMonths : null,
             notes: notes.trim() || null,
           }).select("id").single();
           if (sErr) throw sErr;
@@ -784,21 +840,31 @@ function ForecastDialog({
             if (error) throw error;
             toast.success(`Despesa parcelada criada — ${nParc} parcelas geradas.`);
           } else {
-            const { error } = await supabase.from("recurring_forecasts").insert({
-              school_id: schoolId,
-              month: monthOfDue,
-              due_date: dueDate,
-              description: description.trim(),
-              projected_amount: amt,
-              cost_center_id: costCenterId || null,
-              sub_cost_center_id: subCostCenterId || null,
-              status,
-              series_id: series!.id,
-              normalized_key: `series:${series!.id}:${monthOfDue}`,
-              notes: notes.trim() || null,
-            });
-            if (error) throw error;
-            toast.success("Despesa fixa criada — será replicada nos próximos meses.");
+            // Fixa/Sazonal: materializa o lançamento do mês da data de vencimento
+            // apenas quando ele é um mês de incidência (fixa comum sempre entra).
+            const dueMonthNum = calendarMonthOf(monthOfDue);
+            const incidenceOk = tipo !== "sazonal" || incidenceMonths.includes(dueMonthNum);
+            if (incidenceOk) {
+              const { error } = await supabase.from("recurring_forecasts").insert({
+                school_id: schoolId,
+                month: monthOfDue,
+                due_date: dueDate,
+                description: description.trim(),
+                projected_amount: amt,
+                cost_center_id: costCenterId || null,
+                sub_cost_center_id: subCostCenterId || null,
+                status,
+                series_id: series!.id,
+                normalized_key: `series:${series!.id}:${monthOfDue}`,
+                notes: notes.trim() || null,
+              });
+              if (error) throw error;
+            }
+            toast.success(
+              tipo === "sazonal"
+                ? "Despesa fixa sazonal criada — será gerada nos meses selecionados a cada ano."
+                : "Despesa fixa criada — será replicada nos próximos meses.",
+            );
           }
         } else {
           const { error } = await supabase.from("recurring_forecasts").insert({
@@ -840,7 +906,7 @@ function ForecastDialog({
             <Label>Tipo de Despesa</Label>
             <Select
               value={tipo}
-              onValueChange={(v) => setTipo(v as "fixa" | "nao_fixa" | "parcelada")}
+              onValueChange={(v) => setTipo(v as "fixa" | "nao_fixa" | "parcelada" | "sazonal")}
               disabled={isEdit}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -848,6 +914,7 @@ function ForecastDialog({
                 <SelectItem value="nao_fixa">Não Fixa (apenas neste mês)</SelectItem>
                 <SelectItem value="fixa">Fixa (repete todos os meses)</SelectItem>
                 <SelectItem value="parcelada">Fixa por Período / Parcelada</SelectItem>
+                <SelectItem value="sazonal">Fixa Sazonal (meses específicos, todo ano)</SelectItem>
               </SelectContent>
             </Select>
             {isEdit && forecast?.series_id && (
@@ -856,6 +923,37 @@ function ForecastDialog({
               </p>
             )}
           </div>
+          {tipo === "sazonal" && (
+            <div>
+              <Label>Meses de Incidência</Label>
+              <div className="mt-1.5 grid grid-cols-4 gap-2">
+                {MESES_CURTOS.map((nome, i) => {
+                  const m = i + 1;
+                  const checked = incidenceMonths.includes(m);
+                  return (
+                    <label
+                      key={m}
+                      className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm ${
+                        isEdit ? "cursor-default opacity-70" : "cursor-pointer"
+                      } ${checked ? "border-primary bg-primary/5" : "border-input"}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={isEdit}
+                        onCheckedChange={() => !isEdit && toggleIncidenceMonth(m)}
+                      />
+                      {nome}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isEdit
+                  ? "Meses em que esta despesa é gerada automaticamente todo ano."
+                  : "A despesa será gerada automaticamente nos meses marcados, repetindo o ciclo a cada ano até ser inativada. Ex.: taxa TFLF de maio a dezembro."}
+              </p>
+            </div>
+          )}
           {!isEdit && tipo === "parcelada" && (
             <div>
               <Label>Quantidade de Meses / Parcelas</Label>
@@ -875,9 +973,15 @@ function ForecastDialog({
           <div>
             <Label>Data de Vencimento</Label>
             <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            {(tipo === "fixa" || tipo === "parcelada") && (
+            {(tipo === "fixa" || tipo === "parcelada" || tipo === "sazonal") && (
               <p className="text-xs text-muted-foreground mt-1">
-                O dia do vencimento ({Number(dueDate.split("-")[2] || 0)}) será replicado nos próximos meses{tipo === "parcelada" ? ` (${Math.max(1, Math.floor(Number(parcelas) || 0))} parcelas no total)` : ""}.
+                O dia do vencimento ({Number(dueDate.split("-")[2] || 0)}) será replicado
+                {tipo === "parcelada"
+                  ? ` nos próximos meses (${Math.max(1, Math.floor(Number(parcelas) || 0))} parcelas no total)`
+                  : tipo === "sazonal"
+                    ? " nos meses de incidência selecionados"
+                    : " nos próximos meses"}
+                .
               </p>
             )}
           </div>
