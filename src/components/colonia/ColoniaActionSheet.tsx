@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
+import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import {
   COLONIA_MEALS,
   COLONIA_GATE,
@@ -39,11 +40,18 @@ type CampRecord = {
   occurred_at: string;
 };
 
-function todayRange(): { start: string; end: string } {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+// Intervalo [00:00, 23:59:59.999] de um dia "YYYY-MM-DD" no fuso local.
+function dayRange(ymd: string): { start: string; end: string } {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const start = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const end = new Date(y, m - 1, d, 23, 59, 59, 999);
   return { start: start.toISOString(), end: end.toISOString() };
+}
+
+// Constrói um instante ISO a partir da data escolhida + hora local (h:min).
+function atTime(ymd: string, h: number, min: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d, h, min, 0, 0).toISOString();
 }
 
 function fmtTime(iso: string): string {
@@ -72,9 +80,15 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
   const [gateForm, setGateForm] = useState<ColoniaRecordType | null>(null);
   const [gateTime, setGateTime] = useState("");
 
-  const { start, end } = todayRange();
+  // Data do registro (retroativa): padrão hoje, redefinida ao abrir o modal.
+  const [selectedDate, setSelectedDate] = useState(todayISOLocal());
+  useEffect(() => {
+    if (open) setSelectedDate(todayISOLocal());
+  }, [open, student?.id]);
+
+  const { start, end } = dayRange(selectedDate);
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ["colonia_records", student?.id ?? "none", start],
+    queryKey: ["colonia_records", student?.id ?? "none", selectedDate],
     enabled: open && !!student,
     queryFn: async () => {
       const { data, error } = await supabase
@@ -160,9 +174,8 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
       remove.mutate(existente.id);
       return;
     }
-    const d = new Date();
-    d.setHours(12, 0, 0, 0);
-    register.mutate({ type, occurredAt: d.toISOString() });
+    // Grava ao meio-dia da data escolhida para representar apenas a data.
+    register.mutate({ type, occurredAt: atTime(selectedDate, 12, 0) });
   };
 
   // Entrada/Saída abrem um mini-formulário com o horário atual pré-preenchido.
@@ -179,10 +192,8 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
       toast.error("Horário inválido");
       return;
     }
-    // O horário confirmado é aplicado ao dia de hoje (registro retroativo do dia).
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    register.mutate({ type: gateForm, occurredAt: d.toISOString() });
+    // O horário confirmado é aplicado à data escolhida (registro retroativo).
+    register.mutate({ type: gateForm, occurredAt: atTime(selectedDate, h, m) });
   };
 
   const handleSheetOpenChange = (v: boolean) => {
@@ -219,6 +230,23 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
         </SheetHeader>
 
         <div className="grid gap-2.5 p-5 pb-8 pt-4">
+          <div className="rounded-2xl border border-border bg-card p-3">
+            <label
+              htmlFor="colonia-data-registro"
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              Data do Registro
+            </label>
+            <input
+              id="colonia-data-registro"
+              type="date"
+              value={selectedDate}
+              max={todayISOLocal()}
+              onChange={(e) => setSelectedDate(e.target.value || todayISOLocal())}
+              className="h-12 w-full rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-primary/60"
+            />
+          </div>
+
           {COLONIA_MEALS.map((r) => {
             const Icon = ICONS[r.key];
             const done = records.some((rec) => rec.record_type === r.key);
@@ -309,13 +337,13 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
 
           <div className="mt-4 border-t border-border pt-4">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Histórico de hoje
+              Histórico do dia {formatDateBR(selectedDate)}
             </h3>
             {isLoading ? (
               <p className="py-4 text-center text-sm text-muted-foreground">Carregando…</p>
             ) : records.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
-                Nenhum registro hoje.
+                Nenhum registro nesta data.
               </p>
             ) : (
               <ul className="space-y-1.5">
