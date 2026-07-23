@@ -59,6 +59,11 @@ function formatVencBR(ymd: string): string {
   return `${d}/${m}/${y}`;
 }
 
+// Unidades atendidas pela cobrança automática. O número/token de WhatsApp de
+// produção é exclusivo de CEC e CEC Baby; Núcleo Belvedere e Núcleo Vale do
+// Sereno terão um número próprio no futuro e NÃO recebem este disparo.
+const UNIDADES_COBRANCA_AUTOMATICA = new Set(["CEC", "CEC Baby"]);
+
 export async function handleWhatsAppApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const { pathname } = url;
@@ -116,7 +121,10 @@ async function runCron(): Promise<Response> {
   }
 
   const alvo = diaYMD(-2);
-  const pendencias = await coletarPendenciasPorVencimento(alvo);
+  // Restringe às unidades atendidas pelo número de produção (CEC/CEC Baby).
+  const pendencias = (await coletarPendenciasPorVencimento(alvo)).filter((p) =>
+    UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
+  );
 
   // Anti-duplicidade: não reenvia se já houver log para o mesmo aluno/vencimento
   // com status de envio (evita disparo repetido se o cron rodar duas vezes).
