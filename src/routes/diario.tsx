@@ -12,6 +12,7 @@ import {
   Utensils,
   RefreshCw,
   QrCode,
+  Loader2,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -29,6 +30,7 @@ import { formatDateBR } from "@/lib/date-utils";
 import { StudentActionSheet } from "@/components/diario/StudentActionSheet";
 import { DiarioManager } from "@/components/diario/DiarioManager";
 import { QrScannerDialog } from "@/components/diario/QrScannerDialog";
+import { downloadKeychainPdf, sanitizeFileName } from "@/lib/diario-keychain";
 import { syncDiarioSponte } from "@/lib/sponte.functions";
 import {
   MEALS,
@@ -146,6 +148,23 @@ function DiarioPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [downloadingClass, setDownloadingClass] = useState<string | null>(null);
+
+  const baixarTurma = async (className: string, alunos: DiarioStudent[]) => {
+    setDownloadingClass(className);
+    try {
+      await downloadKeychainPdf(
+        alunos.map((s) => ({ id: s.id, name: s.name, className: s.className })),
+        `chaveiros_${sanitizeFileName(className || "sem_turma")}.pdf`,
+      );
+    } catch (e) {
+      toast.error("Erro ao gerar os chaveiros", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    } finally {
+      setDownloadingClass(null);
+    }
+  };
 
   const specificSchoolId = selected !== "all" ? selected : null;
   const specificSchoolName =
@@ -271,6 +290,23 @@ function DiarioPage() {
                     </span>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2">
+                    {podeEditar && (
+                      <div className="flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={downloadingClass === className}
+                          onClick={() => baixarTurma(className, alunos)}
+                        >
+                          {downloadingClass === className ? (
+                            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                          ) : (
+                            <QrCode className="mr-1.5 h-4 w-4" />
+                          )}
+                          Baixar Turma Toda (chaveiros)
+                        </Button>
+                      </div>
+                    )}
                     {alunos.map((s) => (
                       <StudentCard
                         key={s.id}
