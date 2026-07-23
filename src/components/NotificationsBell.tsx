@@ -9,6 +9,7 @@ import {
   CreditCard,
   BookOpen,
   PartyPopper,
+  Check,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -107,7 +108,9 @@ export function NotificationsBell() {
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
 
-  // --- Task notifications (dismissible: clear on open) ---
+  // --- Task notifications ("Task Concluída" — únicas descartáveis: cada uma
+  // tem um check para marcar como lida e sair da lista; não há descarte em
+  // massa). ---
   const { data: notifications = [] } = useQuery({
     queryKey: ["task_notifications", userId ?? "anon"],
     enabled: !!userId && canTasks,
@@ -395,7 +398,6 @@ export function NotificationsBell() {
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (o && unreadTasks.length > 0) markRead.mutate(unreadTasks.map((n) => n.id));
         if (o && unreadAgenda.length > 0) markAgendaRead.mutate(unreadAgenda.map((n) => n.id));
       }}
     >
@@ -659,34 +661,41 @@ export function NotificationsBell() {
             </div>
           )}
 
-          {/* Task notifications. */}
-          {canTasks && notifications.length > 0 && (
+          {/* Task concluída: única notificação descartável (check p/ marcar lida). */}
+          {canTasks && unreadTasks.length > 0 && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Tasks
               </div>
-              {notifications.map((n) => (
-                <Link
+              {unreadTasks.map((n) => (
+                <div
                   key={n.id}
-                  to="/tasks"
-                  className={`block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent ${
-                    n.read ? "text-muted-foreground" : "font-medium"
-                  }`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
-                  {!n.read && (
+                  <Link to="/tasks" className="min-w-0 flex-1 font-medium">
                     <span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-500" />
-                  )}
-                  {n.message}
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                    {formatDateBR(n.created_at)}
-                  </span>
-                </Link>
+                    {n.message}
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {formatDateBR(n.created_at)}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Marcar como lida"
+                    aria-label="Marcar como lida"
+                    onClick={() => markRead.mutate([n.id])}
+                    disabled={markRead.isPending}
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
               ))}
             </div>
           )}
 
           {badge === 0 &&
-            notifications.length === 0 &&
+            unreadTasks.length === 0 &&
             agendaNotifications.length === 0 &&
             forecasts.length === 0 &&
             openTasks.length === 0 &&
