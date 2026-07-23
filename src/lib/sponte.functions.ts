@@ -1440,49 +1440,30 @@ async function enriquecerLinhaDigitavel(
 
 // ─── Cron de Cobrança por WhatsApp ──────────────────────────────────────────
 // Coleta as pendências cujo VENCIMENTO cai em UM dia específico (ex.: "vencidas
-// há exatamente 2 dias"), em TODAS as unidades com integração Sponte. Sem RBAC:
+// há exatamente 2 dias"), restrita a CEC e CEC Baby (ver regra abaixo). Sem RBAC:
 // roda no cron do servidor (sistema), não numa sessão de usuário. Reutiliza a
 // mesma coleta da tela de Cobrança e atribui a unidade a cada pendência.
+//
+// REGRA DE NEGÓCIO: o número/token de WhatsApp de produção é EXCLUSIVO de CEC e
+// CEC Baby. A cobrança automática só coleta essas duas unidades (o token de CEC
+// atende ambas via alunoUnidadeMap). Núcleo Belvedere e Núcleo Vale do Sereno
+// ficam de fora — terão um número de WhatsApp próprio no futuro.
 export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<PendenciaAgrupada[]> {
   const cecCreds = resolverCredenciais("CEC");
-  const belvedereCreds = resolverCredenciais("Núcleo Belvedere");
-  const valeSerenoCreds = resolverCredenciais("Núcleo Vale do Sereno");
+  if (!cecCreds) return [];
 
-  const vazio: ColetaResult = { pendencias: [], alunoUnidadeMap: {} };
-  const [cecRes, belvedereRes, valeSerenoRes] = await Promise.all([
-    cecCreds
-      ? coletarPendencias(cecCreds.codigoCliente, cecCreds.token, diaYMD, diaYMD)
-      : Promise.resolve(vazio),
-    belvedereCreds
-      ? coletarPendencias(belvedereCreds.codigoCliente, belvedereCreds.token, diaYMD, diaYMD)
-      : Promise.resolve(vazio),
-    valeSerenoCreds
-      ? coletarPendencias(valeSerenoCreds.codigoCliente, valeSerenoCreds.token, diaYMD, diaYMD)
-      : Promise.resolve(vazio),
-  ]);
+  const cecRes = await coletarPendencias(cecCreds.codigoCliente, cecCreds.token, diaYMD, diaYMD);
 
-  // Enriquece cada pendência com a Linha Digitável do boleto, usando as
-  // credenciais da respectiva unidade (necessárias para o GetLinhaDigitavelBoletos).
-  const [cecLinhas, belvedereLinhas, valeSerenoLinhas] = await Promise.all([
-    enriquecerLinhaDigitavel(cecCreds, cecRes.pendencias),
-    enriquecerLinhaDigitavel(belvedereCreds, belvedereRes.pendencias),
-    enriquecerLinhaDigitavel(valeSerenoCreds, valeSerenoRes.pendencias),
-  ]);
+  // Enriquece cada pendência com a Linha Digitável do boleto (necessário para
+  // o GetLinhaDigitavelBoletos).
+  const cecLinhas = await enriquecerLinhaDigitavel(cecCreds, cecRes.pendencias);
 
-  const cec = cecLinhas.map((p) => ({
-    ...p,
-    unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
-  }));
-  const belvedere = belvedereLinhas.map((p) => ({
-    ...p,
-    unidade: "Núcleo Belvedere",
-  }));
-  const valeSereno = valeSerenoLinhas.map((p) => ({
-    ...p,
-    unidade: "Núcleo Vale do Sereno",
-  }));
-
-  return [...cec, ...belvedere, ...valeSereno];
+  return cecLinhas
+    .map((p) => ({
+      ...p,
+      unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
+    }))
+    .filter((p) => p.unidade === "CEC" || p.unidade === "CEC Baby");
 }
 
 // ─── Cobrança Automática — disparo de teste por AlunoID ──────────────────────
