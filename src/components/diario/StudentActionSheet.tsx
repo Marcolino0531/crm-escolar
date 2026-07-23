@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { downloadKeychainPdf, sanitizeFileName } from "@/lib/diario-keychain";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   AlertDialog,
@@ -21,6 +22,8 @@ import {
   AlertTriangle,
   Settings2,
   UserCircle2,
+  QrCode,
+  Loader2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
@@ -55,6 +58,24 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
   const userId = session?.user?.id;
   const [pending, setPending] = useState<Pending | null>(null);
   const [editingPlan, setEditingPlan] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState(false);
+
+  const handleKeychain = async () => {
+    if (!student) return;
+    setDownloadingKey(true);
+    try {
+      await downloadKeychainPdf(
+        [{ id: student.id, name: student.name, className: student.className }],
+        `chaveiro_${sanitizeFileName(student.name)}.pdf`,
+      );
+    } catch (e) {
+      toast.error("Erro ao gerar o chaveiro", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    } finally {
+      setDownloadingKey(false);
+    }
+  };
 
   const register = useMutation({
     mutationFn: async (p: Pending) => {
@@ -210,6 +231,24 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
                       ? `Fora do horário (${sched.today?.entry}–${sched.today?.exit}) · hora extra`
                       : `Dentro do horário (${sched.today?.entry}–${sched.today?.exit})`
                     : "Sem horário hoje · hora extra"}
+                </span>
+              </div>
+            </button>
+
+            <button
+              onClick={handleKeychain}
+              disabled={downloadingKey}
+              className="mt-1 flex h-14 w-full items-center gap-4 rounded-2xl border border-border bg-card px-5 text-left text-sm font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
+            >
+              {downloadingKey ? (
+                <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-primary" />
+              ) : (
+                <QrCode className="h-5 w-5 flex-shrink-0 text-primary" />
+              )}
+              <div className="flex flex-1 flex-col leading-tight">
+                <span>Baixar Chaveiro (PDF)</span>
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  6×4 cm · dobra ao meio · QR + nome
                 </span>
               </div>
             </button>
