@@ -57,6 +57,19 @@ export function emptySchedule(): SchedulePlan {
 
 export const DEFAULT_DAY: DaySchedule = { entry: "07:30", exit: "17:30" };
 
+// QR Code de portaria: o "código único" do aluno é o próprio id, prefixado para
+// diferenciar de QRs genéricos. A leitura aceita o valor prefixado ou o id cru.
+export const DIARIO_QR_PREFIX = "SCHOOLHUB-DIARIO:";
+
+export function buildDiarioQrValue(studentId: string): string {
+  return `${DIARIO_QR_PREFIX}${studentId}`;
+}
+
+export function parseDiarioQrValue(text: string): string {
+  const t = text.trim();
+  return t.startsWith(DIARIO_QR_PREFIX) ? t.slice(DIARIO_QR_PREFIX.length) : t;
+}
+
 // Uma refeição está coberta hoje se o dia da semana atual estiver no plano.
 export function isCoveredToday(plan: MealPlan, meal: MealKey, today = new Date()): boolean {
   return plan[meal].includes(today.getDay() as Weekday);

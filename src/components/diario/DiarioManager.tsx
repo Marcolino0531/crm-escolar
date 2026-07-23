@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Tag, Users, Loader2 } from "lucide-react";
+import { QRCodeCanvas } from "qrcode.react";
+import { Plus, Pencil, Trash2, Tag, Users, Loader2, QrCode, Download, Printer } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import type { DiarioClass } from "@/lib/diario";
+import { buildDiarioQrValue, type DiarioClass } from "@/lib/diario";
 
 type StudentRow = { id: string; name: string; class_id: string | null; class_name: string };
 
@@ -232,6 +233,7 @@ function StudentsTab({ schoolId }: { schoolId: string }) {
   const [name, setName] = useState("");
   const [classId, setClassId] = useState<string>("");
   const [editing, setEditing] = useState<StudentRow | null>(null);
+  const [qrStudent, setQrStudent] = useState<StudentRow | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["diario_students_manage"] });
@@ -390,6 +392,15 @@ function StudentsTab({ schoolId }: { schoolId: string }) {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
+                    onClick={() => setQrStudent(s)}
+                    aria-label="QR Code do aluno"
+                  >
+                    <QrCode className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
                     onClick={() => setEditing(s)}
                   >
                     <Pencil className="h-4 w-4" />
@@ -408,6 +419,83 @@ function StudentsTab({ schoolId }: { schoolId: string }) {
           ))}
         </div>
       )}
+
+      <StudentQrDialog student={qrStudent} onOpenChange={(o) => !o && setQrStudent(null)} />
     </div>
+  );
+}
+
+function StudentQrDialog({
+  student,
+  onOpenChange,
+}: {
+  student: StudentRow | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+
+  const getDataUrl = () => {
+    const canvas = canvasWrapRef.current?.querySelector("canvas");
+    return canvas ? canvas.toDataURL("image/png") : null;
+  };
+
+  const download = () => {
+    if (!student) return;
+    const url = getDataUrl();
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qrcode_${student.name.replace(/\s+/g, "_")}.png`;
+    a.click();
+  };
+
+  const print = () => {
+    if (!student) return;
+    const url = getDataUrl();
+    if (!url) return;
+    const w = window.open("", "_blank", "width=420,height=560");
+    if (!w) return;
+    w.document.write(
+      `<html><head><title>QR ${student.name}</title></head>` +
+        `<body style="font-family:sans-serif;text-align:center;padding:24px">` +
+        `<img src="${url}" style="width:280px;height:280px"/>` +
+        `<h2 style="margin:12px 0 2px">${student.name}</h2>` +
+        `<p style="margin:0;color:#666">${student.class_name || "Sem turma"}</p>` +
+        `</body></html>`,
+    );
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  };
+
+  return (
+    <Dialog open={!!student} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <QrCode className="h-5 w-5 text-primary" /> QR Code do aluno
+          </DialogTitle>
+        </DialogHeader>
+        {student && (
+          <div className="flex flex-col items-center gap-3">
+            <div ref={canvasWrapRef} className="rounded-xl border border-border bg-white p-4">
+              <QRCodeCanvas value={buildDiarioQrValue(student.id)} size={224} level="M" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-semibold">{student.name}</p>
+              <p className="text-xs text-muted-foreground">{student.class_name || "Sem turma"}</p>
+            </div>
+            <div className="flex w-full gap-2">
+              <Button variant="outline" className="flex-1" onClick={download}>
+                <Download className="mr-1.5 h-4 w-4" /> Baixar
+              </Button>
+              <Button className="flex-1" onClick={print}>
+                <Printer className="mr-1.5 h-4 w-4" /> Imprimir
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

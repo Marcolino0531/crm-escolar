@@ -11,6 +11,7 @@ import {
   Download,
   Utensils,
   RefreshCw,
+  QrCode,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -27,6 +28,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { StudentActionSheet } from "@/components/diario/StudentActionSheet";
 import { DiarioManager } from "@/components/diario/DiarioManager";
+import { QrScannerDialog } from "@/components/diario/QrScannerDialog";
 import { syncDiarioSponte } from "@/lib/sponte.functions";
 import {
   MEALS,
@@ -143,6 +145,7 @@ function DiarioPage() {
   const [active, setActive] = useState<DiarioStudent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const specificSchoolId = selected !== "all" ? selected : null;
   const specificSchoolName =
@@ -194,6 +197,11 @@ function DiarioPage() {
             <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
               <RefreshCw className={`mr-2 h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />
               {sync.isPending ? "Sincronizando…" : "Sincronizar com Sponte"}
+            </Button>
+          )}
+          {podeEditar && (
+            <Button onClick={() => setScannerOpen(true)}>
+              <QrCode className="mr-2 h-4 w-4" /> Ler QR Code
             </Button>
           )}
           {podeEditar && (
@@ -297,6 +305,7 @@ function DiarioPage() {
         schoolId={specificSchoolId}
         schoolName={specificSchoolName}
       />
+      <QrScannerDialog open={scannerOpen} onOpenChange={setScannerOpen} students={students} />
     </div>
   );
 }
