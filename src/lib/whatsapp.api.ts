@@ -1,8 +1,10 @@
 // Endpoints nativos da automação de Cobrança por WhatsApp (Cloud API da Meta).
 // Montados a partir do server entry (`src/server.ts`), antes do roteador da app.
 //
-//   GET  /api/whatsapp/cron     — rotina diária (Vercel Cron; CRON_SECRET):
-//                                 dispara lembrete das cobranças vencidas há 2 dias.
+//   GET  /api/whatsapp/cron     — rotina diária (Vercel Cron 09:00 America/Sao_Paulo;
+//                                 CRON_SECRET): dispara lembrete das cobranças vencidas
+//                                 há exatamente 2 dias (venc. >= 01/08/2026), salvo se
+//                                 os envios do dia estiverem pausados (kill switch).
 //   GET  /api/whatsapp/webhook  — verificação do webhook (hub.challenge da Meta).
 //   POST /api/whatsapp/webhook  — eventos de status (enviado/entregue/lido/falha).
 //
@@ -64,6 +66,22 @@ function formatVencBR(ymd: string): string {
 // Sereno terão um número próprio no futuro e NÃO recebem este disparo.
 const UNIDADES_COBRANCA_AUTOMATICA = new Set(["CEC", "CEC Baby"]);
 
+// Data base da cobrança automática: só cobra vencimentos a partir deste dia,
+// para não gerar spam de pendências antigas ao ligar a automação.
+const DATA_BASE_COBRANCA = "2026-08-01";
+
+// Kill switch: envio do dia bloqueado quando `paused_date` == hoje (fuso SP).
+async function envioPausadoHoje(hojeYMD: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from("whatsapp_billing_pause" as never)
+    .select("paused_date")
+    .eq("id", "singleton")
+    .maybeSingle();
+  const pausedDate =
+    (data as unknown as { paused_date: string | null } | null)?.paused_date ?? null;
+  return pausedDate === hojeYMD;
+}
+
 export async function handleWhatsAppApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const { pathname } = url;
@@ -120,7 +138,26 @@ async function runCron(): Promise<Response> {
     });
   }
 
+  // Gatilho: cobra o vencimento de exatamente 2 dias atrás (margem de segurança
+  // para o processamento do arquivo retorno do banco).
   const alvo = diaYMD(-2);
+
+  // Regra da data base: ignora vencimentos anteriores a 01/08/2026.
+  if (alvo < DATA_BASE_COBRANCA) {
+    return json({
+      ok: true,
+      alvo,
+      motivo: `anterior à data base ${DATA_BASE_COBRANCA}`,
+      enviados: 0,
+    });
+  }
+
+  // Kill switch: se os envios foram pausados hoje, não dispara nada.
+  const hoje = diaYMD(0);
+  if (await envioPausadoHoje(hoje)) {
+    return json({ ok: true, alvo, pausado: true, enviados: 0 });
+  }
+
   // Restringe às unidades atendidas pelo número de produção (CEC/CEC Baby).
   const pendencias = (await coletarPendenciasPorVencimento(alvo)).filter((p) =>
     UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
