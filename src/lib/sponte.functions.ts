@@ -1467,6 +1467,75 @@ export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<Pe
     .filter((p) => p.unidade === "CEC" || p.unidade === "CEC Baby");
 }
 
+// ─── Histórico de dívida em aberto de UM aluno (bifurcação do cron) ──────────
+// Retorna TODOS os boletos em aberto do aluno (mês vigente + anteriores),
+// agrupados por boleto e ordenados por vencimento. Usado pelo cron para decidir
+// entre o template padrão (1 boleto) e o de cobrança múltipla (vários boletos).
+export interface BoletoAberto {
+  vencimento: string; // YYYY-MM-DD
+  saldo: number;
+  numeroBoleto: string;
+  contaReceberID: string;
+  numeroParcela: string;
+}
+
+export interface DividaAbertaAluno {
+  boletos: BoletoAberto[]; // ordenados por vencimento asc
+  totalSaldo: number; // soma dos saldos de todos os boletos em aberto
+}
+
+export async function coletarDividaAbertaAluno(
+  unidade: string,
+  alunoId: string,
+): Promise<DividaAbertaAluno | null> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return null;
+
+  let parcelaNodes: string[];
+  try {
+    const xml = await callSponte(
+      "GetParcelas",
+      `AlunoID=${alunoId};Situacao=Aberta`,
+      creds.codigoCliente,
+      creds.token,
+    );
+    if (checkFault(xml)) return null;
+    parcelaNodes = parseXmlList(xml, "wsParcela");
+  } catch {
+    return null;
+  }
+
+  const grupos = new Map<string, BoletoAberto>();
+  for (const node of parcelaNodes) {
+    if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+    const situacao = parseXmlValue(node, "SituacaoParcela");
+    if (situacao === "Quitada" || situacao === "Cancelada") continue;
+    const valor = parseBrDecimal(parseXmlValue(node, "ValorParcela"));
+    const valorPago = parseBrDecimal(parseXmlValue(node, "ValorPago"));
+    const saldo = valor - valorPago;
+    if (saldo <= 0) continue;
+    const numeroBoleto = parseXmlValue(node, "NumeroBoleto");
+    const vencimento = paraYMD(parseXmlValue(node, "Vencimento")) ?? "";
+    const key = numeroBoleto && numeroBoleto !== "0" ? `bol_${numeroBoleto}` : vencimento;
+    const cur = grupos.get(key);
+    if (cur) {
+      cur.saldo += saldo;
+    } else {
+      grupos.set(key, {
+        vencimento,
+        saldo,
+        numeroBoleto,
+        contaReceberID: parseXmlValue(node, "ContaReceberID"),
+        numeroParcela: parseXmlValue(node, "NumeroParcela"),
+      });
+    }
+  }
+
+  const boletos = [...grupos.values()].sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  const totalSaldo = boletos.reduce((s, b) => s + b.saldo, 0);
+  return { boletos, totalSaldo };
+}
+
 // ─── Cobrança Automática — disparo de teste por AlunoID ──────────────────────
 // Aciona MANUALMENTE o fluxo de cobrança para UM aluno do Sponte, validando a
 // integração ponta a ponta (Sponte → linha digitável → WhatsApp Cloud API →
