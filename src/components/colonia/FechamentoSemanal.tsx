@@ -50,6 +50,7 @@ import {
   fmtDayMonth,
   fmtTime,
   mondayOf,
+  ordenarRegistrosDoDia,
   toYMD,
   type ColoniaRecord,
   type ColoniaRecordType,
@@ -773,7 +774,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                 </AccordionTrigger>
                 <AccordionContent className="space-y-3 pb-3">
                   {COLONIA_WEEKDAYS.map((d) => {
-                    const recs = s.byDay[d.weekday];
+                    const recs = ordenarRegistrosDoDia(s.byDay[d.weekday]);
                     if (recs.length === 0) return null;
                     return (
                       <div key={d.weekday} className="rounded-xl bg-secondary/40 p-2.5">

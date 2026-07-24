@@ -21,6 +21,7 @@ import {
   COLONIA_MEALS,
   COLONIA_GATE,
   COLONIA_RECORD_LABEL,
+  ordenarRegistrosDoDia,
   type ColoniaRecordType,
   type ColoniaStudent,
 } from "@/lib/colonia";
@@ -347,7 +348,7 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {records.map((rec) => {
+                {ordenarRegistrosDoDia(records).map((rec) => {
                   const Icon = ICONS[rec.record_type];
                   return (
                     <li

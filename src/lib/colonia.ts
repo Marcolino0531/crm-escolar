@@ -26,6 +26,18 @@ export const COLONIA_RECORD_LABEL: Record<ColoniaRecordType, string> = {
   exit: "Saída",
 };
 
+// Ordem cronológica lógica de exibição dos registros de um dia. Entrada e Saída
+// ancoram a lista (primeiro e último item); as refeições ficam entre elas na
+// sequência do dia. Itens não registrados simplesmente não aparecem.
+export const COLONIA_RECORD_ORDER: ColoniaRecordType[] = [
+  "entry",
+  "breakfast",
+  "lunch",
+  "snack",
+  "dinner",
+  "exit",
+];
+
 // Aluno da Colônia: só os campos necessários para listar/agrupar e registrar.
 // (Sem plano/horário — a Colônia não valida contratação.)
 export type ColoniaStudent = {
@@ -42,6 +54,26 @@ export type ColoniaRecord = {
   record_type: ColoniaRecordType;
   occurred_at: string;
 };
+
+// Prepara os registros de UM dia para exibição: descarta duplicados idênticos
+// (mesmo tipo no mesmo minuto — vindos de duplo clique, ex.: duas Entradas às
+// 07:05) e ordena por COLONIA_RECORD_ORDER, com o horário como desempate.
+export function ordenarRegistrosDoDia<T extends ColoniaRecord>(records: T[]): T[] {
+  const vistos = new Set<string>();
+  const unicos: T[] = [];
+  for (const r of records) {
+    const minuto = Math.floor(new Date(r.occurred_at).getTime() / 60000);
+    const chave = `${r.record_type}|${minuto}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    unicos.push(r);
+  }
+  return unicos.sort((a, b) => {
+    const ordem =
+      COLONIA_RECORD_ORDER.indexOf(a.record_type) - COLONIA_RECORD_ORDER.indexOf(b.record_type);
+    return ordem !== 0 ? ordem : a.occurred_at.localeCompare(b.occurred_at);
+  });
+}
 
 // Dias úteis (segunda a sexta) usados no Fechamento Semanal. weekday = Date.getDay().
 export const COLONIA_WEEKDAYS: { weekday: number; label: string }[] = [
