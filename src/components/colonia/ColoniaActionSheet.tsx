@@ -69,9 +69,18 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canEdit: boolean;
+  // Data (YYYY-MM-DD) em que o modal deve abrir; usada pelo deep link de
+  // pendência do sininho. Sem ela, abre no dia de hoje.
+  initialDate?: string | null;
 };
 
-export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Props) {
+export function ColoniaActionSheet({
+  student,
+  open,
+  onOpenChange,
+  canEdit,
+  initialDate = null,
+}: Props) {
   const { session } = useAuth();
   const qc = useQueryClient();
   const userId = session?.user?.id;
@@ -84,8 +93,8 @@ export function ColoniaActionSheet({ student, open, onOpenChange, canEdit }: Pro
   // Data do registro (retroativa): padrão hoje, redefinida ao abrir o modal.
   const [selectedDate, setSelectedDate] = useState(todayISOLocal());
   useEffect(() => {
-    if (open) setSelectedDate(todayISOLocal());
-  }, [open, student?.id]);
+    if (open) setSelectedDate(initialDate ?? todayISOLocal());
+  }, [open, student?.id, initialDate]);
 
   const { start, end } = dayRange(selectedDate);
   const { data: records = [], isLoading } = useQuery({
