@@ -62,8 +62,9 @@ type ChatMessage = {
   created_at: string;
 };
 
-function nomeConversa(c: Conversation): string {
-  return c.aluno_name || c.contact_name || displayPhoneBR(c.wa_phone) || c.wa_phone;
+// Rótulo primário da conversa: o responsável (quem escreve pelo WhatsApp).
+function nomeResponsavel(c: Conversation): string {
+  return c.responsavel_name || c.contact_name || displayPhoneBR(c.wa_phone) || c.wa_phone;
 }
 
 function horaCurta(iso: string | null): string {
@@ -200,7 +201,15 @@ function AtendimentoPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-semibold">{nomeConversa(c)}</span>
+                      <span className="truncate text-sm font-semibold">
+                        {nomeResponsavel(c)}
+                        {c.aluno_name && (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {" "}
+                            (aluno: {c.aluno_name})
+                          </span>
+                        )}
+                      </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
                         {horaCurta(c.last_message_at)}
                       </span>
@@ -322,7 +331,15 @@ function ThreadConversa({
           <User className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{nomeConversa(conversa)}</div>
+          <div className="truncate text-sm font-semibold">
+            {nomeResponsavel(conversa)}
+            {conversa.aluno_name && (
+              <span className="text-xs font-normal text-muted-foreground">
+                {" "}
+                (aluno: {conversa.aluno_name})
+              </span>
+            )}
+          </div>
           <div className="truncate text-xs text-muted-foreground">
             {displayPhoneBR(conversa.wa_phone) || conversa.wa_phone}
             {conversa.aluno_id ? ` · AlunoID ${conversa.aluno_id}` : ""}
