@@ -22,15 +22,33 @@ export interface RegistrarTemplateParams {
   vinculo: VinculoAluno;
 }
 
+export interface ConversaMatch {
+  id: string;
+  aluno_id: string | null;
+  aluno_name: string;
+}
+
+// Localiza a conversa de um telefone tolerando o 9º dígito e o DDI que a Meta
+// omite no wa_id (ex.: dispara "5531993034128" mas o wa_id chega "553193034128"):
+// casa pelos últimos 8 dígitos, a MESMA regra do cruzamento telefone→aluno. Assim
+// o disparo e o webhook convergem para uma única conversa (evita duplicatas).
+export async function findConversaBySuffix(waPhone: string): Promise<ConversaMatch | null> {
+  const suffix = waPhone.slice(-8);
+  if (suffix.length < 8) return null;
+  const { data } = await supabaseAdmin
+    .from("whatsapp_conversations" as never)
+    .select("id, aluno_id, aluno_name")
+    .ilike("wa_phone", `%${suffix}%`)
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as unknown as ConversaMatch | null) ?? null;
+}
+
 // Garante a conversa do telefone com os dados do aluno já conhecidos no disparo;
 // completa o vínculo se a conversa existir sem aluno associado.
 async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<string | null> {
-  const { data: existente } = await supabaseAdmin
-    .from("whatsapp_conversations" as never)
-    .select("id, aluno_id")
-    .eq("wa_phone", waPhone)
-    .maybeSingle();
-  const atual = existente as unknown as { id: string; aluno_id: string | null } | null;
+  const atual = await findConversaBySuffix(waPhone);
 
   if (atual) {
     if (!atual.aluno_id && v.aluno_id) {
