@@ -58,6 +58,9 @@ type SchoolCtx = {
   schools: { id: string; name: string }[];
   // True when the logged-in user is limited to a subset of schools.
   restricted: boolean;
+  // True for a non-admin whose user_schools is empty: they may access NO school
+  // (never the whole set). The app must show an access-denied state, not data.
+  noSchoolAccess: boolean;
   // True for users who may select the consolidated "Todas as Unidades" view:
   // global users (admin/unrestricted) and restricted users with MORE THAN ONE
   // permitted unit. Single-unit restricted users stay locked to their unit.
@@ -76,6 +79,7 @@ const SchoolContext = createContext<SchoolCtx>({
   setSelected: () => {},
   schools: [],
   restricted: false,
+  noSchoolAccess: false,
   canSeeAll: true,
   allowedIds: [],
   schoolFilterIds: null,
@@ -83,7 +87,7 @@ const SchoolContext = createContext<SchoolCtx>({
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
-  const { isAdmin } = useRole();
+  const { isAdmin, loading: roleLoading } = useRole();
   // Every fresh load/login starts on the consolidated view ("Todas as
   // Unidades"); the selection is intentionally NOT persisted across reloads.
   const [selected, setSelected] = useState<SchoolFilter>("all");
@@ -98,8 +102,10 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  // Schools this user is explicitly allowed to access. Empty = unrestricted.
-  const { data: allowedIds = [] } = useQuery({
+  // Schools this user is explicitly assigned to (user_schools). For a non-admin
+  // this is the ONLY set they may access — an empty set means NO access, never
+  // "all". Admins are global and ignore this list.
+  const { data: allowedIds = [], isLoading: allowedLoading } = useQuery({
     queryKey: ["user_schools", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
@@ -112,11 +118,17 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const restricted = !isAdmin && allowedIds.length > 0;
+  // Any non-admin is scoped to their assigned units. Admins are unrestricted.
+  const restricted = !isAdmin;
   const schools = useMemo(() => {
-    if (!restricted) return allSchools;
+    if (isAdmin) return allSchools;
+    // Non-admin: intersect with assigned units. Empty assignment ⇒ no schools.
     return allSchools.filter((s) => allowedIds.includes(s.id));
-  }, [allSchools, allowedIds, restricted]);
+  }, [allSchools, allowedIds, isAdmin]);
+
+  // Non-admin with zero assigned units: deny access (show no data), never fall
+  // back to the full set. Gate on loading so we don't flash denial mid-fetch.
+  const noSchoolAccess = !isAdmin && !roleLoading && !allowedLoading && allowedIds.length === 0;
 
   // Who may use "Todas as Unidades": global users (admin/unrestricted) and any
   // restricted user with more than one permitted unit. For the latter, "all"
@@ -156,7 +168,16 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
 
   return (
     <SchoolContext.Provider
-      value={{ selected, setSelected, schools, restricted, canSeeAll, allowedIds, schoolFilterIds }}
+      value={{
+        selected,
+        setSelected,
+        schools,
+        restricted,
+        noSchoolAccess,
+        canSeeAll,
+        allowedIds,
+        schoolFilterIds,
+      }}
     >
       {children}
     </SchoolContext.Provider>
