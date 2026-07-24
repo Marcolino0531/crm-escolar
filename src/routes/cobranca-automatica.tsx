@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
@@ -12,6 +12,9 @@ import {
   Inbox,
   FileText,
   X,
+  PauseCircle,
+  PlayCircle,
+  ShieldAlert,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -149,6 +152,8 @@ function CobrancaAutomaticaPage() {
         </p>
       </div>
 
+      <KillSwitch podeEditar={podeEditar} />
+
       {podeEditar && <AmbienteDeTeste onEnviado={() => refetch()} />}
 
       <div className="rounded-xl border border-border bg-card">
@@ -252,6 +257,110 @@ function CobrancaAutomaticaPage() {
       </div>
 
       <DetalheDisparo log={selecionado} onClose={() => setSelecionado(null)} />
+    </div>
+  );
+}
+
+// Data de hoje (YYYY-MM-DD) no horário de Brasília — mesma referência do cron.
+function hojeSaoPauloYMD(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+function formatDiaBR(ymd: string): string {
+  const [y, m, d] = ymd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+// Kill switch: pausa o disparo automático do dia (contingência para quando o
+// arquivo retorno do banco não pôde ser baixado a tempo). A trava vale só para
+// hoje; no dia seguinte a automação volta a rodar sozinha.
+function KillSwitch({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const hoje = hojeSaoPauloYMD();
+
+  const { data: pausadoHoje = false } = useQuery({
+    queryKey: ["cobranca-pause", hoje],
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("whatsapp_billing_pause" as never)
+        .select("paused_date")
+        .eq("id", "singleton")
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      const pd = (data as unknown as { paused_date: string | null } | null)?.paused_date ?? null;
+      return pd === hoje;
+    },
+  });
+
+  const toggle = useMutation({
+    mutationFn: async (pausar: boolean) => {
+      const { data: u } = await supabase.auth.getUser();
+      const { error } = await supabase
+        .from("whatsapp_billing_pause" as never)
+        .update({
+          paused_date: pausar ? hoje : null,
+          updated_at: new Date().toISOString(),
+          updated_by: u.user?.id ?? null,
+        } as never)
+        .eq("id", "singleton");
+      if (error) throw new Error(error.message);
+      return pausar;
+    },
+    onSuccess: (pausar) => {
+      toast.success(
+        pausar ? "Envios automáticos pausados para hoje." : "Envios automáticos reativados.",
+      );
+      qc.invalidateQueries({ queryKey: ["cobranca-pause"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao alterar a pausa."),
+  });
+
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${
+        pausadoHoje ? "border-red-300 bg-red-50" : "border-emerald-200 bg-emerald-50"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        {pausadoHoje ? (
+          <ShieldAlert className="mt-0.5 h-6 w-6 shrink-0 text-red-600" />
+        ) : (
+          <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />
+        )}
+        <div>
+          <div
+            className={`text-sm font-semibold ${pausadoHoje ? "text-red-700" : "text-emerald-800"}`}
+          >
+            {pausadoHoje
+              ? `Envios automáticos PAUSADOS para hoje (${formatDiaBR(hoje)})`
+              : "Envios automáticos ativos"}
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {pausadoHoje
+              ? "Nenhuma cobrança será disparada hoje. A automação volta a rodar amanhã automaticamente."
+              : "O disparo diário roda às 09:00 (horário de Brasília). Use a pausa se o arquivo retorno do banco não puder ser baixado a tempo."}
+          </p>
+        </div>
+      </div>
+      {podeEditar && (
+        <Button
+          variant={pausadoHoje ? "default" : "destructive"}
+          className="gap-1.5"
+          disabled={toggle.isPending}
+          onClick={() => toggle.mutate(!pausadoHoje)}
+        >
+          {pausadoHoje ? (
+            <>
+              <PlayCircle className="h-4 w-4" /> Reativar Envios
+            </>
+          ) : (
+            <>
+              <PauseCircle className="h-4 w-4" /> Pausar Envios
+            </>
+          )}
+        </Button>
+      )}
     </div>
   );
 }
