@@ -344,11 +344,34 @@ async function getOrCreateConversa(
     .maybeSingle();
   const atual = existente as unknown as ConversaRow | null;
   if (atual) {
-    if (contactName && !atual.aluno_name) {
+    const patch: Record<string, string> = {};
+    if (contactName && !atual.aluno_name) patch.contact_name = contactName;
+    // Auto-reparo do vínculo: se a conversa ainda não está ligada a um aluno,
+    // tenta de novo — a cobrança que identifica o telefone pode ter sido
+    // registrada depois de a conversa já existir (ex.: pai que escreveu antes).
+    let vinculoAplicado: { aluno_id: string; aluno_name: string } | null = null;
+    if (!atual.aluno_id) {
+      const vinculo = await vincularAlunoPorTelefone(waPhone);
+      if (vinculo?.aluno_id) {
+        patch.aluno_id = vinculo.aluno_id;
+        patch.aluno_name = vinculo.aluno_name;
+        patch.responsavel_name = vinculo.responsavel_name;
+        patch.unidade = vinculo.unidade;
+        vinculoAplicado = { aluno_id: vinculo.aluno_id, aluno_name: vinculo.aluno_name };
+      }
+    }
+    if (Object.keys(patch).length > 0) {
       await supabaseAdmin
         .from("whatsapp_conversations" as never)
-        .update({ contact_name: contactName } as never)
+        .update(patch as never)
         .eq("id", atual.id);
+    }
+    if (vinculoAplicado) {
+      return {
+        ...atual,
+        aluno_id: vinculoAplicado.aluno_id,
+        aluno_name: vinculoAplicado.aluno_name,
+      };
     }
     return atual;
   }
