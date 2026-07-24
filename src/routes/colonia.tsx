@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PartyPopper, Search, UserCircle2 } from "lucide-react";
@@ -17,8 +17,16 @@ import { ColoniaActionSheet } from "@/components/colonia/ColoniaActionSheet";
 import { FechamentoSemanal } from "@/components/colonia/FechamentoSemanal";
 import { type ColoniaStudent } from "@/lib/colonia";
 
+// Deep link do sininho: `aluno` (diario_students.id) + `dia` (YYYY-MM-DD) abrem
+// direto o registro daquele aluno na data da pendência, para correção imediata.
+type ColoniaSearch = { aluno?: string; dia?: string };
+
 export const Route = createFileRoute("/colonia")({
   head: () => ({ meta: [{ title: "Colônia de Férias — School Hub" }] }),
+  validateSearch: (search: Record<string, unknown>): ColoniaSearch => ({
+    aluno: typeof search.aluno === "string" ? search.aluno : undefined,
+    dia: typeof search.dia === "string" ? search.dia : undefined,
+  }),
   component: ColoniaGate,
 });
 
@@ -77,6 +85,14 @@ function ColoniaPage() {
     schools.find((s) => s.id === specificSchoolId)?.name ?? "Todas as Unidades";
 
   const defaultTab = podeOperacional ? "registro" : "fechamento";
+  const { aluno: focusStudentId, dia: focusDia } = Route.useSearch();
+  const [tab, setTab] = useState(defaultTab);
+
+  // Chegando de uma notificação de pendência, abre a aba de registro (onde a
+  // correção é feita) antes de o modal do aluno subir.
+  useEffect(() => {
+    if (focusStudentId && podeOperacional) setTab("registro");
+  }, [focusStudentId, podeOperacional]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
@@ -92,7 +108,7 @@ function ColoniaPage() {
         </div>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList>
           {podeOperacional && <TabsTrigger value="registro">Registrar Consumos</TabsTrigger>}
           {podeFinanceiro && <TabsTrigger value="fechamento">Fechamento Semanal</TabsTrigger>}
@@ -100,7 +116,12 @@ function ColoniaPage() {
 
         {podeOperacional && (
           <TabsContent value="registro" className="space-y-4 pt-4">
-            <RegistrarConsumos schoolFilterIds={schoolFilterIds} canEdit={podeEditar} />
+            <RegistrarConsumos
+              schoolFilterIds={schoolFilterIds}
+              canEdit={podeEditar}
+              focusStudentId={focusStudentId}
+              focusDia={focusDia}
+            />
           </TabsContent>
         )}
 
@@ -121,16 +142,34 @@ function ColoniaPage() {
 function RegistrarConsumos({
   schoolFilterIds,
   canEdit,
+  focusStudentId,
+  focusDia,
 }: {
   schoolFilterIds: string[] | null;
   canEdit: boolean;
+  focusStudentId?: string;
+  focusDia?: string;
 }) {
   const { data: students = [], isLoading } = useColoniaStudents(schoolFilterIds);
+  const navigate = useNavigate({ from: Route.fullPath });
 
   const [busca, setBusca] = useState("");
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [active, setActive] = useState<ColoniaStudent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Data que o deep link pediu; guardada localmente para sobreviver à limpeza
+  // dos parâmetros da URL enquanto o modal continua aberto.
+  const [deepLinkDate, setDeepLinkDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusStudentId) return;
+    const alvo = students.find((s) => s.id === focusStudentId);
+    if (!alvo) return;
+    setActive(alvo);
+    setDeepLinkDate(focusDia ?? null);
+    setSheetOpen(true);
+    navigate({ search: { aluno: undefined, dia: undefined }, replace: true });
+  }, [focusStudentId, focusDia, students, navigate]);
 
   const filtered = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -226,8 +265,12 @@ function RegistrarConsumos({
       <ColoniaActionSheet
         student={active}
         open={sheetOpen}
-        onOpenChange={setSheetOpen}
+        onOpenChange={(o) => {
+          setSheetOpen(o);
+          if (!o) setDeepLinkDate(null);
+        }}
         canEdit={canEdit}
+        initialDate={deepLinkDate}
       />
     </>
   );

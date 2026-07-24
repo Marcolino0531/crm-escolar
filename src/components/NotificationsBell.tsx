@@ -89,6 +89,7 @@ type ColoniaPendencia = {
 
 type ColoniaDiaIncompleto = {
   studentId: string;
+  schoolId: string;
   name: string;
   dia: string; // YYYY-MM-DD
   pendencia: PendenciaPortaria;
@@ -368,17 +369,25 @@ export function NotificationsBell() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("holiday_camp_records" as never)
-        .select("student_id, record_type, occurred_at, diario_students(name)")
+        .select("student_id, school_id, record_type, occurred_at, diario_students(name)")
         .gte("occurred_at", coloniaIntegridadeInicio.toISOString())
         .lt("occurred_at", coloniaHojeInicio.toISOString());
       if (error) return [] as ColoniaDiaIncompleto[];
 
       const porDia = new Map<
         string,
-        { studentId: string; name: string; dia: string; entrada: boolean; saida: boolean }
+        {
+          studentId: string;
+          schoolId: string;
+          name: string;
+          dia: string;
+          entrada: boolean;
+          saida: boolean;
+        }
       >();
       for (const r of (data ?? []) as unknown as {
         student_id: string;
+        school_id: string;
         record_type: ColoniaRecordType;
         occurred_at: string;
         diario_students: { name: string } | { name: string }[] | null;
@@ -393,6 +402,7 @@ export function NotificationsBell() {
           const st = Array.isArray(r.diario_students) ? r.diario_students[0] : r.diario_students;
           acc = {
             studentId: r.student_id,
+            schoolId: r.school_id,
             name: st?.name ?? "Aluno",
             dia,
             entrada: false,
@@ -408,6 +418,7 @@ export function NotificationsBell() {
         .filter((a) => !a.entrada || !a.saida)
         .map((a) => ({
           studentId: a.studentId,
+          schoolId: a.schoolId,
           name: a.name,
           dia: a.dia,
           pendencia: { faltaEntrada: !a.entrada, faltaSaida: !a.saida },
@@ -645,6 +656,11 @@ export function NotificationsBell() {
                 <Link
                   key={`${p.studentId}-${p.dia}`}
                   to="/colonia"
+                  search={{ aluno: p.studentId, dia: p.dia }}
+                  onClick={() => {
+                    setSelected(p.schoolId);
+                    setOpen(false);
+                  }}
                   className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
                   <div className="flex items-start gap-2">
@@ -655,7 +671,7 @@ export function NotificationsBell() {
                       </div>
                       <div className="text-[11px] text-muted-foreground">
                         {formatDateBR(p.dia)}: houve movimentação no dia, mas o ciclo de horas está
-                        incompleto.
+                        incompleto. Clique para corrigir.
                       </div>
                     </div>
                   </div>
