@@ -19,6 +19,7 @@ import {
   renderBillingMessage,
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
+import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -232,6 +233,18 @@ async function runCron(): Promise<Response> {
         status: "enviado",
         wa_message_id: messageId,
       } as never);
+      // Espelha o disparo no histórico do chat de Atendimento.
+      await registrarTemplateNoChat({
+        telefone: p.telefone,
+        waMessageId: messageId,
+        body: base.message_body,
+        vinculo: {
+          aluno_id: p.alunoId,
+          aluno_name: p.nomeAluno || "",
+          responsavel_name: p.nomeResponsavel || "",
+          unidade: p.unidade || "",
+        },
+      });
     } catch (e) {
       falhas++;
       await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
@@ -337,12 +350,9 @@ async function getOrCreateConversa(
   waPhone: string,
   contactName: string,
 ): Promise<ConversaRow | null> {
-  const { data: existente } = await supabaseAdmin
-    .from("whatsapp_conversations" as never)
-    .select("id, aluno_id, aluno_name")
-    .eq("wa_phone", waPhone)
-    .maybeSingle();
-  const atual = existente as unknown as ConversaRow | null;
+  // Casa pelos últimos 8 dígitos: o wa_id da Meta e o telefone gravado no disparo
+  // podem divergir no 9º dígito/DDI. Converge para uma única conversa.
+  const atual = (await findConversaBySuffix(waPhone)) as ConversaRow | null;
   if (atual) {
     const patch: Record<string, string> = {};
     if (contactName && !atual.aluno_name) patch.contact_name = contactName;

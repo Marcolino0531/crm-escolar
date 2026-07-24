@@ -12,6 +12,7 @@ import {
   Check,
   CheckCheck,
   AlertTriangle,
+  Bot,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -59,6 +60,7 @@ type ChatMessage = {
   status: "recebido" | "enviado" | "entregue" | "lido" | "falha";
   erro_mensagem: string | null;
   wa_timestamp: string | null;
+  origem: "chat" | "cobranca";
   created_at: string;
 };
 
@@ -273,7 +275,7 @@ function ThreadConversa({
       const { data, error } = await supabase
         .from("whatsapp_messages" as never)
         .select(
-          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, created_at",
+          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at",
         )
         .eq("conversation_id", conversa.id)
         .order("created_at", { ascending: true })
@@ -413,6 +415,7 @@ const STATUS_MSG: Record<ChatMessage["status"], { label: string; icon: typeof Ch
 
 function Bolha({ msg }: { msg: ChatMessage }) {
   const out = msg.direction === "out";
+  const automatica = msg.origem === "cobranca";
   const st = STATUS_MSG[msg.status];
   const Icon = st.icon;
   return (
@@ -422,10 +425,17 @@ function Bolha({ msg }: { msg: ChatMessage }) {
           out
             ? msg.status === "falha"
               ? "bg-red-100 text-red-800"
-              : "bg-emerald-100 text-emerald-950"
+              : automatica
+                ? "bg-amber-50 text-amber-950 ring-1 ring-amber-200"
+                : "bg-emerald-100 text-emerald-950"
             : "bg-card text-foreground"
         }`}
       >
+        {automatica && (
+          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+            <Bot className="h-3 w-3" /> Cobrança automática
+          </div>
+        )}
         <div className="whitespace-pre-wrap break-words">{msg.body}</div>
         <div
           className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
