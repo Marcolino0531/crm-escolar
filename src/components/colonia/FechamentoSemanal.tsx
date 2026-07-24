@@ -49,12 +49,15 @@ import {
   firstOfMonth,
   fmtDayMonth,
   fmtTime,
+  labelPendenciaPortaria,
   mondayOf,
   ordenarRegistrosDoDia,
+  pendenciaPortaria,
   toYMD,
   type ColoniaRecord,
   type ColoniaRecordType,
   type ColoniaStudentWeek,
+  type PendenciaPortaria,
 } from "@/lib/colonia";
 import {
   computeDayBilling,
@@ -280,6 +283,26 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   });
 
   const calcReady = !sponteActive || (!beneficiosLoading && !prevPermLoading);
+
+  // Integridade da portaria: dia com qualquer movimentação precisa ter Entrada
+  // E Saída. Só acusa dias já finalizados (de ontem para trás).
+  const hojeYMD = toYMD(new Date());
+  const pendenciasByStudent = useMemo(() => {
+    const m = new Map<string, Map<number, PendenciaPortaria>>();
+    for (const s of students) {
+      const dias = new Map<number, PendenciaPortaria>();
+      for (const d of COLONIA_WEEKDAYS) {
+        const p = pendenciaPortaria(
+          s.byDay[d.weekday],
+          toYMD(addDays(weekStart, d.weekday - 1)),
+          hojeYMD,
+        );
+        if (p) dias.set(d.weekday, p);
+      }
+      if (dias.size > 0) m.set(s.studentId, dias);
+    }
+    return m;
+  }, [students, weekStart, hojeYMD]);
 
   // Extrato por aluno (também usado pelo watcher que invalida faturamentos cujo
   // valor mudou depois de faturado).
@@ -749,6 +772,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                 creditoHoraExtra: 0,
               });
             const calculando = sponteActive && beneficiosLoading;
+            const pendDias = pendenciasByStudent.get(s.studentId);
 
             return (
               <AccordionItem
@@ -767,6 +791,13 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                         {s.className || "Sem turma"}
                       </span>
                     </span>
+                    {pendDias && (
+                      <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-600 dark:text-red-400">
+                        <AlertTriangle className="h-3 w-3" />
+                        {pendDias.size}{" "}
+                        {pendDias.size === 1 ? "dia incompleto" : "dias incompletos"}
+                      </span>
+                    )}
                     <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                       {calculando ? "…" : brl(billing.total)}
                     </span>
@@ -776,8 +807,14 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                   {COLONIA_WEEKDAYS.map((d) => {
                     const recs = ordenarRegistrosDoDia(s.byDay[d.weekday]);
                     if (recs.length === 0) return null;
+                    const pend = pendDias?.get(d.weekday);
                     return (
-                      <div key={d.weekday} className="rounded-xl bg-secondary/40 p-2.5">
+                      <div
+                        key={d.weekday}
+                        className={`rounded-xl p-2.5 ${
+                          pend ? "bg-red-500/5 ring-1 ring-red-500/40" : "bg-secondary/40"
+                        }`}
+                      >
                         <div className="mb-1.5 flex items-center justify-between px-1">
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             {d.label}
@@ -786,6 +823,13 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                             {recs.length} {recs.length === 1 ? "registro" : "registros"}
                           </span>
                         </div>
+                        {pend && (
+                          <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-red-600 dark:text-red-400">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                            {labelPendenciaPortaria(pend)} — o dia teve movimentação e precisa de
+                            Entrada e Saída.
+                          </div>
+                        )}
                         <ul className="space-y-1.5">
                           {recs.map((rec) => {
                             const Icon = ICONS[rec.record_type];
