@@ -34,7 +34,13 @@ import {
   Menu,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
-import { AuthProvider, SchoolProvider, useAuth, usePermissions } from "@/lib/app-context";
+import {
+  AuthProvider,
+  SchoolProvider,
+  useAuth,
+  usePermissions,
+  useSchool,
+} from "@/lib/app-context";
 import { LoginScreen } from "@/components/LoginScreen";
 import { UpdatePasswordScreen } from "@/components/UpdatePasswordScreen";
 import { SchoolFilter } from "@/components/SchoolFilter";
@@ -253,6 +259,7 @@ function AuthGate() {
 
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
+  const { noSchoolAccess } = useSchool();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -441,7 +448,17 @@ function AppShell() {
           </div>
         </div>
         <main className="flex-1 p-4 md:p-8">
-          <Outlet />
+          {noSchoolAccess ? (
+            <div className="mx-auto mt-16 max-w-md rounded-lg border border-border bg-card p-8 text-center">
+              <h2 className="text-lg font-semibold text-foreground">Acesso não liberado</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Sua conta ainda não está vinculada a nenhuma unidade. Fale com um administrador para
+                liberar o acesso.
+              </p>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
     </div>
