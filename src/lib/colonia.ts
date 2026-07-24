@@ -75,6 +75,29 @@ export function ordenarRegistrosDoDia<T extends ColoniaRecord>(records: T[]): T[
   });
 }
 
+// Integridade do dia: se houve QUALQUER movimentação, o aluno precisa ter uma
+// Entrada e uma Saída registradas — sem isso o controle de horas fica quebrado.
+// Trava de data: só acusa dias já finalizados (de ontem para trás); o dia de
+// hoje é ignorado, pois as crianças ainda estão na colônia.
+export type PendenciaPortaria = { faltaEntrada: boolean; faltaSaida: boolean };
+
+export function pendenciaPortaria(
+  records: ColoniaRecord[],
+  diaYMD: string,
+  hojeYMD: string,
+): PendenciaPortaria | null {
+  if (records.length === 0) return null;
+  if (diaYMD >= hojeYMD) return null;
+  const faltaEntrada = !records.some((r) => r.record_type === "entry");
+  const faltaSaida = !records.some((r) => r.record_type === "exit");
+  return faltaEntrada || faltaSaida ? { faltaEntrada, faltaSaida } : null;
+}
+
+export function labelPendenciaPortaria(p: PendenciaPortaria): string {
+  if (p.faltaEntrada && p.faltaSaida) return "Entrada e Saída não registradas";
+  return p.faltaEntrada ? "Entrada não registrada" : "Saída não registrada";
+}
+
 // Dias úteis (segunda a sexta) usados no Fechamento Semanal. weekday = Date.getDay().
 export const COLONIA_WEEKDAYS: { weekday: number; label: string }[] = [
   { weekday: 1, label: "Segunda-feira" },

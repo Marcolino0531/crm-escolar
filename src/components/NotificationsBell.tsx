@@ -20,7 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
 import { STORES, isValeDoSerenoProductName, type StoreKey } from "@/lib/nuvemshop.stores";
-import { mondayOf, addDays, toYMD } from "@/lib/colonia";
+import {
+  mondayOf,
+  addDays,
+  toYMD,
+  labelPendenciaPortaria,
+  type ColoniaRecordType,
+  type PendenciaPortaria,
+} from "@/lib/colonia";
 
 type Notification = {
   id: string;
@@ -80,6 +87,13 @@ type ColoniaPendencia = {
   name: string;
 };
 
+type ColoniaDiaIncompleto = {
+  studentId: string;
+  name: string;
+  dia: string; // YYYY-MM-DD
+  pendencia: PendenciaPortaria;
+};
+
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
   belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
@@ -103,6 +117,7 @@ export function NotificationsBell() {
   const canCartao = canView("financeiro_cartao");
   const canDiario = canView("diario");
   const canAgenda = canView("agenda");
+  const canColonia = canView("colonia");
   const canColoniaFin = canView("colonia_financeiro");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
@@ -331,6 +346,76 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Colônia de Férias: preenchimento incompleto. Dia com movimentação mas
+  // sem Entrada e/ou Saída registradas quebra o controle de horas. Janela
+  // rolante de duas semanas e TRAVA DE DATA: só dias já finalizados (o corte é
+  // hoje 00:00 local), para não acusar enquanto as crianças estão na colônia. ---
+  const coloniaIntegridadeInicio = addDays(coloniaThisMonday, -7);
+  const coloniaHojeInicio = new Date(
+    coloniaNow.getFullYear(),
+    coloniaNow.getMonth(),
+    coloniaNow.getDate(),
+  );
+  const { data: coloniaIncompletos = [] } = useQuery({
+    queryKey: [
+      "colonia_dias_incompletos",
+      toYMD(coloniaIntegridadeInicio),
+      today,
+      userId ?? "anon",
+    ],
+    enabled: !!userId && (canColonia || canColoniaFin),
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("holiday_camp_records" as never)
+        .select("student_id, record_type, occurred_at, diario_students(name)")
+        .gte("occurred_at", coloniaIntegridadeInicio.toISOString())
+        .lt("occurred_at", coloniaHojeInicio.toISOString());
+      if (error) return [] as ColoniaDiaIncompleto[];
+
+      const porDia = new Map<
+        string,
+        { studentId: string; name: string; dia: string; entrada: boolean; saida: boolean }
+      >();
+      for (const r of (data ?? []) as unknown as {
+        student_id: string;
+        record_type: ColoniaRecordType;
+        occurred_at: string;
+        diario_students: { name: string } | { name: string }[] | null;
+      }[]) {
+        const d = new Date(r.occurred_at);
+        const wd = d.getDay();
+        if (wd < 1 || wd > 5) continue; // a colônia opera de segunda a sexta
+        const dia = toYMD(d);
+        const key = `${r.student_id}|${dia}`;
+        let acc = porDia.get(key);
+        if (!acc) {
+          const st = Array.isArray(r.diario_students) ? r.diario_students[0] : r.diario_students;
+          acc = {
+            studentId: r.student_id,
+            name: st?.name ?? "Aluno",
+            dia,
+            entrada: false,
+            saida: false,
+          };
+          porDia.set(key, acc);
+        }
+        if (r.record_type === "entry") acc.entrada = true;
+        if (r.record_type === "exit") acc.saida = true;
+      }
+
+      return [...porDia.values()]
+        .filter((a) => !a.entrada || !a.saida)
+        .map((a) => ({
+          studentId: a.studentId,
+          name: a.name,
+          dia: a.dia,
+          pendencia: { faltaEntrada: !a.entrada, faltaSaida: !a.saida },
+        }))
+        .sort((a, b) => b.dia.localeCompare(a.dia) || a.name.localeCompare(b.name, "pt-BR"));
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -364,6 +449,7 @@ export function NotificationsBell() {
       !canCartao &&
       !canDiario &&
       !canAgenda &&
+      !canColonia &&
       !canColoniaFin)
   )
     return null;
@@ -391,6 +477,7 @@ export function NotificationsBell() {
     extraEvents.length +
     unreadAgenda.length +
     coloniaPendencias.length +
+    coloniaIncompletos.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -540,6 +627,35 @@ export function NotificationsBell() {
                       <div className="text-[11px] text-muted-foreground">
                         Há consumos na semana sem faturamento resolvido (Faturar no Sponte ou Já
                         lançado).
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Colônia de Férias: dia com movimentação sem Entrada e/ou Saída. */}
+          {(canColonia || canColoniaFin) && coloniaIncompletos.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Colônia — preenchimento incompleto
+              </div>
+              {coloniaIncompletos.map((p) => (
+                <Link
+                  key={`${p.studentId}-${p.dia}`}
+                  to="/colonia"
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-red-600">
+                        {p.name} — {labelPendenciaPortaria(p.pendencia)}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {formatDateBR(p.dia)}: houve movimentação no dia, mas o ciclo de horas está
+                        incompleto.
                       </div>
                     </div>
                   </div>
@@ -703,6 +819,7 @@ export function NotificationsBell() {
             availableReceivables.length === 0 &&
             extraEvents.length === 0 &&
             coloniaPendencias.length === 0 &&
+            coloniaIncompletos.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
