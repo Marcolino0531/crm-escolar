@@ -13,11 +13,13 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { onlyDigits } from "@/lib/phone";
-import { coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
+import { coletarDividaAbertaAluno, coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
 import {
   getWhatsAppConfig,
   renderBillingMessage,
+  renderBillingMessageMultipla,
   sendBillingTemplate,
+  sendBillingTemplateMultipla,
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 
@@ -41,6 +43,79 @@ function diaYMD(offsetDias: number): string {
   const spNow = new Date(agora.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
   spNow.setDate(spNow.getDate() + offsetDias);
   return `${spNow.getFullYear()}-${String(spNow.getMonth() + 1).padStart(2, "0")}-${String(spNow.getDate()).padStart(2, "0")}`;
+}
+
+const MESES_PT = [
+  "Janeiro",
+  "Fevereiro",
+  "Março",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro",
+];
+
+// Nomes dos meses (pt-BR) de uma lista de vencimentos YYYY-MM-DD, únicos por
+// mês/ano e ordenados. Anexa o ano quando há mais de um ano no conjunto, para
+// não ficar ambíguo (ex.: "Novembro/2026 e Janeiro/2027"). Junta com ", " e " e ".
+function nomesMesesAbertos(vencimentos: string[]): string {
+  const chaves = new Set<string>();
+  for (const v of vencimentos) {
+    const [y, m] = v.split("-");
+    if (y && m) chaves.add(`${y}-${m}`);
+  }
+  const ordenadas = [...chaves].sort();
+  const anos = new Set(ordenadas.map((k) => k.slice(0, 4)));
+  const rotulos = ordenadas.map((k) => {
+    const [y, m] = k.split("-");
+    const nome = MESES_PT[Number(m) - 1] ?? m;
+    return anos.size > 1 ? `${nome}/${y}` : nome;
+  });
+  if (rotulos.length <= 1) return rotulos[0] ?? "";
+  return `${rotulos.slice(0, -1).join(", ")} e ${rotulos[rotulos.length - 1]}`;
+}
+
+// Regra contratual de atualização de débitos em atraso (Cenário B):
+//   multa de 2% (uma única vez) + juros de mora de 1% ao mês, pró rata die
+// (proporcional aos dias exatos de atraso), sobre o valor original da parcela.
+const MULTA_ATRASO = 0.02;
+const JUROS_MORA_MES = 0.01;
+
+// Dias entre duas datas YYYY-MM-DD (timezone-safe: usa só os componentes, sem
+// new Date() local, pois a Vercel roda em UTC). Positivo = `ate` após `de`.
+function diasEntreYMD(de: string, ate: string): number {
+  const [fy, fm, fd] = de.split("-").map(Number);
+  const [ty, tm, td] = ate.split("-").map(Number);
+  if (!fy || !ty) return 0;
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+// Valor de UMA parcela atualizado para `hojeYMD`: sem atraso devolve o original;
+// vencida aplica 2% de multa + 1%/mês de juros pró rata die sobre os dias de atraso.
+function valorAtualizadoParcela(original: number, vencimentoYMD: string, hojeYMD: string): number {
+  const dias = diasEntreYMD(vencimentoYMD, hojeYMD);
+  if (dias <= 0 || !vencimentoYMD) return original;
+  const multa = original * MULTA_ATRASO;
+  const juros = original * JUROS_MORA_MES * (dias / 30);
+  return original + multa + juros;
+}
+
+// Soma o valor ATUALIZADO no dia do disparo de todos os boletos em aberto
+// (mês vigente + anteriores), aplicando a regra contratual parcela a parcela.
+function calcularTotalAtualizado(
+  boletos: { vencimento: string; saldo: number }[],
+  hojeYMD: string,
+): number {
+  const total = boletos.reduce(
+    (soma, b) => soma + valorAtualizadoParcela(b.saldo, b.vencimento, hojeYMD),
+    0,
+  );
+  return Math.round(total * 100) / 100;
 }
 
 function vencToYMD(v: string): string {
@@ -188,30 +263,71 @@ async function runCron(): Promise<Response> {
     enviadosSet.add(p.alunoId);
 
     // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
-    // mensagem direciona o responsável à secretaria.
+    // mensagem direciona o responsável à secretaria. Vale sempre para o boleto
+    // do MÊS VIGENTE (a linha digitável do Cenário B é só a do mês vigente).
     const linhaDigitavel =
       p.linhaDigitavel && p.linhaDigitavel.trim()
         ? p.linhaDigitavel
         : "Entre em contato com a secretaria da escola";
-    const vars = {
-      to: p.telefone,
-      responsavel: p.nomeResponsavel,
-      aluno: p.nomeAluno,
-      valor: formatBRL(p.valorTotalBoleto),
-      vencimento: formatVencBR(vencYMD),
-      linhaDigitavel,
-    };
+
+    // Bifurcação por histórico de dívida: consulta TODOS os boletos em aberto do
+    // aluno no Sponte. Cenário A = só o mês vigente → template padrão. Cenário B
+    // = também há meses anteriores em aberto → template de cobrança múltipla.
+    const divida = await coletarDividaAbertaAluno(p.unidade ?? "CEC", p.alunoId);
+    const anteriores = (divida?.boletos ?? []).filter(
+      (b) => b.vencimento && b.vencimento < vencYMD,
+    );
+    const multipla = anteriores.length > 0;
+
+    let templateName: string;
+    let messageBody: string;
+    let valorLog: number;
+    let enviar: () => Promise<{ messageId: string }>;
+
+    if (multipla) {
+      // Valor total ATUALIZADO no dia do disparo = soma, por parcela em aberto,
+      // do valor original + multa 2% + juros 1%/mês pró rata die (dias de atraso
+      // de cada boleto até hoje). Muda a cada dia, como esperado.
+      const totalAtualizado = divida
+        ? calcularTotalAtualizado(divida.boletos, hoje)
+        : p.valorTotalBoleto;
+      const varsMultipla = {
+        to: p.telefone,
+        responsavel: p.nomeResponsavel,
+        aluno: p.nomeAluno,
+        mesesAnteriores: nomesMesesAbertos(anteriores.map((b) => b.vencimento)),
+        valorTotalAtualizado: formatBRL(totalAtualizado),
+        linhaDigitavel, // só o boleto do mês vigente
+      };
+      templateName = cfg.templateMultiplaName;
+      messageBody = renderBillingMessageMultipla(varsMultipla);
+      valorLog = totalAtualizado;
+      enviar = () => sendBillingTemplateMultipla(cfg, varsMultipla);
+    } else {
+      const vars = {
+        to: p.telefone,
+        responsavel: p.nomeResponsavel,
+        aluno: p.nomeAluno,
+        valor: formatBRL(p.valorTotalBoleto),
+        vencimento: formatVencBR(vencYMD),
+        linhaDigitavel,
+      };
+      templateName = cfg.templateName;
+      messageBody = renderBillingMessage(vars);
+      valorLog = p.valorTotalBoleto;
+      enviar = () => sendBillingTemplate(cfg, vars);
+    }
 
     const base = {
       responsavel_name: p.nomeResponsavel || "",
       aluno_name: p.nomeAluno || "",
       telefone: p.telefone || "",
       unidade: p.unidade || "",
-      valor: p.valorTotalBoleto,
+      valor: valorLog,
       vencimento: vencYMD,
-      template_name: cfg.templateName,
+      template_name: templateName,
       fatura_id: p.alunoId,
-      message_body: renderBillingMessage(vars),
+      message_body: messageBody,
     };
 
     const semTelefone = !p.telefone || p.telefone === "-";
@@ -226,7 +342,7 @@ async function runCron(): Promise<Response> {
     }
 
     try {
-      const { messageId } = await sendBillingTemplate(cfg, vars);
+      const { messageId } = await enviar();
       enviados++;
       await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
         ...base,
