@@ -80,6 +80,44 @@ function nomesMesesAbertos(vencimentos: string[]): string {
   return `${rotulos.slice(0, -1).join(", ")} e ${rotulos[rotulos.length - 1]}`;
 }
 
+// Regra contratual de atualização de débitos em atraso (Cenário B):
+//   multa de 2% (uma única vez) + juros de mora de 1% ao mês, pró rata die
+// (proporcional aos dias exatos de atraso), sobre o valor original da parcela.
+const MULTA_ATRASO = 0.02;
+const JUROS_MORA_MES = 0.01;
+
+// Dias entre duas datas YYYY-MM-DD (timezone-safe: usa só os componentes, sem
+// new Date() local, pois a Vercel roda em UTC). Positivo = `ate` após `de`.
+function diasEntreYMD(de: string, ate: string): number {
+  const [fy, fm, fd] = de.split("-").map(Number);
+  const [ty, tm, td] = ate.split("-").map(Number);
+  if (!fy || !ty) return 0;
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+// Valor de UMA parcela atualizado para `hojeYMD`: sem atraso devolve o original;
+// vencida aplica 2% de multa + 1%/mês de juros pró rata die sobre os dias de atraso.
+function valorAtualizadoParcela(original: number, vencimentoYMD: string, hojeYMD: string): number {
+  const dias = diasEntreYMD(vencimentoYMD, hojeYMD);
+  if (dias <= 0 || !vencimentoYMD) return original;
+  const multa = original * MULTA_ATRASO;
+  const juros = original * JUROS_MORA_MES * (dias / 30);
+  return original + multa + juros;
+}
+
+// Soma o valor ATUALIZADO no dia do disparo de todos os boletos em aberto
+// (mês vigente + anteriores), aplicando a regra contratual parcela a parcela.
+function calcularTotalAtualizado(
+  boletos: { vencimento: string; saldo: number }[],
+  hojeYMD: string,
+): number {
+  const total = boletos.reduce(
+    (soma, b) => soma + valorAtualizadoParcela(b.saldo, b.vencimento, hojeYMD),
+    0,
+  );
+  return Math.round(total * 100) / 100;
+}
+
 function vencToYMD(v: string): string {
   if (!v) return "";
   if (v.includes("/")) {
@@ -247,9 +285,12 @@ async function runCron(): Promise<Response> {
     let enviar: () => Promise<{ messageId: string }>;
 
     if (multipla) {
-      // Valor total ATUALIZADO no dia do disparo = soma dos saldos de todos os
-      // boletos em aberto (mês vigente + anteriores).
-      const totalAtualizado = divida?.totalSaldo ?? p.valorTotalBoleto;
+      // Valor total ATUALIZADO no dia do disparo = soma, por parcela em aberto,
+      // do valor original + multa 2% + juros 1%/mês pró rata die (dias de atraso
+      // de cada boleto até hoje). Muda a cada dia, como esperado.
+      const totalAtualizado = divida
+        ? calcularTotalAtualizado(divida.boletos, hoje)
+        : p.valorTotalBoleto;
       const varsMultipla = {
         to: p.telefone,
         responsavel: p.nomeResponsavel,
