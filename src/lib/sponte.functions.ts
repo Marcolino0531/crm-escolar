@@ -7,6 +7,7 @@ import {
   renderBillingMessage,
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
+import { registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 
 // ─── Phase 6 (Option C migration) ───────────────────────────────────────────
 // Sponte inadimplência integration ported from the CRA app's api/sponte-batch.ts
@@ -1673,6 +1674,18 @@ export const enviarCobrancaTeste = createServerFn({ method: "POST" })
         status: "enviado",
         wa_message_id: messageId,
       } as never);
+      // Espelha o disparo no histórico do chat de Atendimento.
+      await registrarTemplateNoChat({
+        telefone,
+        waMessageId: messageId,
+        body: mensagem,
+        vinculo: {
+          aluno_id: alunoId,
+          aluno_name: alunoNome || "",
+          responsavel_name: responsavelNome || "",
+          unidade,
+        },
+      });
       return {
         ok: true,
         status: "enviado",

@@ -19,6 +19,7 @@ import {
   renderBillingMessage,
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
+import { registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -232,6 +233,18 @@ async function runCron(): Promise<Response> {
         status: "enviado",
         wa_message_id: messageId,
       } as never);
+      // Espelha o disparo no histórico do chat de Atendimento.
+      await registrarTemplateNoChat({
+        telefone: p.telefone,
+        waMessageId: messageId,
+        body: base.message_body,
+        vinculo: {
+          aluno_id: p.alunoId,
+          aluno_name: p.nomeAluno || "",
+          responsavel_name: p.nomeResponsavel || "",
+          unidade: p.unidade || "",
+        },
+      });
     } catch (e) {
       falhas++;
       await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
