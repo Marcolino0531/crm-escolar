@@ -2179,6 +2179,9 @@ const FaturarColoniaInputSchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // Refaturamento forçado (rota de escape): ignora a trava de "já faturado" e
+  // substitui o vínculo local pelo novo título gerado no Sponte.
+  forcar: z.boolean().optional(),
 });
 
 export interface FaturarColoniaResult {
@@ -2291,8 +2294,17 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => FaturarColoniaInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<FaturarColoniaResult> => {
-    const { unidade, studentId, schoolId, sponteAlunoId, valor, weekStart, weekEnd, vencimento } =
-      data;
+    const {
+      unidade,
+      studentId,
+      schoolId,
+      sponteAlunoId,
+      valor,
+      weekStart,
+      weekEnd,
+      vencimento,
+      forcar,
+    } = data;
 
     if (!(await podeVerFinanceiroColonia(context.userId))) {
       return { ok: false, error: "Sem permissão para faturar a Colônia." };
@@ -2303,19 +2315,22 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
 
-    // Anti-duplicidade: já faturado nesta semana? Curto-circuita sem chamar o Sponte.
-    const { data: existente } = await supabaseAdmin
-      .from("holiday_camp_invoices" as any)
-      .select("sponte_conta_receber_id")
-      .eq("student_id", studentId)
-      .eq("week_start", weekStart)
-      .maybeSingle();
-    if (existente) {
-      return {
-        ok: true,
-        jaFaturado: true,
-        contaReceberID: (existente as any).sponte_conta_receber_id ?? undefined,
-      };
+    // Anti-duplicidade: já faturado nesta semana? Curto-circuita sem chamar o
+    // Sponte. No refaturamento forçado a trava é ignorada de propósito.
+    if (!forcar) {
+      const { data: existente } = await supabaseAdmin
+        .from("holiday_camp_invoices" as any)
+        .select("sponte_conta_receber_id")
+        .eq("student_id", studentId)
+        .eq("week_start", weekStart)
+        .maybeSingle();
+      if (existente) {
+        return {
+          ok: true,
+          jaFaturado: true,
+          contaReceberID: (existente as any).sponte_conta_receber_id ?? undefined,
+        };
+      }
     }
 
     const creds = resolverCredenciais(unidade);
@@ -2403,19 +2418,24 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     }
 
     // Persiste o faturamento (idempotente): trava a duplicidade e alimenta o
-    // estado "Faturado" no Fechamento Semanal.
-    await supabaseAdmin.from("holiday_camp_invoices" as any).insert({
-      student_id: studentId,
-      school_id: schoolId,
-      week_start: weekStart,
-      week_end: weekEnd,
-      amount: valor,
-      due_date: vencimento,
-      sponte_aluno_id: sponteAlunoId,
-      sponte_conta_receber_id: contaReceberID || null,
-      observacao,
-      invoiced_by: context.userId,
-    });
+    // estado "Faturado" no Fechamento Semanal. No refaturamento forçado o
+    // vínculo antigo é substituído pelo título recém-gerado.
+    await supabaseAdmin.from("holiday_camp_invoices" as any).upsert(
+      {
+        student_id: studentId,
+        school_id: schoolId,
+        week_start: weekStart,
+        week_end: weekEnd,
+        amount: valor,
+        due_date: vencimento,
+        sponte_aluno_id: sponteAlunoId,
+        sponte_conta_receber_id: contaReceberID || null,
+        observacao,
+        manual_settlement: false,
+        invoiced_by: context.userId,
+      },
+      { onConflict: "student_id,week_start" },
+    );
 
     return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
   });

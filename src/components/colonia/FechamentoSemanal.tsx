@@ -129,6 +129,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const [loteOpen, setLoteOpen] = useState(false);
   const [loteVencimento, setLoteVencimento] = useState("");
   const [loteDuplicados, setLoteDuplicados] = useState<string[] | null>(null);
+  const [loteConcluidoWeek, setLoteConcluidoWeek] = useState<string | null>(null);
   const schoolIdToName = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
 
   const rangeStart = weekStart;
@@ -543,6 +544,9 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     },
     onSuccess: ({ sucesso, jaFaturado, falhas }) => {
       void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+      // Dá baixa imediata nos avisos de fechamento pendente do sininho.
+      void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
+      if (falhas.length === 0) setLoteConcluidoWeek(weekStartYMD);
       setLoteOpen(false);
       setLoteDuplicados(null);
       const partes = [`${sucesso} faturado(s) com sucesso`];
@@ -594,6 +598,19 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
   const loteBusy = checarDuplicidade.isPending || faturarTodos.isPending;
 
+  // Trava global: com todos os alunos faturáveis resolvidos, o lote da semana
+  // está fechado. O flag local cobre a janela entre o retorno do Sponte e o
+  // refetch dos faturamentos; qualquer aluno que volte a ficar pendente
+  // (desvinculado, título excluído no Sponte, valor alterado) reabre o botão.
+  useEffect(() => {
+    if (faturaveis.length > 0) setLoteConcluidoWeek(null);
+  }, [faturaveis.length]);
+
+  const faturamentoConcluido =
+    canFaturar &&
+    (loteConcluidoWeek === weekStartYMD ||
+      (calcReady && faturaveis.length === 0 && invoices.length > 0));
+
   const abrirLote = () => {
     setLoteDuplicados(null);
     setLoteVencimento(weekEndYMD);
@@ -629,19 +646,32 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
         </button>
       </div>
 
-      {canFaturar && students.length > 0 && (
-        <Button
-          onClick={abrirLote}
-          disabled={!calcReady || faturaveis.length === 0}
-          className="w-full"
-          title={
-            faturaveis.length === 0 ? "Nenhum aluno pendente para faturar nesta semana" : undefined
-          }
-        >
-          <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
-          {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
-        </Button>
-      )}
+      {canFaturar &&
+        students.length > 0 &&
+        (faturamentoConcluido ? (
+          <Button
+            disabled
+            variant="outline"
+            className="w-full border-emerald-500/40 text-emerald-600 disabled:opacity-100 dark:text-emerald-400"
+            title="Todos os alunos desta semana já foram faturados ou resolvidos"
+          >
+            <CheckCircle2 className="h-4 w-4" /> Faturamento Concluído
+          </Button>
+        ) : (
+          <Button
+            onClick={abrirLote}
+            disabled={!calcReady || faturaveis.length === 0}
+            className="w-full"
+            title={
+              faturaveis.length === 0
+                ? "Nenhum aluno pendente para faturar nesta semana"
+                : undefined
+            }
+          >
+            <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
+            {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
+          </Button>
+        ))}
 
       <Dialog open={loteOpen} onOpenChange={(v) => (loteBusy ? null : setLoteOpen(v))}>
         <DialogContent>
@@ -886,7 +916,10 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                       jaFaturado={invoicedSet.has(s.studentId)}
                       manualSettled={manualSet.has(s.studentId)}
                       disabled={calculando}
-                      onFaturado={() => qc.invalidateQueries({ queryKey: ["colonia_invoices"] })}
+                      onFaturado={() => {
+                        void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
+                        void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
+                      }}
                     />
                   )}
                 </AccordionContent>
@@ -1024,6 +1057,7 @@ function FaturarBotao({
   const desvincularFn = useServerFn(desvincularFaturamentoColonia);
   const acordoFn = useServerFn(marcarAcordoManualColonia);
   const [open, setOpen] = useState(false);
+  const [forcarModo, setForcarModo] = useState(false);
   const [vencimento, setVencimento] = useState(defaultVencimento);
   const [faturado, setFaturado] = useState(false);
   const [acordoLocal, setAcordoLocal] = useState(false);
@@ -1033,7 +1067,7 @@ function FaturarBotao({
   const podeFaturar = !!sponteAlunoId && unidadeValida && valor > 0;
 
   const faturar = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (forcar: boolean) => {
       const res = await faturarFn({
         data: {
           unidade: unidade as string,
@@ -1044,6 +1078,7 @@ function FaturarBotao({
           weekStart: weekStartYMD,
           weekEnd: weekEndYMD,
           vencimento,
+          forcar,
         },
       });
       if (!res.ok) throw new Error(res.error ?? "Falha ao faturar no Sponte.");
@@ -1051,7 +1086,9 @@ function FaturarBotao({
     },
     onSuccess: (res) => {
       setFaturado(true);
+      setAcordoLocal(false);
       setOpen(false);
+      setForcarModo(false);
       toast.success(
         res.jaFaturado
           ? "Este aluno já estava faturado nesta semana."
@@ -1116,48 +1153,146 @@ function FaturarBotao({
     },
   });
 
+  const abrirDialogo = (forcar: boolean) => {
+    setForcarModo(forcar);
+    setVencimento(defaultVencimento);
+    setOpen(true);
+  };
+
   const resolvidoManual = (manualSettled || acordoLocal) && !faturado;
+
+  const dialogoFaturamento = (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (faturar.isPending) return;
+        setOpen(v);
+        if (!v) setForcarModo(false);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {forcarModo ? "Forçar Faturamento Manual" : "Faturar no Sponte"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {forcarModo && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Este aluno já consta como resolvido nesta semana. Um novo título será gerado no
+                Sponte e substituirá o vínculo atual — use apenas se a cobrança anterior foi
+                excluída ou cancelada lá.
+              </span>
+            </div>
+          )}
+          <div className="rounded-lg border border-border bg-secondary/40 p-3 text-sm">
+            <div className="font-semibold text-foreground">{studentName}</div>
+            <div className="text-muted-foreground">Semana de {weekLabel}</div>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-muted-foreground">Valor total</span>
+              <span className="font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                {brl(valor)}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`venc-${studentId}`}>Data de Vencimento</Label>
+            <Input
+              id={`venc-${studentId}`}
+              type="date"
+              value={vencimento}
+              onChange={(e) => setVencimento(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={faturar.isPending}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => faturar.mutate(forcarModo)}
+            disabled={faturar.isPending || !vencimento}
+            variant={forcarModo ? "destructive" : "default"}
+          >
+            {faturar.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Faturando…
+              </>
+            ) : forcarModo ? (
+              "Forçar Faturamento"
+            ) : (
+              "Confirmar Faturamento"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   if (jaFaturado || faturado || manualSettled || acordoLocal) {
     return (
-      <div className="mt-2 flex items-center gap-2">
-        <Button
-          variant="outline"
-          disabled
-          className={
-            resolvidoManual
-              ? "flex-1 border-sky-500/40 text-sky-600 dark:text-sky-400"
-              : "flex-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
-          }
-        >
-          {resolvidoManual ? (
-            <>
-              <Handshake className="h-4 w-4" /> Já lançado / Acordo manual
-            </>
-          ) : (
-            <>
-              <CheckCircle2 className="h-4 w-4" /> Faturado
-            </>
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => desvincular.mutate()}
-          disabled={desvincular.isPending}
+      <div className="mt-2 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            disabled
+            className={
+              resolvidoManual
+                ? "flex-1 border-sky-500/40 text-sky-600 dark:text-sky-400"
+                : "flex-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+            }
+          >
+            {resolvidoManual ? (
+              <>
+                <Handshake className="h-4 w-4" /> Já lançado / Acordo manual
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="h-4 w-4" /> Faturado
+              </>
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => desvincular.mutate()}
+            disabled={desvincular.isPending}
+            title={
+              resolvidoManual
+                ? "Desfazer acordo manual (voltar para pendente)"
+                : "Desfazer faturamento (liberar para refaturar)"
+            }
+            aria-label="Desfazer"
+          >
+            {desvincular.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        {/* Rota de escape da trava global: refatura só este aluno (ex.: título
+            excluído por engano direto no Sponte). */}
+        <button
+          type="button"
+          onClick={() => abrirDialogo(true)}
+          disabled={!podeFaturar || disabled || faturar.isPending}
           title={
-            resolvidoManual
-              ? "Desfazer acordo manual (voltar para pendente)"
-              : "Desfazer faturamento (liberar para refaturar)"
+            !sponteAlunoId
+              ? "Aluno sem vínculo com o Sponte"
+              : !unidadeValida
+                ? "Selecione uma unidade com integração Sponte"
+                : "Gera um novo título no Sponte para este aluno, ignorando a trava"
           }
-          aria-label="Desfazer"
+          className="w-full text-center text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {desvincular.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RotateCcw className="h-4 w-4" />
-          )}
-        </Button>
+          Forçar Faturamento Manual
+        </button>
+
+        {dialogoFaturamento}
       </div>
     );
   }
@@ -1165,7 +1300,7 @@ function FaturarBotao({
   return (
     <>
       <Button
-        onClick={() => setOpen(true)}
+        onClick={() => abrirDialogo(false)}
         disabled={!podeFaturar || disabled}
         className="mt-2 w-full"
         title={
@@ -1226,48 +1361,7 @@ function FaturarBotao({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={open} onOpenChange={(v) => (faturar.isPending ? null : setOpen(v))}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Faturar no Sponte</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-lg border border-border bg-secondary/40 p-3 text-sm">
-              <div className="font-semibold text-foreground">{studentName}</div>
-              <div className="text-muted-foreground">Semana de {weekLabel}</div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="text-muted-foreground">Valor total</span>
-                <span className="font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {brl(valor)}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`venc-${studentId}`}>Data de Vencimento</Label>
-              <Input
-                id={`venc-${studentId}`}
-                type="date"
-                value={vencimento}
-                onChange={(e) => setVencimento(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={faturar.isPending}>
-              Cancelar
-            </Button>
-            <Button onClick={() => faturar.mutate()} disabled={faturar.isPending || !vencimento}>
-              {faturar.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Faturando…
-                </>
-              ) : (
-                "Confirmar Faturamento"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {dialogoFaturamento}
     </>
   );
 }
