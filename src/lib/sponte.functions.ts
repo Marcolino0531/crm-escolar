@@ -67,7 +67,7 @@ const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
   },
 };
 
-const UNIDADES_SPONTE = Object.keys(SPONTE_UNIDADES);
+export const UNIDADES_SPONTE = Object.keys(SPONTE_UNIDADES);
 
 interface SponteCreds {
   codigoCliente: string;
@@ -80,7 +80,7 @@ interface SponteCreds {
 // não tem integração ativa ou as variáveis de ambiente não estão configuradas.
 // O consolidado é tratado no handler, combinando as credenciais de CEC e
 // Belvedere explicitamente.
-function resolverCredenciais(unidade: string): SponteCreds | null {
+export function resolverCredenciais(unidade: string): SponteCreds | null {
   const config = SPONTE_UNIDADES[unidade];
   if (!config) return null;
   const codigoCliente = process.env[config.codigoEnv];
@@ -172,7 +172,7 @@ function buildSoapEnvelope(
 </soap:Envelope>`;
 }
 
-function parseXmlValue(xml: string, tag: string): string {
+export function parseXmlValue(xml: string, tag: string): string {
   const regex = new RegExp(`<${tag}>([^<]*)</${tag}>`, "i");
   const match = xml.match(regex);
   return match ? match[1].trim() : "";
@@ -293,7 +293,7 @@ const SITUACOES_BAIXADA = new Set([
   "liquidado",
 ]);
 
-async function callSponte(
+export async function callSponte(
   method: string,
   sParametrosBusca: string,
   codigoCliente: string,
@@ -314,7 +314,7 @@ async function callSponte(
   return response.text();
 }
 
-function checkFault(xml: string): string | null {
+export function checkFault(xml: string): string | null {
   const faultCode = xml.match(/<faultcode>([^<]*)<\/faultcode>/i)?.[1];
   const faultString = xml.match(/<faultstring>([^<]*)<\/faultstring>/i)?.[1];
   if (faultCode || faultString) return faultString || `Fault: ${faultCode}`;
@@ -2196,7 +2196,7 @@ export interface FaturarColoniaResult {
 const CATEGORIA_COLONIA = "Colônia de Férias";
 const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -2206,7 +2206,7 @@ function escapeXml(s: string): string {
 
 // POST de um método SOAP do Sponte com parâmetros arbitrários (extraParams já
 // serializados na ordem do WSDL). callSponte é específico de sParametrosBusca.
-async function callSponteMethod(
+export async function callSponteMethod(
   method: string,
   extraParams: string,
   codigoCliente: string,

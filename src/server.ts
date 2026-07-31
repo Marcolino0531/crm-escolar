@@ -9,6 +9,7 @@ import { handleReceivablesApi } from "./lib/receivables.api";
 import { handleDiarioApi } from "./lib/diario.api";
 import { handleWhatsAppApi } from "./lib/whatsapp.api";
 import { handleAgendaApi } from "./lib/agenda.api";
+import { handleMatriculasApi } from "./lib/matriculas.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -105,6 +106,10 @@ export default {
       // Lembrete matinal por email das reuniões da Agenda (Vercel Cron).
       const agendaResponse = await handleAgendaApi(request);
       if (agendaResponse) return agendaResponse;
+
+      // Webhook de matrícula (Google Forms → Sponte: aluno + responsáveis).
+      const matriculasResponse = await handleMatriculasApi(request);
+      if (matriculasResponse) return matriculasResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
