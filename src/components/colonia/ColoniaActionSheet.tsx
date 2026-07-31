@@ -138,6 +138,8 @@ export function ColoniaActionSheet({
       });
       setGateForm(null);
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
+      qc.invalidateQueries({ queryKey: ["colonia_closing"] });
+      qc.invalidateQueries({ queryKey: ["colonia_dias_incompletos"] });
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Tente novamente.";
@@ -157,6 +159,8 @@ export function ColoniaActionSheet({
     onSuccess: () => {
       toast.success("Registro removido");
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
+      qc.invalidateQueries({ queryKey: ["colonia_closing"] });
+      qc.invalidateQueries({ queryKey: ["colonia_dias_incompletos"] });
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Tente novamente.";

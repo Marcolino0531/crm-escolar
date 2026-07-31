@@ -14,7 +14,9 @@ import {
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -97,6 +99,23 @@ type ColoniaDiaIncompleto = {
   dia: string; // YYYY-MM-DD
   pendencia: PendenciaPortaria;
 };
+
+type EmbeddedStudentName = { name: string } | { name: string }[] | null;
+
+type ColoniaRegistroSemana = {
+  student_id: string;
+  diario_students: EmbeddedStudentName;
+};
+
+type ColoniaRegistroIntegridade = {
+  student_id: string;
+  school_id: string;
+  record_type: ColoniaRecordType;
+  occurred_at: string;
+  diario_students: EmbeddedStudentName;
+};
+
+type PagedRows<T> = { data: T[] | null; error: PostgrestError | null };
 
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
@@ -322,26 +341,28 @@ export function NotificationsBell() {
     enabled: !!userId && canColoniaFin,
     refetchInterval: 60000,
     queryFn: async () => {
-      const [recRes, invRes] = await Promise.all([
-        supabase
-          .from("holiday_camp_records" as never)
-          .select("student_id, diario_students(name)")
-          .gte("occurred_at", coloniaWeekMonday.toISOString())
-          .lt("occurred_at", coloniaWeekSaturday.toISOString()),
+      const [registros, invRes] = await Promise.all([
+        fetchAllRows<ColoniaRegistroSemana>(
+          (from, to) =>
+            supabase
+              .from("holiday_camp_records" as never)
+              .select("student_id, diario_students(name)")
+              .gte("occurred_at", coloniaWeekMonday.toISOString())
+              .lt("occurred_at", coloniaWeekSaturday.toISOString())
+              .order("id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<PagedRows<ColoniaRegistroSemana>>,
+        ).catch(() => null),
         supabase
           .from("holiday_camp_invoices" as never)
           .select("student_id")
           .eq("week_start", coloniaWeekStartYMD),
       ]);
-      if (recRes.error) return [] as ColoniaPendencia[];
+      if (!registros) return [] as ColoniaPendencia[];
       const resolved = new Set(
         ((invRes.data ?? []) as unknown as { student_id: string }[]).map((r) => r.student_id),
       );
       const pendentes = new Map<string, string>();
-      for (const r of (recRes.data ?? []) as unknown as {
-        student_id: string;
-        diario_students: { name: string } | { name: string }[] | null;
-      }[]) {
+      for (const r of registros) {
         if (resolved.has(r.student_id) || pendentes.has(r.student_id)) continue;
         const st = Array.isArray(r.diario_students) ? r.diario_students[0] : r.diario_students;
         pendentes.set(r.student_id, st?.name ?? "Aluno");
@@ -370,12 +391,18 @@ export function NotificationsBell() {
     enabled: !!userId && (canColonia || canColoniaFin),
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("holiday_camp_records" as never)
-        .select("student_id, school_id, record_type, occurred_at, diario_students(name)")
-        .gte("occurred_at", coloniaIntegridadeInicio.toISOString())
-        .lt("occurred_at", coloniaHojeInicio.toISOString());
-      if (error) return [] as ColoniaDiaIncompleto[];
+      const registros = await fetchAllRows<ColoniaRegistroIntegridade>(
+        (from, to) =>
+          supabase
+            .from("holiday_camp_records" as never)
+            .select("student_id, school_id, record_type, occurred_at, diario_students(name)")
+            .gte("occurred_at", coloniaIntegridadeInicio.toISOString())
+            .lt("occurred_at", coloniaHojeInicio.toISOString())
+            .order("occurred_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<PagedRows<ColoniaRegistroIntegridade>>,
+      ).catch(() => null);
+      if (!registros) return [] as ColoniaDiaIncompleto[];
 
       const porDia = new Map<
         string,
@@ -387,13 +414,7 @@ export function NotificationsBell() {
           registros: RegistroPortaria[];
         }
       >();
-      for (const r of (data ?? []) as unknown as {
-        student_id: string;
-        school_id: string;
-        record_type: ColoniaRecordType;
-        occurred_at: string;
-        diario_students: { name: string } | { name: string }[] | null;
-      }[]) {
+      for (const r of registros) {
         const d = new Date(r.occurred_at);
         const wd = d.getDay();
         if (wd < 1 || wd > 5) continue; // a colônia opera de segunda a sexta
