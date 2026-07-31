@@ -2446,6 +2446,7 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
 // categoria "Colônia de Férias" com essa MESMA data de vencimento — para o
 // usuário confirmar antes de gerar cobranças em duplicidade. Best-effort: falha
 // de rede num aluno não o sinaliza como duplicado (não bloqueia o lote).
+// A comparação ignora a situação do boleto: ver titulosColoniaPorVencimento.
 
 const DuplicidadeColoniaInputSchema = z.object({
   vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -2488,26 +2489,13 @@ export const verificarDuplicidadeColonia = createServerFn({ method: "POST" })
       const chave = `${it.unidade}|${it.sponteAlunoId}`;
       let vencs = vencimentosColoniaPorAluno.get(chave);
       if (vencs === undefined) {
-        vencs = new Set<string>();
-        try {
-          const xml = await callSponte(
-            "GetParcelas",
-            `AlunoID=${it.sponteAlunoId}`,
-            creds.codigoCliente,
-            creds.token,
-          );
-          const nodes = checkFault(xml) ? [] : parseXmlList(xml, "wsParcela");
-          for (const node of nodes) {
-            const sit = normalizarTexto(parseXmlValue(node, "SituacaoParcela"));
-            if (sit.includes("cancel") || sit.includes("estorn")) continue;
-            const cat = normalizarTexto(parseXmlValue(node, "Categoria"));
-            if (!cat.includes("colonia")) continue;
-            const venc = paraYMD(parseXmlValue(node, "Vencimento"));
-            if (venc) vencs.add(venc);
-          }
-        } catch {
-          // Best-effort: falha de rede não sinaliza duplicidade.
-        }
+        const titulos = await titulosColoniaPorVencimento(
+          it.sponteAlunoId,
+          creds.codigoCliente,
+          creds.token,
+        );
+        // Best-effort: falha de rede não sinaliza duplicidade.
+        vencs = new Set(titulos ? titulos.keys() : []);
         vencimentosColoniaPorAluno.set(chave, vencs);
       }
       if (vencs.has(vencimento)) duplicados.push(it.studentName);
@@ -2614,88 +2602,146 @@ export const desvincularFaturamentoColonia = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const VerificarColoniaInputSchema = z.object({
+const ConferirColoniaInputSchema = z.object({
+  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   itens: z
     .array(
       z.object({
         unidade: z.string(),
         studentId: z.string().uuid(),
+        schoolId: z.string().uuid(),
         sponteAlunoId: z.string().min(1),
-        contaReceberId: z.string().min(1),
+        valor: z.number().min(0),
+        temVinculoLocal: z.boolean(),
       }),
     )
     .max(200),
 });
 
-export interface VerificarColoniaResult {
+export interface ConferirColoniaResult {
   ok: boolean;
+  faturados: string[];
+  adotados: string[];
   revertidos: string[];
   error?: string;
 }
 
-// Verificação silenciosa: confere no Sponte (GetParcelas por aluno) se cada
-// título faturado ainda existe e não está cancelado/estornado. Os títulos que
-// não existirem mais têm o vínculo local removido (revertidos → "Pendente").
-// Conservador: falha de rede/resposta vazia NÃO reverte, para evitar liberar o
-// botão de um título válido e permitir cobrança em duplicidade.
-export const verificarFaturamentosColonia = createServerFn({ method: "POST" })
+// Títulos de Colônia do aluno no Sponte, indexados pela data de vencimento
+// (YMD → ContaReceberID). Ignora DE PROPÓSITO a situação financeira: gerar a
+// remessa bancária (CNAB) muda o status/estado do boleto e não pode reabrir um
+// faturamento já feito. Retorna null quando a consulta falhou/veio vazia, para
+// o chamador não tomar decisão sobre dado incerto.
+async function titulosColoniaPorVencimento(
+  sponteAlunoId: string,
+  codigoCliente: string,
+  token: string,
+): Promise<Map<string, string> | null> {
+  let xml: string;
+  try {
+    xml = await callSponte("GetParcelas", `AlunoID=${sponteAlunoId}`, codigoCliente, token);
+  } catch {
+    return null;
+  }
+  if (checkFault(xml)) return null;
+  const nodes = parseXmlList(xml, "wsParcela");
+  if (nodes.length === 0) return null;
+  const porVencimento = new Map<string, string>();
+  for (const node of nodes) {
+    const cat = normalizarTexto(parseXmlValue(node, "Categoria"));
+    if (!cat.includes("colonia")) continue;
+    const venc = paraYMD(parseXmlValue(node, "Vencimento"));
+    if (!venc || porVencimento.has(venc)) continue;
+    porVencimento.set(venc, parseXmlValue(node, "ContaReceberID"));
+  }
+  return porVencimento;
+}
+
+// Conferência do faturamento da semana contra o Sponte, usando a data de
+// vencimento informada pelo usuário como chave. O aluno é considerado FATURADO
+// quando existe qualquer título de categoria "Colônia de Férias" com aquele
+// vencimento — independente da situação do boleto (aberto, registrado, pago,
+// remessa gerada...). Consequências:
+//   • título existe e não há vínculo local → adota o título (grava o vínculo),
+//     travando o botão global e dando baixa nos avisos do sininho;
+//   • título não existe e o vínculo local é daquele mesmo vencimento → reverte
+//     (o título foi realmente excluído no Sponte).
+// Conservador: consulta falha/vazia não altera nada, e um vínculo local com
+// outro vencimento nunca é revertido (protege contra data digitada errada).
+export const conferirFaturamentoColonia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => VerificarColoniaInputSchema.parse(input))
-  .handler(async ({ data, context }): Promise<VerificarColoniaResult> => {
-    const { weekStart, itens } = data;
+  .inputValidator((input: unknown) => ConferirColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ConferirColoniaResult> => {
+    const { vencimento, weekStart, weekEnd, itens } = data;
     if (!(await podeVerFinanceiroColonia(context.userId))) {
-      return { ok: false, revertidos: [], error: "Sem permissão para faturar a Colônia." };
+      return {
+        ok: false,
+        faturados: [],
+        adotados: [],
+        revertidos: [],
+        error: "Sem permissão para faturar a Colônia.",
+      };
     }
     const allowed = await allowedSponteUnidades(context.userId);
     const permitidos = itens.filter((it) => allowed === null || allowed.includes(it.unidade));
 
-    // Cache de ContaReceberIDs ativos por (unidade, aluno) para não repetir o
-    // GetParcelas quando o mesmo aluno tem múltiplos títulos.
-    const ativosPorAluno = new Map<string, Set<string> | null>();
+    const cache = new Map<string, Map<string, string> | null>();
+    const faturados: string[] = [];
+    const adotados: string[] = [];
     const revertidos: string[] = [];
 
     for (const it of permitidos) {
       const creds = resolverCredenciais(it.unidade);
       if (!creds) continue;
       const chave = `${it.unidade}|${it.sponteAlunoId}`;
-      let ativos = ativosPorAluno.get(chave);
-      if (ativos === undefined) {
-        ativos = null;
-        try {
-          const xml = await callSponte(
-            "GetParcelas",
-            `AlunoID=${it.sponteAlunoId}`,
-            creds.codigoCliente,
-            creds.token,
-          );
-          const nodes = checkFault(xml) ? [] : parseXmlList(xml, "wsParcela");
-          if (nodes.length > 0) {
-            const set = new Set<string>();
-            for (const node of nodes) {
-              const id = parseXmlValue(node, "ContaReceberID");
-              const sit = normalizarTexto(parseXmlValue(node, "SituacaoParcela"));
-              const cancelada = sit.includes("cancel") || sit.includes("estorn");
-              if (id && !cancelada) set.add(id);
-            }
-            ativos = set;
-          }
-        } catch {
-          ativos = null;
-        }
-        ativosPorAluno.set(chave, ativos);
+      let titulos = cache.get(chave);
+      if (titulos === undefined) {
+        titulos = await titulosColoniaPorVencimento(
+          it.sponteAlunoId,
+          creds.codigoCliente,
+          creds.token,
+        );
+        cache.set(chave, titulos);
       }
-      // Só reverte quando temos uma lista válida (não-nula) que NÃO contém o ID.
-      if (ativos && !ativos.has(it.contaReceberId)) {
-        const { error } = await supabaseAdmin
-          .from("holiday_camp_invoices" as any)
-          .delete()
-          .eq("student_id", it.studentId)
-          .eq("week_start", weekStart);
-        if (!error) revertidos.push(it.studentId);
+      if (titulos === null) continue;
+
+      const contaReceberId = titulos.get(vencimento);
+      if (contaReceberId !== undefined) {
+        faturados.push(it.studentId);
+        if (it.temVinculoLocal) continue;
+        const { error } = await supabaseAdmin.from("holiday_camp_invoices" as any).upsert(
+          {
+            student_id: it.studentId,
+            school_id: it.schoolId,
+            week_start: weekStart,
+            week_end: weekEnd,
+            amount: it.valor,
+            due_date: vencimento,
+            sponte_aluno_id: it.sponteAlunoId,
+            sponte_conta_receber_id: contaReceberId || null,
+            observacao: `Colônia de Férias: título localizado no Sponte (vencimento ${ymdParaBr(vencimento)})`,
+            manual_settlement: false,
+            invoiced_by: context.userId,
+          },
+          { onConflict: "student_id,week_start" },
+        );
+        if (!error) adotados.push(it.studentId);
+        continue;
       }
+
+      if (!it.temVinculoLocal) continue;
+      const { data: removidos, error } = await supabaseAdmin
+        .from("holiday_camp_invoices" as any)
+        .delete()
+        .eq("student_id", it.studentId)
+        .eq("week_start", weekStart)
+        .eq("due_date", vencimento)
+        .eq("manual_settlement", false)
+        .select("id");
+      if (!error && (removidos ?? []).length > 0) revertidos.push(it.studentId);
     }
-    return { ok: true, revertidos };
+    return { ok: true, faturados, adotados, revertidos };
   });
 
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
