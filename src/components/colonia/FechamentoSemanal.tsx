@@ -23,7 +23,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { useSchool } from "@/lib/app-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -120,6 +122,8 @@ function pickStudent(s: RawRow["diario_students"]): EmbeddedStudent | null {
 const RECORD_SELECT =
   "id, student_id, school_id, record_type, occurred_at, diario_students(name, class_name, sponte_aluno_id)";
 
+type PagedRows<T> = { data: T[] | null; error: PostgrestError | null };
+
 type Props = {
   schoolFilterIds: string[] | null;
   canEdit: boolean;
@@ -158,16 +162,17 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const { data: students = [], isLoading } = useQuery({
     queryKey: ["colonia_closing", schoolKey, weekStart.toISOString()],
     queryFn: async () => {
-      let q = supabase
-        .from("holiday_camp_records" as never)
-        .select(RECORD_SELECT)
-        .gte("occurred_at", rangeStart.toISOString())
-        .lt("occurred_at", rangeEndExclusive.toISOString())
-        .order("occurred_at", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as RawRow[];
+      const rows = await fetchAllRows<RawRow>((from, to) => {
+        let q = supabase
+          .from("holiday_camp_records" as never)
+          .select(RECORD_SELECT)
+          .gte("occurred_at", rangeStart.toISOString())
+          .lt("occurred_at", rangeEndExclusive.toISOString())
+          .order("occurred_at", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
+        return q.range(from, to) as unknown as PromiseLike<PagedRows<RawRow>>;
+      });
 
       const map = new Map<string, ColoniaStudentWeek>();
       for (const r of rows) {
@@ -205,16 +210,17 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     queryKey: ["colonia_prev_perm", schoolKey, monthStart.toISOString(), weekStart.toISOString()],
     enabled: sponteActive && weekStart.getTime() > monthStart.getTime(),
     queryFn: async () => {
-      let q = supabase
-        .from("holiday_camp_records" as never)
-        .select("id, student_id, record_type, occurred_at")
-        .gte("occurred_at", monthStart.toISOString())
-        .lt("occurred_at", rangeStart.toISOString())
-        .order("occurred_at", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as RawRow[];
+      const rows = await fetchAllRows<RawRow>((from, to) => {
+        let q = supabase
+          .from("holiday_camp_records" as never)
+          .select("id, student_id, record_type, occurred_at")
+          .gte("occurred_at", monthStart.toISOString())
+          .lt("occurred_at", rangeStart.toISOString())
+          .order("occurred_at", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
+        return q.range(from, to) as unknown as PromiseLike<PagedRows<RawRow>>;
+      });
 
       // student_id → (mondayISO → byDay)
       const perStudent = new Map<string, Map<string, Record<number, ColoniaRecord[]>>>();
@@ -350,6 +356,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       qc.invalidateQueries({ queryKey: ["colonia_closing"] });
       qc.invalidateQueries({ queryKey: ["colonia_prev_perm"] });
       qc.invalidateQueries({ queryKey: ["colonia_records"] });
+      qc.invalidateQueries({ queryKey: ["colonia_dias_incompletos"] });
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Tente novamente.";
