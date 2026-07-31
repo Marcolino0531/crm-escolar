@@ -24,9 +24,12 @@ import {
   mondayOf,
   addDays,
   toYMD,
+  descricaoPendenciaPortaria,
   labelPendenciaPortaria,
+  pendenciaPortaria,
   type ColoniaRecordType,
   type PendenciaPortaria,
+  type RegistroPortaria,
 } from "@/lib/colonia";
 
 type Notification = {
@@ -347,8 +350,8 @@ export function NotificationsBell() {
     },
   });
 
-  // --- Colônia de Férias: preenchimento incompleto. Dia com movimentação mas
-  // sem Entrada e/ou Saída registradas quebra o controle de horas. Janela
+  // --- Colônia de Férias: integridade da portaria. Dia com movimentação mas sem
+  // Entrada e/ou Saída — ou com mais de uma de cada — quebra o controle de horas. Janela
   // rolante de duas semanas e TRAVA DE DATA: só dias já finalizados (o corte é
   // hoje 00:00 local), para não acusar enquanto as crianças estão na colônia. ---
   const coloniaIntegridadeInicio = addDays(coloniaThisMonday, -7);
@@ -381,8 +384,7 @@ export function NotificationsBell() {
           schoolId: string;
           name: string;
           dia: string;
-          entrada: boolean;
-          saida: boolean;
+          registros: RegistroPortaria[];
         }
       >();
       for (const r of (data ?? []) as unknown as {
@@ -405,25 +407,28 @@ export function NotificationsBell() {
             schoolId: r.school_id,
             name: st?.name ?? "Aluno",
             dia,
-            entrada: false,
-            saida: false,
+            registros: [],
           };
           porDia.set(key, acc);
         }
-        if (r.record_type === "entry") acc.entrada = true;
-        if (r.record_type === "exit") acc.saida = true;
+        acc.registros.push({ record_type: r.record_type, occurred_at: r.occurred_at });
       }
 
-      return [...porDia.values()]
-        .filter((a) => !a.entrada || !a.saida)
-        .map((a) => ({
+      const incompletos: ColoniaDiaIncompleto[] = [];
+      for (const a of porDia.values()) {
+        const pendencia = pendenciaPortaria(a.registros, a.dia, today);
+        if (!pendencia) continue;
+        incompletos.push({
           studentId: a.studentId,
           schoolId: a.schoolId,
           name: a.name,
           dia: a.dia,
-          pendencia: { faltaEntrada: !a.entrada, faltaSaida: !a.saida },
-        }))
-        .sort((a, b) => b.dia.localeCompare(a.dia) || a.name.localeCompare(b.name, "pt-BR"));
+          pendencia,
+        });
+      }
+      return incompletos.sort(
+        (a, b) => b.dia.localeCompare(a.dia) || a.name.localeCompare(b.name, "pt-BR"),
+      );
     },
   });
 
@@ -646,11 +651,11 @@ export function NotificationsBell() {
             </div>
           )}
 
-          {/* Colônia de Férias: dia com movimentação sem Entrada e/ou Saída. */}
+          {/* Colônia de Férias: dia com movimentação sem — ou com mais de uma — Entrada/Saída. */}
           {(canColonia || canColoniaFin) && coloniaIncompletos.length > 0 && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Colônia — preenchimento incompleto
+                Colônia — integridade dos registros
               </div>
               {coloniaIncompletos.map((p) => (
                 <Link
@@ -670,8 +675,8 @@ export function NotificationsBell() {
                         {p.name} — {labelPendenciaPortaria(p.pendencia)}
                       </div>
                       <div className="text-[11px] text-muted-foreground">
-                        {formatDateBR(p.dia)}: houve movimentação no dia, mas o ciclo de horas está
-                        incompleto. Clique para corrigir.
+                        {formatDateBR(p.dia)}: {descricaoPendenciaPortaria(p.pendencia)} Clique para
+                        corrigir.
                       </div>
                     </div>
                   </div>

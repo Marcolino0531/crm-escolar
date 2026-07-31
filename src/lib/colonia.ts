@@ -76,26 +76,74 @@ export function ordenarRegistrosDoDia<T extends ColoniaRecord>(records: T[]): T[
 }
 
 // Integridade do dia: se houve QUALQUER movimentação, o aluno precisa ter uma
-// Entrada e uma Saída registradas — sem isso o controle de horas fica quebrado.
+// Entrada e uma Saída registradas — sem isso o controle de horas fica quebrado —
+// e apenas UMA de cada (mais de uma Entrada/Saída no dia é erro de digitação).
 // Trava de data: só acusa dias já finalizados (de ontem para trás); o dia de
 // hoje é ignorado, pois as crianças ainda estão na colônia.
-export type PendenciaPortaria = { faltaEntrada: boolean; faltaSaida: boolean };
+export type PendenciaPortaria = {
+  faltaEntrada: boolean;
+  faltaSaida: boolean;
+  entradasDuplicadas: boolean;
+  saidasDuplicadas: boolean;
+};
+
+// Só o tipo e o horário importam para a integridade da portaria.
+export type RegistroPortaria = Pick<ColoniaRecord, "record_type" | "occurred_at">;
+
+// Conta os registros de um tipo no dia colapsando os idênticos do mesmo minuto —
+// a mesma regra de ordenarRegistrosDoDia. Duplo clique na portaria fica oculto
+// na tela, então não pode virar um alerta que a equipe não consegue resolver.
+function contarDistintos(records: RegistroPortaria[], tipo: ColoniaRecordType): number {
+  const minutos = new Set<number>();
+  for (const r of records) {
+    if (r.record_type !== tipo) continue;
+    minutos.add(Math.floor(new Date(r.occurred_at).getTime() / 60000));
+  }
+  return minutos.size;
+}
 
 export function pendenciaPortaria(
-  records: ColoniaRecord[],
+  records: RegistroPortaria[],
   diaYMD: string,
   hojeYMD: string,
 ): PendenciaPortaria | null {
   if (records.length === 0) return null;
   if (diaYMD >= hojeYMD) return null;
-  const faltaEntrada = !records.some((r) => r.record_type === "entry");
-  const faltaSaida = !records.some((r) => r.record_type === "exit");
-  return faltaEntrada || faltaSaida ? { faltaEntrada, faltaSaida } : null;
+  const entradas = contarDistintos(records, "entry");
+  const saidas = contarDistintos(records, "exit");
+  const p: PendenciaPortaria = {
+    faltaEntrada: entradas === 0,
+    faltaSaida: saidas === 0,
+    entradasDuplicadas: entradas > 1,
+    saidasDuplicadas: saidas > 1,
+  };
+  return p.faltaEntrada || p.faltaSaida || p.entradasDuplicadas || p.saidasDuplicadas ? p : null;
 }
 
 export function labelPendenciaPortaria(p: PendenciaPortaria): string {
-  if (p.faltaEntrada && p.faltaSaida) return "Entrada e Saída não registradas";
-  return p.faltaEntrada ? "Entrada não registrada" : "Saída não registrada";
+  const partes: string[] = [];
+  if (p.faltaEntrada && p.faltaSaida) partes.push("Entrada e Saída não registradas");
+  else if (p.faltaEntrada) partes.push("Entrada não registrada");
+  else if (p.faltaSaida) partes.push("Saída não registrada");
+  if (p.entradasDuplicadas && p.saidasDuplicadas) {
+    partes.push("Múltiplas Entradas e Saídas registradas");
+  } else if (p.entradasDuplicadas) {
+    partes.push("Múltiplas Entradas registradas");
+  } else if (p.saidasDuplicadas) {
+    partes.push("Múltiplas Saídas registradas");
+  }
+  return partes.join(" · ");
+}
+
+// Frase de orientação exibida junto do alerta, conforme o tipo de pendência.
+export function descricaoPendenciaPortaria(p: PendenciaPortaria): string {
+  const falta = p.faltaEntrada || p.faltaSaida;
+  const duplicado = p.entradasDuplicadas || p.saidasDuplicadas;
+  if (falta && duplicado) {
+    return "complete o ciclo de horas e remova os registros excedentes do dia.";
+  }
+  if (falta) return "o dia teve movimentação e precisa de Entrada e Saída.";
+  return "o dia deve ter apenas uma Entrada e uma Saída; remova o registro excedente.";
 }
 
 // Dias úteis (segunda a sexta) usados no Fechamento Semanal. weekday = Date.getDay().
