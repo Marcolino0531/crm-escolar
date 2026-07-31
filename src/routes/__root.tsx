@@ -20,6 +20,7 @@ import {
   KanbanSquare,
   CalendarDays,
   ClipboardCheck,
+  ClipboardList,
   Users,
   AlertCircle,
   PiggyBank,
@@ -308,6 +309,11 @@ function AppShell() {
         items: [
           ...gate(showAgenda, { to: "/agenda", icon: CalendarDays, label: "Agenda" }),
           ...gate(showAdmissoes, { to: "/admissoes", icon: KanbanSquare, label: "Admissões" }),
+          ...gate(showAdmissoes, {
+            to: "/matriculas",
+            icon: ClipboardList,
+            label: "Matrículas",
+          }),
           ...gate(showOnboarding, {
             to: "/onboarding",
             icon: ClipboardCheck,
