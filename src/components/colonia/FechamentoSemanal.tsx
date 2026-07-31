@@ -46,6 +46,7 @@ import {
   COLONIA_RECORD_LABEL,
   COLONIA_WEEKDAYS,
   addDays,
+  descricaoPendenciaPortaria,
   firstOfMonth,
   fmtDayMonth,
   fmtTime,
@@ -825,7 +826,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                       <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-bold text-red-600 dark:text-red-400">
                         <AlertTriangle className="h-3 w-3" />
                         {pendDias.size}{" "}
-                        {pendDias.size === 1 ? "dia incompleto" : "dias incompletos"}
+                        {pendDias.size === 1 ? "dia com pendência" : "dias com pendência"}
                       </span>
                     )}
                     <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
@@ -856,8 +857,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                         {pend && (
                           <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-red-600 dark:text-red-400">
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                            {labelPendenciaPortaria(pend)} — o dia teve movimentação e precisa de
-                            Entrada e Saída.
+                            {labelPendenciaPortaria(pend)} — {descricaoPendenciaPortaria(pend)}
                           </div>
                         )}
                         <ul className="space-y-1.5">
