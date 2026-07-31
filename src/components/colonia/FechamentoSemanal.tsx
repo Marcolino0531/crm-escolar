@@ -73,10 +73,9 @@ import {
   fetchColoniaBeneficios,
   faturarColoniaSponte,
   desvincularFaturamentoColonia,
-  conferirFaturamentoColonia,
   verificarDuplicidadeColonia,
   marcarAcordoManualColonia,
-  salvarVencimentoColonia,
+  definirStatusSemanaColonia,
 } from "@/lib/sponte.functions";
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
@@ -92,11 +91,6 @@ const ICONS: Record<ColoniaRecordType, React.ComponentType<{ className?: string 
 
 function brl(n: number): string {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-function fmtYMD(ymd: string): string {
-  const [y, m, d] = ymd.split("-");
-  return y && m && d ? `${d}/${m}/${y}` : ymd;
 }
 
 type EmbeddedStudent = {
@@ -139,8 +133,8 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const [loteOpen, setLoteOpen] = useState(false);
   const [vencimentoFaturamento, setVencimentoFaturamento] = useState("");
+  const [statusAcao, setStatusAcao] = useState<"manual" | "reabrir" | null>(null);
   const [loteDuplicados, setLoteDuplicados] = useState<string[] | null>(null);
-  const [loteConcluidoWeek, setLoteConcluidoWeek] = useState<string | null>(null);
   const schoolIdToName = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);
 
   const rangeStart = weekStart;
@@ -367,6 +361,12 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   // Alunos já faturados NESTA semana (para exibir o botão como "Faturado").
   const weekStartYMD = toYMD(weekStart);
   const weekEndYMD = toYMD(friday);
+
+  // Vencimento dos boletos gerados no Sponte: sexta da semana por padrão,
+  // ajustável no próprio diálogo do lote.
+  useEffect(() => {
+    setVencimentoFaturamento(weekEndYMD);
+  }, [weekEndYMD]);
   const { data: invoices = [] } = useQuery({
     queryKey: ["colonia_invoices", schoolKey, weekStartYMD],
     enabled: canFaturar,
@@ -448,135 +448,78 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     qc,
   ]);
 
-  // Unidades Sponte em escopo — onde a data de vencimento da semana é gravada.
+  // Unidades integradas que aparecem nesta semana — são elas que recebem o
+  // status. Usar as unidades em tela (e não todas as do filtro) evita que uma
+  // unidade sem movimentação segure a semana como pendente para sempre.
   const escopoSchoolIds = useMemo(() => {
-    const ids = schoolFilterIds ?? schools.map((s) => s.id);
-    return ids.filter((id) => UNIDADES_SPONTE.includes(schoolIdToName.get(id) ?? ""));
-  }, [schoolFilterIds, schools, schoolIdToName]);
+    const ids = new Set<string>();
+    for (const s of students) {
+      if (UNIDADES_SPONTE.includes(schoolIdToName.get(s.schoolId) ?? "")) ids.add(s.schoolId);
+    }
+    return [...ids];
+  }, [students, schoolIdToName]);
 
-  // Data de vencimento do faturamento: é a chave da conferência no Sponte, por
-  // isso é persistida por semana/unidade. Sem isso, um F5 devolvia o input ao
-  // padrão, a conferência rodava com a data errada e o botão global reabria.
-  const { data: vencimentoSalvo = null, isFetched: vencimentoCarregado } = useQuery({
-    queryKey: ["colonia_vencimento_semana", schoolKey, weekStartYMD],
+  // Status do fechamento da semana: flag interna do School Hub, sem consultar o
+  // Sponte. A semana só está resolvida quando TODAS as unidades em escopo estão
+  // marcadas como faturadas.
+  const { data: statusSemana = [], isFetched: statusCarregado } = useQuery({
+    queryKey: ["colonia_status_semana", schoolKey, weekStartYMD],
     enabled: canFaturar,
     queryFn: async () => {
       let q = supabase
-        .from("holiday_camp_billing_dates" as never)
-        .select("due_date, updated_at")
-        .eq("week_start", weekStartYMD)
-        .order("updated_at", { ascending: false })
-        .limit(1);
+        .from("holiday_camp_week_status" as never)
+        .select("school_id, status")
+        .eq("week_start", weekStartYMD);
       if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
       const { data, error } = await q;
       if (error) throw error;
-      const row = (data ?? [])[0] as { due_date: string } | undefined;
-      return row?.due_date ?? null;
+      return (data ?? []) as unknown as { school_id: string; status: string }[];
     },
   });
 
-  // Precedência: data salva → vencimento de um faturamento existente → sexta.
-  const vencimentoInvoice = invoices.find((inv) => inv.dueDate)?.dueDate ?? null;
-  useEffect(() => {
-    if (canFaturar && !vencimentoCarregado) return;
-    setVencimentoFaturamento(vencimentoSalvo ?? vencimentoInvoice ?? weekEndYMD);
-  }, [vencimentoSalvo, vencimentoCarregado, vencimentoInvoice, weekEndYMD, canFaturar]);
+  const semanaFaturada = useMemo(() => {
+    if (!canFaturar || !statusCarregado || escopoSchoolIds.length === 0) return false;
+    const faturadas = new Set(
+      statusSemana.filter((r) => r.status === "faturado").map((r) => r.school_id),
+    );
+    return escopoSchoolIds.every((id) => faturadas.has(id));
+  }, [canFaturar, statusCarregado, escopoSchoolIds, statusSemana]);
 
-  const salvarVencimentoFn = useServerFn(salvarVencimentoColonia);
-  const salvarVencimento = useMutation({
-    mutationFn: async (vencimento: string) => {
-      if (escopoSchoolIds.length === 0) return;
-      await salvarVencimentoFn({
+  const definirStatusFn = useServerFn(definirStatusSemanaColonia);
+  const definirStatus = useMutation({
+    mutationFn: async ({
+      status,
+      origem,
+    }: {
+      status: "faturado" | "pendente";
+      origem: "lote" | "manual" | "reabertura";
+    }) => {
+      if (escopoSchoolIds.length === 0) throw new Error("Nenhuma unidade integrada em tela.");
+      const res = await definirStatusFn({
         data: {
           weekStart: weekStartYMD,
           weekEnd: weekEndYMD,
-          vencimento,
           schoolIds: escopoSchoolIds,
+          status,
+          origem,
         },
       });
+      if (!res.ok) throw new Error(res.error ?? "Não foi possível atualizar o status da semana.");
+      return status;
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["colonia_vencimento_semana"] });
+    onSuccess: (status) => {
+      void qc.invalidateQueries({ queryKey: ["colonia_status_semana"] });
+      // Os avisos do sininho derivam do mesmo status.
+      void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
+      if (status === "faturado") toast.success("Semana marcada como faturada.");
+      else toast.success("Semana reaberta para faturamento.");
     },
     onError: (e: unknown) => {
-      toast.error("Não foi possível salvar a data de vencimento", {
+      toast.error("Erro ao atualizar o status da semana", {
         description: e instanceof Error ? e.message : "Tente novamente.",
       });
     },
   });
-
-  const alterarVencimento = (vencimento: string) => {
-    setVencimentoFaturamento(vencimento);
-    if (vencimento) salvarVencimento.mutate(vencimento);
-  };
-
-  // Conferência no Sponte por vencimento + categoria: o aluno conta como
-  // faturado quando existe título de Colônia com essa data, seja qual for a
-  // situação do boleto (a remessa bancária muda o status e não pode reabrir o
-  // faturamento). Títulos existentes sem vínculo local são adotados; vínculos
-  // daquele vencimento sem título no Sponte são revertidos.
-  const conferirFn = useServerFn(conferirFaturamentoColonia);
-  const conferenciaItens = useMemo(() => {
-    if (!canFaturar || !calcReady) return [];
-    return students
-      .map((s) => ({
-        unidade: schoolIdToName.get(s.schoolId) ?? "",
-        studentId: s.studentId,
-        schoolId: s.schoolId,
-        sponteAlunoId: s.sponteAlunoId ?? "",
-        valor: billingByStudent.get(s.studentId)?.total ?? 0,
-        temVinculoLocal: invoicedSet.has(s.studentId),
-      }))
-      .filter(
-        (it) =>
-          !!it.sponteAlunoId &&
-          UNIDADES_SPONTE.includes(it.unidade) &&
-          !manualSet.has(it.studentId),
-      );
-  }, [students, billingByStudent, invoicedSet, manualSet, schoolIdToName, canFaturar, calcReady]);
-
-  const { data: conferencia, isFetching: conferindo } = useQuery({
-    queryKey: [
-      "colonia_conferencia_sponte",
-      weekStartYMD,
-      vencimentoFaturamento,
-      conferenciaItens
-        .map((i) => i.sponteAlunoId)
-        .sort()
-        .join(","),
-    ],
-    enabled: conferenciaItens.length > 0 && !!vencimentoFaturamento && vencimentoCarregado,
-    staleTime: 2 * 60_000,
-    queryFn: async () =>
-      conferirFn({
-        data: {
-          vencimento: vencimentoFaturamento,
-          weekStart: weekStartYMD,
-          weekEnd: weekEndYMD,
-          itens: conferenciaItens,
-        },
-      }),
-  });
-
-  const sponteFaturadosSet = useMemo(
-    () => new Set(conferencia?.faturados ?? []),
-    [conferencia?.faturados],
-  );
-
-  useEffect(() => {
-    if (!conferencia) return;
-    const { adotados, revertidos } = conferencia;
-    if (adotados.length === 0 && revertidos.length === 0) return;
-    if (adotados.length > 0) {
-      toast.info(
-        "Faturamento reconhecido: título de Colônia já existe no Sponte neste vencimento.",
-      );
-    } else {
-      toast.info("Faturamento revertido: título excluído no Sponte para este vencimento.");
-    }
-    void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
-    void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
-  }, [conferencia, qc]);
 
   const weekLabel = useMemo(
     () => `${fmtDayMonth(weekStart)} – ${fmtDayMonth(friday)}`,
@@ -597,21 +540,12 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       .filter(
         ({ s, unidade, total }) =>
           !invoicedSet.has(s.studentId) &&
-          !sponteFaturadosSet.has(s.studentId) &&
           !!s.sponteAlunoId &&
           !!unidade &&
           UNIDADES_SPONTE.includes(unidade) &&
           total > 0,
       );
-  }, [
-    students,
-    billingByStudent,
-    invoicedSet,
-    sponteFaturadosSet,
-    schoolIdToName,
-    canFaturar,
-    calcReady,
-  ]);
+  }, [students, billingByStudent, invoicedSet, schoolIdToName, canFaturar, calcReady]);
 
   const faturarTodos = useMutation({
     mutationFn: async () => {
@@ -643,11 +577,10 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       return { sucesso, jaFaturado, falhas };
     },
     onSuccess: ({ sucesso, jaFaturado, falhas }) => {
-      salvarVencimento.mutate(vencimentoFaturamento);
       void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
-      // Dá baixa imediata nos avisos de fechamento pendente do sininho.
-      void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
-      if (falhas.length === 0) setLoteConcluidoWeek(weekStartYMD);
+      // Lote sem falhas fecha a semana; com falha, permanece pendente para nova
+      // tentativa (é o próprio status interno que trava o botão e o sininho).
+      if (falhas.length === 0) definirStatus.mutate({ status: "faturado", origem: "lote" });
       setLoteOpen(false);
       setLoteDuplicados(null);
       const partes = [`${sucesso} faturado(s) com sucesso`];
@@ -699,21 +632,6 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
   const loteBusy = checarDuplicidade.isPending || faturarTodos.isPending;
 
-  // Trava global: com todos os alunos faturáveis resolvidos, o lote da semana
-  // está fechado. O flag local cobre a janela entre o retorno do Sponte e o
-  // refetch dos faturamentos; qualquer aluno que volte a ficar pendente
-  // (desvinculado, título excluído no Sponte, valor alterado) reabre o botão.
-  useEffect(() => {
-    if (faturaveis.length > 0) setLoteConcluidoWeek(null);
-  }, [faturaveis.length]);
-
-  const faturamentoConcluido =
-    canFaturar &&
-    (loteConcluidoWeek === weekStartYMD ||
-      (calcReady &&
-        faturaveis.length === 0 &&
-        (invoices.length > 0 || sponteFaturadosSet.size > 0)));
-
   const abrirLote = () => {
     setLoteDuplicados(null);
     setLoteOpen(true);
@@ -750,57 +668,108 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
       {canFaturar && students.length > 0 && (
         <div className="space-y-2 rounded-2xl border border-border bg-card p-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="venc-faturamento">Data de Vencimento do Faturamento</Label>
-            <Input
-              id="venc-faturamento"
-              type="date"
-              required
-              value={vencimentoFaturamento}
-              onChange={(e) => alterarVencimento(e.target.value)}
-              disabled={loteBusy}
-              aria-invalid={!vencimentoFaturamento}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Vencimento usado ao faturar no Sponte e para conferir se o título já existe. O aluno
-              conta como faturado quando há boleto de Colônia de Férias com esta data — independente
-              do status (aberto, registrado, pago, remessa gerada). A data fica salva neste período
-              e é recarregada automaticamente.
-            </p>
-          </div>
-
-          {faturamentoConcluido ? (
-            <Button
-              disabled
-              variant="outline"
-              className="w-full border-emerald-500/40 text-emerald-600 disabled:opacity-100 dark:text-emerald-400"
-              title="Todos os alunos desta semana já foram faturados ou resolvidos"
-            >
-              <CheckCircle2 className="h-4 w-4" /> Faturamento Concluído
-            </Button>
-          ) : conferindo ? (
-            <Button disabled variant="outline" className="w-full disabled:opacity-100">
-              <Loader2 className="h-4 w-4 animate-spin" /> Conferindo no Sponte…
-            </Button>
+          {semanaFaturada ? (
+            <>
+              <Button
+                disabled
+                variant="outline"
+                className="w-full border-emerald-500/40 text-emerald-600 disabled:opacity-100 dark:text-emerald-400"
+                title="Esta semana está marcada como faturada no School Hub"
+              >
+                <CheckCircle2 className="h-4 w-4" /> Faturamento Concluído
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setStatusAcao("reabrir")}
+                disabled={definirStatus.isPending}
+              >
+                <RotateCcw className="h-4 w-4" /> Autorizar faturar novamente
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Semana fechada no School Hub: o botão de faturar fica bloqueado e os avisos do
+                sininho ficam silenciados para este período.
+              </p>
+            </>
           ) : (
-            <Button
-              onClick={abrirLote}
-              disabled={!calcReady || faturaveis.length === 0 || !vencimentoFaturamento}
-              className="w-full"
-              title={
-                !vencimentoFaturamento
-                  ? "Informe a Data de Vencimento do Faturamento"
-                  : faturaveis.length === 0
+            <>
+              <Button
+                onClick={abrirLote}
+                disabled={!calcReady || faturaveis.length === 0}
+                className="w-full"
+                title={
+                  faturaveis.length === 0
                     ? "Nenhum aluno pendente para faturar nesta semana"
                     : undefined
-              }
-            >
-              <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
-              {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
-            </Button>
+                }
+              >
+                <Receipt className="h-4 w-4" /> Faturar Todos no Sponte
+                {faturaveis.length > 0 ? ` (${faturaveis.length})` : ""}
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => setStatusAcao("manual")}
+                disabled={definirStatus.isPending || escopoSchoolIds.length === 0}
+              >
+                <Handshake className="h-4 w-4" /> Já lançado / Acordo manual
+              </Button>
+            </>
           )}
         </div>
       )}
+
+      <Dialog
+        open={statusAcao !== null}
+        onOpenChange={(v) =>
+          definirStatus.isPending ? null : setStatusAcao(v ? statusAcao : null)
+        }
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {statusAcao === "reabrir"
+                ? "Autorizar faturar novamente"
+                : "Já lançado / Acordo manual"}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {statusAcao === "reabrir"
+              ? `A semana ${weekLabel} volta para pendente e o faturamento é reaberto. Os avisos do sininho voltam a aparecer para este período.`
+              : `A semana ${weekLabel} será marcada como faturada no School Hub, sem enviar nada ao Sponte. Use quando a cobrança já foi lançada por fora ou houve acordo manual.`}
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setStatusAcao(null)}
+              disabled={definirStatus.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() =>
+                definirStatus.mutate(
+                  statusAcao === "reabrir"
+                    ? { status: "pendente", origem: "reabertura" }
+                    : { status: "faturado", origem: "manual" },
+                  { onSuccess: () => setStatusAcao(null) },
+                )
+              }
+              disabled={definirStatus.isPending}
+            >
+              {definirStatus.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Salvando…
+                </>
+              ) : statusAcao === "reabrir" ? (
+                "Reabrir semana"
+              ) : (
+                "Marcar como faturada"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={loteOpen} onOpenChange={(v) => (loteBusy ? null : setLoteOpen(v))}>
         <DialogContent>
@@ -856,11 +825,21 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                   {faturaveis.length} aluno(s) pendente(s) serão faturados no Sponte. Alunos já
                   faturados ou marcados como acordo manual são ignorados.
                 </p>
-                <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 p-3 text-sm">
-                  <span className="text-muted-foreground">Data de Vencimento do Faturamento</span>
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {fmtYMD(vencimentoFaturamento)}
-                  </span>
+                <div className="space-y-1.5">
+                  <Label htmlFor="venc-lote">Data de vencimento dos boletos</Label>
+                  <Input
+                    id="venc-lote"
+                    type="date"
+                    required
+                    value={vencimentoFaturamento}
+                    onChange={(e) => setVencimentoFaturamento(e.target.value)}
+                    disabled={loteBusy}
+                    aria-invalid={!vencimentoFaturamento}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Vencimento dos títulos gerados no Sponte. Não influencia o status da semana no
+                    School Hub.
+                  </p>
                 </div>
               </div>
               <DialogFooter>
@@ -1036,9 +1015,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
                       weekEndYMD={weekEndYMD}
                       weekLabel={weekLabel}
                       defaultVencimento={vencimentoFaturamento || weekEndYMD}
-                      jaFaturado={
-                        invoicedSet.has(s.studentId) || sponteFaturadosSet.has(s.studentId)
-                      }
+                      jaFaturado={invoicedSet.has(s.studentId)}
                       manualSettled={manualSet.has(s.studentId)}
                       disabled={calculando}
                       onFaturado={() => {
