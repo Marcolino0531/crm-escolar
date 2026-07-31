@@ -46,6 +46,8 @@ const MatriculaSchema = z.object({
   unidade: texto.refine((u) => UNIDADES_SPONTE.includes(u), {
     message: `Unidade inválida. Use uma destas: ${UNIDADES_SPONTE.join(", ")}`,
   }),
+  // Reprocessa só os responsáveis de um aluno que já entrou no Sponte.
+  alunoIdExistente: z.number().int().positive().optional(),
   aluno: z.object({
     nome: texto.min(3, "Nome completo do aluno é obrigatório"),
     dataNascimento: texto.min(1, "Data de nascimento do aluno é obrigatória"),
@@ -67,9 +69,13 @@ const MatriculaSchema = z.object({
       z.object({
         nome: texto.min(3, "Nome do responsável é obrigatório"),
         parentesco: texto.min(1, "Parentesco é obrigatório"),
-        parentescoId: z.number().int().positive().optional(),
+        parentescoId: z.number().int().optional(),
         dataNascimento: opcional,
-        cpf: opcional,
+        // O Sponte recusa responsável sem CPF ("27 - Campo CPF é obrigatório"),
+        // então barramos aqui — antes de o aluno ser criado.
+        cpf: texto.refine((c) => c.replace(/\D/g, "").length === 11, {
+          message: "CPF do responsável é obrigatório (o Sponte recusa o cadastro sem ele)",
+        }),
         rg: opcional,
         sexo: opcional,
         profissao: opcional,

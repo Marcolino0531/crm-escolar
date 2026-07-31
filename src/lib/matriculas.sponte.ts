@@ -22,24 +22,20 @@ import {
   resolverCredenciais,
 } from "@/lib/sponte.functions";
 
-// Parentesco é um inteiro no Sponte e a API não expõe a tabela de códigos
-// (GetResponsaveis devolve só o rótulo). Estes são os códigos padrão; podem ser
-// sobrescritos por unidade em SPONTE_PARENTESCO_MAP (JSON) ou, caso a caso, pelo
-// campo `parentescoId` do payload. Toda inserção relê o responsável no Sponte e
-// grava o rótulo resultante no log, o que confirma (ou desmente) o código usado.
+// Parentesco é um inteiro NEGATIVO no Sponte (mesmo padrão de SituacaoAlunoID e
+// das formas de cobrança). A API não expõe a tabela; os códigos abaixo foram
+// levantados contra a base do CEC — só existem três, e qualquer outro valor
+// devolve "31 - Parentesco inválido":
+//   -1 Pai   -2 Mãe   -3 Responsável
+// Podem ser sobrescritos por SPONTE_PARENTESCO_MAP (JSON) — útil se outra
+// unidade tiver uma tabela diferente — ou, caso a caso, pelo campo
+// `parentescoId` do payload.
+const PARENTESCO_GENERICO = -3;
+
 const PARENTESCO_PADRAO: Record<string, number> = {
-  pai: 1,
-  mae: 2,
-  avo: 3,
-  ava: 4,
-  tio: 5,
-  tia: 6,
-  irmao: 7,
-  irma: 8,
-  padrasto: 9,
-  madrasta: 10,
-  responsavel: 11,
-  outros: 11,
+  pai: -1,
+  mae: -2,
+  responsavel: PARENTESCO_GENERICO,
 };
 
 function normalizar(s: string): string {
@@ -66,15 +62,25 @@ function mapaParentesco(): Record<string, number> {
   }
 }
 
-export function codigoParentesco(rotulo: string): number | null {
+// Regra do colégio: a mãe é SEMPRE responsável didática, independentemente do que
+// o formulário marcar. O responsável financeiro continua sendo escolha do
+// formulário. Garantido aqui (e não só no Apps Script) para valer para qualquer
+// origem que chame o webhook.
+export function ehMae(parentesco: string): boolean {
+  return normalizar(parentesco).startsWith("mae");
+}
+
+// Avó, tio, padrasto, guardião… nada disso existe na tabela do Sponte, então cai
+// em "Responsável" em vez de derrubar a matrícula por um parentesco atípico.
+export function codigoParentesco(rotulo: string): number {
   const mapa = mapaParentesco();
   const chave = normalizar(rotulo);
   if (chave in mapa) return mapa[chave];
-  // "Mãe biológica", "Avó materna" etc. — casa pelo prefixo mais específico.
+  // "Mãe biológica", "Pai (adotivo)" etc. — casa pelo prefixo mais específico.
   const parcial = Object.keys(mapa)
     .filter((k) => chave.startsWith(k) || chave.includes(k))
     .sort((a, b) => b.length - a.length)[0];
-  return parcial ? mapa[parcial] : null;
+  return parcial ? mapa[parcial] : PARENTESCO_GENERICO;
 }
 
 // Aceita "YYYY-MM-DD", "DD/MM/YYYY" e "DD/MM/YYYY HH:mm". Devolve o formato
@@ -197,6 +203,10 @@ export interface ResponsavelMatricula {
 export interface MatriculaPayload {
   submissionId?: string;
   unidade: string;
+  // Reprocessamento: com o AlunoID preenchido, o aluno NÃO é criado de novo e o
+  // fluxo vai direto para os responsáveis. É a saída para quando o aluno entrou
+  // mas um responsável falhou.
+  alunoIdExistente?: number;
   aluno: AlunoMatricula;
   endereco: {
     cep: string;
@@ -213,6 +223,8 @@ export interface ResponsavelResultado {
   nome: string;
   parentesco: string;
   parentescoId: number;
+  responsavelFinanceiro: boolean;
+  responsavelDidatico: boolean;
   ok: boolean;
   retorno: string;
   responsavelId: number | null;
@@ -349,6 +361,7 @@ function camposAluno(aluno: AlunoMatricula, endereco: EnderecoResolvido, nascime
 function camposResponsavel(
   resp: ResponsavelMatricula,
   parentescoId: number,
+  didatico: boolean,
   endereco: EnderecoResolvido,
   nascimento: string,
   alunoId: number,
@@ -369,7 +382,7 @@ function camposResponsavel(
     sCelular: resp.celular?.trim() ?? "",
     nAlunoID: String(alunoId),
     lResponsavelFinanceiro: resp.responsavelFinanceiro ? "true" : "false",
-    lResponsavelDidatico: resp.responsavelDidatico ? "true" : "false",
+    lResponsavelDidatico: didatico ? "true" : "false",
     sObservacao: "",
     sSexo: resp.sexo?.trim() ?? "",
     sProfissao: resp.profissao?.trim() ?? "",
@@ -422,18 +435,16 @@ export async function processarMatricula(
 
   const endereco = await resolverEndereco(payload.endereco);
 
-  // Códigos de parentesco resolvidos ANTES de qualquer escrita: se um deles for
-  // desconhecido, nada é criado no Sponte (evita aluno órfão sem responsável).
+  // O Sponte aceita no máximo um Pai e uma Mãe por aluno ("O aluno pode ter
+  // apenas um pai e uma mãe cadastrados"). Um segundo com o mesmo papel entra
+  // como "Responsável" em vez de derrubar o cadastro.
+  const usados = new Set<number>();
   const parentescos = payload.responsaveis.map((r) => {
-    const id = r.parentescoId ?? codigoParentesco(r.parentesco);
-    if (id === null) {
-      throw new MatriculaError(
-        "erro_responsavel",
-        `Parentesco "${r.parentesco}" não reconhecido. Envie "parentescoId" no payload ou ajuste SPONTE_PARENTESCO_MAP.`,
-        422,
-      );
-    }
-    return id;
+    if (r.parentescoId !== undefined) return r.parentescoId;
+    const codigo = codigoParentesco(r.parentesco);
+    if ((codigo === -1 || codigo === -2) && usados.has(codigo)) return PARENTESCO_GENERICO;
+    usados.add(codigo);
+    return codigo;
   });
 
   const nascimentosResponsaveis = payload.responsaveis.map((r) => {
@@ -452,7 +463,7 @@ export async function processarMatricula(
   // Trava anti-duplicidade: reenvio do mesmo formulário não cria um segundo
   // cadastro. O CPF do aluno é a chave (quando informado).
   const cpfAluno = payload.aluno.cpf?.trim();
-  if (cpfAluno) {
+  if (cpfAluno && !payload.alunoIdExistente) {
     const existente = await buscarAlunoPorCpf(cpfAluno, creds.codigoCliente, creds.token);
     if (existente) {
       return {
@@ -478,6 +489,8 @@ export async function processarMatricula(
         nome: r.nome,
         parentesco: r.parentesco,
         parentescoId: parentescos[i],
+        responsavelFinanceiro: r.responsavelFinanceiro === true,
+        responsavelDidatico: r.responsavelDidatico === true || ehMae(r.parentesco),
         ok: true,
         retorno: "dry run — nada foi enviado ao Sponte",
         responsavelId: null,
@@ -486,48 +499,27 @@ export async function processarMatricula(
     };
   }
 
-  // ── Passo 1: Aluno (dados pessoais + endereço) ─────────────────────────────
-  const xmlAluno = await callSponteMethod(
-    "InsertAlunos3",
-    serializar(camposAluno(payload.aluno, endereco, nascimentoAluno)),
-    creds.codigoCliente,
-    creds.token,
-  );
-
-  const fault = checkFault(xmlAluno);
-  if (fault) throw new MatriculaError("erro_aluno", fault);
-
-  const retornoAluno = parseXmlValue(xmlAluno, "RetornoOperacao");
-  if (!retornoOk(retornoAluno)) {
-    throw new MatriculaError("erro_aluno", retornoAluno || "O Sponte não confirmou a criação.");
-  }
-
-  // ── Passo 2: captura o AlunoID gerado ──────────────────────────────────────
-  // O InsertAlunos3 devolve só o texto da operação; o ID vem de uma releitura.
-  const alunoId =
-    (cpfAluno ? await buscarAlunoPorCpf(cpfAluno, creds.codigoCliente, creds.token) : null) ??
-    (await buscarAlunoPorNome(
-      payload.aluno.nome,
-      nascimentoAluno,
-      creds.codigoCliente,
-      creds.token,
-    ));
-
-  if (!alunoId) {
-    throw new MatriculaError(
-      "erro_aluno",
-      "O aluno foi criado no Sponte, mas o AlunoID não pôde ser localizado — os responsáveis não foram enviados.",
-    );
-  }
+  const alunoId = payload.alunoIdExistente
+    ? payload.alunoIdExistente
+    : await criarAluno(payload, endereco, nascimentoAluno, creds.codigoCliente, creds.token);
 
   // ── Passo 3: Responsáveis, um a um, atrelados ao AlunoID ───────────────────
   const responsaveis: ResponsavelResultado[] = [];
   for (const [i, resp] of payload.responsaveis.entries()) {
+    // Sem bloco `endereco` próprio, o responsável espelha o endereço do aluno.
     const enderecoResp = resp.endereco ? await resolverEndereco(resp.endereco) : endereco;
+    const didatico = resp.responsavelDidatico === true || ehMae(resp.parentesco);
     const xml = await callSponteMethod(
       "InsertResponsaveis2",
       serializar(
-        camposResponsavel(resp, parentescos[i], enderecoResp, nascimentosResponsaveis[i], alunoId),
+        camposResponsavel(
+          resp,
+          parentescos[i],
+          didatico,
+          enderecoResp,
+          nascimentosResponsaveis[i],
+          alunoId,
+        ),
       ),
       creds.codigoCliente,
       creds.token,
@@ -535,15 +527,23 @@ export async function processarMatricula(
 
     const faultResp = checkFault(xml);
     const retorno = faultResp ?? parseXmlValue(xml, "RetornoOperacao");
-    const ok = !faultResp && retornoOk(retorno);
-    const conferido = ok
-      ? await conferirResponsavel(alunoId, resp.nome, creds.codigoCliente, creds.token)
-      : { responsavelId: null, parentesco: null };
+    // A releitura roda mesmo quando o Sponte devolve erro: já observamos o
+    // responsável ser criado junto com um "29 - CPF já associado". Sem conferir,
+    // um reenvio duplicaria o cadastro.
+    const conferido = await conferirResponsavel(
+      alunoId,
+      resp.nome,
+      creds.codigoCliente,
+      creds.token,
+    );
+    const ok = (!faultResp && retornoOk(retorno)) || conferido.responsavelId !== null;
 
     responsaveis.push({
       nome: resp.nome,
       parentesco: resp.parentesco,
       parentescoId: parentescos[i],
+      responsavelFinanceiro: resp.responsavelFinanceiro === true,
+      responsavelDidatico: didatico,
       ok,
       retorno: retorno || "O Sponte não devolveu retorno.",
       responsavelId: conferido.responsavelId,
@@ -556,14 +556,52 @@ export async function processarMatricula(
     ok: falhas.length === 0,
     status: falhas.length === 0 ? "sucesso" : "erro_responsavel",
     alunoId,
-    alunoJaExistia: false,
+    alunoJaExistia: !!payload.alunoIdExistente,
     endereco,
     responsaveis,
     error:
       falhas.length === 0
         ? undefined
-        : `Aluno criado (AlunoID ${alunoId}), mas ${falhas.length} responsável(is) falharam: ${falhas
+        : `Aluno ${payload.alunoIdExistente ? "" : "criado "}(AlunoID ${alunoId}), mas ${falhas.length} responsável(is) falharam: ${falhas
             .map((f) => `${f.nome} — ${f.retorno}`)
             .join("; ")}`,
   };
+}
+
+// Passos 1 e 2 do fluxo: cria o aluno e devolve o AlunoID gerado.
+async function criarAluno(
+  payload: MatriculaPayload,
+  endereco: EnderecoResolvido,
+  nascimentoAluno: string,
+  codigoCliente: string,
+  token: string,
+): Promise<number> {
+  const xmlAluno = await callSponteMethod(
+    "InsertAlunos3",
+    serializar(camposAluno(payload.aluno, endereco, nascimentoAluno)),
+    codigoCliente,
+    token,
+  );
+
+  const fault = checkFault(xmlAluno);
+  if (fault) throw new MatriculaError("erro_aluno", fault);
+
+  const retornoAluno = parseXmlValue(xmlAluno, "RetornoOperacao");
+  if (!retornoOk(retornoAluno)) {
+    throw new MatriculaError("erro_aluno", retornoAluno || "O Sponte não confirmou a criação.");
+  }
+
+  // O InsertAlunos3 devolve só o texto da operação — o ID vem de uma releitura.
+  const cpf = payload.aluno.cpf?.trim();
+  const alunoId =
+    (cpf ? await buscarAlunoPorCpf(cpf, codigoCliente, token) : null) ??
+    (await buscarAlunoPorNome(payload.aluno.nome, nascimentoAluno, codigoCliente, token));
+
+  if (!alunoId) {
+    throw new MatriculaError(
+      "erro_aluno",
+      "O aluno foi criado no Sponte, mas o AlunoID não pôde ser localizado — os responsáveis não foram enviados.",
+    );
+  }
+  return alunoId;
 }
