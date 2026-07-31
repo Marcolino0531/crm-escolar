@@ -9,6 +9,12 @@
 //                         (DataSet), sem o ID; por isso o AlunoID é resolvido em
 //                         seguida por GetAlunos (CPF, ou nome + nascimento).
 //   InsertResponsaveis2 — idem, com sComplementoEndereco e nAlunoID.
+//   UpdateResponsaveis2 — usado quando o CPF do responsável já existe na base
+//                         (irmão já matriculado): vincula o cadastro existente
+//                         ao novo aluno. Levantado contra a base do CEC: o
+//                         Update ADICIONA o vínculo (o aluno anterior mantém o
+//                         responsável) e parentesco/financeiro/didático valem
+//                         POR VÍNCULO, não para o responsável inteiro.
 //
 // A API NÃO tem campo de nacionalidade na inserção (só na leitura), então ela é
 // registrada na observação do aluno. Naturalidade vai em sCidadeNatal.
@@ -231,6 +237,9 @@ export interface ResponsavelResultado {
   // Rótulo que o Sponte devolveu ao reler o responsável — confirma se o código
   // numérico enviado corresponde ao parentesco pedido no formulário.
   parentescoConfirmado: string | null;
+  // true quando o cadastro já existia (CPF de um irmão) e foi vinculado ao novo
+  // aluno em vez de criado.
+  reaproveitado: boolean;
 }
 
 export type MatriculaStatus =
@@ -297,11 +306,68 @@ async function buscarAlunoPorNome(
   return melhor;
 }
 
-// Relê o responsável recém-criado para (a) capturar o ResponsavelID e (b)
-// registrar o rótulo de parentesco que o Sponte gravou.
+// Cadastro de responsável como o Sponte devolve, incluindo os alunos aos quais
+// ele já está vinculado (bloco <Alunos>, um <wsAlunos> por vínculo).
+interface ResponsavelSponte {
+  id: number;
+  nome: string;
+  cpf: string;
+  rg: string;
+  dataNascimento: string;
+  cep: string;
+  endereco: string;
+  numero: string;
+  complemento: string;
+  cidade: string;
+  bairro: string;
+  email: string;
+  telefone: string;
+  celular: string;
+  sexo: string;
+  tipoPessoa: string;
+  observacao: string;
+  vinculos: { alunoId: number; parentesco: string }[];
+}
+
+function lerResponsavel(bloco: string): ResponsavelSponte | null {
+  const id = parseInt(parseXmlValue(bloco, "ResponsavelID"), 10);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const vinculos = (bloco.match(/<wsAlunos>[\s\S]*?<\/wsAlunos>/g) ?? [])
+    .map((v) => ({
+      alunoId: parseInt(parseXmlValue(v, "AlunoID"), 10),
+      parentesco: parseXmlValue(v, "Parentesco"),
+    }))
+    .filter((v) => Number.isFinite(v.alunoId) && v.alunoId > 0);
+
+  return {
+    id,
+    nome: parseXmlValue(bloco, "Nome"),
+    cpf: parseXmlValue(bloco, "CPFCNPJ"),
+    rg: parseXmlValue(bloco, "RG"),
+    dataNascimento: parseXmlValue(bloco, "DataNascimento"),
+    cep: parseXmlValue(bloco, "CEP"),
+    endereco: parseXmlValue(bloco, "Endereco"),
+    numero: parseXmlValue(bloco, "NumeroEndereco"),
+    complemento: parseXmlValue(bloco, "ComplementoEndereco"),
+    cidade: parseXmlValue(bloco, "Cidade"),
+    bairro: parseXmlValue(bloco, "Bairro"),
+    email: parseXmlValue(bloco, "Email"),
+    telefone: parseXmlValue(bloco, "Telefone"),
+    celular: parseXmlValue(bloco, "Celular"),
+    sexo: parseXmlValue(bloco, "Sexo"),
+    tipoPessoa: parseXmlValue(bloco, "TipoPessoa"),
+    observacao: parseXmlValue(bloco, "Observacao"),
+    vinculos,
+  };
+}
+
+// Relê o responsável para (a) capturar o ResponsavelID e (b) registrar o rótulo
+// de parentesco que o Sponte gravou PARA ESTE ALUNO — com irmãos, o mesmo
+// cadastro carrega um parentesco por vínculo.
 async function conferirResponsavel(
   alunoId: number,
   nome: string,
+  responsavelId: number | null,
   codigoCliente: string,
   token: string,
 ): Promise<{ responsavelId: number | null; parentesco: string | null }> {
@@ -310,14 +376,96 @@ async function conferirResponsavel(
 
   const alvo = normalizar(nome);
   for (const bloco of xml.match(/<wsResponsavel>[\s\S]*?<\/wsResponsavel>/g) ?? []) {
-    if (normalizar(parseXmlValue(bloco, "Nome")) !== alvo) continue;
-    const id = parseInt(parseXmlValue(bloco, "ResponsavelID"), 10);
-    return {
-      responsavelId: Number.isFinite(id) && id > 0 ? id : null,
-      parentesco: parseXmlValue(bloco, "Parentesco") || null,
-    };
+    const registro = lerResponsavel(bloco);
+    if (!registro) continue;
+    const casa = responsavelId ? registro.id === responsavelId : normalizar(registro.nome) === alvo;
+    if (!casa) continue;
+    const vinculo = registro.vinculos.find((v) => v.alunoId === alunoId);
+    return { responsavelId: registro.id, parentesco: vinculo?.parentesco || null };
   }
   return { responsavelId: null, parentesco: null };
+}
+
+// Procura um responsável JÁ CADASTRADO pelo CPF. É o que destrava o erro
+// "29 - O CPF informado já está associado a outro cadastro": o responsável do
+// irmão mais velho existe e precisa ser reaproveitado, não recriado.
+async function buscarResponsavelPorCpf(
+  cpf: string,
+  codigoCliente: string,
+  token: string,
+): Promise<ResponsavelSponte | null> {
+  const digitos = soDigitos(cpf);
+  if (digitos.length !== 11) return null;
+  const formatado = `${digitos.slice(0, 3)}.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-${digitos.slice(9)}`;
+
+  for (const variacao of [formatado, digitos]) {
+    const xml = await callSponte("GetResponsaveis", `CPFCNPJ=${variacao}`, codigoCliente, token);
+    if (checkFault(xml)) continue;
+    for (const bloco of xml.match(/<wsResponsavel>[\s\S]*?<\/wsResponsavel>/g) ?? []) {
+      const registro = lerResponsavel(bloco);
+      if (registro && soDigitos(registro.cpf) === digitos) return registro;
+    }
+  }
+  return null;
+}
+
+// "Física" → 1, "Jurídica" → 2. A leitura devolve o rótulo, a escrita quer o
+// código.
+function codigoTipoPessoa(rotulo: string): string {
+  return normalizar(rotulo).startsWith("jur") ? "2" : "1";
+}
+
+// Vincula ao aluno um responsável que já existe. Os dados cadastrais do
+// responsável são PRESERVADOS (eles pertencem também ao irmão já matriculado);
+// o formulário só completa campos que estavam vazios. O que muda de fato é o
+// vínculo: parentesco e as flags financeiro/didático, que o Sponte guarda por
+// aluno.
+async function vincularResponsavelExistente(
+  existente: ResponsavelSponte,
+  resp: ResponsavelMatricula,
+  parentescoId: number,
+  didatico: boolean,
+  endereco: EnderecoResolvido,
+  nascimento: string,
+  alunoId: number,
+  codigoCliente: string,
+  token: string,
+): Promise<string> {
+  const manter = (atual: string, novo: string): string =>
+    atual.trim() ? atual.trim() : novo.trim();
+
+  const xml = await callSponteMethod(
+    "UpdateResponsaveis2",
+    serializar({
+      nResponsavelID: String(existente.id),
+      sNome: existente.nome || resp.nome.trim(),
+      dDataNascimento: existente.dataNascimento || nascimento,
+      nParentesco: String(parentescoId),
+      sCEP: manter(existente.cep, endereco.cep),
+      sEndereco: manter(existente.endereco, endereco.logradouro),
+      nNumeroEndereco: manter(existente.numero, endereco.numero),
+      sRG: manter(existente.rg, resp.rg ?? ""),
+      sCPFCNPJ: existente.cpf,
+      sCidade: manter(existente.cidade, endereco.cidade),
+      sBairro: manter(existente.bairro, endereco.bairro),
+      sEmail: manter(existente.email, resp.email ?? ""),
+      sTelefone: manter(existente.telefone, resp.telefone ?? ""),
+      sCelular: manter(existente.celular, resp.celular ?? ""),
+      nAlunoID: String(alunoId),
+      lResponsavelFinanceiro: resp.responsavelFinanceiro ? "true" : "false",
+      lResponsavelDidatico: didatico ? "true" : "false",
+      sObservacao: existente.observacao,
+      sSexo: manter(existente.sexo, resp.sexo ?? ""),
+      // A leitura não devolve profissão, então não há valor antigo a preservar.
+      sProfissao: resp.profissao?.trim() ?? "",
+      nTipoPessoa: codigoTipoPessoa(existente.tipoPessoa),
+      sComplementoEndereco: manter(existente.complemento, endereco.complemento),
+    }),
+    codigoCliente,
+    token,
+  );
+
+  return checkFault(xml) ?? parseXmlValue(xml, "RetornoOperacao");
 }
 
 function observacaoAluno(aluno: AlunoMatricula): string {
@@ -495,6 +643,7 @@ export async function processarMatricula(
         retorno: "dry run — nada foi enviado ao Sponte",
         responsavelId: null,
         parentescoConfirmado: null,
+        reaproveitado: false,
       })),
     };
   }
@@ -526,17 +675,55 @@ export async function processarMatricula(
     );
 
     const faultResp = checkFault(xml);
-    const retorno = faultResp ?? parseXmlValue(xml, "RetornoOperacao");
+    const retornoInsercao = faultResp ?? parseXmlValue(xml, "RetornoOperacao");
+    let retorno = retornoInsercao;
     // A releitura roda mesmo quando o Sponte devolve erro: já observamos o
     // responsável ser criado junto com um "29 - CPF já associado". Sem conferir,
     // um reenvio duplicaria o cadastro.
-    const conferido = await conferirResponsavel(
+    let conferido = await conferirResponsavel(
       alunoId,
       resp.nome,
+      null,
       creds.codigoCliente,
       creds.token,
     );
-    const ok = (!faultResp && retornoOk(retorno)) || conferido.responsavelId !== null;
+    let reaproveitado = false;
+
+    // Irmão já matriculado: o CPF pertence a um responsável que existe, e o
+    // Sponte recusa o insert ("29 - O CPF informado já está associado a outro
+    // cadastro"). Em vez de deixar o aluno sem responsável, o cadastro existente
+    // é vinculado a ele.
+    if (conferido.responsavelId === null && resp.cpf?.trim()) {
+      const existente = await buscarResponsavelPorCpf(resp.cpf, creds.codigoCliente, creds.token);
+      if (existente) {
+        reaproveitado = true;
+        const retornoVinculo = existente.vinculos.some((v) => v.alunoId === alunoId)
+          ? "01 - Responsável já estava vinculado a este aluno."
+          : await vincularResponsavelExistente(
+              existente,
+              resp,
+              parentescos[i],
+              didatico,
+              enderecoResp,
+              nascimentosResponsaveis[i],
+              alunoId,
+              creds.codigoCliente,
+              creds.token,
+            );
+        conferido = await conferirResponsavel(
+          alunoId,
+          resp.nome,
+          existente.id,
+          creds.codigoCliente,
+          creds.token,
+        );
+        retorno = `${retorno} → CPF já cadastrado (ResponsavelID ${existente.id}, "${existente.nome}"): vinculado a este aluno. ${retornoVinculo}`;
+      }
+    }
+
+    // O texto do vínculo é anexado ao retorno para a auditoria, mas o veredito
+    // vem da inserção original ou da releitura — nunca do texto concatenado.
+    const ok = (!faultResp && retornoOk(retornoInsercao)) || conferido.responsavelId !== null;
 
     responsaveis.push({
       nome: resp.nome,
@@ -548,6 +735,7 @@ export async function processarMatricula(
       retorno: retorno || "O Sponte não devolveu retorno.",
       responsavelId: conferido.responsavelId,
       parentescoConfirmado: conferido.parentesco,
+      reaproveitado,
     });
   }
 

@@ -87,6 +87,7 @@ type ResponsavelResultado = {
   retorno: string;
   responsavelId: number | null;
   parentescoConfirmado: string | null;
+  reaproveitado?: boolean;
 };
 
 type Resultado = {
@@ -494,7 +495,7 @@ function DetalheSubmissao({
                             r.ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
                           }`}
                         >
-                          {r.ok ? "Criado" : "Falhou"}
+                          {r.ok ? (r.reaproveitado ? "Reaproveitado" : "Criado") : "Falhou"}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
