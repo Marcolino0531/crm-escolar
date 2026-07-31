@@ -104,6 +104,7 @@ type EmbeddedStudentName = { name: string } | { name: string }[] | null;
 
 type ColoniaRegistroSemana = {
   student_id: string;
+  school_id: string;
   diario_students: EmbeddedStudentName;
 };
 
@@ -341,29 +342,33 @@ export function NotificationsBell() {
     enabled: !!userId && canColoniaFin,
     refetchInterval: 60000,
     queryFn: async () => {
-      const [registros, invRes] = await Promise.all([
+      const [registros, statusRes] = await Promise.all([
         fetchAllRows<ColoniaRegistroSemana>(
           (from, to) =>
             supabase
               .from("holiday_camp_records" as never)
-              .select("student_id, diario_students(name)")
+              .select("student_id, school_id, diario_students(name)")
               .gte("occurred_at", coloniaWeekMonday.toISOString())
               .lt("occurred_at", coloniaWeekSaturday.toISOString())
               .order("id", { ascending: true })
               .range(from, to) as unknown as PromiseLike<PagedRows<ColoniaRegistroSemana>>,
         ).catch(() => null),
         supabase
-          .from("holiday_camp_invoices" as never)
-          .select("student_id")
+          .from("holiday_camp_week_status" as never)
+          .select("school_id, status")
           .eq("week_start", coloniaWeekStartYMD),
       ]);
       if (!registros) return [] as ColoniaPendencia[];
-      const resolved = new Set(
-        ((invRes.data ?? []) as unknown as { student_id: string }[]).map((r) => r.student_id),
+      // O aviso deriva exclusivamente do status interno da semana: unidade
+      // marcada como faturada no School Hub não gera pendência.
+      const faturadas = new Set(
+        ((statusRes.data ?? []) as unknown as { school_id: string; status: string }[])
+          .filter((r) => r.status === "faturado")
+          .map((r) => r.school_id),
       );
       const pendentes = new Map<string, string>();
       for (const r of registros) {
-        if (resolved.has(r.student_id) || pendentes.has(r.student_id)) continue;
+        if (faturadas.has(r.school_id) || pendentes.has(r.student_id)) continue;
         const st = Array.isArray(r.diario_students) ? r.diario_students[0] : r.diario_students;
         pendentes.set(r.student_id, st?.name ?? "Aluno");
       }

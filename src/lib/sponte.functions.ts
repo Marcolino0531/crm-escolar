@@ -2602,32 +2602,6 @@ export const desvincularFaturamentoColonia = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-const ConferirColoniaInputSchema = z.object({
-  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  itens: z
-    .array(
-      z.object({
-        unidade: z.string(),
-        studentId: z.string().uuid(),
-        schoolId: z.string().uuid(),
-        sponteAlunoId: z.string().min(1),
-        valor: z.number().min(0),
-        temVinculoLocal: z.boolean(),
-      }),
-    )
-    .max(200),
-});
-
-export interface ConferirColoniaResult {
-  ok: boolean;
-  faturados: string[];
-  adotados: string[];
-  revertidos: string[];
-  error?: string;
-}
-
 // Títulos de Colônia do aluno no Sponte, indexados pela data de vencimento
 // (YMD → ContaReceberID). Ignora DE PROPÓSITO a situação financeira: gerar a
 // remessa bancária (CNAB) muda o status/estado do boleto e não pode reabrir um
@@ -2658,150 +2632,69 @@ async function titulosColoniaPorVencimento(
   return porVencimento;
 }
 
-// Conferência do faturamento da semana contra o Sponte, usando a data de
-// vencimento informada pelo usuário como chave. O aluno é considerado FATURADO
-// quando existe qualquer título de categoria "Colônia de Férias" com aquele
-// vencimento — independente da situação do boleto (aberto, registrado, pago,
-// remessa gerada...). Consequências:
-//   • título existe e não há vínculo local → adota o título (grava o vínculo),
-//     travando o botão global e dando baixa nos avisos do sininho;
-//   • título não existe e o vínculo local é daquele mesmo vencimento → reverte
-//     (o título foi realmente excluído no Sponte).
-// Conservador: consulta falha/vazia não altera nada, e um vínculo local com
-// outro vencimento nunca é revertido (protege contra data digitada errada).
-export const conferirFaturamentoColonia = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => ConferirColoniaInputSchema.parse(input))
-  .handler(async ({ data, context }): Promise<ConferirColoniaResult> => {
-    const { vencimento, weekStart, weekEnd, itens } = data;
-    if (!(await podeVerFinanceiroColonia(context.userId))) {
-      return {
-        ok: false,
-        faturados: [],
-        adotados: [],
-        revertidos: [],
-        error: "Sem permissão para faturar a Colônia.",
-      };
-    }
-    const allowed = await allowedSponteUnidades(context.userId);
-    const permitidos = itens.filter((it) => allowed === null || allowed.includes(it.unidade));
+// ── Status de faturamento da semana (controle interno do School Hub) ────────
+// O estado "faturado" é uma flag do próprio School Hub, por semana e unidade:
+// a operação decide quando a semana está resolvida — pelo lote no Sponte ou por
+// acordo manual — e pode reabri-la. Nada é inferido do boleto no Sponte, cujo
+// status muda por eventos bancários (remessa/CNAB) alheios ao fechamento.
 
-    const cache = new Map<string, Map<string, string> | null>();
-    const faturados: string[] = [];
-    const adotados: string[] = [];
-    const revertidos: string[] = [];
-
-    for (const it of permitidos) {
-      const creds = resolverCredenciais(it.unidade);
-      if (!creds) continue;
-      const chave = `${it.unidade}|${it.sponteAlunoId}`;
-      let titulos = cache.get(chave);
-      if (titulos === undefined) {
-        titulos = await titulosColoniaPorVencimento(
-          it.sponteAlunoId,
-          creds.codigoCliente,
-          creds.token,
-        );
-        cache.set(chave, titulos);
-      }
-      if (titulos === null) continue;
-
-      const contaReceberId = titulos.get(vencimento);
-      if (contaReceberId !== undefined) {
-        faturados.push(it.studentId);
-        if (it.temVinculoLocal) continue;
-        const { error } = await supabaseAdmin.from("holiday_camp_invoices" as any).upsert(
-          {
-            student_id: it.studentId,
-            school_id: it.schoolId,
-            week_start: weekStart,
-            week_end: weekEnd,
-            amount: it.valor,
-            due_date: vencimento,
-            sponte_aluno_id: it.sponteAlunoId,
-            sponte_conta_receber_id: contaReceberId || null,
-            observacao: `Colônia de Férias: título localizado no Sponte (vencimento ${ymdParaBr(vencimento)})`,
-            manual_settlement: false,
-            invoiced_by: context.userId,
-          },
-          { onConflict: "student_id,week_start" },
-        );
-        if (!error) adotados.push(it.studentId);
-        continue;
-      }
-
-      if (!it.temVinculoLocal) continue;
-      const { data: removidos, error } = await supabaseAdmin
-        .from("holiday_camp_invoices" as any)
-        .delete()
-        .eq("student_id", it.studentId)
-        .eq("week_start", weekStart)
-        .eq("due_date", vencimento)
-        .eq("manual_settlement", false)
-        .select("id");
-      if (!error && (removidos ?? []).length > 0) revertidos.push(it.studentId);
-    }
-    return { ok: true, faturados, adotados, revertidos };
-  });
-
-// ── Data de vencimento do faturamento (por semana e unidade) ─────────────────
-// Persiste a data usada no Fechamento Semanal para que ela sobreviva ao F5 e à
-// troca de abas: sem ela, a conferência voltava a rodar com a data padrão e o
-// botão global reabria indevidamente.
-
-const SalvarVencimentoColoniaInputSchema = z.object({
+const StatusSemanaColoniaInputSchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   schoolIds: z.array(z.string().uuid()).min(1).max(50),
+  status: z.enum(["faturado", "pendente"]),
+  origem: z.enum(["lote", "manual", "reabertura"]),
 });
 
-export interface SalvarVencimentoColoniaResult {
+export interface StatusSemanaColoniaResult {
   ok: boolean;
-  salvos: number;
+  unidades: number;
   error?: string;
 }
 
-export const salvarVencimentoColonia = createServerFn({ method: "POST" })
+// Restringe as unidades às que o usuário realmente enxerga (admin vê todas).
+async function filtrarEscolasPermitidas(userId: string, schoolIds: string[]): Promise<string[]> {
+  const allowed = await allowedSponteUnidades(userId);
+  if (allowed === null) return schoolIds;
+  const { data: escolas } = await supabaseAdmin
+    .from("schools" as any)
+    .select("id, name")
+    .in("id", schoolIds);
+  return ((escolas ?? []) as any[])
+    .filter((s) => allowed.includes(s.name as string))
+    .map((s) => s.id as string);
+}
+
+export const definirStatusSemanaColonia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => SalvarVencimentoColoniaInputSchema.parse(input))
-  .handler(async ({ data, context }): Promise<SalvarVencimentoColoniaResult> => {
-    const { weekStart, weekEnd, vencimento, schoolIds } = data;
+  .inputValidator((input: unknown) => StatusSemanaColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<StatusSemanaColoniaResult> => {
+    const { weekStart, weekEnd, schoolIds, status, origem } = data;
 
     if (!(await podeVerFinanceiroColonia(context.userId))) {
-      return { ok: false, salvos: 0, error: "Sem permissão para faturar a Colônia." };
+      return { ok: false, unidades: 0, error: "Sem permissão para faturar a Colônia." };
     }
 
-    // Só grava nas unidades que o usuário realmente enxerga.
-    const allowed = await allowedSponteUnidades(context.userId);
-    let permitidos = schoolIds;
-    if (allowed !== null) {
-      const { data: escolas } = await supabaseAdmin
-        .from("schools" as any)
-        .select("id, name")
-        .in("id", schoolIds);
-      permitidos = ((escolas ?? []) as any[])
-        .filter((s) => allowed.includes(s.name as string))
-        .map((s) => s.id as string);
-    }
+    const permitidos = await filtrarEscolasPermitidas(context.userId, schoolIds);
     if (permitidos.length === 0) {
-      return { ok: false, salvos: 0, error: "Sem permissão para esta unidade." };
+      return { ok: false, unidades: 0, error: "Sem permissão para esta unidade." };
     }
 
-    const { error } = await supabaseAdmin.from("holiday_camp_billing_dates" as any).upsert(
+    const { error } = await supabaseAdmin.from("holiday_camp_week_status" as any).upsert(
       permitidos.map((schoolId) => ({
         school_id: schoolId,
         week_start: weekStart,
         week_end: weekEnd,
-        due_date: vencimento,
+        status,
+        origem,
         updated_by: context.userId,
         updated_at: new Date().toISOString(),
       })),
       { onConflict: "school_id,week_start" },
     );
-    if (error) return { ok: false, salvos: 0, error: error.message };
+    if (error) return { ok: false, unidades: 0, error: error.message };
 
-    return { ok: true, salvos: permitidos.length };
+    return { ok: true, unidades: permitidos.length };
   });
 
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
