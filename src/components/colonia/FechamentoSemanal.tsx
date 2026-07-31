@@ -74,6 +74,7 @@ import {
   conferirFaturamentoColonia,
   verificarDuplicidadeColonia,
   marcarAcordoManualColonia,
+  salvarVencimentoColonia,
 } from "@/lib/sponte.functions";
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
@@ -440,13 +441,67 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     qc,
   ]);
 
-  // Data de vencimento do faturamento: é a chave da conferência no Sponte.
-  // Assume o vencimento já usado no faturamento da semana; na ausência dele,
-  // a sexta-feira da semana.
-  const vencimentoSalvo = invoices.find((inv) => inv.dueDate)?.dueDate ?? null;
+  // Unidades Sponte em escopo — onde a data de vencimento da semana é gravada.
+  const escopoSchoolIds = useMemo(() => {
+    const ids = schoolFilterIds ?? schools.map((s) => s.id);
+    return ids.filter((id) => UNIDADES_SPONTE.includes(schoolIdToName.get(id) ?? ""));
+  }, [schoolFilterIds, schools, schoolIdToName]);
+
+  // Data de vencimento do faturamento: é a chave da conferência no Sponte, por
+  // isso é persistida por semana/unidade. Sem isso, um F5 devolvia o input ao
+  // padrão, a conferência rodava com a data errada e o botão global reabria.
+  const { data: vencimentoSalvo = null, isFetched: vencimentoCarregado } = useQuery({
+    queryKey: ["colonia_vencimento_semana", schoolKey, weekStartYMD],
+    enabled: canFaturar,
+    queryFn: async () => {
+      let q = supabase
+        .from("holiday_camp_billing_dates" as never)
+        .select("due_date, updated_at")
+        .eq("week_start", weekStartYMD)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
+      const { data, error } = await q;
+      if (error) throw error;
+      const row = (data ?? [])[0] as { due_date: string } | undefined;
+      return row?.due_date ?? null;
+    },
+  });
+
+  // Precedência: data salva → vencimento de um faturamento existente → sexta.
+  const vencimentoInvoice = invoices.find((inv) => inv.dueDate)?.dueDate ?? null;
   useEffect(() => {
-    setVencimentoFaturamento(vencimentoSalvo ?? weekEndYMD);
-  }, [vencimentoSalvo, weekEndYMD]);
+    if (canFaturar && !vencimentoCarregado) return;
+    setVencimentoFaturamento(vencimentoSalvo ?? vencimentoInvoice ?? weekEndYMD);
+  }, [vencimentoSalvo, vencimentoCarregado, vencimentoInvoice, weekEndYMD, canFaturar]);
+
+  const salvarVencimentoFn = useServerFn(salvarVencimentoColonia);
+  const salvarVencimento = useMutation({
+    mutationFn: async (vencimento: string) => {
+      if (escopoSchoolIds.length === 0) return;
+      await salvarVencimentoFn({
+        data: {
+          weekStart: weekStartYMD,
+          weekEnd: weekEndYMD,
+          vencimento,
+          schoolIds: escopoSchoolIds,
+        },
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["colonia_vencimento_semana"] });
+    },
+    onError: (e: unknown) => {
+      toast.error("Não foi possível salvar a data de vencimento", {
+        description: e instanceof Error ? e.message : "Tente novamente.",
+      });
+    },
+  });
+
+  const alterarVencimento = (vencimento: string) => {
+    setVencimentoFaturamento(vencimento);
+    if (vencimento) salvarVencimento.mutate(vencimento);
+  };
 
   // Conferência no Sponte por vencimento + categoria: o aluno conta como
   // faturado quando existe título de Colônia com essa data, seja qual for a
@@ -473,7 +528,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       );
   }, [students, billingByStudent, invoicedSet, manualSet, schoolIdToName, canFaturar, calcReady]);
 
-  const { data: conferencia } = useQuery({
+  const { data: conferencia, isFetching: conferindo } = useQuery({
     queryKey: [
       "colonia_conferencia_sponte",
       weekStartYMD,
@@ -483,7 +538,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
         .sort()
         .join(","),
     ],
-    enabled: conferenciaItens.length > 0 && !!vencimentoFaturamento,
+    enabled: conferenciaItens.length > 0 && !!vencimentoFaturamento && vencimentoCarregado,
     staleTime: 2 * 60_000,
     queryFn: async () =>
       conferirFn({
@@ -581,6 +636,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
       return { sucesso, jaFaturado, falhas };
     },
     onSuccess: ({ sucesso, jaFaturado, falhas }) => {
+      salvarVencimento.mutate(vencimentoFaturamento);
       void qc.invalidateQueries({ queryKey: ["colonia_invoices"] });
       // Dá baixa imediata nos avisos de fechamento pendente do sininho.
       void qc.invalidateQueries({ queryKey: ["colonia_pendencias_semana"] });
@@ -694,14 +750,15 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
               type="date"
               required
               value={vencimentoFaturamento}
-              onChange={(e) => setVencimentoFaturamento(e.target.value)}
+              onChange={(e) => alterarVencimento(e.target.value)}
               disabled={loteBusy}
               aria-invalid={!vencimentoFaturamento}
             />
             <p className="text-[11px] text-muted-foreground">
               Vencimento usado ao faturar no Sponte e para conferir se o título já existe. O aluno
               conta como faturado quando há boleto de Colônia de Férias com esta data — independente
-              do status (aberto, registrado, pago, remessa gerada).
+              do status (aberto, registrado, pago, remessa gerada). A data fica salva neste período
+              e é recarregada automaticamente.
             </p>
           </div>
 
@@ -713,6 +770,10 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
               title="Todos os alunos desta semana já foram faturados ou resolvidos"
             >
               <CheckCircle2 className="h-4 w-4" /> Faturamento Concluído
+            </Button>
+          ) : conferindo ? (
+            <Button disabled variant="outline" className="w-full disabled:opacity-100">
+              <Loader2 className="h-4 w-4 animate-spin" /> Conferindo no Sponte…
             </Button>
           ) : (
             <Button

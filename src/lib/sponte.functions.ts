@@ -2744,6 +2744,66 @@ export const conferirFaturamentoColonia = createServerFn({ method: "POST" })
     return { ok: true, faturados, adotados, revertidos };
   });
 
+// ── Data de vencimento do faturamento (por semana e unidade) ─────────────────
+// Persiste a data usada no Fechamento Semanal para que ela sobreviva ao F5 e à
+// troca de abas: sem ela, a conferência voltava a rodar com a data padrão e o
+// botão global reabria indevidamente.
+
+const SalvarVencimentoColoniaInputSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  schoolIds: z.array(z.string().uuid()).min(1).max(50),
+});
+
+export interface SalvarVencimentoColoniaResult {
+  ok: boolean;
+  salvos: number;
+  error?: string;
+}
+
+export const salvarVencimentoColonia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SalvarVencimentoColoniaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<SalvarVencimentoColoniaResult> => {
+    const { weekStart, weekEnd, vencimento, schoolIds } = data;
+
+    if (!(await podeVerFinanceiroColonia(context.userId))) {
+      return { ok: false, salvos: 0, error: "Sem permissão para faturar a Colônia." };
+    }
+
+    // Só grava nas unidades que o usuário realmente enxerga.
+    const allowed = await allowedSponteUnidades(context.userId);
+    let permitidos = schoolIds;
+    if (allowed !== null) {
+      const { data: escolas } = await supabaseAdmin
+        .from("schools" as any)
+        .select("id, name")
+        .in("id", schoolIds);
+      permitidos = ((escolas ?? []) as any[])
+        .filter((s) => allowed.includes(s.name as string))
+        .map((s) => s.id as string);
+    }
+    if (permitidos.length === 0) {
+      return { ok: false, salvos: 0, error: "Sem permissão para esta unidade." };
+    }
+
+    const { error } = await supabaseAdmin.from("holiday_camp_billing_dates" as any).upsert(
+      permitidos.map((schoolId) => ({
+        school_id: schoolId,
+        week_start: weekStart,
+        week_end: weekEnd,
+        due_date: vencimento,
+        updated_by: context.userId,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: "school_id,week_start" },
+    );
+    if (error) return { ok: false, salvos: 0, error: error.message };
+
+    return { ok: true, salvos: permitidos.length };
+  });
+
 // ── Sincronização do Diário do Aluno a partir do Sponte ──────────────────────
 // Popula/atualiza diario_classes e diario_students usando o Sponte como fonte da
 // verdade (turmas, alunos e matrículas ATIVAS). Idempotente: os alunos são
