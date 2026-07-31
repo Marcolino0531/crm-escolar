@@ -14,6 +14,7 @@ import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as MatriculasRouteImport } from './routes/matriculas'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FundosRouteImport } from './routes/fundos'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
@@ -53,6 +54,11 @@ const RhRoute = RhRouteImport.update({
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatriculasRoute = MatriculasRouteImport.update({
+  id: '/matriculas',
+  path: '/matriculas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InadimplenciaRoute = InadimplenciaRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByTo {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -192,6 +200,7 @@ export interface FileRoutesById {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -216,6 +225,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matriculas'
     | '/onboarding'
     | '/rh'
     | '/tasks'
@@ -238,6 +248,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matriculas'
     | '/onboarding'
     | '/rh'
     | '/tasks'
@@ -260,6 +271,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matriculas'
     | '/onboarding'
     | '/rh'
     | '/tasks'
@@ -283,6 +295,7 @@ export interface RootRouteChildren {
   FluxoFuturoRoute: typeof FluxoFuturoRoute
   FundosRoute: typeof FundosRoute
   InadimplenciaRoute: typeof InadimplenciaRoute
+  MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       path: '/onboarding'
       fullPath: '/onboarding'
       preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/matriculas': {
+      id: '/matriculas'
+      path: '/matriculas'
+      fullPath: '/matriculas'
+      preLoaderRoute: typeof MatriculasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inadimplencia': {
@@ -451,6 +471,7 @@ const rootRouteChildren: RootRouteChildren = {
   FluxoFuturoRoute: FluxoFuturoRoute,
   FundosRoute: FundosRoute,
   InadimplenciaRoute: InadimplenciaRoute,
+  MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
