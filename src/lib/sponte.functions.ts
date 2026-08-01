@@ -1179,6 +1179,224 @@ export const fetchSpontePix = createServerFn({ method: "POST" })
     };
   });
 
+// ─── Conciliação manual por Aluno ────────────────────────────────────────────
+// Resolve as linhas que o automático não tem como acertar:
+//  • PIX/transferência que entra no extrato com o nome do PAI, enquanto a
+//    responsável financeira cadastrada no Sponte é a MÃE (o fuzzy match por
+//    nome não fecha);
+//  • transferência entre contas do próprio colégio (correção de pagamento feito
+//    na unidade errada), que entra com o nome do colégio no extrato.
+// O operador busca o aluno pelo nome e escolhe os títulos manualmente. Estas
+// funções são SOMENTE LEITURA no Sponte — nenhuma baixa é escrita lá.
+
+export interface ResponsavelAlunoSponte {
+  responsavelId: string;
+  nome: string;
+  parentesco: string;
+  financeiro: boolean;
+  didatico: boolean;
+}
+
+export interface AlunoBuscaSponte {
+  alunoId: string;
+  nome: string;
+  cpf: string;
+  turma: string;
+  situacao: string;
+  responsaveis: ResponsavelAlunoSponte[];
+}
+
+export interface BuscaAlunosResult {
+  alunos: AlunoBuscaSponte[];
+  truncado: boolean;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const BuscaAlunosInputSchema = z.object({
+  nome: z.string().trim().min(3),
+  unidade: z.string().min(1),
+});
+
+// Teto de resultados exibidos (a busca por nome do Sponte é do tipo "contém" e
+// um termo curto como "Silva" devolve dezenas de alunos).
+const MAX_ALUNOS_BUSCA = 40;
+
+// O sParametrosBusca é uma lista "chave=valor" separada por ";", então os
+// separadores precisam sair do termo digitado antes de virar parâmetro.
+function sanitizarTermoBusca(termo: string): string {
+  return escapeXml(termo.replace(/[;=]/g, " ").replace(/\s+/g, " ").trim());
+}
+
+export const buscarAlunosSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => BuscaAlunosInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<BuscaAlunosResult> => {
+    const { nome, unidade } = data;
+
+    // RBAC por unidade (server-side).
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { alunos: [], truncado: false, error: "Sem permissão para esta unidade." };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { alunos: [], truncado: false, indisponivel: true };
+
+    const termo = sanitizarTermoBusca(nome);
+    if (termo.length < 3) return { alunos: [], truncado: false };
+
+    let xml: string;
+    try {
+      xml = await callSponte("GetAlunos", `Nome=${termo}`, creds.codigoCliente, creds.token);
+    } catch (e) {
+      return {
+        alunos: [],
+        truncado: false,
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+    const fault = checkFault(xml);
+    if (fault) return { alunos: [], truncado: false, error: fault };
+
+    const alunos: AlunoBuscaSponte[] = [];
+    for (const node of parseXmlList(xml, "wsAluno")) {
+      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+      const alunoId = parseXmlValue(node, "AlunoID");
+      if (!alunoId || alunoId === "0") continue;
+
+      const turma = parseXmlValue(node, "TurmaAtual");
+      // CEC e CEC Baby compartilham o token: separa por TurmaAtual. Aluno sem
+      // turma classificável (inativo/ex-aluno) fica na unidade-mãe CEC.
+      if (creds.segmentaPorTurma && (classificarUnidade(turma) ?? "CEC") !== unidade) continue;
+
+      const respFinanceiroId = parseXmlValue(node, "ResponsavelFinanceiroID");
+      const respDidaticoId = parseXmlValue(node, "ResponsavelDidaticoID");
+      const responsaveis: ResponsavelAlunoSponte[] = parseXmlList(node, "wsResponsaveis")
+        .map((r) => {
+          const responsavelId = parseXmlValue(r, "ResponsavelID");
+          return {
+            responsavelId,
+            nome: parseXmlValue(r, "Nome"),
+            parentesco: parseXmlValue(r, "Parentesco"),
+            financeiro: !!responsavelId && responsavelId === respFinanceiroId,
+            didatico: !!responsavelId && responsavelId === respDidaticoId,
+          };
+        })
+        .filter((r) => r.nome);
+
+      alunos.push({
+        alunoId,
+        nome: parseXmlValue(node, "Nome"),
+        cpf: parseXmlValue(node, "CPF") || parseXmlValue(node, "CPFCNPJ"),
+        turma,
+        situacao: parseXmlValue(node, "Situacao"),
+        responsaveis,
+      });
+    }
+
+    // Ativos primeiro (o caso comum é um aluno matriculado), depois alfabético.
+    const ordem = (a: AlunoBuscaSponte) => (normalizarTexto(a.situacao) === "ativo" ? 0 : 1);
+    alunos.sort((a, b) => ordem(a) - ordem(b) || a.nome.localeCompare(b.nome));
+
+    return {
+      alunos: alunos.slice(0, MAX_ALUNOS_BUSCA),
+      truncado: alunos.length > MAX_ALUNOS_BUSCA,
+    };
+  });
+
+export interface TituloSponteAluno {
+  contaReceberID: string;
+  numeroParcela: string;
+  numeroBoleto: string;
+  vencimento: string; // YYYY-MM-DD
+  categoria: string;
+  valor: number;
+  valorPago: number;
+  saldo: number;
+  situacao: string; // rótulo cru do Sponte (Pendente, Quitada, Cancelada…)
+  quitada: boolean;
+  dataPagamento: string; // YYYY-MM-DD ("" quando em aberto)
+  formaCobranca: string;
+  // Forma REAL da liquidação (vem do rateio): Pix, Cobrança Bancária, Dinheiro…
+  tipoRecebimento: string;
+}
+
+export interface TitulosAlunoResult {
+  titulos: TituloSponteAluno[];
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const TitulosAlunoInputSchema = z.object({
+  alunoId: z.string().trim().regex(/^\d+$/, "AlunoID inválido."),
+  unidade: z.string().min(1),
+});
+
+export const fetchTitulosAlunoSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => TitulosAlunoInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<TitulosAlunoResult> => {
+    const { alunoId, unidade } = data;
+
+    // RBAC por unidade (server-side).
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { titulos: [], error: "Sem permissão para esta unidade." };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { titulos: [], indisponivel: true };
+
+    let xml: string;
+    try {
+      xml = await callSponte("GetParcelas", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token);
+    } catch (e) {
+      return {
+        titulos: [],
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+    const fault = checkFault(xml);
+    if (fault) return { titulos: [], error: fault };
+
+    const titulos: TituloSponteAluno[] = [];
+    for (const node of parseXmlList(xml, "wsParcela")) {
+      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+      const situacao = parseXmlValue(node, "SituacaoParcela");
+      if (normalizarTexto(situacao) === "cancelada") continue;
+
+      const valor = parseBrDecimal(parseXmlValue(node, "ValorParcela"));
+      const valorPago = parseBrDecimal(parseXmlValue(node, "ValorPago"));
+      const quitada = SITUACOES_BAIXADA.has(normalizarTexto(situacao));
+      const tiposRecebimento = [
+        ...new Set(
+          parseXmlList(node, "wsRateioLancamento")
+            .map((r) => parseXmlValue(r, "TipoRecebimento"))
+            .filter(Boolean),
+        ),
+      ];
+
+      titulos.push({
+        contaReceberID: parseXmlValue(node, "ContaReceberID"),
+        numeroParcela: parseXmlValue(node, "NumeroParcela"),
+        numeroBoleto: parseXmlValue(node, "NumeroBoleto"),
+        vencimento: paraYMD(parseXmlValue(node, "Vencimento")) ?? "",
+        categoria: parseXmlValue(node, "Categoria") || "Outros",
+        valor,
+        valorPago,
+        saldo: Math.round((valor - valorPago) * 100) / 100,
+        situacao,
+        quitada,
+        dataPagamento: paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "",
+        formaCobranca: parseXmlValue(node, "FormaCobranca"),
+        tipoRecebimento: tiposRecebimento.join(" / "),
+      });
+    }
+
+    // Mais recentes primeiro: é onde está o pagamento que o operador procura.
+    titulos.sort((a, b) => b.vencimento.localeCompare(a.vencimento));
+    return { titulos };
+  });
+
 const InputSchema = z.object({
   dataInicio: z.string().min(8),
   dataFim: z.string().min(8),

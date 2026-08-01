@@ -13,12 +13,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette } from "lucide-react";
+import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, UserSearch } from "lucide-react";
 import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
 import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
+import { ConciliarPorAlunoDialog, type ItemConciliacaoAluno } from "@/components/conciliacao/ConciliarPorAlunoDialog";
+import type { AlunoBuscaSponte } from "@/lib/sponte.functions";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -251,6 +253,8 @@ function ConciliacaoPage() {
   const [manualTxId, setManualTxId] = useState<string | null>(null);
   const [manualRows, setManualRows] = useState<{ subcategory_id: string; amount: string }[]>([]);
   const [manualSaving, setManualSaving] = useState(false);
+  const [alunoTxId, setAlunoTxId] = useState<string | null>(null);
+  const [alunoSaving, setAlunoSaving] = useState(false);
   const [colorsOpen, setColorsOpen] = useState(false);
   const [colorDraft, setColorDraft] = useState<Record<string, string>>({});
   const [colorsSaving, setColorsSaving] = useState(false);
@@ -329,7 +333,7 @@ function ConciliacaoPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("boleto_reconciliations")
-        .select("id, transaction_id, source_filename, total_amount, created_at, boleto_reconciliation_items(id, subcategory_label, amount, revenue_category_id, revenue_subcategory_id)")
+        .select("id, transaction_id, source_filename, total_amount, created_at, sponte_aluno_id, sponte_aluno_nome, boleto_reconciliation_items(id, subcategory_label, amount, revenue_category_id, revenue_subcategory_id, sponte_numero_boleto, sponte_vencimento)")
         .in("transaction_id", txIds);
       if (error) throw error;
       return data as Array<{
@@ -338,12 +342,16 @@ function ConciliacaoPage() {
         source_filename: string | null;
         total_amount: number;
         created_at: string;
+        sponte_aluno_id: string | null;
+        sponte_aluno_nome: string | null;
         boleto_reconciliation_items: Array<{
           id: string;
           subcategory_label: string;
           amount: number;
           revenue_category_id: string | null;
           revenue_subcategory_id: string | null;
+          sponte_numero_boleto: string | null;
+          sponte_vencimento: string | null;
         }>;
       }>;
     },
@@ -430,7 +438,16 @@ function ConciliacaoPage() {
     sourceFilename: string | null,
     _parentDate: string,
     _parentDescription: string,
-    items: { subcategory_label: string; amount: number; revenue_category_id: string | null; revenue_subcategory_id: string | null }[],
+    items: {
+      subcategory_label: string;
+      amount: number;
+      revenue_category_id: string | null;
+      revenue_subcategory_id: string | null;
+      sponte_conta_receber_id?: string | null;
+      sponte_numero_boleto?: string | null;
+      sponte_vencimento?: string | null;
+    }[],
+    alunoSponte?: { id: string; nome: string },
   ) {
     const total = Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100;
 
@@ -445,7 +462,14 @@ function ConciliacaoPage() {
     // 3. Cria o cabeçalho da conciliação (marca a transação pai como "Conciliada").
     const { data: rec, error: recErr } = await supabase
       .from("boleto_reconciliations")
-      .insert({ transaction_id: txId, school_id: schoolId, source_filename: sourceFilename, total_amount: total })
+      .insert({
+        transaction_id: txId,
+        school_id: schoolId,
+        source_filename: sourceFilename,
+        total_amount: total,
+        sponte_aluno_id: alunoSponte?.id ?? null,
+        sponte_aluno_nome: alunoSponte?.nome ?? null,
+      })
       .select("id")
       .single();
     if (recErr) throw new Error(`Erro ao salvar conciliação: ${recErr.message}`);
@@ -458,6 +482,9 @@ function ConciliacaoPage() {
       revenue_category_id: it.revenue_category_id,
       revenue_subcategory_id: it.revenue_subcategory_id,
       transaction_id: null,
+      sponte_conta_receber_id: it.sponte_conta_receber_id ?? null,
+      sponte_numero_boleto: it.sponte_numero_boleto ?? null,
+      sponte_vencimento: it.sponte_vencimento || null,
     }));
     const { error: itErr } = await supabase.from("boleto_reconciliation_items").insert(itemRows as any);
     if (itErr) throw new Error(`Erro ao salvar itens: ${itErr.message}`);
@@ -543,6 +570,46 @@ function ConciliacaoPage() {
       toast.error(e instanceof Error ? e.message : String(e), { duration: 10000 });
     } finally {
       setManualSaving(false);
+    }
+  }
+
+  // Conciliação manual por aluno: o operador escolheu o aluno no Sponte e os
+  // títulos que aquela linha do extrato pagou. Nada é escrito no Sponte — o
+  // vínculo (aluno + títulos) fica só no School Hub, e a linha passa a
+  // "Conciliada" pelo mesmo mecanismo das demais.
+  async function handleConciliarPorAluno(aluno: AlunoBuscaSponte, itens: ItemConciliacaoAluno[]) {
+    const txId = alunoTxId;
+    if (!txId) return;
+    const parentTx = revenueTxs.find((t) => t.id === txId);
+    if (!parentTx) return;
+
+    setAlunoSaving(true);
+    try {
+      const items = itens.map((it) => ({
+        subcategory_label: it.categoria,
+        amount: it.valor,
+        ...matchSubcategory(it.categoria),
+        sponte_conta_receber_id: it.contaReceberId,
+        sponte_numero_boleto: it.numeroBoleto,
+        sponte_vencimento: it.vencimento,
+      }));
+      await persistReconciliation(
+        txId,
+        `Conciliação por aluno — ${aluno.nome}`,
+        parentTx.date,
+        parentTx.description ?? "Receita",
+        items,
+        { id: aluno.alunoId, nome: aluno.nome },
+      );
+      toast.success(`Transação vinculada a ${aluno.nome}: ${items.length} título(s).`);
+      setAlunoTxId(null);
+      qc.invalidateQueries({ queryKey: ["conc-recs"] });
+      qc.invalidateQueries({ queryKey: ["conc-txs"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e), { duration: 10000 });
+    } finally {
+      setAlunoSaving(false);
     }
   }
 
@@ -992,6 +1059,17 @@ function ConciliacaoPage() {
                               // conciliação automática individual foi unificada no
                               // botão global "Sincronizar com Sponte" do cabeçalho.
                               <>
+                                {sponteAtiva && !isReconciled && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setAlunoTxId(t.id)}
+                                    disabled={isUploading || isAuto}
+                                    title="Vincular esta linha a um aluno do Sponte (PIX no nome do pai, transferência entre contas do colégio…)"
+                                  >
+                                    <UserSearch className="h-3 w-3" /> Buscar Aluno
+                                  </Button>
+                                )}
                                 <Button size="sm" variant="outline" onClick={() => openManual(t.id)} disabled={isUploading || isAuto}>
                                   <SplitSquareHorizontal className="h-3 w-3" /> Desmembrar Manualmente
                                 </Button>
@@ -1041,10 +1119,15 @@ function ConciliacaoPage() {
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground">
                   Arquivo: <strong>{rec.source_filename}</strong> · Total: <strong>{formatBRL(Number(rec.total_amount))}</strong>
+                  {rec.sponte_aluno_id && (
+                    <>
+                      {" · "}Aluno: <strong>{rec.sponte_aluno_nome}</strong> (Sponte {rec.sponte_aluno_id})
+                    </>
+                  )}
                 </div>
                 <Table>
                   <TableHeader>
-                    <TableRow><TableHead>Subcategoria</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
+                    <TableRow><TableHead>Subcategoria</TableHead><TableHead className="w-40">Título</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
                   </TableHeader>
                   <TableBody>
                     {[...rec.boleto_reconciliation_items]
@@ -1052,6 +1135,10 @@ function ConciliacaoPage() {
                       .map((it) => (
                         <TableRow key={it.id}>
                           <TableCell className="text-sm">{it.subcategory_label}{!it.revenue_subcategory_id && <Badge variant="outline" className="ml-2 text-xs">não mapeada</Badge>}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {it.sponte_vencimento ? `Venc. ${formatBR(it.sponte_vencimento)}` : "—"}
+                            {it.sponte_numero_boleto && it.sponte_numero_boleto !== "0" ? ` · boleto ${it.sponte_numero_boleto}` : ""}
+                          </TableCell>
                           <TableCell className="text-right font-mono">{formatBRL(Number(it.amount))}</TableCell>
                         </TableRow>
                       ))}
@@ -1062,6 +1149,18 @@ function ConciliacaoPage() {
           })()}
         </DialogContent>
       </Dialog>
+
+      <ConciliarPorAlunoDialog
+        open={!!alunoTxId}
+        onOpenChange={(o) => { if (!o) setAlunoTxId(null); }}
+        unidade={schoolName}
+        transacao={(() => {
+          const t = alunoTxId ? revenueTxs.find((x) => x.id === alunoTxId) : null;
+          return t ? { id: t.id, date: t.date, description: t.description, amount: Number(t.amount) } : null;
+        })()}
+        salvando={alunoSaving}
+        onConfirmar={handleConciliarPorAluno}
+      />
 
       <Dialog open={!!manualTxId} onOpenChange={(o) => { if (!o) { setManualTxId(null); setManualRows([]); } }}>
         <DialogContent className="max-w-2xl">
