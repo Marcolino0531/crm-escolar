@@ -64,6 +64,9 @@ export type Database = {
           reconciliation_id: string;
           revenue_category_id: string | null;
           revenue_subcategory_id: string | null;
+          sponte_conta_receber_id: string | null;
+          sponte_numero_boleto: string | null;
+          sponte_vencimento: string | null;
           subcategory_label: string;
           transaction_id: string | null;
         };
@@ -74,6 +77,9 @@ export type Database = {
           reconciliation_id: string;
           revenue_category_id?: string | null;
           revenue_subcategory_id?: string | null;
+          sponte_conta_receber_id?: string | null;
+          sponte_numero_boleto?: string | null;
+          sponte_vencimento?: string | null;
           subcategory_label: string;
           transaction_id?: string | null;
         };
@@ -84,6 +90,9 @@ export type Database = {
           reconciliation_id?: string;
           revenue_category_id?: string | null;
           revenue_subcategory_id?: string | null;
+          sponte_conta_receber_id?: string | null;
+          sponte_numero_boleto?: string | null;
+          sponte_vencimento?: string | null;
           subcategory_label?: string;
           transaction_id?: string | null;
         };
@@ -110,6 +119,8 @@ export type Database = {
           id: string;
           school_id: string;
           source_filename: string | null;
+          sponte_aluno_id: string | null;
+          sponte_aluno_nome: string | null;
           total_amount: number;
           transaction_id: string;
         };
@@ -118,6 +129,8 @@ export type Database = {
           id?: string;
           school_id: string;
           source_filename?: string | null;
+          sponte_aluno_id?: string | null;
+          sponte_aluno_nome?: string | null;
           total_amount: number;
           transaction_id: string;
         };
@@ -126,6 +139,8 @@ export type Database = {
           id?: string;
           school_id?: string;
           source_filename?: string | null;
+          sponte_aluno_id?: string | null;
+          sponte_aluno_nome?: string | null;
           total_amount?: number;
           transaction_id?: string;
         };
