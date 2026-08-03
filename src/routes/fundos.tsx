@@ -35,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { rentabilidadeRealPct, somarPatrimonioPorCompetencia } from "@/lib/fundos";
 
 export const Route = createFileRoute("/fundos")({
   component: FundosGate,
@@ -44,7 +45,9 @@ function FundosGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
   if (!canView("financeiro_fundos"))
-    return <AccessDenied message="Você não tem permissão para visualizar os Fundos de Investimento." />;
+    return (
+      <AccessDenied message="Você não tem permissão para visualizar os Fundos de Investimento." />
+    );
   return <FundosPage />;
 }
 
@@ -62,6 +65,8 @@ type FundEntry = {
   fund_id: string;
   competencia: string;
   valor_liquido: number;
+  aportes: number;
+  resgates: number;
   created_at: string;
 };
 
@@ -81,7 +86,16 @@ function addMonths(iso: string, delta: number) {
   return monthKey(new Date(y, m - 1 + delta, 1));
 }
 
-const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
+const COLORS = [
+  "#10b981",
+  "#3b82f6",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
+];
 
 // ---- Page ----
 function FundosPage() {
@@ -101,7 +115,10 @@ function FundosPage() {
   const { data: funds = [], isLoading: loadingFunds } = useQuery({
     queryKey: ["provision_funds", schoolId, schoolFilterIds],
     queryFn: async () => {
-      let q = supabase.from("provision_funds" as any).select("*").order("name");
+      let q = supabase
+        .from("provision_funds" as any)
+        .select("*")
+        .order("name");
       if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
       const { data, error } = await q;
       if (error) throw error;
@@ -134,20 +151,22 @@ function FundosPage() {
       const prev = entries.find((e) => e.fund_id === f.id && e.competencia === prevMonth);
       const valorAtual = current ? Number(current.valor_liquido) : null;
       const valorAnterior = prev ? Number(prev.valor_liquido) : null;
-      let variacao: number | null = null;
-      if (valorAtual != null && valorAnterior != null && valorAnterior !== 0) {
-        variacao = ((valorAtual - valorAnterior) / Math.abs(valorAnterior)) * 100;
-      }
+      // Rentabilidade real: desconta aportes/resgates do período (gravados no
+      // lançamento do mês corrente) para não confundir movimentação de caixa
+      // com ganho/perda do fundo.
+      const variacao = rentabilidadeRealPct({
+        valorAtual,
+        valorAnterior,
+        aportes: current ? Number(current.aportes) : 0,
+        resgates: current ? Number(current.resgates) : 0,
+      });
       return { fund: f, valorAtual, valorAnterior, variacao };
     });
   }, [funds, entries, month, prevMonth]);
 
   // Chart data: total patrimônio per month (sum across funds per competencia)
   const chartData = useMemo(() => {
-    const byMonth = new Map<string, number>();
-    for (const e of entries) {
-      byMonth.set(e.competencia, (byMonth.get(e.competencia) ?? 0) + Number(e.valor_liquido));
-    }
+    const byMonth = somarPatrimonioPorCompetencia(entries);
     return [...byMonth.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([comp, total]) => ({ month: monthLabel(comp), total }));
@@ -187,7 +206,10 @@ function FundosPage() {
   const updateFund = useMutation({
     mutationFn: async (payload: { id: string; name: string; destination: string }) => {
       const { id, ...rest } = payload;
-      const { error } = await supabase.from("provision_funds" as any).update(rest).eq("id", id);
+      const { error } = await supabase
+        .from("provision_funds" as any)
+        .update(rest)
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -200,7 +222,10 @@ function FundosPage() {
 
   const deleteFund = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("provision_funds" as any).delete().eq("id", id);
+      const { error } = await supabase
+        .from("provision_funds" as any)
+        .delete()
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -212,7 +237,13 @@ function FundosPage() {
   });
 
   const upsertEntry = useMutation({
-    mutationFn: async (payload: { fund_id: string; competencia: string; valor_liquido: number }) => {
+    mutationFn: async (payload: {
+      fund_id: string;
+      competencia: string;
+      valor_liquido: number;
+      aportes: number;
+      resgates: number;
+    }) => {
       const { error } = await supabase
         .from("provision_fund_entries" as any)
         .upsert(payload, { onConflict: "fund_id,competencia" });
@@ -266,7 +297,9 @@ function FundosPage() {
           {loadingFunds || loadingEntries ? (
             <p className="text-sm text-muted-foreground">Carregando…</p>
           ) : funds.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum fundo cadastrado. Clique em "Novo Fundo" para começar.</p>
+            <p className="text-sm text-muted-foreground">
+              Nenhum fundo cadastrado. Clique em "Novo Fundo" para começar.
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -276,7 +309,12 @@ function FundosPage() {
                   {schoolId === "all" && <TableHead>Colégio</TableHead>}
                   <TableHead className="text-right">Mês Atual</TableHead>
                   <TableHead className="text-right">Mês Anterior</TableHead>
-                  <TableHead className="text-right">Variação</TableHead>
+                  <TableHead
+                    className="text-right"
+                    title="Rentabilidade real do período (desconta aportes e resgates)"
+                  >
+                    Variação
+                  </TableHead>
                   {editable && <TableHead className="text-right">Ações</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -287,7 +325,9 @@ function FundosPage() {
                     <TableCell>{fund.destination}</TableCell>
                     {schoolId === "all" && (
                       <TableCell>
-                        <Badge variant="outline" className="text-xs">{schoolName(fund.school_id)}</Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {schoolName(fund.school_id)}
+                        </Badge>
                       </TableCell>
                     )}
                     <TableCell className="text-right tabular-nums">
@@ -330,7 +370,8 @@ function FundosPage() {
                             size="icon"
                             title="Excluir fundo"
                             onClick={() => {
-                              if (confirm(`Excluir o fundo "${fund.name}"?`)) deleteFund.mutate(fund.id);
+                              if (confirm(`Excluir o fundo "${fund.name}"?`))
+                                deleteFund.mutate(fund.id);
                             }}
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
@@ -357,24 +398,53 @@ function FundosPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 10, right: 24, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="month" tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
+                    tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
+                  />
                   <ReTooltip
                     formatter={(v: number) => fmtBRL(v)}
-                    contentStyle={{ background: "var(--color-card)", border: "1px solid var(--color-border)", borderRadius: 8 }}
+                    contentStyle={{
+                      background: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                    }}
                   />
-                  <Line type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={perFundChartData} margin={{ top: 10, right: 24, left: 8, bottom: 8 }}>
+                <LineChart
+                  data={perFundChartData}
+                  margin={{ top: 10, right: 24, left: 8, bottom: 8 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis dataKey="month" tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
+                    tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`}
+                  />
                   <ReTooltip
                     formatter={(v: number) => fmtBRL(v)}
-                    contentStyle={{ background: "var(--color-card)", border: "1px solid var(--color-border)", borderRadius: 8 }}
+                    contentStyle={{
+                      background: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                    }}
                   />
                   {funds.map((f, i) => (
                     <Line
@@ -451,10 +521,22 @@ function CreateFundDialog({
   const [destination, setDestination] = useState("");
   const [selSchool, setSelSchool] = useState(schoolId === "all" ? "" : schoolId);
 
-  const reset = () => { setName(""); setDestination(""); setSelSchool(schoolId === "all" ? "" : schoolId); };
+  const reset = () => {
+    setName("");
+    setDestination("");
+    setSelSchool(schoolId === "all" ? "" : schoolId);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { onClose(); reset(); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          onClose();
+          reset();
+        }
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Novo Fundo</DialogTitle>
@@ -462,11 +544,19 @@ function CreateFundDialog({
         <div className="space-y-4">
           <div>
             <Label>Nome do Fundo</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Reserva Estratégica" />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex.: Reserva Estratégica"
+            />
           </div>
           <div>
             <Label>Destino do Investimento</Label>
-            <Input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="Ex.: 13º Salário, Férias" />
+            <Input
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              placeholder="Ex.: 13º Salário, Férias"
+            />
           </div>
           {schoolId === "all" && (
             <div>
@@ -478,18 +568,37 @@ function CreateFundDialog({
               >
                 <option value="">Selecione…</option>
                 {schools.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
                 ))}
               </select>
             </div>
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { onClose(); reset(); }}>Cancelar</Button>
           <Button
-            disabled={saving || !name.trim() || !destination.trim() || !(schoolId !== "all" ? schoolId : selSchool)}
+            variant="outline"
             onClick={() => {
-              onSave({ name: name.trim(), destination: destination.trim(), school_id: schoolId !== "all" ? schoolId : selSchool });
+              onClose();
+              reset();
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            disabled={
+              saving ||
+              !name.trim() ||
+              !destination.trim() ||
+              !(schoolId !== "all" ? schoolId : selSchool)
+            }
+            onClick={() => {
+              onSave({
+                name: name.trim(),
+                destination: destination.trim(),
+                school_id: schoolId !== "all" ? schoolId : selSchool,
+              });
               reset();
             }}
           >
@@ -518,7 +627,12 @@ function EditFundDialog({
   const [destination, setDestination] = useState(fund.destination);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Editar Fundo</DialogTitle>
@@ -534,10 +648,14 @@ function EditFundDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
           <Button
             disabled={saving || !name.trim() || !destination.trim()}
-            onClick={() => onSave({ id: fund.id, name: name.trim(), destination: destination.trim() })}
+            onClick={() =>
+              onSave({ id: fund.id, name: name.trim(), destination: destination.trim() })
+            }
           >
             {saving ? "Salvando…" : "Salvar"}
           </Button>
@@ -560,23 +678,38 @@ function EntryDialog({
   entries: FundEntry[];
   open: boolean;
   onClose: () => void;
-  onSave: (p: { fund_id: string; competencia: string; valor_liquido: number }) => void;
+  onSave: (p: {
+    fund_id: string;
+    competencia: string;
+    valor_liquido: number;
+    aportes: number;
+    resgates: number;
+  }) => void;
   saving: boolean;
   currentMonth: string;
 }) {
   const [comp, setComp] = useState(() => currentMonth.slice(0, 7)); // YYYY-MM
   const existing = entries.find((e) => e.competencia === comp + "-01");
   const [valor, setValor] = useState(existing ? String(existing.valor_liquido) : "");
+  const [aportes, setAportes] = useState(existing ? String(existing.aportes) : "");
+  const [resgates, setResgates] = useState(existing ? String(existing.resgates) : "");
 
-  // Update valor when competencia changes and entry exists
+  // Update fields when competencia changes and entry exists
   const handleCompChange = (v: string) => {
     setComp(v);
     const e = entries.find((x) => x.competencia === v + "-01");
     setValor(e ? String(e.valor_liquido) : "");
+    setAportes(e ? String(e.aportes) : "");
+    setResgates(e ? String(e.resgates) : "");
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Lançamento Mensal — {fund.name}</DialogTitle>
@@ -596,16 +729,55 @@ function EntryDialog({
               placeholder="0,00"
             />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Aportes do período (R$)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={aportes}
+                onChange={(e) => setAportes(e.target.value)}
+                placeholder="0,00"
+              />
+            </div>
+            <div>
+              <Label>Resgates do período (R$)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={resgates}
+                onChange={(e) => setResgates(e.target.value)}
+                placeholder="0,00"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Aportes e resgates são descontados no cálculo da rentabilidade do mês. Deixe em branco
+            (ou 0) se não houve movimentação.
+          </p>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
           <Button
-            disabled={saving || !comp || !valor || isNaN(Number(valor))}
+            disabled={
+              saving ||
+              !comp ||
+              !valor ||
+              isNaN(Number(valor)) ||
+              (aportes !== "" && isNaN(Number(aportes))) ||
+              (resgates !== "" && isNaN(Number(resgates)))
+            }
             onClick={() =>
               onSave({
                 fund_id: fund.id,
                 competencia: comp + "-01",
                 valor_liquido: Number(valor),
+                aportes: aportes === "" ? 0 : Number(aportes),
+                resgates: resgates === "" ? 0 : Number(resgates),
               })
             }
           >
