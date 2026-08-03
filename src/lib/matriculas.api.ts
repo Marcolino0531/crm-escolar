@@ -14,6 +14,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
+import { extrairDadosBasicos } from "@/lib/matriculas.audit";
 import {
   MatriculaError,
   processarMatricula,
@@ -58,6 +59,25 @@ async function registrarLog(
   if (error) console.error("[matrículas] falha ao gravar o log da submissão:", error.message);
 }
 
+// Grava a tentativa rejeitada na validação (payload inválido) para dar
+// visibilidade no painel /matriculas. Nada é enviado ao Sponte.
+async function registrarFalhaValidacao(bruto: unknown, problemas: string[]): Promise<void> {
+  const dados = extrairDadosBasicos(bruto);
+  const { error } = await supabaseAdmin.from("enrollment_submissions" as never).insert({
+    submission_id: dados.submissionId,
+    unidade: dados.unidade,
+    aluno_nome: dados.alunoNome,
+    aluno_cpf: dados.alunoCpf,
+    sponte_aluno_id: null,
+    status: "erro_validacao",
+    erro: problemas.join("; "),
+    payload: bruto ?? {},
+    resultado: null,
+  } as never);
+  if (error)
+    console.error("[matrículas] falha ao gravar o log de erro de validação:", error.message);
+}
+
 export async function handleMatriculasApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/api/matriculas/webhook") return null;
@@ -70,23 +90,26 @@ export async function handleMatriculasApi(request: Request): Promise<Response | 
   }
   if (!auth) return json({ ok: false, error: "não autorizado" }, 401);
 
+  // dryRun é um ensaio (Apps Script valida antes do envio real): não grava log.
+  const dryRun = url.searchParams.get("dryRun") === "1";
+
   let bruto: unknown;
   try {
     bruto = await request.json();
   } catch {
-    return json({ ok: false, error: "corpo da requisição não é um JSON válido" }, 400);
+    const mensagem = "corpo da requisição não é um JSON válido";
+    if (!dryRun) await registrarFalhaValidacao({ erro_parse: mensagem }, [mensagem]);
+    return json({ ok: false, error: mensagem }, 400);
   }
 
   const parsed = MatriculaSchema.safeParse(bruto);
   if (!parsed.success) {
-    return json(
-      { ok: false, error: "payload inválido", problemas: problemasDoPayload(parsed.error) },
-      422,
-    );
+    const problemas = problemasDoPayload(parsed.error);
+    if (!dryRun) await registrarFalhaValidacao(bruto, problemas);
+    return json({ ok: false, error: "payload inválido", problemas }, 422);
   }
 
   const payload = parsed.data as MatriculaPayload;
-  const dryRun = url.searchParams.get("dryRun") === "1";
 
   // Idempotência: o Apps Script pode reenviar a mesma resposta do formulário.
   if (!dryRun && payload.submissionId) {

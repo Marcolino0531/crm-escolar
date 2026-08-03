@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import { reprocessarMatricula } from "@/lib/matriculas.functions";
+import { STATUS_ERRO } from "@/lib/matriculas.audit";
 
 export const Route = createFileRoute("/matriculas")({
   head: () => ({ meta: [{ title: "Matrículas — School Hub" }] }),
@@ -58,13 +59,50 @@ const UNIDADES = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Seren
 
 const PER_PAGE = 20;
 
-type SubmissionStatus = "sucesso" | "duplicado" | "erro_aluno" | "erro_responsavel";
+type SubmissionStatus =
+  | "sucesso"
+  | "duplicado"
+  | "erro_aluno"
+  | "erro_responsavel"
+  | "erro_validacao";
 
-const STATUS_STYLE: Record<SubmissionStatus, { label: string; cls: string; erro: boolean }> = {
-  sucesso: { label: "Sucesso", cls: "bg-emerald-100 text-emerald-700", erro: false },
-  duplicado: { label: "Duplicado", cls: "bg-amber-100 text-amber-700", erro: false },
-  erro_aluno: { label: "Erro no aluno", cls: "bg-red-100 text-red-700", erro: true },
-  erro_responsavel: { label: "Erro no responsável", cls: "bg-red-100 text-red-700", erro: true },
+// `reprocessavel` separa "badge de erro" de "pode reenviar ao Sponte": erros de
+// validação não têm o que reenviar (o payload gravado continua inválido), então
+// só mostram o motivo — a correção é na origem (Google Forms).
+const STATUS_STYLE: Record<
+  SubmissionStatus,
+  { label: string; cls: string; erro: boolean; reprocessavel: boolean }
+> = {
+  sucesso: {
+    label: "Sucesso",
+    cls: "bg-emerald-100 text-emerald-700",
+    erro: false,
+    reprocessavel: false,
+  },
+  duplicado: {
+    label: "Duplicado",
+    cls: "bg-amber-100 text-amber-700",
+    erro: false,
+    reprocessavel: false,
+  },
+  erro_aluno: {
+    label: "Erro no aluno",
+    cls: "bg-red-100 text-red-700",
+    erro: true,
+    reprocessavel: true,
+  },
+  erro_responsavel: {
+    label: "Erro no responsável",
+    cls: "bg-red-100 text-red-700",
+    erro: true,
+    reprocessavel: true,
+  },
+  erro_validacao: {
+    label: "Erro de validação",
+    cls: "bg-amber-100 text-amber-800",
+    erro: true,
+    reprocessavel: false,
+  },
 };
 
 const STATUS_FILTROS = [
@@ -74,6 +112,7 @@ const STATUS_FILTROS = [
   { value: "erros", label: "Todos os erros" },
   { value: "erro_aluno", label: "Erro no aluno" },
   { value: "erro_responsavel", label: "Erro no responsável" },
+  { value: "erro_validacao", label: "Erro de validação" },
 ];
 
 // Espelha `ResponsavelResultado` do motor da matrícula (matriculas.sponte).
@@ -173,7 +212,7 @@ function MatriculasPage() {
         .range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
 
       if (unidade !== "todas") q = q.eq("unidade", unidade);
-      if (status === "erros") q = q.in("status", ["erro_aluno", "erro_responsavel"]);
+      if (status === "erros") q = q.in("status", STATUS_ERRO as unknown as string[]);
       else if (status !== "todos") q = q.eq("status", status);
       if (buscaDebounced) {
         // Vírgula e parênteses quebram a sintaxe do filtro `or` do PostgREST.
@@ -353,7 +392,7 @@ function MatriculasPage() {
                     <StatusBadge status={row.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    {STATUS_STYLE[row.status]?.erro && podeReprocessar && (
+                    {STATUS_STYLE[row.status]?.reprocessavel && podeReprocessar && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -433,7 +472,9 @@ function DetalheSubmissao({
   onClose: () => void;
 }) {
   const responsaveis = submissao?.resultado?.responsaveis ?? [];
-  const ehErro = submissao ? (STATUS_STYLE[submissao.status]?.erro ?? false) : false;
+  const ehReprocessavel = submissao
+    ? (STATUS_STYLE[submissao.status]?.reprocessavel ?? false)
+    : false;
 
   return (
     <Sheet
@@ -514,7 +555,7 @@ function DetalheSubmissao({
               <BlocoJson titulo="Resposta do Sponte" valor={submissao.resultado} />
             </div>
 
-            {ehErro && podeReprocessar && (
+            {ehReprocessavel && podeReprocessar && (
               <div className="border-t px-4 py-3">
                 <Button
                   className="w-full"
