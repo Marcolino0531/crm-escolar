@@ -43,6 +43,16 @@ export function rentabilidadeRealPct(input: RentabilidadeInput): number | null {
   return (ganho / valorAnterior) * 100;
 }
 
+/**
+ * Formata um valor de movimentação (aporte/resgate) para exibição na tabela.
+ * Retorna um travessão ("—") quando não houve movimentação — valor ausente ou
+ * zero — seguindo o mesmo padrão visual das demais colunas sem dado.
+ */
+export function formatMovimentacaoBRL(valor: number | null | undefined): string {
+  if (valor == null || valor === 0) return "—";
+  return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 export interface PatrimonioEntry {
   competencia: string;
   valor_liquido: number;

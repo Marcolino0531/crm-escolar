@@ -35,7 +35,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { rentabilidadeRealPct, somarPatrimonioPorCompetencia } from "@/lib/fundos";
+import {
+  rentabilidadeRealPct,
+  somarPatrimonioPorCompetencia,
+  formatMovimentacaoBRL,
+} from "@/lib/fundos";
 
 export const Route = createFileRoute("/fundos")({
   component: FundosGate,
@@ -154,13 +158,15 @@ function FundosPage() {
       // Rentabilidade real: desconta aportes/resgates do período (gravados no
       // lançamento do mês corrente) para não confundir movimentação de caixa
       // com ganho/perda do fundo.
+      const aportes = current ? Number(current.aportes) : 0;
+      const resgates = current ? Number(current.resgates) : 0;
       const variacao = rentabilidadeRealPct({
         valorAtual,
         valorAnterior,
-        aportes: current ? Number(current.aportes) : 0,
-        resgates: current ? Number(current.resgates) : 0,
+        aportes,
+        resgates,
       });
-      return { fund: f, valorAtual, valorAnterior, variacao };
+      return { fund: f, valorAtual, valorAnterior, aportes, resgates, variacao };
     });
   }, [funds, entries, month, prevMonth]);
 
@@ -309,6 +315,8 @@ function FundosPage() {
                   {schoolId === "all" && <TableHead>Colégio</TableHead>}
                   <TableHead className="text-right">Mês Atual</TableHead>
                   <TableHead className="text-right">Mês Anterior</TableHead>
+                  <TableHead className="text-right">Aporte do período</TableHead>
+                  <TableHead className="text-right">Resgate do período</TableHead>
                   <TableHead
                     className="text-right"
                     title="Rentabilidade real do período (desconta aportes e resgates)"
@@ -319,68 +327,76 @@ function FundosPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {fundStats.map(({ fund, valorAtual, valorAnterior, variacao }) => (
-                  <TableRow key={fund.id}>
-                    <TableCell className="font-medium">{fund.name}</TableCell>
-                    <TableCell>{fund.destination}</TableCell>
-                    {schoolId === "all" && (
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {schoolName(fund.school_id)}
-                        </Badge>
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right tabular-nums">
-                      {valorAtual != null ? fmtBRL(valorAtual) : "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {valorAnterior != null ? fmtBRL(valorAnterior) : "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {variacao != null ? (
-                        <span className={variacao >= 0 ? "text-emerald-600" : "text-red-600"}>
-                          {variacao >= 0 ? "+" : ""}
-                          {variacao.toFixed(2)}%
-                        </span>
-                      ) : (
-                        "—"
+                {fundStats.map(
+                  ({ fund, valorAtual, valorAnterior, aportes, resgates, variacao }) => (
+                    <TableRow key={fund.id}>
+                      <TableCell className="font-medium">{fund.name}</TableCell>
+                      <TableCell>{fund.destination}</TableCell>
+                      {schoolId === "all" && (
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {schoolName(fund.school_id)}
+                          </Badge>
+                        </TableCell>
                       )}
-                    </TableCell>
-                    {editable && (
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Lançamento mensal"
-                            onClick={() => setEntryFund(fund)}
-                          >
-                            <DollarSign className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Editar fundo"
-                            onClick={() => setEditFund(fund)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Excluir fundo"
-                            onClick={() => {
-                              if (confirm(`Excluir o fundo "${fund.name}"?`))
-                                deleteFund.mutate(fund.id);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
+                      <TableCell className="text-right tabular-nums">
+                        {valorAtual != null ? fmtBRL(valorAtual) : "—"}
                       </TableCell>
-                    )}
-                  </TableRow>
-                ))}
+                      <TableCell className="text-right tabular-nums">
+                        {valorAnterior != null ? fmtBRL(valorAnterior) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMovimentacaoBRL(aportes)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMovimentacaoBRL(resgates)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {variacao != null ? (
+                          <span className={variacao >= 0 ? "text-emerald-600" : "text-red-600"}>
+                            {variacao >= 0 ? "+" : ""}
+                            {variacao.toFixed(2)}%
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      {editable && (
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Lançamento mensal"
+                              onClick={() => setEntryFund(fund)}
+                            >
+                              <DollarSign className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Editar fundo"
+                              onClick={() => setEditFund(fund)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Excluir fundo"
+                              onClick={() => {
+                                if (confirm(`Excluir o fundo "${fund.name}"?`))
+                                  deleteFund.mutate(fund.id);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ),
+                )}
               </TableBody>
             </Table>
           )}

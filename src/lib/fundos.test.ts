@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { rentabilidadeRealPct, somarPatrimonioPorCompetencia } from "./fundos";
+import {
+  rentabilidadeRealPct,
+  somarPatrimonioPorCompetencia,
+  formatMovimentacaoBRL,
+} from "./fundos";
 
 describe("rentabilidadeRealPct", () => {
   it("sem movimentação: variação = ganho bruto sobre o saldo anterior", () => {
@@ -132,5 +136,25 @@ describe("somarPatrimonioPorCompetencia", () => {
 
   it("lista vazia gera mapa vazio", () => {
     expect(somarPatrimonioPorCompetencia([]).size).toBe(0);
+  });
+});
+
+describe("formatMovimentacaoBRL", () => {
+  // Normaliza os espaços do Intl (usa espaço não separável entre R$ e valor).
+  const norm = (s: string) => s.replace(/\u00a0/g, " ");
+
+  it("exibe travessão quando não há movimentação", () => {
+    expect(formatMovimentacaoBRL(0)).toBe("—");
+    expect(formatMovimentacaoBRL(null)).toBe("—");
+    expect(formatMovimentacaoBRL(undefined)).toBe("—");
+  });
+
+  it("formata valor em reais quando há movimentação", () => {
+    expect(norm(formatMovimentacaoBRL(100000))).toBe("R$ 100.000,00");
+    expect(norm(formatMovimentacaoBRL(1234.5))).toBe("R$ 1.234,50");
+  });
+
+  it("formata centavos corretamente", () => {
+    expect(norm(formatMovimentacaoBRL(0.1))).toBe("R$ 0,10");
   });
 });
