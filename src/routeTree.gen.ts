@@ -19,6 +19,7 @@ import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FundosRouteImport } from './routes/fundos'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
+import { Route as EstoqueMaterialRouteImport } from './routes/estoque-material'
 import { Route as DiarioRouteImport } from './routes/diario'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
@@ -79,6 +80,11 @@ const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
 const ExtratoBancarioRoute = ExtratoBancarioRouteImport.update({
   id: '/extrato-bancario',
   path: '/extrato-bancario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstoqueMaterialRoute = EstoqueMaterialRouteImport.update({
+  id: '/estoque-material',
+  path: '/estoque-material',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiarioRoute = DiarioRouteImport.update({
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/diario': typeof DiarioRoute
+  '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
@@ -172,6 +179,7 @@ export interface FileRoutesByTo {
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/diario': typeof DiarioRoute
+  '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
@@ -196,6 +204,7 @@ export interface FileRoutesById {
   '/conciliacao': typeof ConciliacaoRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/diario': typeof DiarioRoute
+  '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
@@ -221,6 +230,7 @@ export interface FileRouteTypes {
     | '/conciliacao'
     | '/configuracoes'
     | '/diario'
+    | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
     | '/conciliacao'
     | '/configuracoes'
     | '/diario'
+    | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
@@ -267,6 +278,7 @@ export interface FileRouteTypes {
     | '/conciliacao'
     | '/configuracoes'
     | '/diario'
+    | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
     | '/fundos'
@@ -291,6 +303,7 @@ export interface RootRouteChildren {
   ConciliacaoRoute: typeof ConciliacaoRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   DiarioRoute: typeof DiarioRoute
+  EstoqueMaterialRoute: typeof EstoqueMaterialRoute
   ExtratoBancarioRoute: typeof ExtratoBancarioRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
   FundosRoute: typeof FundosRoute
@@ -373,6 +386,13 @@ declare module '@tanstack/react-router' {
       path: '/extrato-bancario'
       fullPath: '/extrato-bancario'
       preLoaderRoute: typeof ExtratoBancarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estoque-material': {
+      id: '/estoque-material'
+      path: '/estoque-material'
+      fullPath: '/estoque-material'
+      preLoaderRoute: typeof EstoqueMaterialRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/diario': {
@@ -467,6 +487,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConciliacaoRoute: ConciliacaoRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
   DiarioRoute: DiarioRoute,
+  EstoqueMaterialRoute: EstoqueMaterialRoute,
   ExtratoBancarioRoute: ExtratoBancarioRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
   FundosRoute: FundosRoute,

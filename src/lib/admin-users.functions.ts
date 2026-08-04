@@ -11,6 +11,7 @@ const APP_MODULES = [
   "rh",
   "tasks",
   "uniformes",
+  "estoque_material",
   "diario",
   "colonia",
   "colonia_financeiro",
