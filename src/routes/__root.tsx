@@ -29,6 +29,7 @@ import {
   Bot,
   MessageSquare,
   Shirt,
+  Package,
   BookOpen,
   PartyPopper,
   CreditCard,
@@ -272,6 +273,7 @@ function AppShell() {
   const showRh = canView("rh");
   const showTasks = canView("tasks");
   const showUniformes = canView("uniformes");
+  const showEstoqueMaterial = canView("estoque_material");
   const showDiario = canView("diario");
   const showColonia = canView("colonia") || canView("colonia_financeiro");
   // Financeiro sub-tabs: each link is gated independently.
@@ -322,6 +324,11 @@ function AppShell() {
           ...gate(showRh, { to: "/rh", icon: Users, label: "Recursos Humanos" }),
           ...gate(showTasks, { to: "/tasks", icon: ListTodo, label: "Tasks" }),
           ...gate(showUniformes, { to: "/uniformes", icon: Shirt, label: "Uniformes" }),
+          ...gate(showEstoqueMaterial, {
+            to: "/estoque-material",
+            icon: Package,
+            label: "Estoque de Material Escolar",
+          }),
           ...gate(showDiario, { to: "/diario", icon: BookOpen, label: "Diário do Aluno" }),
           ...gate(showColonia, {
             to: "/colonia",
@@ -387,6 +394,7 @@ function AppShell() {
     showRh,
     showTasks,
     showUniformes,
+    showEstoqueMaterial,
     showDiario,
     showColonia,
     showFinanceiro,
