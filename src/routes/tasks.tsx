@@ -127,7 +127,7 @@ function TasksPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("recurring_task_defs" as never)
-        .select("id, title, description, day_of_month")
+        .select("id, title, description, day_of_month, start_month")
         .eq("active", true);
       if (error) throw error;
       return (data ?? []) as unknown as RecurringTaskDef[];

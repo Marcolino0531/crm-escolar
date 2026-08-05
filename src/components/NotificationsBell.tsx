@@ -205,7 +205,7 @@ export function NotificationsBell() {
       const [defsRes, compRes] = await Promise.all([
         supabase
           .from("recurring_task_defs" as never)
-          .select("id, title, description, day_of_month")
+          .select("id, title, description, day_of_month, start_month")
           .eq("active", true),
         supabase.from("recurring_task_completions" as never).select("def_id, month_key"),
       ]);

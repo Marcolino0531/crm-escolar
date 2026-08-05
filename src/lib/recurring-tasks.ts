@@ -7,12 +7,18 @@
 // O status de uma ocorrência é por mês: uma linha em recurring_task_completions
 // marca aquele mês como cumprido; a ausência dela significa pendente. Por isso
 // marcar cumprida em um mês não afeta o mês seguinte.
+//
+// A rotina só gera ocorrências a partir de start_month (inclusive): nunca em
+// meses anteriores à sua criação. Se o dia configurado já passou no mês da
+// criação, start_month é o mês seguinte (a 1ª ocorrência não nasce "vencida").
 
 export type RecurringTaskDef = {
   id: string;
   title: string;
   description: string | null;
   day_of_month: number;
+  // Primeiro mês (YYYY-MM) em que a rotina passa a ocorrer.
+  start_month: string;
 };
 
 function pad2(n: number): string {
@@ -41,6 +47,23 @@ export function resolveOccurrenceDate(year: number, month0: number, dayOfMonth: 
 // Chave do mês (YYYY-MM) usada para marcar/consultar cumprimento por mês.
 export function monthKey(year: number, month0: number): string {
   return `${year}-${pad2(month0 + 1)}`;
+}
+
+// Primeiro mês (YYYY-MM) em que a rotina deve ocorrer, dado o dia do mês e a
+// data de criação: o próprio mês se o dia ainda não passou (hoje <= ocorrência),
+// senão o mês seguinte — evitando gerar uma ocorrência já vencida na criação.
+export function firstOccurrenceMonthKey(todayISO: string, dayOfMonth: number): string {
+  const year = Number(todayISO.slice(0, 4));
+  const month0 = Number(todayISO.slice(5, 7)) - 1;
+  const occ = resolveOccurrenceDate(year, month0, dayOfMonth);
+  if (todayISO <= occ) return monthKey(year, month0);
+  const next = new Date(year, month0 + 1, 1);
+  return monthKey(next.getFullYear(), next.getMonth());
+}
+
+// A rotina ocorre no mês `mk` (YYYY-MM)? Só a partir de start_month (inclusive).
+export function occursInMonth(def: RecurringTaskDef, mk: string): boolean {
+  return mk >= def.start_month;
 }
 
 // Mês (YYYY-MM) de uma data ISO (YYYY-MM-DD).
@@ -85,6 +108,7 @@ export function dueOccurrences(
   const mk = monthKey(year, month0);
   const out: DueOccurrence[] = [];
   for (const def of defs) {
+    if (!occursInMonth(def, mk)) continue;
     const date = resolveOccurrenceDate(year, month0, def.day_of_month);
     if (todayISO >= date && !completed.has(completedKey(def.id, mk))) {
       out.push({ def, date, monthKey: mk });

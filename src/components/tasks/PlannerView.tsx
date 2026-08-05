@@ -34,7 +34,9 @@ import {
   monthKey as monthKeyOf,
   completedKey,
   occurrenceStatus,
+  occursInMonth,
   dueOccurrences,
+  firstOccurrenceMonthKey,
   type RecurringTaskDef,
   type OccurrenceStatus,
 } from "@/lib/recurring-tasks";
@@ -87,7 +89,7 @@ export function PlannerView() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("recurring_task_defs" as never)
-        .select("id, title, description, day_of_month")
+        .select("id, title, description, day_of_month, start_month")
         .eq("active", true)
         .order("day_of_month", { ascending: true });
       if (error) throw error;
@@ -125,6 +127,7 @@ export function PlannerView() {
         title: p.title,
         day_of_month: p.day_of_month,
         description: p.description || null,
+        start_month: firstOccurrenceMonthKey(today, p.day_of_month),
       } as never);
       if (error) throw error;
     },
@@ -187,6 +190,7 @@ export function PlannerView() {
     const mk = monthKeyOf(y, m0);
     const map = new Map<string, { def: RecurringTaskDef; status: OccurrenceStatus }[]>();
     for (const def of defs) {
+      if (!occursInMonth(def, mk)) continue;
       const date = resolveOccurrenceDate(y, m0, def.day_of_month);
       const status = occurrenceStatus(date, completedSet.has(completedKey(def.id, mk)), today);
       const arr = map.get(date) ?? [];
