@@ -2,7 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Plus, ArrowRight, Trash2, Play, Check, Inbox, Loader2, CheckCircle2, MessageSquare, Send, Archive } from "lucide-react";
+import {
+  Plus,
+  ArrowRight,
+  Trash2,
+  Play,
+  Check,
+  Inbox,
+  Loader2,
+  CheckCircle2,
+  MessageSquare,
+  Send,
+  Archive,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
@@ -21,12 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -35,7 +42,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatDateBR } from "@/lib/date-utils";
+import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
+import { PlannerView } from "@/components/tasks/PlannerView";
+import { completedKey, countDuePending, type RecurringTaskDef } from "@/lib/recurring-tasks";
 
 function fmtDateTime(iso: string) {
   const d = new Date(iso);
@@ -106,7 +115,39 @@ function TasksPage() {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
   const [view, setView] = useState<"recebidas" | "enviadas">("recebidas");
+  const [modo, setModo] = useState<"tickets" | "planner">("tickets");
   const listUsersFn = useServerFn(listDirectoryUsers);
+
+  // Contador de rotinas vencidas e pendentes do mês corrente, exibido na aba
+  // Planner (indicador localizado no módulo Tasks).
+  const today = todayISOLocal();
+  const { data: plannerDefs = [] } = useQuery({
+    queryKey: ["recurring_task_defs", me],
+    enabled: !!me,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("recurring_task_defs" as never)
+        .select("id, title, description, day_of_month")
+        .eq("active", true);
+      if (error) throw error;
+      return (data ?? []) as unknown as RecurringTaskDef[];
+    },
+  });
+  const { data: plannerCompletions = [] } = useQuery({
+    queryKey: ["recurring_task_completions", me],
+    enabled: !!me,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("recurring_task_completions" as never)
+        .select("def_id, month_key");
+      if (error) throw error;
+      return (data ?? []) as unknown as { def_id: string; month_key: string }[];
+    },
+  });
+  const plannerPendentes = useMemo(() => {
+    const set = new Set(plannerCompletions.map((c) => completedKey(c.def_id, c.month_key)));
+    return countDuePending(plannerDefs, set, today);
+  }, [plannerDefs, plannerCompletions, today]);
 
   const { data: users = [] } = useQuery({
     queryKey: ["directory_users"],
@@ -198,7 +239,10 @@ function TasksPage() {
 
   const deleteTask = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("tasks" as any).delete().eq("id", id);
+      const { error } = await supabase
+        .from("tasks" as any)
+        .delete()
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -217,93 +261,121 @@ function TasksPage() {
             Gerenciador interno de tarefas. Você vê apenas as tasks que enviou ou recebeu.
           </p>
         </div>
-        {podeCriar && (
+        {podeCriar && modo === "tickets" && (
           <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Nova Task
           </Button>
         )}
       </div>
 
-      <Tabs value={view} onValueChange={(v) => setView(v as "recebidas" | "enviadas")}>
+      <Tabs value={modo} onValueChange={(v) => setModo(v as "tickets" | "planner")}>
         <TabsList>
-          <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
-          <TabsTrigger value="enviadas">Enviadas</TabsTrigger>
+          <TabsTrigger value="tickets">Tickets</TabsTrigger>
+          <TabsTrigger value="planner" className="gap-1.5">
+            Planner
+            {plannerPendentes > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                {plannerPendentes}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Carregando…</p>
+      {modo === "planner" ? (
+        <PlannerView />
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {COLUMNS.map((col) => {
-            const Icon = col.icon;
-            const items = byStatus[col.status];
-            return (
-              <div key={col.status} className="flex flex-col">
-                <div className={`mb-3 flex items-center gap-2 rounded-md border-t-4 ${col.accent} bg-card px-3 py-2 shadow-sm`}>
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">{col.label}</span>
-                  <Badge variant="secondary" className="ml-auto">{items.length}</Badge>
-                </div>
-                <div className="flex flex-col gap-3">
-                  {items.length === 0 ? (
-                    <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
-                      Nenhuma task aqui.
-                    </p>
-                  ) : (
-                    items.map((t) => (
-                      <TaskCard
-                        key={t.id}
-                        task={t}
-                        me={me}
-                        userName={userName}
-                        onOpen={() => setOpenTaskId(t.id)}
-                        onAdvance={(status) => setStatus.mutate({ id: t.id, status })}
-                        onDelete={() => {
-                          if (confirm(`Excluir a task "${t.title}"?`)) deleteTask.mutate(t.id);
-                        }}
-                      />
-                    ))
-                  )}
-                  {col.status === "concluido" && archivedTasks.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowArchive(true)}
-                      className="flex items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        <>
+          <Tabs value={view} onValueChange={(v) => setView(v as "recebidas" | "enviadas")}>
+            <TabsList>
+              <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
+              <TabsTrigger value="enviadas">Enviadas</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Carregando…</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {COLUMNS.map((col) => {
+                const Icon = col.icon;
+                const items = byStatus[col.status];
+                return (
+                  <div key={col.status} className="flex flex-col">
+                    <div
+                      className={`mb-3 flex items-center gap-2 rounded-md border-t-4 ${col.accent} bg-card px-3 py-2 shadow-sm`}
                     >
-                      <Archive className="h-3.5 w-3.5" /> Ver tarefas arquivadas ({archivedTasks.length})
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">{col.label}</span>
+                      <Badge variant="secondary" className="ml-auto">
+                        {items.length}
+                      </Badge>
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      {items.length === 0 ? (
+                        <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+                          Nenhuma task aqui.
+                        </p>
+                      ) : (
+                        items.map((t) => (
+                          <TaskCard
+                            key={t.id}
+                            task={t}
+                            me={me}
+                            userName={userName}
+                            onOpen={() => setOpenTaskId(t.id)}
+                            onAdvance={(status) => setStatus.mutate({ id: t.id, status })}
+                            onDelete={() => {
+                              if (confirm(`Excluir a task "${t.title}"?`)) deleteTask.mutate(t.id);
+                            }}
+                          />
+                        ))
+                      )}
+                      {col.status === "concluido" && archivedTasks.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowArchive(true)}
+                          className="flex items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          <Archive className="h-3.5 w-3.5" /> Ver tarefas arquivadas (
+                          {archivedTasks.length})
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <CreateTaskDialog
+            open={showCreate}
+            onClose={() => setShowCreate(false)}
+            users={users}
+            me={me}
+            onSave={(p) => createTask.mutate(p)}
+            saving={createTask.isPending}
+          />
+
+          <ArchivedTasksSheet
+            open={showArchive}
+            tasks={archivedTasks}
+            userName={userName}
+            onClose={() => setShowArchive(false)}
+            onOpenTask={(id) => {
+              setOpenTaskId(id);
+              setShowArchive(false);
+            }}
+          />
+
+          <TaskChatSheet
+            task={tasks.find((t) => t.id === openTaskId) ?? null}
+            me={me}
+            userName={userName}
+            onClose={() => setOpenTaskId(null)}
+          />
+        </>
       )}
-
-      <CreateTaskDialog
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        users={users}
-        me={me}
-        onSave={(p) => createTask.mutate(p)}
-        saving={createTask.isPending}
-      />
-
-      <ArchivedTasksSheet
-        open={showArchive}
-        tasks={archivedTasks}
-        userName={userName}
-        onClose={() => setShowArchive(false)}
-        onOpenTask={(id) => { setOpenTaskId(id); setShowArchive(false); }}
-      />
-
-      <TaskChatSheet
-        task={tasks.find((t) => t.id === openTaskId) ?? null}
-        me={me}
-        userName={userName}
-        onClose={() => setOpenTaskId(null)}
-      />
     </div>
   );
 }
@@ -361,7 +433,15 @@ function TaskChatSheet({
   });
 
   return (
-    <Sheet open={!!task} onOpenChange={(v) => { if (!v) { onClose(); setBody(""); } }}>
+    <Sheet
+      open={!!task}
+      onOpenChange={(v) => {
+        if (!v) {
+          onClose();
+          setBody("");
+        }
+      }}
+    >
       <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
         {task && (
           <>
@@ -369,15 +449,23 @@ function TaskChatSheet({
               <SheetTitle className="pr-6 text-base leading-tight">{task.title}</SheetTitle>
               <div className="space-y-1.5 pt-1 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-1">
-                  <span className="font-medium text-foreground">De: {userName(task.sender_id)}</span>
+                  <span className="font-medium text-foreground">
+                    De: {userName(task.sender_id)}
+                  </span>
                   <ArrowRight className="h-3 w-3" />
-                  <span className="font-medium text-foreground">Para: {userName(task.recipient_id)}</span>
+                  <span className="font-medium text-foreground">
+                    Para: {userName(task.recipient_id)}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="text-[10px]">{STATUS_LABEL[task.status]}</Badge>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {STATUS_LABEL[task.status]}
+                  </Badge>
                   <span>Criada: {formatDateBR(task.created_at)}</span>
                   {task.completed_at && (
-                    <span className="text-emerald-600">Finalizada: {formatDateBR(task.completed_at)}</span>
+                    <span className="text-emerald-600">
+                      Finalizada: {formatDateBR(task.completed_at)}
+                    </span>
                   )}
                 </div>
                 {task.description && (
@@ -401,20 +489,25 @@ function TaskChatSheet({
                 messages.map((m) => {
                   const mine = m.author_id === me;
                   return (
-                    <div key={m.id} className={`flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                    <div
+                      key={m.id}
+                      className={`flex flex-col ${mine ? "items-end" : "items-start"}`}
+                    >
                       <div
                         className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                          mine
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-foreground"
+                          mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
                         }`}
                       >
-                        <div className={`mb-0.5 text-[10px] font-semibold ${mine ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                        <div
+                          className={`mb-0.5 text-[10px] font-semibold ${mine ? "text-primary-foreground/80" : "text-muted-foreground"}`}
+                        >
                           {userName(m.author_id)}
                         </div>
                         <p className="whitespace-pre-wrap break-words">{m.body}</p>
                       </div>
-                      <span className="mt-0.5 text-[10px] text-muted-foreground">{fmtDateTime(m.created_at)}</span>
+                      <span className="mt-0.5 text-[10px] text-muted-foreground">
+                        {fmtDateTime(m.created_at)}
+                      </span>
                     </div>
                   );
                 })
@@ -472,7 +565,12 @@ function ArchivedTasksSheet({
   onOpenTask: (id: string) => void;
 }) {
   return (
-    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
       <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="flex items-center gap-2 text-base">
@@ -500,7 +598,9 @@ function ArchivedTasksSheet({
                   <span className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">De: {userName(t.sender_id)}</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span className="font-medium text-foreground">Para: {userName(t.recipient_id)}</span>
+                    <span className="font-medium text-foreground">
+                      Para: {userName(t.recipient_id)}
+                    </span>
                   </span>
                   {t.completed_at && (
                     <span className="text-xs text-emerald-600">
@@ -535,7 +635,10 @@ function TaskCard({
   const isRecipient = task.recipient_id === me;
   const isSender = task.sender_id === me;
   // Keep action-button clicks from also opening the chat panel.
-  const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
 
   return (
     <Card
@@ -559,23 +662,40 @@ function TaskCard({
       </div>
 
       {task.description && (
-        <p className="line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{task.description}</p>
+        <p className="line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">
+          {task.description}
+        </p>
       )}
 
       <div className="flex flex-wrap items-center gap-1 pt-1">
         {/* The recipient drives the workflow. */}
         {isRecipient && task.status === "aberto" && (
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("em_resolucao"))}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            onClick={stop(() => onAdvance("em_resolucao"))}
+          >
             <Play className="h-3 w-3" /> Iniciar
           </Button>
         )}
         {isRecipient && task.status === "em_resolucao" && (
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("concluido"))}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            onClick={stop(() => onAdvance("concluido"))}
+          >
             <Check className="h-3 w-3" /> Concluir
           </Button>
         )}
         {isRecipient && task.status === "concluido" && (
-          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={stop(() => onAdvance("em_resolucao"))}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 text-xs"
+            onClick={stop(() => onAdvance("em_resolucao"))}
+          >
             Reabrir
           </Button>
         )}
@@ -622,10 +742,22 @@ function CreateTaskDialog({
     [users, me],
   );
 
-  const reset = () => { setRecipient(""); setTitle(""); setDescription(""); };
+  const reset = () => {
+    setRecipient("");
+    setTitle("");
+    setDescription("");
+  };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { onClose(); reset(); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          onClose();
+          reset();
+        }
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Nova Task</DialogTitle>
@@ -648,7 +780,11 @@ function CreateTaskDialog({
           </div>
           <div>
             <Label>Título do Pedido</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Revisar contrato" />
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Ex.: Revisar contrato"
+            />
           </div>
           <div>
             <Label>Descrição detalhada</Label>
@@ -661,10 +797,25 @@ function CreateTaskDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { onClose(); reset(); }}>Cancelar</Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              onClose();
+              reset();
+            }}
+          >
+            Cancelar
+          </Button>
           <Button
             disabled={saving || !recipient || !title.trim()}
-            onClick={() => { onSave({ recipient_id: recipient, title: title.trim(), description: description.trim() }); reset(); }}
+            onClick={() => {
+              onSave({
+                recipient_id: recipient,
+                title: title.trim(),
+                description: description.trim(),
+              });
+              reset();
+            }}
           >
             {saving ? "Enviando…" : "Enviar"}
           </Button>

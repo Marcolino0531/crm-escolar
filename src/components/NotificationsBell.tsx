@@ -33,6 +33,12 @@ import {
   type PendenciaPortaria,
   type RegistroPortaria,
 } from "@/lib/colonia";
+import {
+  dueOccurrences,
+  completedKey,
+  type RecurringTaskDef,
+  type DueOccurrence,
+} from "@/lib/recurring-tasks";
 
 type Notification = {
   id: string;
@@ -186,9 +192,36 @@ export function NotificationsBell() {
     },
   });
 
+  const today = todayISOLocal();
+
+  // --- Rotinas do Planner vencidas e pendentes (derivadas ao vivo; persistem
+  // enquanto a ocorrência do mês não for marcada como cumprida — não somem por
+  // passar o dia nem por recarregar; só ao cumprir). ---
+  const { data: plannerDue = [] } = useQuery({
+    queryKey: ["recurring_planner_due", userId ?? "anon", today],
+    enabled: !!userId && canTasks,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const [defsRes, compRes] = await Promise.all([
+        supabase
+          .from("recurring_task_defs" as never)
+          .select("id, title, description, day_of_month")
+          .eq("active", true),
+        supabase.from("recurring_task_completions" as never).select("def_id, month_key"),
+      ]);
+      if (defsRes.error) return [] as DueOccurrence[];
+      const defs = (defsRes.data ?? []) as unknown as RecurringTaskDef[];
+      const completed = new Set(
+        ((compRes.data ?? []) as unknown as { def_id: string; month_key: string }[]).map((c) =>
+          completedKey(c.def_id, c.month_key),
+        ),
+      );
+      return dueOccurrences(defs, completed, today);
+    },
+  });
+
   // --- Accounts payable alerts (derived from Fluxo Futuro; NOT dismissible —
   // they persist until the bill's status becomes "paid" / quitada). ---
-  const today = todayISOLocal();
 
   // --- Alerta do dia 25: data limite para envio dos boletos de mensalidade.
   // Aparece a partir do dia 25 e some assim que o checklist do mês é marcado. ---
@@ -520,6 +553,7 @@ export function NotificationsBell() {
     unreadAgenda.length +
     coloniaPendencias.length +
     coloniaIncompletos.length +
+    plannerDue.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -824,6 +858,33 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* Rotinas do Planner vencidas e pendentes: persistem até serem
+              marcadas como cumpridas (não somem por passar o dia/recarregar). */}
+          {canTasks && plannerDue.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Rotinas vencidas (Planner)
+              </div>
+              {plannerDue.map(({ def, date }) => (
+                <Link
+                  key={def.id}
+                  to="/tasks"
+                  className="block border-b px-3 py-2 text-sm font-medium last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                    <div className="min-w-0">
+                      <div>{def.title}</div>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                        Venceu em {formatDateBR(date)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Task concluída: única notificação descartável (check p/ marcar lida). */}
           {canTasks && unreadTasks.length > 0 && (
             <div>
@@ -867,6 +928,7 @@ export function NotificationsBell() {
             extraEvents.length === 0 &&
             coloniaPendencias.length === 0 &&
             coloniaIncompletos.length === 0 &&
+            plannerDue.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
