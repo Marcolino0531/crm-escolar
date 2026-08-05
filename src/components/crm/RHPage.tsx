@@ -147,6 +147,14 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const funcionariosFiltrados = funcionarios.filter((f) =>
     abaStatus === "ativos" ? isAtivo(f) : !isAtivo(f),
   );
+  // Na aba de desligados, ordena pela data de rescisão (desligamento) do mais
+  // recente para o mais antigo. dataRescisao é ISO (YYYY-MM-DD), então a
+  // comparação lexicográfica coincide com a cronológica.
+  if (abaStatus === "desligados") {
+    funcionariosFiltrados.sort((a, b) =>
+      (b.dataRescisao ?? "").localeCompare(a.dataRescisao ?? ""),
+    );
+  }
   const totalAtivos = funcionarios.filter(isAtivo).length;
   const totalDesligados = funcionarios.length - totalAtivos;
 
