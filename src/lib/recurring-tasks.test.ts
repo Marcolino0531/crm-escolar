@@ -6,16 +6,20 @@ import {
   monthKey,
   completedKey,
   occurrenceStatus,
+  occursInMonth,
+  firstOccurrenceMonthKey,
   dueOccurrences,
   countDuePending,
   type RecurringTaskDef,
 } from "./recurring-tasks";
 
-const def = (id: string, day: number, title = id): RecurringTaskDef => ({
+// start_month padrão bem no passado para não filtrar os testes que não o exercitam.
+const def = (id: string, day: number, title = id, start_month = "2000-01"): RecurringTaskDef => ({
   id,
   title,
   description: null,
   day_of_month: day,
+  start_month,
 });
 
 describe("daysInMonth", () => {
@@ -110,5 +114,64 @@ describe("dueOccurrences / countDuePending", () => {
     const mesmoDia = [def("x", 5, "Zebra"), def("y", 5, "Abacaxi")];
     const due = dueOccurrences(mesmoDia, new Set(), "2025-03-10");
     expect(due.map((d) => d.def.title)).toEqual(["Abacaxi", "Zebra"]);
+  });
+});
+
+describe("firstOccurrenceMonthKey", () => {
+  it("usa o próprio mês quando o dia ainda não passou", () => {
+    expect(firstOccurrenceMonthKey("2026-08-05", 10)).toBe("2026-08");
+  });
+
+  it("inclui o próprio dia da criação (não considera vencido)", () => {
+    expect(firstOccurrenceMonthKey("2026-08-10", 10)).toBe("2026-08");
+  });
+
+  it("avança para o mês seguinte quando o dia já passou na criação", () => {
+    expect(firstOccurrenceMonthKey("2026-08-15", 10)).toBe("2026-09");
+  });
+
+  it("vira o ano quando a criação é em dezembro após o dia", () => {
+    expect(firstOccurrenceMonthKey("2026-12-20", 10)).toBe("2027-01");
+  });
+
+  it("grampeia o dia ao fim do mês ao decidir o marco", () => {
+    // Fev não bissexto: dia 31 → ocorrência 28; criando em 28 ainda conta este mês.
+    expect(firstOccurrenceMonthKey("2025-02-28", 31)).toBe("2025-02");
+    // Criando em 27, a ocorrência (28) ainda não passou → este mês.
+    expect(firstOccurrenceMonthKey("2025-02-27", 31)).toBe("2025-02");
+  });
+});
+
+describe("start_month: sem ocorrências retroativas", () => {
+  it("occursInMonth só a partir de start_month (inclusive)", () => {
+    const d = def("a", 10, "a", "2026-08");
+    expect(occursInMonth(d, "2026-07")).toBe(false);
+    expect(occursInMonth(d, "2026-08")).toBe(true);
+    expect(occursInMonth(d, "2026-09")).toBe(true);
+  });
+
+  it("não gera vencidas em meses anteriores ao de criação", () => {
+    // Criada em agosto/2026 (dia 10). Em julho/2026 não deve haver nada vencido.
+    const d = def("a", 10, "Faturamento", "2026-08");
+    expect(countDuePending([d], new Set(), "2026-07-31")).toBe(0);
+    expect(dueOccurrences([d], new Set(), "2026-07-31")).toEqual([]);
+  });
+
+  it("quando o dia já passou na criação, o mês da criação também fica sem vencida", () => {
+    // Criada em 15/08 para dia 10 → start_month setembro; agosto não vence.
+    const sm = firstOccurrenceMonthKey("2026-08-15", 10);
+    const d = def("a", 10, "Faturamento", sm);
+    expect(sm).toBe("2026-09");
+    expect(countDuePending([d], new Set(), "2026-08-31")).toBe(0);
+    // Já em setembro, no dia 10, passa a vencer normalmente.
+    expect(countDuePending([d], new Set(), "2026-09-10")).toBe(1);
+  });
+
+  it("gera a partir do mês de criação quando o dia ainda não passou", () => {
+    const sm = firstOccurrenceMonthKey("2026-08-05", 10);
+    const d = def("a", 10, "Faturamento", sm);
+    expect(sm).toBe("2026-08");
+    expect(countDuePending([d], new Set(), "2026-08-05")).toBe(0); // dia 10 ainda não chegou
+    expect(countDuePending([d], new Set(), "2026-08-10")).toBe(1); // no dia, vence
   });
 });
