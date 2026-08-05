@@ -395,86 +395,6 @@ function FluxoFuturoPage() {
         <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Saldo Projetado</CardTitle></CardHeader><CardContent><div className={`text-2xl font-bold ${!sponteAtiva ? "" : saldoProjetado >= 0 ? "text-green-600" : "text-red-600"}`}>{sponteAtiva ? fmtBRL(saldoProjetado) : "—"}</div></CardContent></Card>
       </div>
 
-      {/* ── Receitas Previstas (Sponte) — acima das Despesas ── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CardTitle>Receitas Previstas Sponte</CardTitle>
-            {sponteAtiva && (
-              <Badge variant="secondary" className="gap-1">
-                <Building2 className="h-3 w-3" /> {schoolName}
-              </Badge>
-            )}
-          </div>
-          {sponteAtiva && (
-            <Button size="sm" variant="outline" onClick={() => refetchReceitas()} disabled={receitasLoading}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${receitasLoading ? "animate-spin" : ""}`} />Atualizar
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent>
-          {!sponteAtiva ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <Construction className="h-8 w-8 text-amber-500" />
-              <p className="text-sm font-medium">Integração Sponte indisponível para {schoolName || "esta unidade"}.</p>
-              <p className="text-xs text-muted-foreground">Selecione <strong>CEC</strong>, <strong>CEC Baby</strong>, <strong>Núcleo Belvedere</strong> ou <strong>Núcleo Vale do Sereno</strong> no topo para ver as receitas previstas.</p>
-            </div>
-          ) : receitasErroMsg ? (
-            <div className="py-8 text-center text-sm text-red-600">Erro ao consultar o Sponte: {receitasErroMsg}</div>
-          ) : receitasLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">Consultando receitas no Sponte…</div>
-          ) : receitas.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              Nenhuma receita prevista (parcela pendente) de {fmtVenc(recInicio)} a {fmtVenc(recFim)}.
-            </div>
-          ) : (
-            <>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Janela {fmtVenc(recInicio)} – {fmtVenc(recFim)} · {receitas.length} boleto(s){receitasData?.meta ? ` · ${receitasData.meta.tempoSegundos}s` : ""}. Desconto de pontualidade aplicado apenas sobre a Mensalidade.
-              </p>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Vencimento</TableHead>
-                    <TableHead>Aluno</TableHead>
-                    <TableHead>Responsável</TableHead>
-                    <TableHead>Categoria(s)</TableHead>
-                    <TableHead className="text-right">Valor Bruto</TableHead>
-                    <TableHead className="text-right">Valor Previsto</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {receitas.map((r) => (
-                    <TableRow key={r.groupKey}>
-                      <TableCell className="text-xs">{fmtVenc(r.vencimento)}</TableCell>
-                      <TableCell className="font-medium">{r.nomeAluno}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{r.nomeResponsavel}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {r.categorias.map((c) => (
-                            <Badge key={c} variant="outline" className="text-xs">{c}</Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtBRL(r.valorTotalBoleto)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-semibold text-green-600">
-                        {fmtBRL(r.valorComDesconto)}
-                        {r.descontoBolsa > 0 && (
-                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">(-{r.descontoBolsa}%)</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <div className="mt-3 flex justify-end border-t pt-3 text-sm font-semibold">
-                Total de Receitas Previstas:&nbsp;<span className="text-green-600">{fmtBRL(totalReceitasPrevistas)}</span>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Despesas Previstas</CardTitle>
@@ -604,6 +524,86 @@ function FluxoFuturoPage() {
                 })}
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Receitas Previstas (Sponte) — abaixo das Despesas ── */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle>Receitas Previstas Sponte</CardTitle>
+            {sponteAtiva && (
+              <Badge variant="secondary" className="gap-1">
+                <Building2 className="h-3 w-3" /> {schoolName}
+              </Badge>
+            )}
+          </div>
+          {sponteAtiva && (
+            <Button size="sm" variant="outline" onClick={() => refetchReceitas()} disabled={receitasLoading}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${receitasLoading ? "animate-spin" : ""}`} />Atualizar
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {!sponteAtiva ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <Construction className="h-8 w-8 text-amber-500" />
+              <p className="text-sm font-medium">Integração Sponte indisponível para {schoolName || "esta unidade"}.</p>
+              <p className="text-xs text-muted-foreground">Selecione <strong>CEC</strong>, <strong>CEC Baby</strong>, <strong>Núcleo Belvedere</strong> ou <strong>Núcleo Vale do Sereno</strong> no topo para ver as receitas previstas.</p>
+            </div>
+          ) : receitasErroMsg ? (
+            <div className="py-8 text-center text-sm text-red-600">Erro ao consultar o Sponte: {receitasErroMsg}</div>
+          ) : receitasLoading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Consultando receitas no Sponte…</div>
+          ) : receitas.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Nenhuma receita prevista (parcela pendente) de {fmtVenc(recInicio)} a {fmtVenc(recFim)}.
+            </div>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Janela {fmtVenc(recInicio)} – {fmtVenc(recFim)} · {receitas.length} boleto(s){receitasData?.meta ? ` · ${receitasData.meta.tempoSegundos}s` : ""}. Desconto de pontualidade aplicado apenas sobre a Mensalidade.
+              </p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Vencimento</TableHead>
+                    <TableHead>Aluno</TableHead>
+                    <TableHead>Responsável</TableHead>
+                    <TableHead>Categoria(s)</TableHead>
+                    <TableHead className="text-right">Valor Bruto</TableHead>
+                    <TableHead className="text-right">Valor Previsto</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {receitas.map((r) => (
+                    <TableRow key={r.groupKey}>
+                      <TableCell className="text-xs">{fmtVenc(r.vencimento)}</TableCell>
+                      <TableCell className="font-medium">{r.nomeAluno}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{r.nomeResponsavel}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {r.categorias.map((c) => (
+                            <Badge key={c} variant="outline" className="text-xs">{c}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtBRL(r.valorTotalBoleto)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold text-green-600">
+                        {fmtBRL(r.valorComDesconto)}
+                        {r.descontoBolsa > 0 && (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">(-{r.descontoBolsa}%)</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="mt-3 flex justify-end border-t pt-3 text-sm font-semibold">
+                Total de Receitas Previstas:&nbsp;<span className="text-green-600">{fmtBRL(totalReceitasPrevistas)}</span>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
