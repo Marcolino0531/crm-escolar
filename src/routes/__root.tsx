@@ -34,6 +34,8 @@ import {
   PartyPopper,
   CreditCard,
   Menu,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -50,6 +52,17 @@ import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import {
+  parseExpandedState,
+  serializeExpandedState,
+  isExpanded,
+  toggleExpanded,
+  expandGroups,
+  groupIdsForPath,
+  flattenTos,
+  type ExpandedState,
+  type NavNode as NavNodeShape,
+} from "@/lib/sidebar-nav";
 
 import appCss from "../styles.css?url";
 
@@ -154,19 +167,27 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-type NavEntry = {
-  to: string;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-};
+type IconComp = React.ComponentType<{ className?: string }>;
 
-type NavSection = { heading?: string; items: NavEntry[] };
+// Modelo de navegação em árvore: itens (uma rota) e grupos (categorias e
+// subcategorias). Compatível estruturalmente com NavNodeShape (lib pura).
+type NavItemNode = { kind: "item"; to: string; icon: IconComp; label: string };
+type NavGroupNode = { kind: "group"; id: string; label: string; children: NavTreeNode[] };
+type NavTreeNode = NavItemNode | NavGroupNode;
 
-function NavItem({ to, icon: Icon, label, onNavigate }: NavEntry & { onNavigate?: () => void }) {
+function NavItem({
+  to,
+  icon: Icon,
+  label,
+  depth,
+  onNavigate,
+}: Omit<NavItemNode, "kind"> & { depth: number; onNavigate?: () => void }) {
+  const pad = depth > 0 ? { paddingLeft: `${0.75 + depth * 0.75}rem` } : undefined;
   return (
     <Link
       to={to}
       onClick={onNavigate}
+      style={pad}
       className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       activeProps={{
         className:
@@ -174,19 +195,100 @@ function NavItem({ to, icon: Icon, label, onNavigate }: NavEntry & { onNavigate?
       }}
       activeOptions={{ exact: to === "/" }}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-4 w-4 shrink-0" />
       {label}
     </Link>
+  );
+}
+
+// Cabeçalho clicável de uma categoria/subcategoria, com chevron de estado.
+function NavGroupHeader({
+  label,
+  expanded,
+  depth,
+  onToggle,
+}: {
+  label: string;
+  expanded: boolean;
+  depth: number;
+  onToggle: () => void;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const pad = depth > 0 ? { paddingLeft: `${0.75 + depth * 0.75}rem` } : undefined;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      style={pad}
+      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    >
+      <Chevron className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1">{label}</span>
+    </button>
+  );
+}
+
+function NavNodes({
+  nodes,
+  depth,
+  expanded,
+  onToggle,
+  onNavigate,
+}: {
+  nodes: NavTreeNode[];
+  depth: number;
+  expanded: ExpandedState;
+  onToggle: (id: string) => void;
+  onNavigate?: () => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) =>
+        node.kind === "item" ? (
+          <NavItem
+            key={node.to}
+            to={node.to}
+            icon={node.icon}
+            label={node.label}
+            depth={depth}
+            onNavigate={onNavigate}
+          />
+        ) : (
+          <div key={node.id} className="flex flex-col gap-1">
+            <NavGroupHeader
+              label={node.label}
+              expanded={isExpanded(expanded, node.id)}
+              depth={depth}
+              onToggle={() => onToggle(node.id)}
+            />
+            {isExpanded(expanded, node.id) && (
+              <NavNodes
+                nodes={node.children}
+                depth={depth + 1}
+                expanded={expanded}
+                onToggle={onToggle}
+                onNavigate={onNavigate}
+              />
+            )}
+          </div>
+        ),
+      )}
+    </>
   );
 }
 
 // Conteúdo da sidebar reutilizado no painel fixo (desktop) e no drawer
 // (tablet/mobile). `onNavigate` fecha o drawer ao clicar num item.
 function SidebarContent({
-  sections,
+  tree,
+  expanded,
+  onToggle,
   onNavigate,
 }: {
-  sections: NavSection[];
+  tree: NavTreeNode[];
+  expanded: ExpandedState;
+  onToggle: (id: string) => void;
   onNavigate?: () => void;
 }) {
   return (
@@ -204,20 +306,13 @@ function SidebarContent({
         </div>
       </div>
       <nav className="flex flex-col gap-1">
-        {sections.map((section, i) =>
-          section.items.length === 0 ? null : (
-            <div key={section.heading ?? `sec-${i}`} className="flex flex-col gap-1">
-              {section.heading && (
-                <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-                  {section.heading}
-                </div>
-              )}
-              {section.items.map((item) => (
-                <NavItem key={item.to} {...item} onNavigate={onNavigate} />
-              ))}
-            </div>
-          ),
-        )}
+        <NavNodes
+          nodes={tree}
+          depth={0}
+          expanded={expanded}
+          onToggle={onToggle}
+          onNavigate={onNavigate}
+        />
       </nav>
       <Button
         variant="ghost"
@@ -262,9 +357,11 @@ function AuthGate() {
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
   const { noSchoolAccess } = useSchool();
+  const { session } = useAuth();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [expanded, setExpanded] = useState<ExpandedState>({});
 
   const showMainDashboard = canView("dashboard");
   const showAgenda = canView("agenda");
@@ -300,91 +397,147 @@ function AppShell() {
       showFundos);
   const showConfig = canView("configuracoes");
 
-  // Modelo de navegação (mesma ordem do menu), usado tanto para renderizar a
-  // sidebar/drawer quanto para achar a primeira rota permitida.
-  const sections = useMemo<NavSection[]>(() => {
-    const gate = (show: boolean, item: NavEntry) => (show ? [item] : []);
+  // Modelo de navegação em árvore (mesma ordem do menu): categorias colapsáveis
+  // e, dentro de Financeiro, subcategorias. Itens avulsos (Dashboard,
+  // Configurações) ficam no nível superior. Categorias/subcategorias sem itens
+  // visíveis são omitidas. Usado para renderizar a sidebar e para achar a
+  // primeira rota permitida.
+  const tree = useMemo<NavTreeNode[]>(() => {
+    const item = (show: boolean, node: NavItemNode): NavTreeNode[] => (show ? [node] : []);
+    const group = (id: string, label: string, children: NavTreeNode[]): NavTreeNode[] =>
+      children.length ? [{ kind: "group", id, label, children }] : [];
     return [
-      { items: gate(showMainDashboard, { to: "/", icon: LayoutDashboard, label: "Dashboard" }) },
-      {
-        heading: "Módulos",
-        items: [
-          ...gate(showAgenda, { to: "/agenda", icon: CalendarDays, label: "Agenda" }),
-          ...gate(showAdmissoes, { to: "/admissoes", icon: KanbanSquare, label: "Admissões" }),
-          ...gate(showAdmissoes, {
-            to: "/matriculas",
-            icon: ClipboardList,
-            label: "Matrículas",
+      ...item(showMainDashboard, {
+        kind: "item",
+        to: "/",
+        icon: LayoutDashboard,
+        label: "Dashboard",
+      }),
+      ...group("comercial", "Comercial e Admissões", [
+        ...item(showAgenda, { kind: "item", to: "/agenda", icon: CalendarDays, label: "Agenda" }),
+        ...item(showAdmissoes, {
+          kind: "item",
+          to: "/admissoes",
+          icon: KanbanSquare,
+          label: "Admissões",
+        }),
+        ...item(showAdmissoes, {
+          kind: "item",
+          to: "/matriculas",
+          icon: ClipboardList,
+          label: "Matrículas",
+        }),
+        ...item(showOnboarding, {
+          kind: "item",
+          to: "/onboarding",
+          icon: ClipboardCheck,
+          label: "Onboarding",
+        }),
+      ]),
+      ...group("pedagogico", "Pedagógico e Operacional", [
+        ...item(showDiario, {
+          kind: "item",
+          to: "/diario",
+          icon: BookOpen,
+          label: "Diário do Aluno",
+        }),
+        ...item(showUniformes, {
+          kind: "item",
+          to: "/uniformes",
+          icon: Shirt,
+          label: "Uniformes",
+        }),
+        ...item(showEstoqueMaterial, {
+          kind: "item",
+          to: "/estoque-material",
+          icon: Package,
+          label: "Estoque de Material Escolar",
+        }),
+        ...item(showColonia, {
+          kind: "item",
+          to: "/colonia",
+          icon: PartyPopper,
+          label: "Colônia de Férias",
+        }),
+      ]),
+      ...group("pessoas", "Pessoas", [
+        ...item(showRh, { kind: "item", to: "/rh", icon: Users, label: "Recursos Humanos" }),
+        ...item(showTasks, { kind: "item", to: "/tasks", icon: ListTodo, label: "Tasks" }),
+      ]),
+      ...group("financeiro", "Financeiro", [
+        ...group("fin-bancario", "Bancário", [
+          ...item(showFinanceiro && showDashboard, {
+            kind: "item",
+            to: "/extrato-bancario",
+            icon: Landmark,
+            label: "Extrato Bancário",
           }),
-          ...gate(showOnboarding, {
-            to: "/onboarding",
-            icon: ClipboardCheck,
-            label: "Onboarding",
+          ...item(showFinanceiro && showUpload, {
+            kind: "item",
+            to: "/upload",
+            icon: Upload,
+            label: "Importar Extrato",
           }),
-          ...gate(showRh, { to: "/rh", icon: Users, label: "Recursos Humanos" }),
-          ...gate(showTasks, { to: "/tasks", icon: ListTodo, label: "Tasks" }),
-          ...gate(showUniformes, { to: "/uniformes", icon: Shirt, label: "Uniformes" }),
-          ...gate(showEstoqueMaterial, {
-            to: "/estoque-material",
-            icon: Package,
-            label: "Estoque de Material Escolar",
+          ...item(showFinanceiro && showCartao, {
+            kind: "item",
+            to: "/cartao-credito",
+            icon: CreditCard,
+            label: "Cartão de Crédito",
           }),
-          ...gate(showDiario, { to: "/diario", icon: BookOpen, label: "Diário do Aluno" }),
-          ...gate(showColonia, {
-            to: "/colonia",
-            icon: PartyPopper,
-            label: "Colônia de Férias",
+        ]),
+        ...group("fin-faturamento", "Faturamento e Investimentos", [
+          ...item(showFinanceiro && showConciliacao, {
+            kind: "item",
+            to: "/conciliacao",
+            icon: FileCheck2,
+            label: "Faturamento",
           }),
-        ],
-      },
-      {
-        heading: "Financeiro",
-        items: showFinanceiro
-          ? [
-              ...gate(showDashboard, {
-                to: "/extrato-bancario",
-                icon: Landmark,
-                label: "Extrato Bancário",
-              }),
-              ...gate(showUpload, { to: "/upload", icon: Upload, label: "Importar Extrato" }),
-              ...gate(showConciliacao, {
-                to: "/conciliacao",
-                icon: FileCheck2,
-                label: "Faturamento",
-              }),
-              ...gate(showFluxo, {
-                to: "/fluxo-futuro",
-                icon: TrendingUp,
-                label: "Fluxo Futuro",
-              }),
-              ...gate(showInadimplencia, {
-                to: "/inadimplencia",
-                icon: AlertCircle,
-                label: "Inadimplência",
-              }),
-              ...gate(showCobranca, { to: "/cobranca", icon: HandCoins, label: "Cobrança" }),
-              ...gate(showCobranca, {
-                to: "/cobranca-automatica",
-                icon: Bot,
-                label: "Cobrança Automática",
-              }),
-              ...gate(showCobranca, {
-                to: "/atendimento",
-                icon: MessageSquare,
-                label: "Atendimento",
-              }),
-              ...gate(showCartao, {
-                to: "/cartao-credito",
-                icon: CreditCard,
-                label: "Cartão de Crédito",
-              }),
-              ...gate(showFundos, { to: "/fundos", icon: PiggyBank, label: "Fundos" }),
-            ]
-          : [],
-      },
-      {
-        items: gate(showConfig, { to: "/configuracoes", icon: Settings, label: "Configurações" }),
-      },
+          ...item(showFinanceiro && showFluxo, {
+            kind: "item",
+            to: "/fluxo-futuro",
+            icon: TrendingUp,
+            label: "Fluxo Futuro",
+          }),
+          ...item(showFinanceiro && showFundos, {
+            kind: "item",
+            to: "/fundos",
+            icon: PiggyBank,
+            label: "Fundos",
+          }),
+        ]),
+        ...group("fin-cobranca", "Cobrança", [
+          ...item(showFinanceiro && showInadimplencia, {
+            kind: "item",
+            to: "/inadimplencia",
+            icon: AlertCircle,
+            label: "Inadimplência",
+          }),
+          ...item(showFinanceiro && showCobranca, {
+            kind: "item",
+            to: "/cobranca",
+            icon: HandCoins,
+            label: "Cobrança",
+          }),
+          ...item(showFinanceiro && showCobranca, {
+            kind: "item",
+            to: "/cobranca-automatica",
+            icon: Bot,
+            label: "Cobrança Automática",
+          }),
+          ...item(showFinanceiro && showCobranca, {
+            kind: "item",
+            to: "/atendimento",
+            icon: MessageSquare,
+            label: "Atendimento",
+          }),
+        ]),
+      ]),
+      ...item(showConfig, {
+        kind: "item",
+        to: "/configuracoes",
+        icon: Settings,
+        label: "Configurações",
+      }),
     ];
   }, [
     showMainDashboard,
@@ -409,7 +562,38 @@ function AppShell() {
     showConfig,
   ]);
 
-  const firstAllowed = useMemo(() => sections.flatMap((s) => s.items)[0]?.to ?? null, [sections]);
+  const firstAllowed = useMemo(() => flattenTos(tree)[0] ?? null, [tree]);
+
+  // Estado colapsável persistido por usuário (localStorage). Carregado no
+  // cliente para evitar mismatch de hidratação; até lá, tudo aparece expandido.
+  const storageKey = session?.user?.id ? `sidebar-nav:${session.user.id}` : null;
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") return;
+    setExpanded(parseExpandedState(window.localStorage.getItem(storageKey)));
+  }, [storageKey]);
+
+  const toggleGroup = (id: string) =>
+    setExpanded((prev) => {
+      const next = toggleExpanded(prev, id);
+      if (storageKey && typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, serializeExpandedState(next));
+      }
+      return next;
+    });
+
+  // Auto-expande a categoria/subcategoria da rota atual (mesmo se recolhida),
+  // para o usuário sempre ver onde está na hierarquia. Persiste o resultado.
+  useEffect(() => {
+    const ids = groupIdsForPath(tree as unknown as NavNodeShape[], pathname);
+    if (ids.length === 0) return;
+    setExpanded((prev) => {
+      const next = expandGroups(prev, ids);
+      if (next !== prev && storageKey && typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, serializeExpandedState(next));
+      }
+      return next;
+    });
+  }, [pathname, tree, storageKey]);
 
   // Preserva a rota exata em recarregamentos (F5) e deep links. Só redireciona
   // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
@@ -427,8 +611,8 @@ function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
-        <SidebarContent sections={sections} />
+      <aside className="hidden lg:flex w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar p-4">
+        <SidebarContent tree={tree} expanded={expanded} onToggle={toggleGroup} />
       </aside>
 
       {/* Drawer de navegação para tablet/mobile. */}
@@ -438,7 +622,12 @@ function AppShell() {
           className="flex max-h-[100dvh] w-64 flex-col overflow-y-auto border-sidebar-border bg-sidebar p-4"
         >
           <SheetTitle className="sr-only">Menu de navegação</SheetTitle>
-          <SidebarContent sections={sections} onNavigate={() => setMenuOpen(false)} />
+          <SidebarContent
+            tree={tree}
+            expanded={expanded}
+            onToggle={toggleGroup}
+            onNavigate={() => setMenuOpen(false)}
+          />
         </SheetContent>
       </Sheet>
 
