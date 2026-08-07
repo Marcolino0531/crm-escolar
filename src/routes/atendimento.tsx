@@ -18,6 +18,8 @@ import {
   CheckSquare,
   X,
   ImageOff,
+  FileText,
+  FileX,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -69,9 +71,10 @@ type ChatMessage = {
   wa_timestamp: string | null;
   origem: "chat" | "cobranca";
   created_at: string;
-  message_type: "text" | "image";
+  message_type: "text" | "image" | "document";
   media_path: string | null;
   media_mime: string | null;
+  media_filename: string | null;
 };
 
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
@@ -447,7 +450,7 @@ function ThreadConversa({
       const { data, error } = await supabase
         .from("whatsapp_messages" as never)
         .select(
-          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at, message_type, media_path, media_mime",
+          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at, message_type, media_path, media_mime, media_filename",
         )
         .eq("conversation_id", conversa.id)
         .order("created_at", { ascending: true })
@@ -649,6 +652,55 @@ function ImagemMensagem({ path }: { path: string }) {
   );
 }
 
+// Card de documento recebido (PDF e genéricos): gera uma signed URL a partir do
+// caminho no storage privado e abre/baixa o arquivo ao clicar. Falha de acesso
+// cai numa mensagem de erro clara.
+function DocumentoMensagem({ path, filename }: { path: string; filename: string | null }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [erro, setErro] = useState(false);
+
+  useEffect(() => {
+    let ativo = true;
+    void supabase.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!ativo) return;
+        if (error || !data?.signedUrl) setErro(true);
+        else setUrl(data.signedUrl);
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [path]);
+
+  const nome = filename ?? "Documento";
+
+  if (erro) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-muted px-2 py-3 text-xs text-muted-foreground">
+        <FileX className="h-4 w-4" /> Não foi possível carregar este documento
+      </div>
+    );
+  }
+  if (!url) {
+    return <Skeleton className="h-14 w-56 rounded-lg" />;
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 hover:bg-muted"
+    >
+      <FileText className="h-8 w-8 shrink-0 text-red-500" />
+      <span className="min-w-0 break-words text-sm font-medium underline-offset-2 hover:underline">
+        {nome}
+      </span>
+    </a>
+  );
+}
+
 function Bolha({ msg }: { msg: ChatMessage }) {
   const out = msg.direction === "out";
   const automatica = msg.origem === "cobranca";
@@ -680,6 +732,15 @@ function Bolha({ msg }: { msg: ChatMessage }) {
         ) : msg.message_type === "image" ? (
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <ImageOff className="h-4 w-4" /> {msg.body}
+          </div>
+        ) : msg.message_type === "document" && msg.media_path ? (
+          <div className="space-y-1">
+            <DocumentoMensagem path={msg.media_path} filename={msg.media_filename} />
+            {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
+          </div>
+        ) : msg.message_type === "document" ? (
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <FileX className="h-4 w-4" /> {msg.body}
           </div>
         ) : (
           <div className="whitespace-pre-wrap break-words">{msg.body}</div>
