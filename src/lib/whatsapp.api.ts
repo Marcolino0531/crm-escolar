@@ -603,6 +603,8 @@ async function processarMensagensRecebidas(
         last_message_preview: body.slice(0, 200),
         last_message_direction: "in",
         unread_count: unread + 1,
+        // Nova mensagem do responsável traz a conversa de volta para "Gerais".
+        archived: false,
       } as never)
       .eq("id", conversa.id);
   }

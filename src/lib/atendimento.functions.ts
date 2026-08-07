@@ -19,6 +19,15 @@ async function assertCanEditCobranca(userId: string) {
   if (!data) throw new Error("Você não tem permissão para responder no Atendimento.");
 }
 
+async function assertCanEditAtendimento(userId: string) {
+  const { data, error } = await supabaseAdmin.rpc(
+    "can_edit_module" as never,
+    { _user_id: userId, _module: "financeiro_atendimento" } as never,
+  );
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Você não tem permissão para editar o Atendimento.");
+}
+
 const EnviarMensagemInputSchema = z.object({
   conversationId: z.string().uuid(),
   body: z.string().trim().min(1).max(4000),
@@ -94,4 +103,32 @@ export const enviarMensagemChat = createServerFn({ method: "POST" })
       .eq("id", conversa.id);
 
     return { ok: true, waMessageId: messageId };
+  });
+
+const ArquivarInputSchema = z.object({
+  conversationIds: z.array(z.string().uuid()).min(1).max(500),
+  archived: z.boolean(),
+});
+
+export interface ArquivarResult {
+  ok: boolean;
+  count: number;
+  error?: string;
+}
+
+// Arquiva/desarquiva uma ou várias conversas de uma vez (ação em lote). Não
+// apaga mensagens: só alterna o campo `archived` entre as abas Gerais/Arquivadas.
+export const arquivarConversas = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ArquivarResult> => {
+    await assertCanEditAtendimento(context.userId);
+
+    const { error } = await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .update({ archived: data.archived } as never)
+      .in("id", data.conversationIds);
+    if (error) return { ok: false, count: 0, error: error.message };
+
+    return { ok: true, count: data.conversationIds.length };
   });
