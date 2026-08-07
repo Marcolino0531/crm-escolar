@@ -17,6 +17,7 @@ import {
   ArchiveRestore,
   CheckSquare,
   X,
+  ImageOff,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -68,7 +69,12 @@ type ChatMessage = {
   wa_timestamp: string | null;
   origem: "chat" | "cobranca";
   created_at: string;
+  message_type: "text" | "image";
+  media_path: string | null;
+  media_mime: string | null;
 };
+
+const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
 // Rótulo primário da conversa: o responsável (quem escreve pelo WhatsApp).
 function nomeResponsavel(c: Conversation): string {
@@ -441,7 +447,7 @@ function ThreadConversa({
       const { data, error } = await supabase
         .from("whatsapp_messages" as never)
         .select(
-          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at",
+          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at, message_type, media_path, media_mime",
         )
         .eq("conversation_id", conversa.id)
         .order("created_at", { ascending: true })
@@ -598,6 +604,51 @@ const STATUS_MSG: Record<ChatMessage["status"], { label: string; icon: typeof Ch
   falha: { label: "Falha", icon: AlertTriangle },
 };
 
+// Miniatura de imagem recebida: gera uma signed URL a partir do caminho no
+// storage privado (o mesmo mecanismo usado nos anexos de RH) e abre em tamanho
+// grande ao clicar. Falha de carregamento cai numa mensagem de erro clara.
+function ImagemMensagem({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [erro, setErro] = useState(false);
+
+  useEffect(() => {
+    let ativo = true;
+    void supabase.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!ativo) return;
+        if (error || !data?.signedUrl) setErro(true);
+        else setUrl(data.signedUrl);
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [path]);
+
+  if (erro) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-muted px-2 py-3 text-xs text-muted-foreground">
+        <ImageOff className="h-4 w-4" /> Não foi possível carregar esta imagem
+      </div>
+    );
+  }
+  if (!url) {
+    return <Skeleton className="h-40 w-56 rounded-lg" />;
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="block">
+      <img
+        src={url}
+        alt="Imagem recebida"
+        loading="lazy"
+        onError={() => setErro(true)}
+        className="max-h-64 max-w-full cursor-zoom-in rounded-lg object-cover"
+      />
+    </a>
+  );
+}
+
 function Bolha({ msg }: { msg: ChatMessage }) {
   const out = msg.direction === "out";
   const automatica = msg.origem === "cobranca";
@@ -621,7 +672,18 @@ function Bolha({ msg }: { msg: ChatMessage }) {
             <Bot className="h-3 w-3" /> Cobrança automática
           </div>
         )}
-        <div className="whitespace-pre-wrap break-words">{msg.body}</div>
+        {msg.message_type === "image" && msg.media_path ? (
+          <div className="space-y-1">
+            <ImagemMensagem path={msg.media_path} />
+            {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
+          </div>
+        ) : msg.message_type === "image" ? (
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <ImageOff className="h-4 w-4" /> {msg.body}
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap break-words">{msg.body}</div>
+        )}
         <div
           className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
             out ? "text-emerald-700/70" : "text-muted-foreground"
