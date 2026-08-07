@@ -3,8 +3,11 @@
 //
 //   GET  /api/whatsapp/cron     — rotina diária (Vercel Cron 09:00 America/Sao_Paulo;
 //                                 CRON_SECRET): dispara lembrete das cobranças vencidas
-//                                 há exatamente 2 dias (venc. >= 01/08/2026), salvo se
-//                                 os envios do dia estiverem pausados (kill switch).
+//                                 há 2 dias (venc. >= 01/08/2026). Só roda em dias úteis
+//                                 (pula sáb/dom/feriados nacionais — ver billing-schedule);
+//                                 vencimentos cujo gatilho caiu num dia não útil são
+//                                 reagendados para o próximo dia útil, sem duplicar. Não
+//                                 dispara se os envios do dia estiverem pausados (kill switch).
 //   GET  /api/whatsapp/webhook  — verificação do webhook (hub.challenge da Meta).
 //   POST /api/whatsapp/webhook  — eventos de status (enviado/entregue/lido/falha).
 //
@@ -22,6 +25,7 @@ import {
   sendBillingTemplateMultipla,
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
+import { isDiaUtil, vencimentosParaEnvio } from "@/lib/billing-schedule";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -203,7 +207,7 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
   return json({ ok: false, error: "Rota não encontrada." }, 404);
 }
 
-// ─── Cron: dispara lembrete das cobranças vencidas há exatamente 2 dias ───────
+// ─── Cron: dispara lembrete das cobranças vencidas há 2 dias (dias úteis) ─────
 async function runCron(): Promise<Response> {
   const cfg = getWhatsAppConfig();
   if (!cfg) {
@@ -214,26 +218,54 @@ async function runCron(): Promise<Response> {
     });
   }
 
-  // Gatilho: cobra o vencimento de exatamente 2 dias atrás (margem de segurança
-  // para o processamento do arquivo retorno do banco).
-  const alvo = diaYMD(-2);
+  const hoje = diaYMD(0);
 
-  // Regra da data base: ignora vencimentos anteriores a 01/08/2026.
-  if (alvo < DATA_BASE_COBRANCA) {
-    return json({
-      ok: true,
-      alvo,
-      motivo: `anterior à data base ${DATA_BASE_COBRANCA}`,
-      enviados: 0,
-    });
+  // Não dispara aos sábados, domingos e feriados nacionais (ver billing-schedule).
+  if (!isDiaUtil(hoje)) {
+    return json({ ok: true, hoje, motivo: "dia não útil (fim de semana/feriado)", enviados: 0 });
   }
 
   // Kill switch: se os envios foram pausados hoje, não dispara nada.
-  const hoje = diaYMD(0);
   if (await envioPausadoHoje(hoje)) {
-    return json({ ok: true, alvo, pausado: true, enviados: 0 });
+    return json({ ok: true, hoje, pausado: true, enviados: 0 });
   }
 
+  // Vencimentos a disparar hoje: o gatilho D+2 de cada vencimento, com os que
+  // caíram em fim de semana/feriado reagendados para este dia útil. Ignora
+  // vencimentos anteriores à data base (evita spam de pendências antigas).
+  const alvos = vencimentosParaEnvio(hoje, 2)
+    .map((t) => t.vencimento)
+    .filter((v) => v >= DATA_BASE_COBRANCA);
+
+  if (alvos.length === 0) {
+    return json({ ok: true, hoje, motivo: `nenhum vencimento elegível`, enviados: 0 });
+  }
+
+  let enviados = 0;
+  let falhas = 0;
+  let pulados = 0;
+  let total = 0;
+  for (const alvo of alvos) {
+    const r = await processarVencimento(cfg, alvo, hoje);
+    enviados += r.enviados;
+    falhas += r.falhas;
+    pulados += r.pulados;
+    total += r.total;
+  }
+
+  console.log(
+    `[whatsapp] cron ${hoje} (vencimentos ${alvos.join(", ")}): ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) de ${total} pendência(s).`,
+  );
+  return json({ ok: true, hoje, alvos, total, enviados, falhas, pulados });
+}
+
+// Dispara os lembretes de UM vencimento (`alvo`), com anti-duplicidade por
+// aluno/vencimento. `hoje` é usado para atualizar o valor da dívida no disparo.
+async function processarVencimento(
+  cfg: NonNullable<ReturnType<typeof getWhatsAppConfig>>,
+  alvo: string,
+  hoje: string,
+): Promise<{ enviados: number; falhas: number; pulados: number; total: number }> {
   // Restringe às unidades atendidas pelo número de produção (CEC/CEC Baby).
   const pendencias = (await coletarPendenciasPorVencimento(alvo)).filter((p) =>
     UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
@@ -371,10 +403,7 @@ async function runCron(): Promise<Response> {
     }
   }
 
-  console.log(
-    `[whatsapp] cron ${alvo}: ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) de ${pendencias.length} pendência(s).`,
-  );
-  return json({ ok: true, alvo, total: pendencias.length, enviados, falhas, pulados });
+  return { enviados, falhas, pulados, total: pendencias.length };
 }
 
 // ─── Webhook: status dos disparos + mensagens recebidas (atendimento) ─────────

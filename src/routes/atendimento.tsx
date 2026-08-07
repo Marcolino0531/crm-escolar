@@ -32,7 +32,7 @@ export const Route = createFileRoute("/atendimento")({
 function AtendimentoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro") || !canView("financeiro_cobranca"))
+  if (!canView("financeiro") || !canView("financeiro_atendimento"))
     return <AccessDenied message="Você não tem permissão para acessar o Atendimento." />;
   return <AtendimentoPage />;
 }
@@ -90,7 +90,7 @@ function dataHora(iso: string | null): string {
 
 function AtendimentoPage() {
   const { canEdit } = usePermissions();
-  const podeResponder = canEdit("financeiro_cobranca");
+  const podeResponder = canEdit("financeiro_atendimento");
   const queryClient = useQueryClient();
   const [selecionadaId, setSelecionadaId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -159,7 +159,7 @@ function AtendimentoPage() {
       <div className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card md:grid-cols-[320px_1fr]">
         {/* Lista de conversas */}
         <div
-          className={`flex flex-col border-border md:border-r ${
+          className={`flex min-h-0 flex-col border-border md:border-r ${
             selecionada ? "hidden md:flex" : "flex"
           }`}
         >
@@ -174,7 +174,7 @@ function AtendimentoPage() {
               />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             {conversasQuery.isLoading ? (
               <div className="space-y-2 p-3">
                 {Array.from({ length: 6 }).map((_, i) => (
@@ -235,7 +235,7 @@ function AtendimentoPage() {
         </div>
 
         {/* Thread */}
-        <div className={`flex flex-col ${selecionada ? "flex" : "hidden md:flex"}`}>
+        <div className={`flex min-h-0 flex-col ${selecionada ? "flex" : "hidden md:flex"}`}>
           {selecionada ? (
             <ThreadConversa
               conversa={selecionada}

@@ -381,6 +381,7 @@ function AppShell() {
   const showInadimplencia = canView("financeiro_inadimplencia");
   // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
   const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
+  const showAtendimento = canView("financeiro") && canView("financeiro_atendimento");
   const showCartao = canView("financeiro") && canView("financeiro_cartao");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
@@ -393,6 +394,7 @@ function AppShell() {
       showFluxo ||
       showInadimplencia ||
       showCobranca ||
+      showAtendimento ||
       showCartao ||
       showFundos);
   const showConfig = canView("configuracoes");
@@ -524,7 +526,7 @@ function AppShell() {
             icon: Bot,
             label: "Cobrança Automática",
           }),
-          ...item(showFinanceiro && showCobranca, {
+          ...item(showFinanceiro && showAtendimento, {
             kind: "item",
             to: "/atendimento",
             icon: MessageSquare,
@@ -557,6 +559,7 @@ function AppShell() {
     showFluxo,
     showInadimplencia,
     showCobranca,
+    showAtendimento,
     showCartao,
     showFundos,
     showConfig,
