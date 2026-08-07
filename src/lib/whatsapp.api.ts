@@ -31,6 +31,7 @@ import {
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 import { isDiaUtil, vencimentosParaEnvio } from "@/lib/billing-schedule";
 import { calcularTotalVencido } from "@/lib/billing-debt";
+import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
 import {
   parseIncomingMessage,
   buildMessageFields,
@@ -406,6 +407,14 @@ interface WebhookMessage {
     button_reply?: { title?: string };
     list_reply?: { title?: string };
   };
+  // Eventos administrativos (troca de número/identidade). Não é mensagem real.
+  system?: {
+    body?: string;
+    type?: string;
+    wa_id?: string;
+    new_wa_id?: string;
+    customer?: string;
+  };
 }
 
 // Baixa a mídia (imagem/documento) da Meta pelo media_id e a armazena no bucket
@@ -549,6 +558,59 @@ async function getOrCreateConversa(
   return criada as unknown as ConversaRow;
 }
 
+// Trata um evento type:"system" (troca de número/identidade). Nunca cria
+// conversa: se for troca de número e houver conversa do número antigo, migra o
+// wa_phone para o novo número (preservando histórico e vínculo) e grava uma nota
+// interna discreta. Qualquer outro caso (identidade, sem número novo, sem
+// conversa anterior) é ignorado silenciosamente.
+async function processarEventoSystem(msg: WebhookMessage): Promise<void> {
+  const decision = decideSystemAction(parseSystemEvent(msg));
+  if (decision.action !== "migrate") return;
+
+  const oldDigits = onlyDigits(decision.oldWaId);
+  const newDigits = onlyDigits(decision.newWaId);
+  const conversa = (await findConversaBySuffix(oldDigits)) as ConversaRow | null;
+  if (!conversa) return; // sem conversa do número antigo → nada a migrar
+
+  if (newDigits && newDigits !== oldDigits) {
+    await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .update({ wa_phone: newDigits } as never)
+      .eq("id", conversa.id);
+  }
+
+  // Idempotência: não regrava a nota se a Meta reenviar o evento.
+  if (msg.id) {
+    const { data: jaExiste } = await supabaseAdmin
+      .from("whatsapp_messages" as never)
+      .select("id")
+      .eq("wa_message_id", msg.id)
+      .maybeSingle();
+    if (jaExiste) return;
+  }
+
+  const waTs = msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : null;
+  await supabaseAdmin.from("whatsapp_messages" as never).insert({
+    conversation_id: conversa.id,
+    wa_message_id: msg.id ?? null,
+    direction: "in",
+    body: decision.note,
+    status: "recebido",
+    wa_timestamp: waTs,
+    message_type: "system",
+  } as never);
+
+  // Atualiza a prévia sem incrementar não-lidas (não é comunicação real).
+  await supabaseAdmin
+    .from("whatsapp_conversations" as never)
+    .update({
+      last_message_at: waTs ?? new Date().toISOString(),
+      last_message_preview: decision.note.slice(0, 200),
+      last_message_direction: "in",
+    } as never)
+    .eq("id", conversa.id);
+}
+
 // Processa as mensagens RECEBIDAS de um bloco de webhook: grava cada mensagem,
 // cria/atualiza a conversa e incrementa o não-lidas.
 async function processarMensagensRecebidas(
@@ -563,6 +625,13 @@ async function processarMensagensRecebidas(
   const sendCfg = getWhatsAppSendConfig();
 
   for (const msg of messages) {
+    // Eventos type:"system" (troca de número/identidade) não são mensagens de
+    // conversa: nunca criam conversa fantasma nem gravam "[system não suportada]".
+    if (msg.type === "system") {
+      await processarEventoSystem(msg);
+      continue;
+    }
+
     const from = onlyDigits(msg.from);
     if (!from || !msg.id) continue;
 
