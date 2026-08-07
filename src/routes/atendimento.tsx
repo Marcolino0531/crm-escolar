@@ -13,6 +13,10 @@ import {
   CheckCheck,
   AlertTriangle,
   Bot,
+  Archive,
+  ArchiveRestore,
+  CheckSquare,
+  X,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -21,8 +25,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { enviarMensagemChat } from "@/lib/atendimento.functions";
+import { enviarMensagemChat, arquivarConversas } from "@/lib/atendimento.functions";
 import { displayPhoneBR } from "@/lib/phone";
+import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
 
 export const Route = createFileRoute("/atendimento")({
   head: () => ({ meta: [{ title: "Atendimento — School Hub" }] }),
@@ -49,6 +54,7 @@ type Conversation = {
   last_message_preview: string;
   last_message_direction: "in" | "out";
   unread_count: number;
+  archived: boolean;
 };
 
 type ChatMessage = {
@@ -92,8 +98,38 @@ function AtendimentoPage() {
   const { canEdit } = usePermissions();
   const podeResponder = canEdit("financeiro_atendimento");
   const queryClient = useQueryClient();
+  const arquivarFn = useServerFn(arquivarConversas);
   const [selecionadaId, setSelecionadaId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [aba, setAba] = useState<AbaAtendimento>("ativas");
+  const [modoSelecao, setModoSelecao] = useState(false);
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+
+  const arquivarMut = useMutation({
+    mutationFn: (v: { ids: string[]; archived: boolean }) =>
+      arquivarFn({ data: { conversationIds: v.ids, archived: v.archived } }),
+    onSuccess: (res, v) => {
+      if (res.ok) {
+        setSelecionados(new Set());
+        setModoSelecao(false);
+        void queryClient.invalidateQueries({ queryKey: ["atendimento-conversas"] });
+        toast.success(
+          v.archived
+            ? `${res.count} conversa(s) arquivada(s).`
+            : `${res.count} conversa(s) desarquivada(s).`,
+        );
+      } else {
+        toast.error(res.error ?? "Falha ao atualizar as conversas.");
+      }
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Falha ao atualizar as conversas."),
+  });
+
+  const alternarArquivo = (ids: string[], archived: boolean) => {
+    if (ids.length === 0) return;
+    arquivarMut.mutate({ ids, archived });
+  };
 
   const conversasQuery = useQuery({
     queryKey: ["atendimento-conversas"],
@@ -102,7 +138,7 @@ function AtendimentoPage() {
       const { data, error } = await supabase
         .from("whatsapp_conversations" as never)
         .select(
-          "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, last_message_at, last_message_preview, last_message_direction, unread_count",
+          "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
         )
         .order("last_message_at", { ascending: false, nullsFirst: false })
         .limit(200);
@@ -131,18 +167,36 @@ function AtendimentoPage() {
   }, [queryClient]);
 
   const conversas = useMemo(() => conversasQuery.data ?? [], [conversasQuery.data]);
+  const { ativas, arquivadas } = useMemo(() => separarPorAba(conversas), [conversas]);
+  const listaDaAba = aba === "arquivadas" ? arquivadas : ativas;
+
   const conversasFiltradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return conversas;
-    return conversas.filter((c) =>
+    if (!q) return listaDaAba;
+    return listaDaAba.filter((c) =>
       [c.aluno_name, c.contact_name, c.responsavel_name, c.wa_phone, c.aluno_id ?? ""]
         .join(" ")
         .toLowerCase()
         .includes(q),
     );
-  }, [conversas, busca]);
+  }, [listaDaAba, busca]);
 
   const selecionada = conversas.find((c) => c.id === selecionadaId) ?? null;
+
+  const trocarAba = (nova: AbaAtendimento) => {
+    setAba(nova);
+    setModoSelecao(false);
+    setSelecionados(new Set());
+  };
+
+  const toggleSelecionado = (id: string) => {
+    setSelecionados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -163,7 +217,31 @@ function AtendimentoPage() {
             selecionada ? "hidden md:flex" : "flex"
           }`}
         >
-          <div className="border-b border-border p-3">
+          <div className="space-y-2 border-b border-border p-3">
+            {/* Abas Gerais / Arquivadas */}
+            <div className="flex rounded-lg bg-muted p-0.5 text-sm">
+              <button
+                onClick={() => trocarAba("ativas")}
+                className={`flex-1 rounded-md px-2 py-1 font-medium transition-colors ${
+                  aba === "ativas"
+                    ? "bg-card shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Gerais{ativas.length > 0 ? ` (${ativas.length})` : ""}
+              </button>
+              <button
+                onClick={() => trocarAba("arquivadas")}
+                className={`flex-1 rounded-md px-2 py-1 font-medium transition-colors ${
+                  aba === "arquivadas"
+                    ? "bg-card shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Arquivadas{arquivadas.length > 0 ? ` (${arquivadas.length})` : ""}
+              </button>
+            </div>
+
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -173,6 +251,47 @@ function AtendimentoPage() {
                 className="h-9 pl-8"
               />
             </div>
+
+            {podeResponder &&
+              (modoSelecao ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    className="h-8 flex-1 gap-1"
+                    disabled={selecionados.size === 0 || arquivarMut.isPending}
+                    onClick={() => alternarArquivo(Array.from(selecionados), aba !== "arquivadas")}
+                  >
+                    {aba === "arquivadas" ? (
+                      <ArchiveRestore className="h-4 w-4" />
+                    ) : (
+                      <Archive className="h-4 w-4" />
+                    )}
+                    {aba === "arquivadas" ? "Desarquivar" : "Arquivar"}
+                    {selecionados.size > 0 ? ` (${selecionados.size})` : ""}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 gap-1"
+                    onClick={() => {
+                      setModoSelecao(false);
+                      setSelecionados(new Set());
+                    }}
+                  >
+                    <X className="h-4 w-4" /> Cancelar
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 w-full gap-1"
+                  disabled={conversasFiltradas.length === 0}
+                  onClick={() => setModoSelecao(true)}
+                >
+                  <CheckSquare className="h-4 w-4" /> Selecionar
+                </Button>
+              ))}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {conversasQuery.isLoading ? (
@@ -184,52 +303,93 @@ function AtendimentoPage() {
             ) : conversasFiltradas.length === 0 ? (
               <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
                 <Inbox className="h-8 w-8 text-muted-foreground/60" />
-                <p className="text-sm font-medium">Nenhuma conversa ainda.</p>
+                <p className="text-sm font-medium">
+                  {aba === "arquivadas" ? "Nenhuma conversa arquivada." : "Nenhuma conversa ainda."}
+                </p>
                 <p className="text-xs text-muted-foreground">
-                  As respostas dos responsáveis aparecerão aqui automaticamente.
+                  {aba === "arquivadas"
+                    ? "Conversas arquivadas aparecem aqui e voltam para Gerais ao receber nova mensagem."
+                    : "As respostas dos responsáveis aparecerão aqui automaticamente."}
                 </p>
               </div>
             ) : (
-              conversasFiltradas.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelecionadaId(c.id)}
-                  className={`flex w-full items-start gap-3 border-b border-border/60 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
-                    c.id === selecionadaId ? "bg-muted" : ""
-                  }`}
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <User className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-semibold">
-                        {nomeResponsavel(c)}
-                        {c.aluno_name && (
-                          <span className="text-xs font-normal text-muted-foreground">
-                            {" "}
-                            (aluno: {c.aluno_name})
+              conversasFiltradas.map((c) => {
+                const marcada = selecionados.has(c.id);
+                const handleClick = () => {
+                  if (modoSelecao) toggleSelecionado(c.id);
+                  else setSelecionadaId(c.id);
+                };
+                return (
+                  <div
+                    key={c.id}
+                    className={`group flex w-full items-start gap-3 border-b border-border/60 px-3 py-3 transition-colors hover:bg-muted/50 ${
+                      c.id === selecionadaId && !modoSelecao ? "bg-muted" : ""
+                    } ${marcada ? "bg-primary/5" : ""}`}
+                  >
+                    {modoSelecao && (
+                      <input
+                        type="checkbox"
+                        checked={marcada}
+                        onChange={() => toggleSelecionado(c.id)}
+                        className="mt-3 h-4 w-4 shrink-0 accent-primary"
+                        aria-label="Selecionar conversa"
+                      />
+                    )}
+                    <button
+                      onClick={handleClick}
+                      className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <User className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-semibold">
+                            {nomeResponsavel(c)}
+                            {c.aluno_name && (
+                              <span className="text-xs font-normal text-muted-foreground">
+                                {" "}
+                                (aluno: {c.aluno_name})
+                              </span>
+                            )}
                           </span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            {horaCurta(c.last_message_at)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs text-muted-foreground">
+                            {c.last_message_direction === "out" ? "Você: " : ""}
+                            {c.last_message_preview || "—"}
+                          </span>
+                          {c.unread_count > 0 && (
+                            <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">
+                              {c.unread_count}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                    {podeResponder && !modoSelecao && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          alternarArquivo([c.id], aba !== "arquivadas");
+                        }}
+                        disabled={arquivarMut.isPending}
+                        title={aba === "arquivadas" ? "Desarquivar" : "Arquivar"}
+                        className="mt-1 shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                      >
+                        {aba === "arquivadas" ? (
+                          <ArchiveRestore className="h-4 w-4" />
+                        ) : (
+                          <Archive className="h-4 w-4" />
                         )}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {horaCurta(c.last_message_at)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs text-muted-foreground">
-                        {c.last_message_direction === "out" ? "Você: " : ""}
-                        {c.last_message_preview || "—"}
-                      </span>
-                      {c.unread_count > 0 && (
-                        <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">
-                          {c.unread_count}
-                        </span>
-                      )}
-                    </div>
+                      </button>
+                    )}
                   </div>
-                </button>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -241,6 +401,8 @@ function AtendimentoPage() {
               conversa={selecionada}
               podeResponder={podeResponder}
               onVoltar={() => setSelecionadaId(null)}
+              onArquivar={() => alternarArquivo([selecionada.id], !selecionada.archived)}
+              arquivando={arquivarMut.isPending}
             />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
@@ -258,10 +420,14 @@ function ThreadConversa({
   conversa,
   podeResponder,
   onVoltar,
+  onArquivar,
+  arquivando,
 }: {
   conversa: Conversation;
   podeResponder: boolean;
   onVoltar: () => void;
+  onArquivar: () => void;
+  arquivando: boolean;
 }) {
   const queryClient = useQueryClient();
   const enviarFn = useServerFn(enviarMensagemChat);
@@ -332,7 +498,7 @@ function ThreadConversa({
         <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
           <User className="h-4 w-4" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">
             {nomeResponsavel(conversa)}
             {conversa.aluno_name && (
@@ -348,6 +514,25 @@ function ThreadConversa({
             {conversa.unidade ? ` · ${conversa.unidade}` : ""}
           </div>
         </div>
+        {podeResponder && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 gap-1"
+            disabled={arquivando}
+            onClick={onArquivar}
+            title={conversa.archived ? "Desarquivar conversa" : "Arquivar conversa"}
+          >
+            {conversa.archived ? (
+              <ArchiveRestore className="h-4 w-4" />
+            ) : (
+              <Archive className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">
+              {conversa.archived ? "Desarquivar" : "Arquivar"}
+            </span>
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">
