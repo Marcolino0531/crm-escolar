@@ -19,13 +19,26 @@ import { onlyDigits } from "@/lib/phone";
 import { coletarDividaAbertaAluno, coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
 import {
   getWhatsAppConfig,
+  getWhatsAppSendConfig,
+  getMediaUrl,
+  downloadMedia,
   renderBillingMessage,
   renderBillingMessageMultipla,
   sendBillingTemplate,
   sendBillingTemplateMultipla,
+  type WhatsAppSendConfig,
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 import { isDiaUtil, vencimentosParaEnvio } from "@/lib/billing-schedule";
+import {
+  parseIncomingMessage,
+  buildMessageFields,
+  mediaStoragePath,
+  type StoredMedia,
+} from "@/lib/whatsapp-media";
+
+// Bucket (privado) do storage do School Hub para as imagens recebidas no chat.
+const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -422,11 +435,40 @@ interface WebhookMessage {
   timestamp?: string;
   type?: string;
   text?: { body?: string };
+  image?: { id?: string; mime_type?: string; caption?: string };
   button?: { text?: string };
   interactive?: {
     button_reply?: { title?: string };
     list_reply?: { title?: string };
   };
+}
+
+// Baixa a imagem da Meta pelo media_id e a armazena no bucket do School Hub.
+// A URL da Meta expira em minutos, então o download acontece agora, no webhook.
+// Retorna o caminho definitivo no storage, ou null em qualquer falha (media_id
+// expirado, erro da Graph API, falha de upload) — o chamador grava a mensagem
+// de erro no lugar da imagem.
+async function baixarEArmazenarMidia(
+  cfg: WhatsAppSendConfig,
+  mediaId: string,
+): Promise<StoredMedia | null> {
+  try {
+    const { url, mimeType: mimeMeta } = await getMediaUrl(cfg, mediaId);
+    const { bytes, mimeType: mimeDownload } = await downloadMedia(cfg, url);
+    const mime = mimeDownload || mimeMeta;
+    const path = mediaStoragePath(mediaId, mime);
+    const { error } = await supabaseAdmin.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .upload(path, bytes, { contentType: mime ?? undefined, upsert: true });
+    if (error) {
+      console.warn("[whatsapp] upload da mídia falhou:", error.message);
+      return null;
+    }
+    return { path, mime };
+  } catch (e) {
+    console.warn("[whatsapp] download da mídia falhou:", e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 interface WebhookPayload {
   entry?: {
@@ -438,16 +480,6 @@ interface WebhookPayload {
       };
     }[];
   }[];
-}
-
-// Extrai o texto legível de uma mensagem recebida (texto, botão ou resposta
-// interativa). Mídias/localização caem num rótulo genérico.
-function extrairTexto(msg: WebhookMessage): string {
-  if (msg.type === "text") return msg.text?.body ?? "";
-  if (msg.type === "button") return msg.button?.text ?? "";
-  if (msg.type === "interactive")
-    return msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
-  return `[${msg.type ?? "mensagem"} não suportada]`;
 }
 
 // Resolve o cadastro do aluno a partir do telefone: casa pelos últimos 8 dígitos
@@ -562,6 +594,8 @@ async function processarMensagensRecebidas(
     if (c.wa_id) nomePorWaId.set(onlyDigits(c.wa_id), c.profile?.name ?? "");
   }
 
+  const sendCfg = getWhatsAppSendConfig();
+
   for (const msg of messages) {
     const from = onlyDigits(msg.from);
     if (!from || !msg.id) continue;
@@ -569,7 +603,7 @@ async function processarMensagensRecebidas(
     const conversa = await getOrCreateConversa(from, nomePorWaId.get(from) ?? "");
     if (!conversa) continue;
 
-    const body = extrairTexto(msg);
+    const parsed = parseIncomingMessage(msg);
     const waTs = msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : null;
 
     // Idempotência: não regrava a mesma mensagem se a Meta reenviar o evento.
@@ -580,6 +614,18 @@ async function processarMensagensRecebidas(
       .maybeSingle();
     if (jaExiste) continue;
 
+    // Imagem: baixa da Meta e armazena no storage do School Hub agora (a URL da
+    // Meta expira rápido). Em qualquer falha, `stored` fica null e o corpo vira
+    // a mensagem de erro definida na lib.
+    let stored: StoredMedia | null = null;
+    if (parsed.isImage && parsed.mediaId && sendCfg) {
+      stored = await baixarEArmazenarMidia(sendCfg, parsed.mediaId);
+    }
+    const fields = buildMessageFields(parsed, stored);
+    const body = fields.body;
+    // Prévia da lista: imagem sem legenda mostra um rótulo amigável.
+    const preview = fields.message_type === "image" && stored && !body ? "📷 Imagem" : body;
+
     await supabaseAdmin.from("whatsapp_messages" as never).insert({
       conversation_id: conversa.id,
       wa_message_id: msg.id,
@@ -587,6 +633,10 @@ async function processarMensagensRecebidas(
       body,
       status: "recebido",
       wa_timestamp: waTs,
+      message_type: fields.message_type,
+      media_path: fields.media_path,
+      media_mime: fields.media_mime,
+      media_id: fields.media_id,
     } as never);
 
     const { data: conv } = await supabaseAdmin
@@ -600,7 +650,7 @@ async function processarMensagensRecebidas(
       .from("whatsapp_conversations" as never)
       .update({
         last_message_at: waTs ?? new Date().toISOString(),
-        last_message_preview: body.slice(0, 200),
+        last_message_preview: preview.slice(0, 200),
         last_message_direction: "in",
         unread_count: unread + 1,
         // Nova mensagem do responsável traz a conversa de volta para "Gerais".

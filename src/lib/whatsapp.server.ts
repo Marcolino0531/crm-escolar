@@ -105,6 +105,50 @@ export async function sendTextMessage(
   return { messageId: respBody.messages[0].id };
 }
 
+// ─── Download de mídia recebida (imagens) ────────────────────────────────────
+// Fluxo em duas etapas exigido pela Meta: (1) resolver o media_id para uma URL
+// temporária no Graph API; (2) baixar o binário dessa URL (a URL expira em
+// minutos, então o download precisa ocorrer no recebimento do webhook).
+
+export interface DownloadedMedia {
+  bytes: Uint8Array;
+  mimeType: string | null;
+}
+
+// Passo 1: resolve o media_id para a URL temporária de download + mime.
+export async function getMediaUrl(
+  cfg: WhatsAppSendConfig,
+  mediaId: string,
+): Promise<{ url: string; mimeType: string | null }> {
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${mediaId}`;
+  const resp = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${cfg.token}` },
+  });
+  const body = (await resp.json().catch(() => null)) as {
+    url?: string;
+    mime_type?: string;
+    error?: { message?: string };
+  } | null;
+  if (!resp.ok || !body?.url) {
+    throw new Error(
+      body?.error?.message || `HTTP ${resp.status} ao resolver a mídia na Graph API.`,
+    );
+  }
+  return { url: body.url, mimeType: body.mime_type ?? null };
+}
+
+// Passo 2: baixa o binário da URL temporária (também exige o Bearer token).
+export async function downloadMedia(
+  cfg: WhatsAppSendConfig,
+  url: string,
+): Promise<DownloadedMedia> {
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${cfg.token}` } });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} ao baixar a mídia.`);
+  const mimeType = resp.headers.get("content-type");
+  const bytes = new Uint8Array(await resp.arrayBuffer());
+  return { bytes, mimeType };
+}
+
 // Normaliza para o formato exigido pela Meta: DDI (55) + DDD + número, só dígitos.
 // A Meta espera E.164 sem o "+". Números brasileiros sem DDI recebem o 55.
 export function toMetaPhone(v: string | null | undefined): string {
