@@ -436,6 +436,7 @@ interface WebhookMessage {
   type?: string;
   text?: { body?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
+  document?: { id?: string; mime_type?: string; caption?: string; filename?: string };
   button?: { text?: string };
   interactive?: {
     button_reply?: { title?: string };
@@ -443,20 +444,21 @@ interface WebhookMessage {
   };
 }
 
-// Baixa a imagem da Meta pelo media_id e a armazena no bucket do School Hub.
-// A URL da Meta expira em minutos, então o download acontece agora, no webhook.
-// Retorna o caminho definitivo no storage, ou null em qualquer falha (media_id
-// expirado, erro da Graph API, falha de upload) — o chamador grava a mensagem
-// de erro no lugar da imagem.
+// Baixa a mídia (imagem/documento) da Meta pelo media_id e a armazena no bucket
+// do School Hub. A URL da Meta expira em minutos, então o download acontece
+// agora, no webhook. Retorna o caminho definitivo no storage, ou null em
+// qualquer falha (media_id expirado, erro da Graph API, falha de upload) — o
+// chamador grava a mensagem de erro no lugar da mídia.
 async function baixarEArmazenarMidia(
   cfg: WhatsAppSendConfig,
   mediaId: string,
+  filename?: string | null,
 ): Promise<StoredMedia | null> {
   try {
     const { url, mimeType: mimeMeta } = await getMediaUrl(cfg, mediaId);
     const { bytes, mimeType: mimeDownload } = await downloadMedia(cfg, url);
     const mime = mimeDownload || mimeMeta;
-    const path = mediaStoragePath(mediaId, mime);
+    const path = mediaStoragePath(mediaId, mime, new Date(), filename);
     const { error } = await supabaseAdmin.storage
       .from(WHATSAPP_MEDIA_BUCKET)
       .upload(path, bytes, { contentType: mime ?? undefined, upsert: true });
@@ -614,17 +616,22 @@ async function processarMensagensRecebidas(
       .maybeSingle();
     if (jaExiste) continue;
 
-    // Imagem: baixa da Meta e armazena no storage do School Hub agora (a URL da
-    // Meta expira rápido). Em qualquer falha, `stored` fica null e o corpo vira
-    // a mensagem de erro definida na lib.
+    // Mídia (imagem/documento): baixa da Meta e armazena no storage do School Hub
+    // agora (a URL da Meta expira rápido). Em qualquer falha, `stored` fica null
+    // e o corpo vira a mensagem de erro definida na lib.
     let stored: StoredMedia | null = null;
-    if (parsed.isImage && parsed.mediaId && sendCfg) {
-      stored = await baixarEArmazenarMidia(sendCfg, parsed.mediaId);
+    if (parsed.isMedia && parsed.mediaId && sendCfg) {
+      stored = await baixarEArmazenarMidia(sendCfg, parsed.mediaId, parsed.filename);
     }
     const fields = buildMessageFields(parsed, stored);
     const body = fields.body;
-    // Prévia da lista: imagem sem legenda mostra um rótulo amigável.
-    const preview = fields.message_type === "image" && stored && !body ? "📷 Imagem" : body;
+    // Prévia da lista: mídia sem legenda mostra um rótulo amigável.
+    let preview = body;
+    if (stored && !body) {
+      if (fields.message_type === "image") preview = "📷 Imagem";
+      else if (fields.message_type === "document")
+        preview = `📄 ${fields.media_filename ?? "Documento"}`;
+    }
 
     await supabaseAdmin.from("whatsapp_messages" as never).insert({
       conversation_id: conversa.id,
@@ -637,6 +644,7 @@ async function processarMensagensRecebidas(
       media_path: fields.media_path,
       media_mime: fields.media_mime,
       media_id: fields.media_id,
+      media_filename: fields.media_filename,
     } as never);
 
     const { data: conv } = await supabaseAdmin

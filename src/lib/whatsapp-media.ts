@@ -5,12 +5,14 @@
 // testável isoladamente. O download/upload em si fica em whatsapp.server.ts.
 
 export const IMAGE_DOWNLOAD_ERROR = "Não foi possível carregar esta imagem";
+export const DOCUMENT_DOWNLOAD_ERROR = "Não foi possível carregar este documento";
 
 // Formato relevante de uma mensagem recebida no webhook da Meta.
 export interface WebhookLikeMessage {
   type?: string;
   text?: { body?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
+  document?: { id?: string; mime_type?: string; caption?: string; filename?: string };
   button?: { text?: string };
   interactive?: {
     button_reply?: { title?: string };
@@ -18,24 +20,44 @@ export interface WebhookLikeMessage {
   };
 }
 
+export type MediaKind = "text" | "image" | "document";
+
 export interface ParsedIncomingMessage {
-  isImage: boolean;
-  // Texto legível: corpo do texto, legenda da imagem, título do botão/lista,
+  kind: MediaKind;
+  // Verdadeiro quando a mensagem carrega uma mídia (imagem ou documento).
+  isMedia: boolean;
+  // Texto legível: corpo do texto, legenda da mídia, título do botão/lista,
   // ou o rótulo "[tipo não suportada]" para tipos ainda não tratados.
   text: string;
-  // media_id da Meta (só para imagens); usado para baixar a mídia na hora.
+  // media_id da Meta (só para mídias); usado para baixar o arquivo na hora.
   mediaId: string | null;
   mimeType: string | null;
+  // Nome original do arquivo (só para documentos, quando a Meta envia).
+  filename: string | null;
 }
 
-// Interpreta a mensagem recebida, capturando o media_id quando for imagem.
+// Interpreta a mensagem recebida, capturando media_id/mime (imagem e documento)
+// e o filename (documento).
 export function parseIncomingMessage(msg: WebhookLikeMessage): ParsedIncomingMessage {
   if (msg.type === "image") {
     return {
-      isImage: true,
+      kind: "image",
+      isMedia: true,
       text: msg.image?.caption?.trim() ?? "",
       mediaId: msg.image?.id ?? null,
       mimeType: msg.image?.mime_type ?? null,
+      filename: null,
+    };
+  }
+
+  if (msg.type === "document") {
+    return {
+      kind: "document",
+      isMedia: true,
+      text: msg.document?.caption?.trim() ?? "",
+      mediaId: msg.document?.id ?? null,
+      mimeType: msg.document?.mime_type ?? null,
+      filename: msg.document?.filename?.trim() || null,
     };
   }
 
@@ -46,16 +68,17 @@ export function parseIncomingMessage(msg: WebhookLikeMessage): ParsedIncomingMes
     text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
   else text = `[${msg.type ?? "mensagem"} não suportada]`;
 
-  return { isImage: false, text, mediaId: null, mimeType: null };
+  return { kind: "text", isMedia: false, text, mediaId: null, mimeType: null, filename: null };
 }
 
 // Campos do registro de mensagem gravado no banco.
 export interface MessageMediaFields {
-  message_type: "text" | "image";
+  message_type: MediaKind;
   body: string;
   media_path: string | null;
   media_mime: string | null;
   media_id: string | null;
+  media_filename: string | null;
 }
 
 // Resultado do upload da mídia no storage do School Hub (null = falhou/expirou).
@@ -65,29 +88,31 @@ export interface StoredMedia {
 }
 
 // Monta os campos da mensagem a partir do parse e do resultado do armazenamento.
-// Para imagens: se o upload deu certo, associa o caminho definitivo do storage;
-// se falhou (media_id expirado/erro da Meta), grava a mensagem de erro no corpo,
-// preservando o media_id para eventual reprocessamento.
+// Para mídias (imagem/documento): se o upload deu certo, associa o caminho
+// definitivo do storage; se falhou (media_id expirado/erro da Meta), grava a
+// mensagem de erro no corpo, preservando o media_id para eventual reprocesso.
 export function buildMessageFields(
   parsed: ParsedIncomingMessage,
   stored: StoredMedia | null,
 ): MessageMediaFields {
-  if (parsed.isImage) {
+  if (parsed.kind === "image" || parsed.kind === "document") {
     if (stored) {
       return {
-        message_type: "image",
+        message_type: parsed.kind,
         body: parsed.text,
         media_path: stored.path,
         media_mime: stored.mime,
         media_id: parsed.mediaId,
+        media_filename: parsed.filename,
       };
     }
     return {
-      message_type: "image",
-      body: IMAGE_DOWNLOAD_ERROR,
+      message_type: parsed.kind,
+      body: parsed.kind === "image" ? IMAGE_DOWNLOAD_ERROR : DOCUMENT_DOWNLOAD_ERROR,
       media_path: null,
       media_mime: parsed.mimeType,
       media_id: parsed.mediaId,
+      media_filename: parsed.filename,
     };
   }
 
@@ -97,7 +122,15 @@ export function buildMessageFields(
     media_path: null,
     media_mime: null,
     media_id: null,
+    media_filename: null,
   };
+}
+
+// Extensão de arquivo a partir de um nome de arquivo (ex.: "recibo.PDF" → "pdf").
+export function extFromFilename(filename: string | null | undefined): string | null {
+  if (!filename) return null;
+  const m = /\.([A-Za-z0-9]{1,8})$/.exec(filename.trim());
+  return m ? m[1].toLowerCase() : null;
 }
 
 // Extensão de arquivo a partir do mime-type (fallback .bin). Usada para nomear
@@ -113,19 +146,34 @@ export function extFromMime(mime: string | null | undefined): string {
       return "webp";
     case "image/gif":
       return "gif";
+    case "application/pdf":
+      return "pdf";
+    case "application/msword":
+      return "doc";
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      return "docx";
+    case "application/vnd.ms-excel":
+      return "xls";
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      return "xlsx";
+    case "text/plain":
+      return "txt";
     default:
       return "bin";
   }
 }
 
 // Caminho determinístico do objeto no bucket, particionado por ano/mês. É
-// idempotente por media_id (o webhook pode reentregar o mesmo evento).
+// idempotente por media_id (o webhook pode reentregar o mesmo evento). Para
+// documentos, preserva a extensão do nome do arquivo quando disponível.
 export function mediaStoragePath(
   mediaId: string,
   mime: string | null | undefined,
   now: Date = new Date(),
+  filename?: string | null,
 ): string {
   const ano = now.getUTCFullYear();
   const mes = String(now.getUTCMonth() + 1).padStart(2, "0");
-  return `${ano}/${mes}/${mediaId}.${extFromMime(mime)}`;
+  const ext = extFromFilename(filename) ?? extFromMime(mime);
+  return `${ano}/${mes}/${mediaId}.${ext}`;
 }
