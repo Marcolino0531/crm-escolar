@@ -36,7 +36,6 @@ import {
   useSchool,
   APP_MODULES,
   ALL_MODULES,
-  FINANCEIRO_SUBMODULES,
   MODULE_LABELS,
   type AppModule,
 } from "@/lib/app-context";
@@ -178,6 +177,38 @@ function PermRow({
   );
 }
 
+// Agrupamento das permissões espelhando as categorias do menu lateral, para que
+// o administrador encontre cada módulo na mesma ordem que já vê na navegação.
+const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
+  { label: "Comercial e Admissões", modules: ["agenda", "admissoes", "onboarding"] },
+  {
+    label: "Pedagógico e Operacional",
+    modules: ["diario", "uniformes", "estoque_material", "colonia", "colonia_financeiro"],
+  },
+  { label: "Pessoas", modules: ["rh", "tasks"] },
+];
+
+// Subcategorias do Financeiro, na mesma ordem do menu lateral.
+const FIN_SUBCATEGORIES: { label: string; modules: AppModule[] }[] = [
+  { label: "Bancário", modules: ["financeiro_dashboard", "financeiro_upload", "financeiro_cartao"] },
+  {
+    label: "Faturamento e Investimentos",
+    modules: ["financeiro_conciliacao", "financeiro_fluxo", "financeiro_fundos"],
+  },
+  {
+    label: "Cobrança",
+    modules: ["financeiro_inadimplencia", "financeiro_cobranca", "financeiro_atendimento"],
+  },
+];
+
+function CategoryLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
 function PermissionMatrix({
   value,
   onChange,
@@ -188,16 +219,21 @@ function PermissionMatrix({
   disabled?: boolean;
 }) {
   const [finOpen, setFinOpen] = useState(false);
-  // Financeiro is rendered as an expandable group with its sub-tabs nested.
-  const topModules = APP_MODULES.filter((m) => m !== "financeiro");
   return (
     <div className="space-y-2">
-      {topModules
-        .filter((m) => m !== "configuracoes")
-        .map((m) => (
-          <PermRow key={m} module={m} value={value} onChange={onChange} disabled={disabled} />
-        ))}
+      {/* Item avulso do topo, como no menu. */}
+      <PermRow module="dashboard" value={value} onChange={onChange} disabled={disabled} />
 
+      {PERM_CATEGORIES.map((cat) => (
+        <div key={cat.label} className="space-y-2">
+          <CategoryLabel>{cat.label}</CategoryLabel>
+          {cat.modules.map((m) => (
+            <PermRow key={m} module={m} value={value} onChange={onChange} disabled={disabled} />
+          ))}
+        </div>
+      ))}
+
+      <CategoryLabel>{MODULE_LABELS.financeiro}</CategoryLabel>
       <Collapsible
         open={finOpen}
         onOpenChange={setFinOpen}
@@ -236,19 +272,25 @@ function PermissionMatrix({
             Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o
             módulo Financeiro estiver com <strong>Visualizar</strong> ligado.
           </p>
-          {FINANCEIRO_SUBMODULES.map((sm) => (
-            <PermRow
-              key={sm}
-              module={sm}
-              value={value}
-              onChange={onChange}
-              disabled={disabled}
-              indent
-            />
+          {FIN_SUBCATEGORIES.map((sub) => (
+            <div key={sub.label} className="space-y-2">
+              <CategoryLabel>{sub.label}</CategoryLabel>
+              {sub.modules.map((sm) => (
+                <PermRow
+                  key={sm}
+                  module={sm}
+                  value={value}
+                  onChange={onChange}
+                  disabled={disabled}
+                  indent
+                />
+              ))}
+            </div>
           ))}
         </CollapsibleContent>
       </Collapsible>
 
+      <CategoryLabel>{MODULE_LABELS.configuracoes}</CategoryLabel>
       <PermRow module="configuracoes" value={value} onChange={onChange} disabled={disabled} />
     </div>
   );
