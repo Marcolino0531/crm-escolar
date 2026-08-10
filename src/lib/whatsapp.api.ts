@@ -2,12 +2,12 @@
 // Montados a partir do server entry (`src/server.ts`), antes do roteador da app.
 //
 //   GET  /api/whatsapp/cron     — rotina diária (Vercel Cron 09:00 America/Sao_Paulo;
-//                                 CRON_SECRET): dispara lembrete das cobranças vencidas
-//                                 há 2 dias (venc. >= 01/08/2026). Só roda em dias úteis
-//                                 (pula sáb/dom/feriados nacionais — ver billing-schedule);
-//                                 vencimentos cujo gatilho caiu num dia não útil são
-//                                 reagendados para o próximo dia útil, sem duplicar. Não
-//                                 dispara se os envios do dia estiverem pausados (kill switch).
+//                                 CRON_SECRET): cobrança RECORRENTE das parcelas vencidas
+//                                 (venc. >= 01/08/2026) após 2 DIAS ÚTEIS de tolerância,
+//                                 repetida todo dia útil até o Sponte registrar o pagamento.
+//                                 Uma única mensagem por responsável por dia, agregando
+//                                 todas as parcelas/alunos. Não roda em sáb/dom/feriados
+//                                 (ver billing-schedule) nem com o kill switch ligado.
 //   GET  /api/whatsapp/webhook  — verificação do webhook (hub.challenge da Meta).
 //   POST /api/whatsapp/webhook  — eventos de status (enviado/entregue/lido/falha).
 //
@@ -16,7 +16,12 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { onlyDigits } from "@/lib/phone";
-import { coletarDividaAbertaAluno, coletarPendenciasPorVencimento } from "@/lib/sponte.functions";
+import {
+  buscarLinhaDigitavelPorUnidade,
+  coletarDividaAbertaAluno,
+  coletarPendenciasPorVencimento,
+  type BoletoAberto,
+} from "@/lib/sponte.functions";
 import {
   getWhatsAppConfig,
   getWhatsAppSendConfig,
@@ -29,8 +34,16 @@ import {
   type WhatsAppSendConfig,
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
-import { isDiaUtil, vencimentosParaEnvio } from "@/lib/billing-schedule";
-import { calcularTotalVencido } from "@/lib/billing-debt";
+import { addDaysYMD, isDiaUtil } from "@/lib/billing-schedule";
+import { parcelasVencidas } from "@/lib/billing-debt";
+import {
+  agruparPorResponsavel,
+  jaCobradoHoje,
+  parcelasCobraveis,
+  vencimentosEntrandoEmCobranca,
+  type GrupoCobranca,
+  type ParcelaCobranca,
+} from "@/lib/billing-recurrence";
 import {
   parseIncomingMessage,
   buildMessageFields,
@@ -98,15 +111,6 @@ function nomesMesesAbertos(vencimentos: string[]): string {
   return `${rotulos.slice(0, -1).join(", ")} e ${rotulos[rotulos.length - 1]}`;
 }
 
-function vencToYMD(v: string): string {
-  if (!v) return "";
-  if (v.includes("/")) {
-    const [d, m, y] = v.split("/");
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
-  }
-  return v.slice(0, 10);
-}
-
 function formatBRL(n: number): string {
   return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -125,6 +129,25 @@ const UNIDADES_COBRANCA_AUTOMATICA = new Set(["CEC", "CEC Baby"]);
 // Data base da cobrança automática: só cobra vencimentos a partir deste dia,
 // para não gerar spam de pendências antigas ao ligar a automação.
 const DATA_BASE_COBRANCA = "2026-08-01";
+
+// Janela do histórico de disparos usada para reavaliar quem continua devendo.
+// Cobre com folga o ciclo de uma dívida sem varrer o histórico inteiro.
+const JANELA_RECORRENCIA_DIAS = 120;
+
+// Consultas simultâneas ao Sponte na reavaliação diária das dívidas.
+const CONCORRENCIA_SPONTE = 5;
+
+// Status que caracterizam disparo bem-sucedido (inclui o legado 'sucesso').
+const STATUS_ENVIADO = ["enviado", "entregue", "lido", "sucesso"];
+
+// Aluno a ser reavaliado no Sponte no disparo de hoje.
+interface CandidatoCobranca {
+  alunoId: string;
+  alunoNome: string;
+  unidade: string;
+  telefone: string;
+  responsavelNome: string;
+}
 
 // Kill switch: envio do dia bloqueado quando `paused_date` == hoje (fuso SP).
 async function envioPausadoHoje(hojeYMD: string): Promise<boolean> {
@@ -183,7 +206,16 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
   return json({ ok: false, error: "Rota não encontrada." }, 404);
 }
 
-// ─── Cron: dispara lembrete das cobranças vencidas há 2 dias (dias úteis) ─────
+// ─── Cron: cobrança recorrente diária, agrupada por responsável ───────────────
+//
+// Fluxo do dia (só em dia útil e com o kill switch desligado):
+//   1. Novos devedores: vencimentos cuja tolerância de 2 DIAS ÚTEIS termina hoje.
+//   2. Devedores em cobrança: alunos dos disparos recentes (histórico de logs),
+//      reavaliados no Sponte — quem quitou sai da régua no mesmo dia.
+//   3. Cada aluno candidato tem a dívida reconsultada; sobram as parcelas em
+//      aberto, vencidas e fora da tolerância.
+//   4. As parcelas são agrupadas por RESPONSÁVEL: uma única mensagem por dia,
+//      mesmo com várias parcelas e/ou vários alunos.
 async function runCron(): Promise<Response> {
   const cfg = getWhatsAppConfig();
   if (!cfg) {
@@ -206,181 +238,273 @@ async function runCron(): Promise<Response> {
     return json({ ok: true, hoje, pausado: true, enviados: 0 });
   }
 
-  // Vencimentos a disparar hoje: o gatilho D+2 de cada vencimento, com os que
-  // caíram em fim de semana/feriado reagendados para este dia útil. Ignora
-  // vencimentos anteriores à data base (evita spam de pendências antigas).
-  const alvos = vencimentosParaEnvio(hoje, 2)
-    .map((t) => t.vencimento)
-    .filter((v) => v >= DATA_BASE_COBRANCA);
-
-  if (alvos.length === 0) {
-    return json({ ok: true, hoje, motivo: `nenhum vencimento elegível`, enviados: 0 });
+  const candidatos = await coletarCandidatos(hoje);
+  if (candidatos.length === 0) {
+    return json({ ok: true, hoje, motivo: "nenhum aluno em cobrança", enviados: 0 });
   }
+
+  // Reconsulta a dívida de cada candidato no Sponte: quem pagou desaparece daqui.
+  // Em lotes concorrentes para caber no tempo de execução do cron.
+  const cobraveis: ParcelaCobranca[] = [];
+  const vencidasPorAluno = new Map<string, BoletoAberto[]>();
+  const linhaPorAluno = new Map<string, string>();
+  for (let i = 0; i < candidatos.length; i += CONCORRENCIA_SPONTE) {
+    const lote = candidatos.slice(i, i + CONCORRENCIA_SPONTE);
+    const resultados = await Promise.all(
+      lote.map(async (c) => ({
+        candidato: c,
+        divida: await coletarDividaAbertaAluno(c.unidade, c.alunoId),
+      })),
+    );
+    for (const { candidato: c, divida } of resultados) {
+      if (!divida) continue;
+      vencidasPorAluno.set(c.alunoId, parcelasVencidas(divida.boletos, hoje));
+      for (const b of divida.boletos) {
+        cobraveis.push({
+          alunoId: c.alunoId,
+          alunoNome: c.alunoNome,
+          unidade: c.unidade,
+          telefone: c.telefone,
+          responsavelNome: c.responsavelNome,
+          vencimento: b.vencimento,
+          saldo: b.saldo,
+          dataPagamento: b.dataPagamento,
+        });
+      }
+    }
+    // Linha digitável do boleto vencido mais recente de cada aluno (mês vigente).
+    const linhas = await Promise.all(
+      lote.map((c) => {
+        const maisRecente = vencidasPorAluno.get(c.alunoId)?.at(-1);
+        if (!maisRecente) return Promise.resolve("");
+        return buscarLinhaDigitavelPorUnidade(
+          c.unidade,
+          maisRecente.contaReceberID,
+          maisRecente.numeroParcela,
+        );
+      }),
+    );
+    lote.forEach((c, idx) => {
+      if (linhas[idx]) linhaPorAluno.set(c.alunoId, linhas[idx]);
+    });
+  }
+
+  const grupos = agruparPorResponsavel(
+    parcelasCobraveis(cobraveis, hoje, DATA_BASE_COBRANCA),
+    hoje,
+    vencidasPorAluno,
+  );
+  if (grupos.length === 0) {
+    return json({ ok: true, hoje, motivo: "nenhuma parcela cobrável hoje", enviados: 0 });
+  }
+
+  // Idempotência do dia: telefones que já receberam disparo hoje (cron reexecutado).
+  const telefonesHoje = await telefonesJaCobradosHoje(hoje);
 
   let enviados = 0;
   let falhas = 0;
   let pulados = 0;
-  let total = 0;
-  for (const alvo of alvos) {
-    const r = await processarVencimento(cfg, alvo, hoje);
-    enviados += r.enviados;
-    falhas += r.falhas;
-    pulados += r.pulados;
-    total += r.total;
-  }
-
-  console.log(
-    `[whatsapp] cron ${hoje} (vencimentos ${alvos.join(", ")}): ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) de ${total} pendência(s).`,
-  );
-  return json({ ok: true, hoje, alvos, total, enviados, falhas, pulados });
-}
-
-// Dispara os lembretes de UM vencimento (`alvo`), com anti-duplicidade por
-// aluno/vencimento. `hoje` é usado para atualizar o valor da dívida no disparo.
-async function processarVencimento(
-  cfg: NonNullable<ReturnType<typeof getWhatsAppConfig>>,
-  alvo: string,
-  hoje: string,
-): Promise<{ enviados: number; falhas: number; pulados: number; total: number }> {
-  // Restringe às unidades atendidas pelo número de produção (CEC/CEC Baby).
-  const pendencias = (await coletarPendenciasPorVencimento(alvo)).filter((p) =>
-    UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
-  );
-
-  // Anti-duplicidade: não reenvia se já houver log para o mesmo aluno/vencimento
-  // com status de envio (evita disparo repetido se o cron rodar duas vezes).
-  const { data: jaEnviados } = await supabaseAdmin
-    .from("whatsapp_billing_logs" as never)
-    .select("fatura_id")
-    .eq("vencimento", alvo)
-    .in("status", ["enviado", "entregue", "lido", "sucesso"]);
-  const enviadosSet = new Set(
-    ((jaEnviados ?? []) as unknown as { fatura_id: string | null }[]).map((r) => r.fatura_id ?? ""),
-  );
-
-  let enviados = 0;
-  let falhas = 0;
-  let pulados = 0;
-
-  for (const p of pendencias) {
-    const vencYMD = vencToYMD(p.vencimento) || alvo;
-    if (enviadosSet.has(p.alunoId)) {
+  for (const grupo of grupos) {
+    if (jaCobradoHoje(telefonesHoje, grupo.telefone)) {
       pulados++;
       continue;
     }
-    enviadosSet.add(p.alunoId);
+    telefonesHoje.push(grupo.telefone);
+    const r = await dispararGrupo(cfg, grupo, hoje, linhaPorAluno);
+    enviados += r.enviado ? 1 : 0;
+    falhas += r.enviado ? 0 : 1;
+  }
 
-    // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
-    // mensagem direciona o responsável à secretaria. Vale sempre para o boleto
-    // do MÊS VIGENTE (a linha digitável do Cenário B é só a do mês vigente).
-    const linhaDigitavel =
-      p.linhaDigitavel && p.linhaDigitavel.trim()
-        ? p.linhaDigitavel
-        : "Entre em contato com a secretaria da escola";
+  console.log(
+    `[whatsapp] cron ${hoje}: ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) em ${grupos.length} responsável(is).`,
+  );
+  return json({
+    ok: true,
+    hoje,
+    responsaveis: grupos.length,
+    alunos: candidatos.length,
+    enviados,
+    falhas,
+    pulados,
+  });
+}
 
-    // Bifurcação por histórico de dívida: consulta TODOS os boletos em aberto do
-    // aluno no Sponte. Cenário A = só o mês vigente → template padrão. Cenário B
-    // = também há meses anteriores em aberto → template de cobrança múltipla.
-    const divida = await coletarDividaAbertaAluno(p.unidade ?? "CEC", p.alunoId);
-    const anteriores = (divida?.boletos ?? []).filter(
-      (b) => b.vencimento && b.vencimento < vencYMD,
+// Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que
+// já vinham sendo cobrados (histórico de disparos). Deduplicados por AlunoID.
+async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
+  const mapa = new Map<string, CandidatoCobranca>();
+
+  // Já em cobrança primeiro; os dados frescos do Sponte (abaixo) prevalecem.
+  for (const c of await candidatosDoHistorico(hoje)) mapa.set(c.alunoId, c);
+
+  const novos = vencimentosEntrandoEmCobranca(hoje).filter((v) => v >= DATA_BASE_COBRANCA);
+  for (const vencimento of novos) {
+    const pendencias = (await coletarPendenciasPorVencimento(vencimento)).filter((p) =>
+      UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
     );
-    const multipla = anteriores.length > 0;
-
-    let templateName: string;
-    let messageBody: string;
-    let valorLog: number;
-    let enviar: () => Promise<{ messageId: string }>;
-
-    if (multipla) {
-      // Valor total ATUALIZADO no dia do disparo = soma, por parcela VENCIDA
-      // (vencimento <= hoje), do valor original + multa 2% + juros 1%/mês pró
-      // rata die (dias de atraso até hoje). Parcelas com vencimento futuro
-      // (ainda não vencidas) e já pagas ficam de fora — ver billing-debt.
-      const totalAtualizado = divida
-        ? calcularTotalVencido(divida.boletos, hoje)
-        : p.valorTotalBoleto;
-      const varsMultipla = {
-        to: p.telefone,
-        responsavel: p.nomeResponsavel,
-        aluno: p.nomeAluno,
-        mesesAnteriores: nomesMesesAbertos(anteriores.map((b) => b.vencimento)),
-        valorTotalAtualizado: formatBRL(totalAtualizado),
-        linhaDigitavel, // só o boleto do mês vigente
-      };
-      templateName = cfg.templateMultiplaName;
-      messageBody = renderBillingMessageMultipla(varsMultipla);
-      valorLog = totalAtualizado;
-      enviar = () => sendBillingTemplateMultipla(cfg, varsMultipla);
-    } else {
-      const vars = {
-        to: p.telefone,
-        responsavel: p.nomeResponsavel,
-        aluno: p.nomeAluno,
-        valor: formatBRL(p.valorTotalBoleto),
-        vencimento: formatVencBR(vencYMD),
-        linhaDigitavel,
-      };
-      templateName = cfg.templateName;
-      messageBody = renderBillingMessage(vars);
-      valorLog = p.valorTotalBoleto;
-      enviar = () => sendBillingTemplate(cfg, vars);
-    }
-
-    const base = {
-      responsavel_name: p.nomeResponsavel || "",
-      aluno_name: p.nomeAluno || "",
-      telefone: p.telefone || "",
-      unidade: p.unidade || "",
-      valor: valorLog,
-      vencimento: vencYMD,
-      template_name: templateName,
-      fatura_id: p.alunoId,
-      message_body: messageBody,
-    };
-
-    const semTelefone = !p.telefone || p.telefone === "-";
-    if (semTelefone) {
-      falhas++;
-      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
-        ...base,
-        status: "falha",
-        erro_mensagem: "Responsável sem telefone cadastrado no Sponte.",
-      } as never);
-      continue;
-    }
-
-    try {
-      const { messageId } = await enviar();
-      enviados++;
-      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
-        ...base,
-        status: "enviado",
-        wa_message_id: messageId,
-      } as never);
-      // Espelha o disparo no histórico do chat de Atendimento.
-      await registrarTemplateNoChat({
-        telefone: p.telefone,
-        waMessageId: messageId,
-        body: base.message_body,
-        vinculo: {
-          aluno_id: p.alunoId,
-          aluno_name: p.nomeAluno || "",
-          responsavel_name: p.nomeResponsavel || "",
-          unidade: p.unidade || "",
-        },
+    for (const p of pendencias) {
+      mapa.set(p.alunoId, {
+        alunoId: p.alunoId,
+        alunoNome: p.nomeAluno || "",
+        unidade: p.unidade || "CEC",
+        telefone: p.telefone || "",
+        responsavelNome: p.nomeResponsavel || "",
       });
-    } catch (e) {
-      falhas++;
-      await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
-        ...base,
-        status: "falha",
-        erro_mensagem: e instanceof Error ? e.message : String(e),
-      } as never);
     }
   }
 
-  return { enviados, falhas, pulados, total: pendencias.length };
+  return [...mapa.values()];
+}
+
+// Alunos com disparo bem-sucedido nos últimos `JANELA_RECORRENCIA_DIAS` dias.
+// É o que sustenta a recorrência diária: enquanto a dívida existir, o aluno
+// continua na régua; quitada, ele simplesmente deixa de gerar parcela cobrável.
+async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]> {
+  const desde = addDaysYMD(hoje, -JANELA_RECORRENCIA_DIAS);
+  const { data } = await supabaseAdmin
+    .from("whatsapp_billing_logs" as never)
+    .select("fatura_id, alunos_cobrados, aluno_name, responsavel_name, telefone, unidade")
+    .gte("data_envio", `${desde}T00:00:00Z`)
+    .in("status", STATUS_ENVIADO)
+    .order("data_envio", { ascending: true });
+
+  const rows = (data ?? []) as unknown as {
+    fatura_id: string | null;
+    alunos_cobrados: { id?: string; nome?: string }[] | null;
+    aluno_name: string | null;
+    responsavel_name: string | null;
+    telefone: string | null;
+    unidade: string | null;
+  }[];
+
+  // Ordem ascendente: o registro mais recente sobrescreve nome/telefone.
+  const mapa = new Map<string, CandidatoCobranca>();
+  for (const row of rows) {
+    const alunos =
+      row.alunos_cobrados && row.alunos_cobrados.length > 0
+        ? row.alunos_cobrados
+        : [{ id: row.fatura_id ?? "", nome: row.aluno_name ?? "" }];
+    for (const aluno of alunos) {
+      if (!aluno.id) continue;
+      mapa.set(aluno.id, {
+        alunoId: aluno.id,
+        alunoNome: aluno.nome ?? "",
+        unidade: row.unidade || "CEC",
+        telefone: row.telefone ?? "",
+        responsavelNome: row.responsavel_name ?? "",
+      });
+    }
+  }
+  return [...mapa.values()].filter((c) => UNIDADES_COBRANCA_AUTOMATICA.has(c.unidade));
+}
+
+// Telefones com disparo bem-sucedido hoje (janela do dia no fuso de São Paulo).
+async function telefonesJaCobradosHoje(hoje: string): Promise<string[]> {
+  const { data } = await supabaseAdmin
+    .from("whatsapp_billing_logs" as never)
+    .select("telefone")
+    .gte("data_envio", `${hoje}T00:00:00-03:00`)
+    .lte("data_envio", `${hoje}T23:59:59-03:00`)
+    .in("status", STATUS_ENVIADO);
+  return ((data ?? []) as unknown as { telefone: string | null }[]).map((r) => r.telefone ?? "");
+}
+
+// Dispara (e registra) a mensagem diária de UM responsável.
+async function dispararGrupo(
+  cfg: NonNullable<ReturnType<typeof getWhatsAppConfig>>,
+  grupo: GrupoCobranca,
+  hoje: string,
+  linhaPorAluno: Map<string, string>,
+): Promise<{ enviado: boolean }> {
+  // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
+  // mensagem direciona o responsável à secretaria.
+  const linhaDigitavel =
+    grupo.alunoIds.map((id) => linhaPorAluno.get(id)).find((l) => l && l.trim()) ??
+    "Entre em contato com a secretaria da escola";
+
+  let templateName: string;
+  let messageBody: string;
+  let enviar: () => Promise<{ messageId: string }>;
+
+  if (grupo.multipla) {
+    const varsMultipla = {
+      to: grupo.telefone,
+      responsavel: grupo.responsavelNome,
+      aluno: grupo.alunosLabel,
+      mesesAnteriores: nomesMesesAbertos(grupo.parcelas.map((p) => p.vencimento)),
+      valorTotalAtualizado: formatBRL(grupo.totalAtualizado),
+      linhaDigitavel,
+    };
+    templateName = cfg.templateMultiplaName;
+    messageBody = renderBillingMessageMultipla(varsMultipla);
+    enviar = () => sendBillingTemplateMultipla(cfg, varsMultipla);
+  } else {
+    const vars = {
+      to: grupo.telefone,
+      responsavel: grupo.responsavelNome,
+      aluno: grupo.alunosLabel,
+      valor: formatBRL(grupo.totalAtualizado),
+      vencimento: formatVencBR(grupo.vencimentoMaisAntigo),
+      linhaDigitavel,
+    };
+    templateName = cfg.templateName;
+    messageBody = renderBillingMessage(vars);
+    enviar = () => sendBillingTemplate(cfg, vars);
+  }
+
+  const base = {
+    responsavel_name: grupo.responsavelNome || "",
+    aluno_name: grupo.alunosLabel || "",
+    telefone: grupo.telefone || "",
+    unidade: grupo.unidade || "",
+    valor: grupo.totalAtualizado,
+    vencimento: grupo.vencimentoMaisAntigo,
+    template_name: templateName,
+    fatura_id: grupo.alunoIds[0] ?? null,
+    alunos_cobrados: grupo.alunoIds.map((id) => ({
+      id,
+      nome: grupo.parcelas.find((p) => p.alunoId === id)?.alunoNome ?? "",
+    })),
+    message_body: messageBody,
+  };
+
+  if (!grupo.telefone || grupo.telefone === "-") {
+    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+      ...base,
+      status: "falha",
+      erro_mensagem: "Responsável sem telefone cadastrado no Sponte.",
+    } as never);
+    return { enviado: false };
+  }
+
+  try {
+    const { messageId } = await enviar();
+    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+      ...base,
+      status: "enviado",
+      wa_message_id: messageId,
+    } as never);
+    // Espelha o disparo no histórico do chat de Atendimento.
+    await registrarTemplateNoChat({
+      telefone: grupo.telefone,
+      waMessageId: messageId,
+      body: messageBody,
+      vinculo: {
+        aluno_id: grupo.alunoIds[0] ?? null,
+        aluno_name: grupo.alunosLabel || "",
+        responsavel_name: grupo.responsavelNome || "",
+        unidade: grupo.unidade || "",
+      },
+    });
+    return { enviado: true };
+  } catch (e) {
+    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+      ...base,
+      status: "falha",
+      erro_mensagem: e instanceof Error ? e.message : String(e),
+    } as never);
+    return { enviado: false };
+  }
 }
 
 // ─── Webhook: status dos disparos + mensagens recebidas (atendimento) ─────────

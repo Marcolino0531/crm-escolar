@@ -1695,6 +1695,9 @@ export interface BoletoAberto {
   numeroBoleto: string;
   contaReceberID: string;
   numeroParcela: string;
+  // Data de pagamento (YYYY-MM-DD) quando o Sponte já registrou a quitação.
+  // Preenchida encerra a cobrança recorrente daquela parcela no mesmo dia.
+  dataPagamento: string;
 }
 
 export interface DividaAbertaAluno {
@@ -1734,10 +1737,12 @@ export async function coletarDividaAbertaAluno(
     if (saldo <= 0) continue;
     const numeroBoleto = parseXmlValue(node, "NumeroBoleto");
     const vencimento = paraYMD(parseXmlValue(node, "Vencimento")) ?? "";
+    const dataPagamento = paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "";
     const key = numeroBoleto && numeroBoleto !== "0" ? `bol_${numeroBoleto}` : vencimento;
     const cur = grupos.get(key);
     if (cur) {
       cur.saldo += saldo;
+      if (!cur.dataPagamento) cur.dataPagamento = dataPagamento;
     } else {
       grupos.set(key, {
         vencimento,
@@ -1745,6 +1750,7 @@ export async function coletarDividaAbertaAluno(
         numeroBoleto,
         contaReceberID: parseXmlValue(node, "ContaReceberID"),
         numeroParcela: parseXmlValue(node, "NumeroParcela"),
+        dataPagamento,
       });
     }
   }
@@ -1752,6 +1758,19 @@ export async function coletarDividaAbertaAluno(
   const boletos = [...grupos.values()].sort((a, b) => a.vencimento.localeCompare(b.vencimento));
   const totalSaldo = boletos.reduce((s, b) => s + b.saldo, 0);
   return { boletos, totalSaldo };
+}
+
+// Linha digitável de um boleto já gerado, resolvendo as credenciais pela unidade.
+// Usado pela cobrança recorrente, que reavalia a dívida do aluno todos os dias e
+// precisa da linha do boleto mais recente. Retorna "" quando indisponível.
+export async function buscarLinhaDigitavelPorUnidade(
+  unidade: string,
+  contaReceberID: string,
+  numeroParcela: string,
+): Promise<string> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds || !contaReceberID) return "";
+  return buscarLinhaDigitavel(creds.codigoCliente, creds.token, contaReceberID, numeroParcela);
 }
 
 // ─── Cobrança Automática — disparo de teste por AlunoID ──────────────────────
