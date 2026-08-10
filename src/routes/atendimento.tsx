@@ -71,7 +71,7 @@ type ChatMessage = {
   wa_timestamp: string | null;
   origem: "chat" | "cobranca";
   created_at: string;
-  message_type: "text" | "image" | "document";
+  message_type: "text" | "image" | "document" | "system";
   media_path: string | null;
   media_mime: string | null;
   media_filename: string | null;
@@ -702,6 +702,18 @@ function DocumentoMensagem({ path, filename }: { path: string; filename: string 
 }
 
 function Bolha({ msg }: { msg: ChatMessage }) {
+  // Nota interna de evento administrativo (ex.: troca de número): centralizada e
+  // discreta, sem balão de conversa.
+  if (msg.message_type === "system") {
+    return (
+      <div className="flex justify-center">
+        <div className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">
+          {msg.body} · {dataHora(msg.wa_timestamp ?? msg.created_at)}
+        </div>
+      </div>
+    );
+  }
+
   const out = msg.direction === "out";
   const automatica = msg.origem === "cobranca";
   const st = STATUS_MSG[msg.status];
