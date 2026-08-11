@@ -8,6 +8,13 @@ import {
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
 import { registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
+import {
+  contaCaixaBate,
+  ehRecebimentoBancario,
+  normalizarTexto,
+  parseBrDecimal,
+  valorBoletoDaParcela,
+} from "@/lib/sponte-baixa";
 
 // ─── Phase 6 (Option C migration) ───────────────────────────────────────────
 // Sponte inadimplência integration ported from the CRA app's api/sponte-batch.ts
@@ -139,19 +146,6 @@ async function podeVerFinanceiroColonia(userId: string): Promise<boolean> {
   return ((perms ?? []) as any[]).some((p) => p.can_view || p.can_edit);
 }
 
-// Casa o nome da Conta Creditada (ex.: "Caixa - 489426") com a conta-caixa da
-// unidade usando .includes — tanto no texto cru ("011311") quanto só nos
-// dígitos. NÃO removemos zeros à esquerda: a conta do CEC Baby ("011311")
-// precisa casar literalmente.
-function contaCaixaBate(contaTexto: string, contaAlvo: string): boolean {
-  if (!contaTexto || !contaAlvo) return false;
-  if (contaTexto.includes(contaAlvo)) return true;
-  const soDigitos = (s: string) => s.replace(/\D/g, "");
-  const a = soDigitos(contaTexto);
-  const b = soDigitos(contaAlvo);
-  return !!b && a.includes(b);
-}
-
 function buildSoapEnvelope(
   method: string,
   extraParams: string,
@@ -184,22 +178,6 @@ function parseXmlList(xml: string, itemTag: string): string[] {
   let m;
   while ((m = regex.exec(xml)) !== null) items.push(m[0]);
   return items;
-}
-
-function parseBrDecimal(value: string): number {
-  if (!value) return 0;
-  return parseFloat(value.replace(/\./g, "").replace(",", ".")) || 0;
-}
-
-// Remove acentos, baixa caixa e colapsa espaços — para comparar rótulos do
-// Sponte (FormaCobranca, SituacaoParcela) sem depender de acentuação/caixa.
-function normalizarTexto(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
 }
 
 // Converte uma data do Sponte ("DD/MM/YYYY" ou "YYYY-MM-DD[...]") para o
@@ -660,16 +638,6 @@ interface ColetaBaixadasResult {
   fault?: string;
 }
 
-// Reconhece liquidações que caem no crédito bancário agregado do extrato — a
-// linha "COB COMPE" (Caixa) / "BOLETOS RECEBIDOS" (Itaú). Ou seja, somente
-// boletos compensados ("Cobrança Bancária" / "Boleto Bancário"). Exclui PIX,
-// dinheiro, cartão etc., que NÃO entram nessa linha do banco. O rótulo varia,
-// então casamos por inclusão normalizada (sem acento/caixa).
-function ehRecebimentoBancario(forma: string): boolean {
-  const f = normalizarTexto(forma);
-  return f.includes("cobranca bancaria") || f.includes("boleto");
-}
-
 // Reconhece liquidações via PIX no rateio (TipoRecebimento = "Pix"). Usado pela
 // conciliação automática de PIX, que casa cada linha PIX do extrato com a baixa
 // correspondente do Sponte por valor exato + similaridade de nome.
@@ -786,35 +754,27 @@ async function coletarBaixadas(
       const alunoId = parseXmlValue(parcela, "AlunoID");
       const numeroBoleto = parseXmlValue(parcela, "NumeroBoleto");
 
-      // Filtros de FORMA (boleto) + CONTA da baixa real, somados juntos porque a
-      // forma REAL de liquidação está no RATEIO (TipoRecebimento), não na parcela:
-      // a FormaCobranca da parcela vem "Cobrança Bancária" mesmo quando o boleto
-      // foi PAGO via PIX — e esse PIX NÃO entra no "BOLETOS RECEBIDOS"/"COB COMPE"
-      // do banco, inflando a soma (era a causa do CEC nunca fechar). Por isso o
-      // filtro de boleto é por rateio. Sem conta configurada (fallback): usa a
-      // forma da parcela. CEC/CEC Baby/Belvedere: soma só os rateios na conta-
-      // caixa da unidade E liquidados via boleto (trata baixas divididas entre
-      // contas).
-      let valorNaConta: number;
-      if (!contaCaixa) {
-        valorNaConta = ehRecebimentoBancario(formaRaw)
-          ? parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO))
-          : 0;
-      } else if (rateioNodes.length) {
-        valorNaConta = rateioNodes
-          .filter(
-            (r) =>
-              contaCaixaBate(parseXmlValue(r, "ContaCreditada"), contaCaixa) &&
-              ehRecebimentoBancario(parseXmlValue(r, "TipoRecebimento")),
-          )
-          .reduce((s, r) => s + parseBrDecimal(parseXmlValue(r, "ValorPagoRateado")), 0);
-      } else {
-        valorNaConta =
-          contaCaixaBate(parseXmlValue(parcela, "ContaCreditar"), contaCaixa) &&
-          ehRecebimentoBancario(formaRaw)
-            ? parseBrDecimal(primeiroValor(parcela, TAGS_VALOR_PAGO))
-            : 0;
-      }
+      // Filtro de FORMA (boleto) pelo RATEIO + CONTA da baixa real: a forma REAL
+      // de liquidação está no rateio (TipoRecebimento), não na parcela — a
+      // FormaCobranca vem "Cobrança Bancária" mesmo quando o boleto foi PAGO via
+      // PIX, e esse PIX NÃO entra no "BOLETOS RECEBIDOS"/"COB COMPE" do banco.
+      // O filtro de conta entra só nas unidades que compartilham/segmentam conta
+      // (CEC 489426, CEC Baby 011311, Belvedere 9295/1137); em unidade de conta
+      // única (Vale do Sereno, cuja Conta Creditada vem só como "Caixa") vale
+      // apenas o filtro de boleto. Regra em `valorBoletoDaParcela`.
+      const valorNaConta = valorBoletoDaParcela(
+        {
+          formaCobranca: formaRaw,
+          contaCreditar: parseXmlValue(parcela, "ContaCreditar"),
+          valorPago: primeiroValor(parcela, TAGS_VALOR_PAGO),
+          rateios: rateioNodes.map((r) => ({
+            contaCreditada: parseXmlValue(r, "ContaCreditada"),
+            tipoRecebimento: parseXmlValue(r, "TipoRecebimento"),
+            valorPagoRateado: parseXmlValue(r, "ValorPagoRateado"),
+          })),
+        },
+        contaCaixa,
+      );
       if (valorNaConta <= 0) continue;
       // Contribuiu via boleto na conta certa (funil de diagnóstico).
       diag.comFormaBancaria++;
