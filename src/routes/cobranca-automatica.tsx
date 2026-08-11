@@ -15,6 +15,7 @@ import {
   PauseCircle,
   PlayCircle,
   ShieldAlert,
+  Timer,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -40,6 +41,8 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { enviarCobrancaTeste } from "@/lib/sponte.functions";
+import { isDiaUtil } from "@/lib/billing-schedule";
+import { alertaExecucaoCron } from "@/lib/billing-cron-runs";
 import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca-automatica")({
@@ -154,6 +157,8 @@ function CobrancaAutomaticaPage() {
 
       <KillSwitch podeEditar={podeEditar} />
 
+      <ExecucoesDoCron />
+
       {podeEditar && <AmbienteDeTeste onEnviado={() => refetch()} />}
 
       <div className="rounded-xl border border-border bg-card">
@@ -257,6 +262,133 @@ function CobrancaAutomaticaPage() {
       </div>
 
       <DetalheDisparo log={selecionado} onClose={() => setSelecionado(null)} />
+    </div>
+  );
+}
+
+type CronRun = {
+  id: string;
+  data_ref: string;
+  slot: string;
+  iniciado_em: string;
+  finalizado_em: string | null;
+  status: "em_andamento" | "ok" | "sem_envio" | "nao_util" | "pausado" | "erro";
+  responsaveis: number;
+  enviados: number;
+  falhas: number;
+  pulados: number;
+  motivo: string | null;
+  erro: string | null;
+  duracao_ms: number | null;
+};
+
+const RUN_STATUS_STYLE: Record<CronRun["status"], { label: string; cls: string }> = {
+  em_andamento: { label: "Em andamento", cls: "bg-slate-100 text-slate-600" },
+  ok: { label: "Disparou", cls: "bg-emerald-100 text-emerald-700" },
+  sem_envio: { label: "Sem envio", cls: "bg-sky-100 text-sky-700" },
+  nao_util: { label: "Dia não útil", cls: "bg-slate-100 text-slate-600" },
+  pausado: { label: "Pausado", cls: "bg-amber-100 text-amber-700" },
+  erro: { label: "Erro", cls: "bg-red-100 text-red-700" },
+};
+
+// Execuções do cron — inclusive as que não enviaram nada. É aqui que um disparo
+// perdido (deploy na hora do agendamento, timeout, erro do Sponte) fica visível.
+function ExecucoesDoCron() {
+  const { data: runs = [], isError } = useQuery({
+    queryKey: ["cobranca-cron-runs"],
+    refetchInterval: 60000,
+    queryFn: async (): Promise<CronRun[]> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+      const resp = await fetch("/api/cobrancas/cron-runs?limit=12", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as { ok: boolean; data?: CronRun[]; error?: string };
+      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar as execuções.");
+      return body.data ?? [];
+    },
+  });
+
+  const hoje = hojeSaoPauloYMD();
+  const horaBRT = Number(
+    new Date().toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      hour12: false,
+    }),
+  );
+  const alerta = alertaExecucaoCron(runs, hoje, horaBRT, isDiaUtil(hoje));
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <Timer className="h-4 w-4 text-primary" /> Execuções da Automação
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          Tentativas diárias às 09h, 12h, 15h e 18h · quem já foi cobrado no dia não recebe de novo
+        </span>
+      </div>
+
+      {alerta && (
+        <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {alerta} ({formatDiaBR(hoje)}) — a próxima tentativa do dia cobre o disparo.
+          </span>
+        </div>
+      )}
+
+      {isError ? (
+        <div className="px-4 py-4 text-sm text-red-600">Falha ao carregar as execuções.</div>
+      ) : runs.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground">
+          Nenhuma execução registrada ainda.
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Dia</TableHead>
+              <TableHead>Tentativa</TableHead>
+              <TableHead>Início</TableHead>
+              <TableHead>Resultado</TableHead>
+              <TableHead>Detalhe</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {runs.map((r) => {
+              const style = RUN_STATUS_STYLE[r.status] ?? RUN_STATUS_STYLE.em_andamento;
+              return (
+                <TableRow key={r.id}>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {formatDiaBR(r.data_ref)}
+                  </TableCell>
+                  <TableCell className="text-sm">{r.slot}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    {formatDataHora(r.iniciado_em)}
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}
+                    >
+                      {style.label}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {r.erro
+                      ? r.erro
+                      : r.status === "ok"
+                        ? `${r.enviados} enviada(s), ${r.falhas} falha(s), ${r.pulados} já cobrado(s)`
+                        : (r.motivo ?? "—")}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
     </div>
   );
 }

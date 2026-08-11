@@ -1,7 +1,8 @@
 // Endpoint nativo do Histórico de Envios de WhatsApp da Cobrança.
 // Montado a partir do server entry (`src/server.ts`), antes do roteador da app.
 //
-//   GET /api/cobrancas/logs  — lista paginada dos disparos (filtros + resumo)
+//   GET /api/cobrancas/logs       — lista paginada dos disparos (filtros + resumo)
+//   GET /api/cobrancas/cron-runs  — últimas execuções do cron de cobrança
 //
 // Filtros (query string): unidade, status ('sucesso'|'erro'), date (YYYY-MM-DD),
 // page (1-based), per_page. Resposta inclui `summary` (envios de hoje, falhas,
@@ -78,7 +79,41 @@ export async function handleCobrancasApi(request: Request): Promise<Response | n
     }
   }
 
+  if (pathname === "/api/cobrancas/cron-runs" && request.method === "GET") {
+    if (!(await isAuthenticated(request))) {
+      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+    }
+    try {
+      return await listCronRuns(url);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[cobrancas] /cron-runs falhou:", msg);
+      return json({ ok: false, error: msg }, 500);
+    }
+  }
+
   return json({ ok: false, error: "Rota não encontrada." }, 404);
+}
+
+const MAX_CRON_RUNS = 60;
+
+// Execuções do cron de cobrança, da mais recente para a mais antiga. Inclui as
+// que não geraram envio — é justamente a ausência de execução que precisa ficar
+// visível quando um disparo se perde.
+async function listCronRuns(url: URL): Promise<Response> {
+  const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
+  const limit = Math.min(MAX_CRON_RUNS, Math.max(1, limitRaw || 20));
+
+  const { data, error } = await supabaseAdmin
+    .from("whatsapp_cron_runs" as never)
+    .select(
+      "id, data_ref, slot, iniciado_em, finalizado_em, status, responsaveis, enviados, falhas, pulados, motivo, erro, duracao_ms",
+    )
+    .order("iniciado_em", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return json({ ok: true, data: data ?? [] });
 }
 
 function startOfTodayISO(): string {
