@@ -8,6 +8,12 @@
 //                                 Uma única mensagem por responsável por dia, agregando
 //                                 todas as parcelas/alunos. Não roda em sáb/dom/feriados
 //                                 (ver billing-schedule) nem com o kill switch ligado.
+//   GET  /api/whatsapp/cron/tentativa-{2,3,4}
+//                               — mesma rotina, repetida às 12h, 15h e 18h: se a tentativa
+//                                 anterior se perdeu (deploy na hora do agendamento, timeout,
+//                                 erro do Sponte), a seguinte cobre o dia. Não duplica envio:
+//                                 o responsável já cobrado hoje é pulado. Toda execução — até
+//                                 as que não enviam nada — fica em `whatsapp_cron_runs`.
 //   GET  /api/whatsapp/webhook  — verificação do webhook (hub.challenge da Meta).
 //   POST /api/whatsapp/webhook  — eventos de status (enviado/entregue/lido/falha).
 //
@@ -45,6 +51,7 @@ import {
   type ParcelaCobranca,
 } from "@/lib/billing-recurrence";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
+import { slotDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
 import {
   parseIncomingMessage,
   buildMessageFields,
@@ -167,18 +174,13 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
   const { pathname } = url;
   if (!pathname.startsWith("/api/whatsapp/")) return null;
 
-  if (pathname === "/api/whatsapp/cron" && request.method === "GET") {
+  const slot = request.method === "GET" ? slotDaRota(pathname) : null;
+  if (slot) {
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret && bearer(request) !== cronSecret) {
       return json({ ok: false, error: "não autorizado" }, 401);
     }
-    try {
-      return await runCron();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[whatsapp] cron falhou:", msg);
-      return json({ ok: false, error: msg }, 500);
-    }
+    return await runCronRegistrado(slot);
   }
 
   if (pathname === "/api/whatsapp/webhook" && request.method === "GET") {
@@ -217,31 +219,27 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
 //      aberto, vencidas e fora da tolerância.
 //   4. As parcelas são agrupadas por RESPONSÁVEL: uma única mensagem por dia,
 //      mesmo com várias parcelas e/ou vários alunos.
-async function runCron(): Promise<Response> {
+async function runCron(hoje: string): Promise<ResultadoCron> {
   const cfg = getWhatsAppConfig();
   if (!cfg) {
-    return json({
-      ok: false,
-      error:
-        "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
-    });
+    throw new Error(
+      "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
+    );
   }
-
-  const hoje = diaYMD(0);
 
   // Não dispara aos sábados, domingos e feriados nacionais (ver billing-schedule).
   if (!isDiaUtil(hoje)) {
-    return json({ ok: true, hoje, motivo: "dia não útil (fim de semana/feriado)", enviados: 0 });
+    return { status: "nao_util", motivo: "dia não útil (fim de semana/feriado)" };
   }
 
   // Kill switch: se os envios foram pausados hoje, não dispara nada.
   if (await envioPausadoHoje(hoje)) {
-    return json({ ok: true, hoje, pausado: true, enviados: 0 });
+    return { status: "pausado", motivo: "envios pausados para hoje (kill switch)" };
   }
 
   const candidatos = await coletarCandidatos(hoje);
   if (candidatos.length === 0) {
-    return json({ ok: true, hoje, motivo: "nenhum aluno em cobrança", enviados: 0 });
+    return { status: "sem_envio", motivo: "nenhum aluno em cobrança" };
   }
 
   // Reconsulta a dívida de cada candidato no Sponte: quem pagou desaparece daqui.
@@ -296,7 +294,11 @@ async function runCron(): Promise<Response> {
     vencidasPorAluno,
   );
   if (grupos.length === 0) {
-    return json({ ok: true, hoje, motivo: "nenhuma parcela cobrável hoje", enviados: 0 });
+    return {
+      status: "sem_envio",
+      motivo: "nenhuma parcela cobrável hoje",
+      alunos: candidatos.length,
+    };
   }
 
   // Idempotência do dia: telefones que já receberam disparo hoje (cron reexecutado).
@@ -319,15 +321,78 @@ async function runCron(): Promise<Response> {
   console.log(
     `[whatsapp] cron ${hoje}: ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) em ${grupos.length} responsável(is).`,
   );
-  return json({
-    ok: true,
-    hoje,
+  return {
+    status: enviados > 0 || falhas > 0 ? "ok" : "sem_envio",
+    motivo: enviados === 0 && falhas === 0 ? "todos os responsáveis já cobrados hoje" : null,
     responsaveis: grupos.length,
     alunos: candidatos.length,
     enviados,
     falhas,
     pulados,
-  });
+  };
+}
+
+interface ResultadoCron {
+  status: Exclude<StatusExecucao, "em_andamento" | "erro">;
+  motivo?: string | null;
+  responsaveis?: number;
+  alunos?: number;
+  enviados?: number;
+  falhas?: number;
+  pulados?: number;
+}
+
+// Executa a tentativa do dia registrando-a em `whatsapp_cron_runs`.
+//
+// A inserção da linha (data_ref, slot) é a própria trava de concorrência: se a
+// mesma tentativa já está registrada, esta execução não roda de novo. Uma
+// tentativa perdida ou com erro fica gravada com o motivo, e a tentativa
+// seguinte do dia cobre o disparo — sem duplicar, porque quem já foi cobrado
+// hoje é pulado no envio.
+async function runCronRegistrado(slot: string): Promise<Response> {
+  const hoje = diaYMD(0);
+  const inicio = Date.now();
+
+  const { data: run, error: erroInsert } = await supabaseAdmin
+    .from("whatsapp_cron_runs" as never)
+    .insert({ data_ref: hoje, slot, status: "em_andamento" } as never)
+    .select("id")
+    .maybeSingle();
+
+  if (erroInsert || !run) {
+    console.warn(`[whatsapp] cron ${hoje} slot ${slot} já registrado — execução ignorada.`);
+    return json({ ok: true, hoje, slot, ignorado: true });
+  }
+  const runId = (run as unknown as { id: string }).id;
+
+  const finalizar = async (campos: Record<string, unknown>) => {
+    await supabaseAdmin
+      .from("whatsapp_cron_runs" as never)
+      .update({
+        ...campos,
+        finalizado_em: new Date().toISOString(),
+        duracao_ms: Date.now() - inicio,
+      } as never)
+      .eq("id", runId);
+  };
+
+  try {
+    const r = await runCron(hoje);
+    await finalizar({
+      status: r.status,
+      motivo: r.motivo ?? null,
+      responsaveis: r.responsaveis ?? 0,
+      enviados: r.enviados ?? 0,
+      falhas: r.falhas ?? 0,
+      pulados: r.pulados ?? 0,
+    });
+    return json({ ok: true, hoje, slot, ...r });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[whatsapp] cron falhou:", msg);
+    await finalizar({ status: "erro", erro: msg });
+    return json({ ok: false, hoje, slot, error: msg }, 500);
+  }
 }
 
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que

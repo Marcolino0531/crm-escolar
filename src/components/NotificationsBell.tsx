@@ -49,6 +49,8 @@ import {
   type PendenciaMensal,
   type TransacaoPendencia,
 } from "@/lib/financeiro-pendencias";
+import { alertaExecucaoCron, type ExecucaoCron } from "@/lib/billing-cron-runs";
+import { isDiaUtil } from "@/lib/billing-schedule";
 
 type Notification = {
   id: string;
@@ -257,6 +259,34 @@ export function NotificationsBell() {
   });
   const diaDoMes = new Date().getDate();
   const alertaBoletos = canCobranca && diaDoMes >= 25 && !cobrancaChecklist?.boletos_enviados;
+
+  // --- Cobrança automática: aviso quando nenhuma tentativa do dia foi concluída
+  // (disparo perdido) ou quando alguma falhou. Some sozinho quando uma tentativa
+  // posterior conclui o dia. ---
+  const hojeBRT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const { data: cronRuns = [] } = useQuery({
+    queryKey: ["cobranca_cron_runs_alert", hojeBRT, userId ?? "anon"],
+    enabled: !!userId && canCobranca,
+    refetchInterval: 300000,
+    queryFn: async (): Promise<ExecucaoCron[]> => {
+      const { data, error } = await supabase
+        .from("whatsapp_cron_runs" as never)
+        .select("data_ref, slot, status, enviados, falhas")
+        .eq("data_ref", hojeBRT);
+      if (error) return [];
+      return (data ?? []) as unknown as ExecucaoCron[];
+    },
+  });
+  const horaBRT = Number(
+    new Date().toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      hour12: false,
+    }),
+  );
+  const alertaCron = canCobranca
+    ? alertaExecucaoCron(cronRuns, hojeBRT, horaBRT, isDiaUtil(hojeBRT))
+    : null;
 
   const { data: forecasts = [] } = useQuery({
     queryKey: ["fluxo_alerts", today],
@@ -621,7 +651,8 @@ export function NotificationsBell() {
     plannerDue.length +
     pendenciasCategoria.length +
     pendenciasFaturamento.length +
-    (alertaBoletos ? 1 : 0);
+    (alertaBoletos ? 1 : 0) +
+    (alertaCron ? 1 : 0);
 
   return (
     <Popover
@@ -663,6 +694,29 @@ export function NotificationsBell() {
                     <div className="text-[11px] text-muted-foreground">
                       Realize o envio dos boletos de todos os colégios e marque o checklist no
                       módulo de Cobrança.
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            </div>
+          )}
+
+          {/* Cobrança automática: disparo diário perdido ou com falha. */}
+          {alertaCron && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cobrança Automática
+              </div>
+              <Link
+                to="/cobranca-automatica"
+                className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+              >
+                <div className="flex items-start gap-2">
+                  <HandCoins className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                  <div className="min-w-0">
+                    <div className="font-medium text-red-600">{alertaCron}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Veja as execuções da automação na tela de Cobrança Automática.
                     </div>
                   </div>
                 </div>
@@ -1056,7 +1110,8 @@ export function NotificationsBell() {
             plannerDue.length === 0 &&
             pendenciasCategoria.length === 0 &&
             pendenciasFaturamento.length === 0 &&
-            !alertaBoletos && (
+            !alertaBoletos &&
+            !alertaCron && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
               </p>

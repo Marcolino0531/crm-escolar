@@ -21,6 +21,18 @@
       "schedule": "0 12 * * *"
     },
     {
+      "path": "/api/whatsapp/cron/tentativa-2",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/whatsapp/cron/tentativa-3",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/whatsapp/cron/tentativa-4",
+      "schedule": "0 21 * * *"
+    },
+    {
       "path": "/api/agenda/cron",
       "schedule": "0 10 * * *"
     }
