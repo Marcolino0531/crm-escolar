@@ -10,6 +10,8 @@ import {
   BookOpen,
   PartyPopper,
   Check,
+  Tags,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -39,6 +41,14 @@ import {
   type RecurringTaskDef,
   type DueOccurrence,
 } from "@/lib/recurring-tasks";
+import {
+  mensagemCategorizacao,
+  mensagemConciliacao,
+  pendenciasCategorizacao,
+  pendenciasConciliacao,
+  type PendenciaMensal,
+  type TransacaoPendencia,
+} from "@/lib/financeiro-pendencias";
 
 type Notification = {
   id: string;
@@ -124,6 +134,9 @@ type ColoniaRegistroIntegridade = {
 
 type PagedRows<T> = { data: T[] | null; error: PostgrestError | null };
 
+// Janela de varredura das pendências financeiras do sininho (meses para trás).
+const PENDENCIAS_MESES = 12;
+
 // Texto fixo por loja exibido no sininho (1 alerta agrupado por loja).
 const LOW_STOCK_ALERT_TEXT: Record<StoreKey, string> = {
   belvedere: "Estoque baixo detectado no Núcleo Belvedere e Vale do Sereno",
@@ -149,6 +162,8 @@ export function NotificationsBell() {
   const canAgenda = canView("agenda");
   const canColonia = canView("colonia");
   const canColoniaFin = canView("colonia_financeiro");
+  const canExtrato = canView("financeiro_dashboard");
+  const canConciliacao = canView("financeiro_conciliacao");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -491,6 +506,54 @@ export function NotificationsBell() {
     },
   });
 
+  // --- Pendências financeiras por colégio/mês (derivadas ao vivo: o aviso some
+  // sozinho quando a última transação é categorizada / a última receita é
+  // conciliada). Um aviso por colégio e mês, nunca por transação. ---
+  const janelaPendencias = (() => {
+    const [ano, mes] = monthKeyFromISO(today).split("-").map(Number);
+    const d = new Date(ano, (mes ?? 1) - 1 - PENDENCIAS_MESES, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  })();
+  const { data: pendenciasFinanceiras } = useQuery({
+    queryKey: ["financeiro_pendencias", janelaPendencias, userId ?? "anon"],
+    enabled: !!userId && (canExtrato || canConciliacao),
+    refetchInterval: 300000,
+    queryFn: async () => {
+      const [transacoes, conciliacoes] = await Promise.all([
+        fetchAllRows<TransacaoPendencia>(
+          (from, to) =>
+            supabase
+              .from("transactions")
+              .select(
+                "id, school_id, date, type, cost_center_id, revenue_category_id, parent_transaction_id, description, amount",
+              )
+              .gte("date", janelaPendencias)
+              .order("id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<PagedRows<TransacaoPendencia>>,
+        ),
+        fetchAllRows<{ transaction_id: string }>(
+          (from, to) =>
+            supabase
+              .from("boleto_reconciliations")
+              .select("transaction_id")
+              .order("transaction_id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<PagedRows<{ transaction_id: string }>>,
+        ),
+      ]);
+      return {
+        categorizacao: canExtrato ? pendenciasCategorizacao(transacoes) : [],
+        conciliacao: canConciliacao
+          ? pendenciasConciliacao(
+              transacoes,
+              conciliacoes.map((r) => r.transaction_id),
+            )
+          : [],
+      };
+    },
+  });
+  const pendenciasCategoria: PendenciaMensal[] = pendenciasFinanceiras?.categorizacao ?? [];
+  const pendenciasFaturamento: PendenciaMensal[] = pendenciasFinanceiras?.conciliacao ?? [];
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -525,7 +588,9 @@ export function NotificationsBell() {
       !canDiario &&
       !canAgenda &&
       !canColonia &&
-      !canColoniaFin)
+      !canColoniaFin &&
+      !canExtrato &&
+      !canConciliacao)
   )
     return null;
 
@@ -554,6 +619,8 @@ export function NotificationsBell() {
     coloniaPendencias.length +
     coloniaIncompletos.length +
     plannerDue.length +
+    pendenciasCategoria.length +
+    pendenciasFaturamento.length +
     (alertaBoletos ? 1 : 0);
 
   return (
@@ -773,6 +840,64 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* Extrato Bancário: transações sem categoria (1 aviso por colégio/mês). */}
+          {pendenciasCategoria.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Extrato Bancário
+              </div>
+              {pendenciasCategoria.map((p) => (
+                <Link
+                  key={`cat-${p.schoolId}-${p.monthKey}`}
+                  to="/extrato-bancario"
+                  onClick={() => {
+                    setSelected(p.schoolId);
+                    setOpen(false);
+                  }}
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <Tags className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">
+                        {mensagemCategorizacao(schoolName(p.schoolId) || "—", p.monthKey)}
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Faturamento: receitas do período ainda pendentes de conciliação. */}
+          {pendenciasFaturamento.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Faturamento
+              </div>
+              {pendenciasFaturamento.map((p) => (
+                <Link
+                  key={`conc-${p.schoolId}-${p.monthKey}`}
+                  to="/conciliacao"
+                  onClick={() => {
+                    setSelected(p.schoolId);
+                    setOpen(false);
+                  }}
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">
+                        {mensagemConciliacao(schoolName(p.schoolId) || "—", p.monthKey)}
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Accounts payable: overdue first (red), then due today. */}
           {canFluxo && (overdue.length > 0 || dueToday.length > 0) && (
             <div>
@@ -929,6 +1054,8 @@ export function NotificationsBell() {
             coloniaPendencias.length === 0 &&
             coloniaIncompletos.length === 0 &&
             plannerDue.length === 0 &&
+            pendenciasCategoria.length === 0 &&
+            pendenciasFaturamento.length === 0 &&
             !alertaBoletos && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
