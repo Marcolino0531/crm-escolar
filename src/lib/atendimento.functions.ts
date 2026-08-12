@@ -2,7 +2,7 @@
 //
 // O envio de mensagens de texto livre usa o endpoint padrão da Cloud API (fora
 // da janela de 24h a Meta exige template). Requer permissão de edição do módulo
-// Cobrança e roda inteiramente no servidor (token nunca vai ao navegador).
+// Atendimento e roda inteiramente no servidor (token nunca vai ao navegador).
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -10,22 +10,13 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getWhatsAppSendConfig, sendTextMessage } from "@/lib/whatsapp.server";
 
-async function assertCanEditCobranca(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "cobranca" } as never,
-  );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para responder no Atendimento.");
-}
-
-async function assertCanEditAtendimento(userId: string) {
+async function assertCanEditAtendimento(userId: string, acao: string) {
   const { data, error } = await supabaseAdmin.rpc(
     "can_edit_module" as never,
     { _user_id: userId, _module: "financeiro_atendimento" } as never,
   );
   if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para editar o Atendimento.");
+  if (!data) throw new Error(`Você não tem permissão para ${acao} no Atendimento.`);
 }
 
 const EnviarMensagemInputSchema = z.object({
@@ -43,7 +34,7 @@ export const enviarMensagemChat = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => EnviarMensagemInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<EnviarMensagemResult> => {
-    await assertCanEditCobranca(context.userId);
+    await assertCanEditAtendimento(context.userId, "responder");
 
     const cfg = getWhatsAppSendConfig();
     if (!cfg) {
@@ -122,7 +113,7 @@ export const arquivarConversas = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<ArquivarResult> => {
-    await assertCanEditAtendimento(context.userId);
+    await assertCanEditAtendimento(context.userId, "arquivar conversas");
 
     const { error } = await supabaseAdmin
       .from("whatsapp_conversations" as never)
