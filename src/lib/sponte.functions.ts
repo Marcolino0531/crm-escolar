@@ -1728,6 +1728,39 @@ export async function coletarDividaAbertaAluno(
   return { boletos, totalSaldo };
 }
 
+// Responsável FINANCEIRO atual do aluno no Sponte, resolvendo as credenciais
+// pela unidade. É o destinatário da cobrança automática, reconsultado a cada
+// disparo: trocar o responsável no cadastro redireciona a mensagem na mesma
+// rodada. Retorna null quando a consulta não pôde ser feita (credencial
+// ausente, fault ou erro de rede) — diferente de um responsável cadastrado sem
+// telefone, que volta com `telefone` vazio.
+export async function buscarResponsavelFinanceiroAluno(
+  unidade: string,
+  alunoId: string,
+): Promise<{ nome: string; telefone: string } | null> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds || !alunoId) return null;
+  try {
+    const xml = await callSponte(
+      "GetResponsavelFinanceiro",
+      `AlunoID=${alunoId}`,
+      creds.codigoCliente,
+      creds.token,
+    );
+    if (checkFault(xml)) return null;
+    const node = parseXmlList(xml, "wsResponsavel").find((n) =>
+      parseXmlValue(n, "RetornoOperacao").startsWith("01"),
+    );
+    if (!node) return null;
+    return {
+      nome: parseXmlValue(node, "Nome"),
+      telefone: parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone"),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Linha digitável de um boleto já gerado, resolvendo as credenciais pela unidade.
 // Usado pela cobrança recorrente, que reavalia a dívida do aluno todos os dias e
 // precisa da linha do boleto mais recente. Retorna "" quando indisponível.
