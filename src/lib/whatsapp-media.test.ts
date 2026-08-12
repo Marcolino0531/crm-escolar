@@ -7,6 +7,7 @@ import {
   mediaStoragePath,
   IMAGE_DOWNLOAD_ERROR,
   DOCUMENT_DOWNLOAD_ERROR,
+  AUDIO_DOWNLOAD_ERROR,
 } from "./whatsapp-media";
 
 describe("parseIncomingMessage", () => {
@@ -87,11 +88,43 @@ describe("parseIncomingMessage", () => {
     ).toBe("Opção A");
   });
 
+  it("captura media_id e mime de uma mensagem de voz (ogg/opus)", () => {
+    const p = parseIncomingMessage({
+      type: "audio",
+      audio: { id: "AUD123", mime_type: "audio/ogg; codecs=opus", voice: true },
+    });
+    expect(p).toEqual({
+      kind: "audio",
+      isMedia: true,
+      text: "",
+      mediaId: "AUD123",
+      mimeType: "audio/ogg; codecs=opus",
+      filename: null,
+    });
+  });
+
+  it("áudio encaminhado (arquivo, sem voice) também é tratado como mídia", () => {
+    const p = parseIncomingMessage({
+      type: "audio",
+      audio: { id: "AUD9", mime_type: "audio/mpeg" },
+    });
+    expect(p.kind).toBe("audio");
+    expect(p.isMedia).toBe(true);
+    expect(p.mediaId).toBe("AUD9");
+    expect(p.mimeType).toBe("audio/mpeg");
+  });
+
+  it("áudio sem media_id não dispara download (mediaId nulo)", () => {
+    const p = parseIncomingMessage({ type: "audio", audio: { mime_type: "audio/ogg" } });
+    expect(p.kind).toBe("audio");
+    expect(p.mediaId).toBeNull();
+  });
+
   it("tipo não tratado cai no rótulo genérico e não é mídia", () => {
-    const p = parseIncomingMessage({ type: "audio" });
+    const p = parseIncomingMessage({ type: "sticker" });
     expect(p.isMedia).toBe(false);
     expect(p.kind).toBe("text");
-    expect(p.text).toBe("[audio não suportada]");
+    expect(p.text).toBe("[sticker não suportada]");
     expect(p.mediaId).toBeNull();
   });
 });
@@ -176,6 +209,44 @@ describe("buildMessageFields", () => {
     expect(fields.media_filename).toBe("contrato.docx");
   });
 
+  it("áudio com upload bem-sucedido associa a URL do storage ao registro", () => {
+    const parsed = parseIncomingMessage({
+      type: "audio",
+      audio: { id: "AUD1", mime_type: "audio/ogg; codecs=opus", voice: true },
+    });
+    const stored = {
+      path: mediaStoragePath("AUD1", "audio/ogg; codecs=opus", new Date("2026-06-18T03:59:00Z")),
+      mime: "audio/ogg; codecs=opus",
+    };
+    const fields = buildMessageFields(parsed, stored);
+    expect(fields).toEqual({
+      message_type: "audio",
+      body: "",
+      media_path: "2026/06/AUD1.ogg",
+      media_mime: "audio/ogg; codecs=opus",
+      media_id: "AUD1",
+      media_filename: null,
+    });
+  });
+
+  it("áudio com falha no download grava a mensagem de erro e preserva o media_id", () => {
+    const parsed = parseIncomingMessage({
+      type: "audio",
+      audio: { id: "AUD1", mime_type: "audio/ogg" },
+    });
+    const fields = buildMessageFields(parsed, null);
+    expect(fields).toEqual({
+      message_type: "audio",
+      body: AUDIO_DOWNLOAD_ERROR,
+      media_path: null,
+      media_mime: "audio/ogg",
+      media_id: "AUD1",
+      media_filename: null,
+    });
+    // O corpo não volta a ser o "[audio não suportada]" de antes.
+    expect(fields.body).not.toContain("não suportada");
+  });
+
   it("mensagem de texto não recebe campos de mídia", () => {
     const parsed = parseIncomingMessage({ type: "text", text: { body: "oi" } });
     const fields = buildMessageFields(parsed, null);
@@ -197,6 +268,21 @@ describe("extFromMime / extFromFilename / mediaStoragePath", () => {
     expect(extFromMime("image/webp")).toBe("webp");
     expect(extFromMime("image/jpeg; codecs=foo")).toBe("jpg");
     expect(extFromMime(null)).toBe("bin");
+  });
+
+  it("mapeia mimes de áudio conhecidos (voz do WhatsApp é ogg/opus)", () => {
+    expect(extFromMime("audio/ogg; codecs=opus")).toBe("ogg");
+    expect(extFromMime("audio/opus")).toBe("ogg");
+    expect(extFromMime("audio/mpeg")).toBe("mp3");
+    expect(extFromMime("audio/mp4")).toBe("m4a");
+    expect(extFromMime("audio/aac")).toBe("aac");
+    expect(extFromMime("audio/amr")).toBe("amr");
+  });
+
+  it("caminho do áudio no storage é idempotente por media_id", () => {
+    const now = new Date("2026-06-18T03:59:00Z");
+    expect(mediaStoragePath("AUD7", "audio/ogg; codecs=opus", now)).toBe("2026/06/AUD7.ogg");
+    expect(mediaStoragePath("AUD7", "audio/ogg; codecs=opus", now)).toBe("2026/06/AUD7.ogg");
   });
 
   it("mapeia mimes de documento conhecidos", () => {

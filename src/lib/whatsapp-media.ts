@@ -1,4 +1,5 @@
-// Lógica pura de mensagens recebidas do WhatsApp com mídia (imagens).
+// Lógica pura de mensagens recebidas do WhatsApp com mídia (imagem, documento e
+// áudio).
 //
 // Separa o PARSING do payload da Meta e a MONTAGEM do registro que vai para o
 // banco (`whatsapp_messages`), sem fazer rede nem tocar storage, para ser
@@ -6,6 +7,7 @@
 
 export const IMAGE_DOWNLOAD_ERROR = "Não foi possível carregar esta imagem";
 export const DOCUMENT_DOWNLOAD_ERROR = "Não foi possível carregar este documento";
+export const AUDIO_DOWNLOAD_ERROR = "Não foi possível carregar este áudio";
 
 // Formato relevante de uma mensagem recebida no webhook da Meta.
 export interface WebhookLikeMessage {
@@ -13,6 +15,8 @@ export interface WebhookLikeMessage {
   text?: { body?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
   document?: { id?: string; mime_type?: string; caption?: string; filename?: string };
+  // Áudio e mensagem de voz (`voice: true`) compartilham o mesmo formato.
+  audio?: { id?: string; mime_type?: string; voice?: boolean };
   button?: { text?: string };
   interactive?: {
     button_reply?: { title?: string };
@@ -20,11 +24,18 @@ export interface WebhookLikeMessage {
   };
 }
 
-export type MediaKind = "text" | "image" | "document";
+export type MediaKind = "text" | "image" | "document" | "audio";
+
+// Mensagem de erro gravada no corpo quando o download da mídia falha.
+const MEDIA_DOWNLOAD_ERROR: Record<Exclude<MediaKind, "text">, string> = {
+  image: IMAGE_DOWNLOAD_ERROR,
+  document: DOCUMENT_DOWNLOAD_ERROR,
+  audio: AUDIO_DOWNLOAD_ERROR,
+};
 
 export interface ParsedIncomingMessage {
   kind: MediaKind;
-  // Verdadeiro quando a mensagem carrega uma mídia (imagem ou documento).
+  // Verdadeiro quando a mensagem carrega uma mídia (imagem, documento ou áudio).
   isMedia: boolean;
   // Texto legível: corpo do texto, legenda da mídia, título do botão/lista,
   // ou o rótulo "[tipo não suportada]" para tipos ainda não tratados.
@@ -36,8 +47,8 @@ export interface ParsedIncomingMessage {
   filename: string | null;
 }
 
-// Interpreta a mensagem recebida, capturando media_id/mime (imagem e documento)
-// e o filename (documento).
+// Interpreta a mensagem recebida, capturando media_id/mime (imagem, documento e
+// áudio) e o filename (documento).
 export function parseIncomingMessage(msg: WebhookLikeMessage): ParsedIncomingMessage {
   if (msg.type === "image") {
     return {
@@ -58,6 +69,18 @@ export function parseIncomingMessage(msg: WebhookLikeMessage): ParsedIncomingMes
       mediaId: msg.document?.id ?? null,
       mimeType: msg.document?.mime_type ?? null,
       filename: msg.document?.filename?.trim() || null,
+    };
+  }
+
+  if (msg.type === "audio") {
+    return {
+      kind: "audio",
+      isMedia: true,
+      // A Meta não envia legenda em áudio; o corpo fica vazio e a tela mostra o player.
+      text: "",
+      mediaId: msg.audio?.id ?? null,
+      mimeType: msg.audio?.mime_type ?? null,
+      filename: null,
     };
   }
 
@@ -88,14 +111,14 @@ export interface StoredMedia {
 }
 
 // Monta os campos da mensagem a partir do parse e do resultado do armazenamento.
-// Para mídias (imagem/documento): se o upload deu certo, associa o caminho
+// Para mídias (imagem/documento/áudio): se o upload deu certo, associa o caminho
 // definitivo do storage; se falhou (media_id expirado/erro da Meta), grava a
 // mensagem de erro no corpo, preservando o media_id para eventual reprocesso.
 export function buildMessageFields(
   parsed: ParsedIncomingMessage,
   stored: StoredMedia | null,
 ): MessageMediaFields {
-  if (parsed.kind === "image" || parsed.kind === "document") {
+  if (parsed.kind !== "text") {
     if (stored) {
       return {
         message_type: parsed.kind,
@@ -108,7 +131,7 @@ export function buildMessageFields(
     }
     return {
       message_type: parsed.kind,
-      body: parsed.kind === "image" ? IMAGE_DOWNLOAD_ERROR : DOCUMENT_DOWNLOAD_ERROR,
+      body: MEDIA_DOWNLOAD_ERROR[parsed.kind],
       media_path: null,
       media_mime: parsed.mimeType,
       media_id: parsed.mediaId,
@@ -158,6 +181,22 @@ export function extFromMime(mime: string | null | undefined): string {
       return "xlsx";
     case "text/plain":
       return "txt";
+    // Áudio: o WhatsApp manda mensagem de voz em ogg/opus; os demais aparecem
+    // quando o responsável encaminha um arquivo de música/gravação.
+    case "audio/ogg":
+    case "audio/opus":
+      return "ogg";
+    case "audio/mpeg":
+    case "audio/mp3":
+      return "mp3";
+    case "audio/mp4":
+    case "audio/m4a":
+    case "audio/x-m4a":
+      return "m4a";
+    case "audio/aac":
+      return "aac";
+    case "audio/amr":
+      return "amr";
     default:
       return "bin";
   }

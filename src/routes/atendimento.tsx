@@ -20,6 +20,8 @@ import {
   ImageOff,
   FileText,
   FileX,
+  Download,
+  MicOff,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -72,7 +74,7 @@ type ChatMessage = {
   wa_timestamp: string | null;
   origem: "chat" | "cobranca";
   created_at: string;
-  message_type: "text" | "image" | "document" | "system";
+  message_type: "text" | "image" | "document" | "audio" | "system";
   media_path: string | null;
   media_mime: string | null;
   media_filename: string | null;
@@ -697,6 +699,82 @@ function DocumentoMensagem({ path, filename }: { path: string; filename: string 
   );
 }
 
+// O navegador reproduz este mime? Sem mime conhecido, tenta tocar de qualquer
+// forma (o `onError` do player cobre a recusa).
+function navegadorTocaAudio(mime: string | null): boolean {
+  const tipo = (mime ?? "").split(";")[0].trim().toLowerCase();
+  if (!tipo || typeof document === "undefined") return true;
+  const el = document.createElement("audio");
+  if (typeof el.canPlayType !== "function") return true;
+  // ogg/opus é o formato das mensagens de voz do WhatsApp; o codec precisa entrar
+  // na consulta, senão navegadores que só tocam Vorbis respondem "maybe".
+  const consulta = tipo === "audio/ogg" ? 'audio/ogg; codecs="opus"' : tipo;
+  return el.canPlayType(consulta) !== "";
+}
+
+// Player de áudio recebido (mensagem de voz do responsável): gera uma signed URL
+// a partir do caminho no storage privado e toca direto no balão, sem download.
+// O WhatsApp manda ogg/opus, que Chrome, Firefox e Edge reproduzem nativamente;
+// se o navegador não der conta do formato (Safari antigo), o player dá lugar a um
+// link de download, em vez de um controle mudo.
+function AudioMensagem({ path, mime }: { path: string; mime: string | null }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [erro, setErro] = useState(false);
+  // Formato recusado pelo navegador: checado no mime antes de montar o player e
+  // também no erro de decodificação (o mime da Meta nem sempre é preciso).
+  const [semSuporte, setSemSuporte] = useState(() => !navegadorTocaAudio(mime));
+
+  useEffect(() => {
+    let ativo = true;
+    void supabase.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!ativo) return;
+        if (error || !data?.signedUrl) setErro(true);
+        else setUrl(data.signedUrl);
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [path]);
+
+  if (erro) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg bg-muted px-2 py-3 text-xs text-muted-foreground">
+        <MicOff className="h-4 w-4" /> Não foi possível carregar este áudio
+      </div>
+    );
+  }
+  if (!url) {
+    return <Skeleton className="h-12 w-56 rounded-lg" />;
+  }
+  if (semSuporte) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm hover:bg-muted"
+      >
+        <Download className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <span className="underline-offset-2 hover:underline">
+          Baixar áudio (formato não suportado neste navegador)
+        </span>
+      </a>
+    );
+  }
+  return (
+    <audio
+      controls
+      preload="metadata"
+      src={url}
+      onError={() => setSemSuporte(true)}
+      className="h-11 w-64 max-w-full"
+    />
+  );
+}
+
 // Divisor de data centralizado entre os dias da conversa (estilo WhatsApp).
 function DivisorData({ label }: { label: string }) {
   return (
@@ -760,6 +838,12 @@ function Bolha({ msg }: { msg: ChatMessage }) {
         ) : msg.message_type === "document" ? (
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <FileX className="h-4 w-4" /> {msg.body}
+          </div>
+        ) : msg.message_type === "audio" && msg.media_path ? (
+          <AudioMensagem path={msg.media_path} mime={msg.media_mime} />
+        ) : msg.message_type === "audio" ? (
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <MicOff className="h-4 w-4" /> {msg.body}
           </div>
         ) : (
           <div className="whitespace-pre-wrap break-words">{msg.body}</div>

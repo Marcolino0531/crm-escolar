@@ -625,6 +625,7 @@ interface WebhookMessage {
   text?: { body?: string };
   image?: { id?: string; mime_type?: string; caption?: string };
   document?: { id?: string; mime_type?: string; caption?: string; filename?: string };
+  audio?: { id?: string; mime_type?: string; voice?: boolean };
   button?: { text?: string };
   interactive?: {
     button_reply?: { title?: string };
@@ -640,7 +641,7 @@ interface WebhookMessage {
   };
 }
 
-// Baixa a mídia (imagem/documento) da Meta pelo media_id e a armazena no bucket
+// Baixa a mídia (imagem/documento/áudio) da Meta pelo media_id e a armazena no bucket
 // do School Hub. A URL da Meta expira em minutos, então o download acontece
 // agora, no webhook. Retorna o caminho definitivo no storage, ou null em
 // qualquer falha (media_id expirado, erro da Graph API, falha de upload) — o
@@ -872,7 +873,7 @@ async function processarMensagensRecebidas(
       .maybeSingle();
     if (jaExiste) continue;
 
-    // Mídia (imagem/documento): baixa da Meta e armazena no storage do School Hub
+    // Mídia (imagem/documento/áudio): baixa da Meta e armazena no storage do School Hub
     // agora (a URL da Meta expira rápido). Em qualquer falha, `stored` fica null
     // e o corpo vira a mensagem de erro definida na lib.
     let stored: StoredMedia | null = null;
@@ -887,6 +888,7 @@ async function processarMensagensRecebidas(
       if (fields.message_type === "image") preview = "📷 Imagem";
       else if (fields.message_type === "document")
         preview = `📄 ${fields.media_filename ?? "Documento"}`;
+      else if (fields.message_type === "audio") preview = "🎤 Áudio";
     }
 
     await supabaseAdmin.from("whatsapp_messages" as never).insert({
