@@ -31,6 +31,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { enviarMensagemChat, arquivarConversas } from "@/lib/atendimento.functions";
 import { displayPhoneBR } from "@/lib/phone";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
+import { agruparPorDia } from "@/lib/atendimento-dias";
 
 export const Route = createFileRoute("/atendimento")({
   head: () => ({ meta: [{ title: "Atendimento — School Hub" }] }),
@@ -89,18 +90,6 @@ function horaCurta(iso: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
-
-function dataHora(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function AtendimentoPage() {
@@ -461,6 +450,7 @@ function ThreadConversa({
   });
 
   const mensagens = useMemo(() => mensagensQuery.data ?? [], [mensagensQuery.data]);
+  const itens = useMemo(() => agruparPorDia(mensagens, new Date()), [mensagens]);
 
   // Marca como lida ao abrir a conversa (zera o contador de não-lidas).
   useEffect(() => {
@@ -556,7 +546,13 @@ function ThreadConversa({
             Nenhuma mensagem nesta conversa.
           </div>
         ) : (
-          mensagens.map((m) => <Bolha key={m.id} msg={m} />)
+          itens.map((item) =>
+            item.tipo === "divisor" ? (
+              <DivisorData key={`dia-${item.dia}`} label={item.label} />
+            ) : (
+              <Bolha key={item.msg.id} msg={item.msg} />
+            ),
+          )
         )}
         <div ref={fimRef} />
       </div>
@@ -701,6 +697,17 @@ function DocumentoMensagem({ path, filename }: { path: string; filename: string 
   );
 }
 
+// Divisor de data centralizado entre os dias da conversa (estilo WhatsApp).
+function DivisorData({ label }: { label: string }) {
+  return (
+    <div className="flex justify-center py-1">
+      <div className="rounded-md bg-background px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground shadow-sm">
+        {label}
+      </div>
+    </div>
+  );
+}
+
 function Bolha({ msg }: { msg: ChatMessage }) {
   // Nota interna de evento administrativo (ex.: troca de número): centralizada e
   // discreta, sem balão de conversa.
@@ -708,7 +715,7 @@ function Bolha({ msg }: { msg: ChatMessage }) {
     return (
       <div className="flex justify-center">
         <div className="rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-          {msg.body} · {dataHora(msg.wa_timestamp ?? msg.created_at)}
+          {msg.body} · {horaCurta(msg.wa_timestamp ?? msg.created_at)}
         </div>
       </div>
     );
@@ -762,7 +769,7 @@ function Bolha({ msg }: { msg: ChatMessage }) {
             out ? "text-emerald-700/70" : "text-muted-foreground"
           }`}
         >
-          <span>{dataHora(msg.wa_timestamp ?? msg.created_at)}</span>
+          <span>{horaCurta(msg.wa_timestamp ?? msg.created_at)}</span>
           {out && Icon && (
             <span
               className={`inline-flex items-center gap-0.5 ${
