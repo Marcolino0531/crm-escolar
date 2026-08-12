@@ -1174,7 +1174,8 @@ export interface BuscaAlunosResult {
 }
 
 const BuscaAlunosInputSchema = z.object({
-  nome: z.string().trim().min(3),
+  // Nome (a partir de 3 letras) ou AlunoID (só dígitos).
+  nome: z.string().trim().min(1),
   unidade: z.string().min(1),
 });
 
@@ -1203,11 +1204,18 @@ export const buscarAlunosSponte = createServerFn({ method: "POST" })
     if (!creds) return { alunos: [], truncado: false, indisponivel: true };
 
     const termo = sanitizarTermoBusca(nome);
-    if (termo.length < 3) return { alunos: [], truncado: false };
+    // Termo só de dígitos é AlunoID (busca exata); o resto é nome (busca "contém").
+    const porId = /^\d+$/.test(termo);
+    if (!porId && termo.length < 3) return { alunos: [], truncado: false };
 
     let xml: string;
     try {
-      xml = await callSponte("GetAlunos", `Nome=${termo}`, creds.codigoCliente, creds.token);
+      xml = await callSponte(
+        "GetAlunos",
+        porId ? `AlunoID=${termo}` : `Nome=${termo}`,
+        creds.codigoCliente,
+        creds.token,
+      );
     } catch (e) {
       return {
         alunos: [],

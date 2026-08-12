@@ -50,6 +50,12 @@ import {
   type GrupoCobranca,
   type ParcelaCobranca,
 } from "@/lib/billing-recurrence";
+import {
+  filtrarPorAcordo,
+  filtrarPorAcordoDoAluno,
+  mapaExcecoes,
+  type ExcecaoCobranca,
+} from "@/lib/billing-exceptions";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
 import { slotDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
 import {
@@ -242,6 +248,10 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
     return { status: "sem_envio", motivo: "nenhum aluno em cobrança" };
   }
 
+  // Alunos com acordo de parcelamento: as parcelas vencidas até o mês de
+  // referência saem da régua (do disparo e do total anunciado).
+  const excecoes = await carregarExcecoesAcordo();
+
   // Reconsulta a dívida de cada candidato no Sponte: quem pagou desaparece daqui.
   // Em lotes concorrentes para caber no tempo de execução do cron.
   const cobraveis: ParcelaCobranca[] = [];
@@ -257,7 +267,10 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
     );
     for (const { candidato: c, divida } of resultados) {
       if (!divida) continue;
-      vencidasPorAluno.set(c.alunoId, parcelasVencidas(divida.boletos, hoje));
+      vencidasPorAluno.set(
+        c.alunoId,
+        filtrarPorAcordoDoAluno(c.alunoId, parcelasVencidas(divida.boletos, hoje), excecoes),
+      );
       for (const b of divida.boletos) {
         cobraveis.push({
           alunoId: c.alunoId,
@@ -289,7 +302,7 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   }
 
   const grupos = agruparPorResponsavel(
-    parcelasCobraveis(cobraveis, hoje, DATA_BASE_COBRANCA),
+    parcelasCobraveis(filtrarPorAcordo(cobraveis, excecoes), hoje, DATA_BASE_COBRANCA),
     hoje,
     vencidasPorAluno,
   );
@@ -393,6 +406,27 @@ async function runCronRegistrado(slot: string): Promise<Response> {
     await finalizar({ status: "erro", erro: msg });
     return json({ ok: false, hoje, slot, error: msg }, 500);
   }
+}
+
+// Exceções vigentes por acordo (AlunoID → mês de referência YYYY-MM). Sem
+// linha na tabela, o aluno é cobrado normalmente — remover a exceção não exige
+// nenhum outro desfazimento.
+async function carregarExcecoesAcordo(): Promise<Map<string, string>> {
+  const { data, error } = await supabaseAdmin
+    .from("whatsapp_billing_exceptions" as never)
+    .select("aluno_id, mes_referencia");
+  if (error) {
+    // Fail-open explícito: a falha de leitura não pode travar o disparo do dia,
+    // mas fica registrada para não passar em silêncio.
+    console.error("[whatsapp] falha ao ler exceções de acordo:", error.message);
+    return new Map();
+  }
+  const rows = (data ?? []) as unknown as { aluno_id: string; mes_referencia: string }[];
+  const excecoes: ExcecaoCobranca[] = rows.map((r) => ({
+    alunoId: r.aluno_id,
+    mesReferencia: r.mes_referencia,
+  }));
+  return mapaExcecoes(excecoes);
 }
 
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que

@@ -9,13 +9,18 @@ import {
   FlaskConical,
   AlertTriangle,
   CheckCircle2,
+  Handshake,
   Inbox,
   FileText,
+  Loader2,
+  Search,
+  Trash2,
   X,
   PauseCircle,
   PlayCircle,
   ShieldAlert,
   Timer,
+  User,
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -39,10 +44,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { supabase } from "@/integrations/supabase/client";
-import { enviarCobrancaTeste } from "@/lib/sponte.functions";
+import {
+  buscarAlunosSponte,
+  enviarCobrancaTeste,
+  type AlunoBuscaSponte,
+} from "@/lib/sponte.functions";
 import { isDiaUtil } from "@/lib/billing-schedule";
 import { alertaExecucaoCron } from "@/lib/billing-cron-runs";
+import { rotuloMesReferencia } from "@/lib/billing-exceptions";
+import { useAuth } from "@/lib/app-context";
 import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca-automatica")({
@@ -160,6 +172,8 @@ function CobrancaAutomaticaPage() {
       <ExecucoesDoCron />
 
       {podeEditar && <AmbienteDeTeste onEnviado={() => refetch()} />}
+
+      <AlunosComAcordo podeEditar={podeEditar} />
 
       <div className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -583,6 +597,295 @@ function AmbienteDeTeste({ onEnviado }: { onEnviado: () => void }) {
             <div className="font-medium">{res.error ?? "Falha no disparo."}</div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+type ExcecaoAcordo = {
+  id: string;
+  aluno_id: string;
+  aluno_nome: string;
+  unidade: string;
+  mes_referencia: string;
+  created_at: string;
+  created_by_nome: string;
+};
+
+// Alunos com acordo de parcelamento: a automação para de insistir nas parcelas
+// vencidas até o mês do acordo e segue cobrando as posteriores. É um filtro do
+// disparo — nada é escrito no Sponte nem nos débitos do School Hub.
+function AlunosComAcordo({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const { session } = useAuth();
+  const buscar = useServerFn(buscarAlunosSponte);
+
+  const [unidade, setUnidade] = useState<string>("");
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [erroBusca, setErroBusca] = useState<string | null>(null);
+  const [selecionado, setSelecionado] = useState<AlunoBuscaSponte | null>(null);
+  const [inicioMes, setInicioMes] = useState<string>(() => `${hojeSaoPauloYMD().slice(0, 7)}-01`);
+
+  const { data: excecoes = [], isError } = useQuery({
+    queryKey: ["cobranca-excecoes"],
+    queryFn: async (): Promise<ExcecaoAcordo[]> => {
+      const { data, error } = await supabase
+        .from("whatsapp_billing_exceptions" as never)
+        .select("id, aluno_id, aluno_nome, unidade, mes_referencia, created_at, created_by_nome")
+        .order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as ExcecaoAcordo[];
+    },
+  });
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => {
+      setErroBusca(null);
+      setResultados(alunos);
+      setSelecionado(alunos.length === 1 ? alunos[0] : null);
+    },
+    onError: (e) => {
+      setResultados(null);
+      setErroBusca(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  const salvar = useMutation({
+    mutationFn: async () => {
+      if (!selecionado) throw new Error("Selecione um aluno.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const { error } = await supabase.from("whatsapp_billing_exceptions" as never).upsert(
+        {
+          aluno_id: selecionado.alunoId,
+          aluno_nome: selecionado.nome,
+          unidade,
+          mes_referencia: inicioMes.slice(0, 7),
+          created_at: new Date().toISOString(),
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never,
+        { onConflict: "aluno_id" },
+      );
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Aluno excluído da cobrança automática para o período do acordo.");
+      setResultados(null);
+      setSelecionado(null);
+      setTermo("");
+      qc.invalidateQueries({ queryKey: ["cobranca-excecoes"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar a exceção."),
+  });
+
+  const remover = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("whatsapp_billing_exceptions" as never)
+        .delete()
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success(
+        "Exceção removida — a cobrança automática volta a valer para todas as parcelas.",
+      );
+      qc.invalidateQueries({ queryKey: ["cobranca-excecoes"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover a exceção."),
+  });
+
+  // Nome precisa de 3 letras; AlunoID (só dígitos) vale a partir de 1 caractere.
+  const t = termo.trim();
+  const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <Handshake className="h-4 w-4 text-primary" /> Alunos com Acordo
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          {excecoes.length} aluno(s) com cobrança automática suspensa
+        </span>
+      </div>
+
+      <p className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+        A exceção afeta <strong>apenas o disparo automático de cobrança via WhatsApp</strong>:
+        parcelas vencidas até o mês do acordo (inclusive) deixam de ser cobradas, e as que vencerem
+        depois continuam sendo cobradas normalmente. Nada é alterado no Sponte nem no cadastro
+        financeiro do School Hub — os débitos continuam existindo e visíveis em Inadimplência, Fluxo
+        Futuro e nas demais telas.
+      </p>
+
+      {podeEditar && (
+        <div className="space-y-3 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">Unidade</Label>
+              <Select
+                value={unidade}
+                onValueChange={(v) => {
+                  setUnidade(v);
+                  setResultados(null);
+                  setSelecionado(null);
+                }}
+              >
+                <SelectTrigger className="h-9 w-56">
+                  <SelectValue placeholder="Selecione a unidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNIDADES_SPONTE.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="acordo-busca" className="text-[11px] text-muted-foreground">
+                Aluno (nome ou AlunoID do Sponte)
+              </Label>
+              <Input
+                id="acordo-busca"
+                value={termo}
+                onChange={(e) => setTermo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && unidade && termoValido) buscarAlunos.mutate();
+                }}
+                placeholder="ex.: Giovanna ou 554"
+                className="h-9 w-64"
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 gap-1"
+              disabled={!unidade || !termoValido || buscarAlunos.isPending}
+              onClick={() => buscarAlunos.mutate()}
+            >
+              {buscarAlunos.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              Buscar no Sponte
+            </Button>
+          </div>
+
+          {erroBusca && <div className="text-xs text-red-600">{erroBusca}</div>}
+
+          {resultados && resultados.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              Nenhum aluno encontrado para “{termo.trim()}” em {unidade}.
+            </div>
+          )}
+
+          {resultados && resultados.length > 0 && (
+            <div className="max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  onClick={() => setSelecionado(a)}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 ${
+                    selecionado?.alunoId === a.alunoId ? "bg-primary/10" : ""
+                  }`}
+                >
+                  <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="font-medium">{a.nome}</span>
+                  <span className="text-xs text-muted-foreground">
+                    AlunoID {a.alunoId}
+                    {a.turma ? ` · ${a.turma}` : ""}
+                    {a.situacao ? ` · ${a.situacao}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selecionado && (
+            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
+              <div className="text-sm">
+                <div className="font-semibold">{selecionado.nome}</div>
+                <div className="text-xs text-muted-foreground">
+                  AlunoID {selecionado.alunoId} · {unidade}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] text-muted-foreground">
+                  Mês de referência do acordo
+                </div>
+                <MonthYearPicker startDate={inicioMes} onChange={(start) => setInicioMes(start)} />
+              </div>
+              <Button
+                className="h-9 gap-1"
+                disabled={salvar.isPending}
+                onClick={() => salvar.mutate()}
+              >
+                <Handshake className="h-4 w-4" />
+                {salvar.isPending ? "Salvando…" : "Suspender cobrança"}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isError ? (
+        <div className="px-4 py-4 text-sm text-red-600">Falha ao carregar as exceções.</div>
+      ) : excecoes.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground">
+          Nenhum aluno com acordo cadastrado — a cobrança automática vale para todos.
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Aluno</TableHead>
+              <TableHead>AlunoID</TableHead>
+              <TableHead>Unidade</TableHead>
+              <TableHead>Acordo até</TableHead>
+              <TableHead>Cadastrado por</TableHead>
+              {podeEditar && <TableHead className="w-10" />}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {excecoes.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell className="text-sm font-medium">{e.aluno_nome || "—"}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{e.aluno_id}</TableCell>
+                <TableCell className="text-sm">{e.unidade}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm">
+                  {rotuloMesReferencia(e.mes_referencia)}
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {e.created_by_nome || "—"} · {formatDataHora(e.created_at)}
+                </TableCell>
+                {podeEditar && (
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                      title="Remover exceção (volta a cobrar todas as parcelas)"
+                      disabled={remover.isPending}
+                      onClick={() => remover.mutate(e.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </div>
   );
