@@ -14,11 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Trash2,
   Plus,
@@ -183,14 +179,24 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
   { label: "Comercial e Admissões", modules: ["agenda", "admissoes", "onboarding"] },
   {
     label: "Pedagógico e Operacional",
-    modules: ["diario", "uniformes", "estoque_material", "colonia", "colonia_financeiro"],
+    modules: [
+      "diario",
+      "uniformes",
+      "estoque_material",
+      "colonia",
+      "colonia_financeiro",
+      "esportes",
+    ],
   },
   { label: "Pessoas", modules: ["rh", "tasks"] },
 ];
 
 // Subcategorias do Financeiro, na mesma ordem do menu lateral.
 const FIN_SUBCATEGORIES: { label: string; modules: AppModule[] }[] = [
-  { label: "Bancário", modules: ["financeiro_dashboard", "financeiro_upload", "financeiro_cartao"] },
+  {
+    label: "Bancário",
+    modules: ["financeiro_dashboard", "financeiro_upload", "financeiro_cartao"],
+  },
   {
     label: "Faturamento e Investimentos",
     modules: ["financeiro_conciliacao", "financeiro_fluxo", "financeiro_fundos"],
@@ -269,8 +275,8 @@ function PermissionMatrix({
         </div>
         <CollapsibleContent className="space-y-2 px-3 pb-3">
           <p className="text-xs text-muted-foreground">
-            Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o
-            módulo Financeiro estiver com <strong>Visualizar</strong> ligado.
+            Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o módulo
+            Financeiro estiver com <strong>Visualizar</strong> ligado.
           </p>
           {FIN_SUBCATEGORIES.map((sub) => (
             <div key={sub.label} className="space-y-2">
@@ -373,6 +379,49 @@ function SchoolSelector({
   );
 }
 
+// Modalidades que um usuário pode ver dentro de Esportes Extracurriculares.
+// É o nível de permissão mais fino do sistema: marcar ao menos uma modalidade
+// transforma o usuário em PARCEIRO EXTERNO — ele passa a ver só essas
+// modalidades e perde a escrita no módulo, mesmo com "Editar" ligado.
+function ModalidadeSelector({
+  modalidades,
+  value,
+  onChange,
+}: {
+  modalidades: { id: string; nome: string; parceiro_nome: string }[];
+  value: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  if (modalidades.length === 0)
+    return (
+      <p className="text-xs text-muted-foreground">
+        Nenhuma modalidade cadastrada em Esportes Extracurriculares.
+      </p>
+    );
+  const toggle = (id: string, on: boolean) =>
+    onChange(on ? Array.from(new Set([...value, id])) : value.filter((x) => x !== id));
+  return (
+    <div className="space-y-2">
+      {modalidades.map((m) => (
+        <label
+          key={m.id}
+          className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+        >
+          <span className="text-sm font-medium">
+            {m.nome} <span className="font-normal text-muted-foreground">— {m.parceiro_nome}</span>
+          </span>
+          <Switch checked={value.includes(m.id)} onCheckedChange={(v) => toggle(m.id, v)} />
+        </label>
+      ))}
+      <p className="text-xs text-muted-foreground">
+        Nenhuma modalidade marcada = usuário interno, vê todas as modalidades. Com uma ou mais
+        marcadas, o usuário é tratado como parceiro externo: vê somente essas modalidades (alunos,
+        valores e repasses) e não pode alterar nada.
+      </p>
+    </div>
+  );
+}
+
 function UserManagement() {
   const qc = useQueryClient();
   const { schools } = useSchool();
@@ -386,6 +435,7 @@ function UserManagement() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [perms, setPerms] = useState<PermState>(() => blankPerms(false));
   const [schoolIds, setSchoolIds] = useState<string[]>([]);
+  const [modalidadeIds, setModalidadeIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -395,11 +445,24 @@ function UserManagement() {
   const [editIsAdmin, setEditIsAdmin] = useState(false);
   const [editPerms, setEditPerms] = useState<PermState>(() => blankPerms(false));
   const [editSchoolIds, setEditSchoolIds] = useState<string[]>([]);
+  const [editModalidadeIds, setEditModalidadeIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["managed_users"],
     queryFn: () => listFn(),
+  });
+
+  const { data: modalidades = [] } = useQuery({
+    queryKey: ["esportes_modalidades", "acessos"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("esportes_modalidades" as never)
+        .select("id, nome, parceiro_nome")
+        .order("nome", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as { id: string; nome: string; parceiro_nome: string }[];
+    },
   });
 
   async function handleCreate() {
@@ -422,6 +485,7 @@ function UserManagement() {
           isAdmin,
           permissions: permsToArray(perms),
           schoolIds,
+          esporteModalidadeIds: modalidadeIds,
         },
       });
       toast.success("Usuário criado.");
@@ -431,6 +495,7 @@ function UserManagement() {
       setIsAdmin(false);
       setPerms(blankPerms(false));
       setSchoolIds([]);
+      setModalidadeIds([]);
       qc.invalidateQueries({ queryKey: ["managed_users"] });
     } catch (e: any) {
       toast.error(e?.message ?? "Falha ao criar usuário.");
@@ -447,6 +512,7 @@ function UserManagement() {
     setEditIsAdmin(u.roles.includes("admin"));
     setEditPerms(permsFromUser(u));
     setEditSchoolIds(u.schoolIds ?? []);
+    setEditModalidadeIds(u.esporteModalidadeIds ?? []);
   }
 
   async function handleSaveEdit(userId: string) {
@@ -467,6 +533,7 @@ function UserManagement() {
           isAdmin: editIsAdmin,
           permissions: permsToArray(editPerms),
           schoolIds: editSchoolIds,
+          esporteModalidadeIds: editModalidadeIds,
           name: editName.trim(),
           email: editEmail.trim(),
           password: editPassword,
@@ -551,8 +618,18 @@ function UserManagement() {
             />
           </CollapsibleSection>
 
-          <CollapsibleSection title={isAdmin ? "Unidades permitidas" : "Unidades permitidas (obrigatório)"}>
+          <CollapsibleSection
+            title={isAdmin ? "Unidades permitidas" : "Unidades permitidas (obrigatório)"}
+          >
             <SchoolSelector schools={schools} value={schoolIds} onChange={setSchoolIds} />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Modalidades de Esportes Extracurriculares">
+            <ModalidadeSelector
+              modalidades={modalidades}
+              value={modalidadeIds}
+              onChange={setModalidadeIds}
+            />
           </CollapsibleSection>
 
           <div className="flex justify-end">
@@ -591,9 +668,7 @@ function UserManagement() {
                         {u.name ? (
                           <div className="truncate text-sm font-semibold">
                             {u.name}{" "}
-                            <span className="font-normal text-muted-foreground">
-                              - {u.email}
-                            </span>
+                            <span className="font-normal text-muted-foreground">- {u.email}</span>
                           </div>
                         ) : (
                           <div className="text-sm font-medium">{u.email}</div>
@@ -681,6 +756,13 @@ function UserManagement() {
                             onChange={setEditSchoolIds}
                           />
                         </CollapsibleSection>
+                        <CollapsibleSection title="Modalidades de Esportes Extracurriculares">
+                          <ModalidadeSelector
+                            modalidades={modalidades}
+                            value={editModalidadeIds}
+                            onChange={setEditModalidadeIds}
+                          />
+                        </CollapsibleSection>
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
                             <X className="h-4 w-4" /> Cancelar
@@ -714,7 +796,10 @@ type SchoolFaturamento = {
 
 // Converte o texto digitado (pt-BR, ex.: "1.234,56" ou "1234,56") em número.
 function parseMoedaInput(s: string): number | null {
-  const cleaned = s.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  const cleaned = s
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
   if (cleaned.trim() === "") return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
@@ -805,9 +890,7 @@ function FaturamentoRetroativo({ podeEditar }: { podeEditar: boolean }) {
                       inputMode="decimal"
                       value={valorExibido(s)}
                       disabled={!podeEditar}
-                      onChange={(e) =>
-                        setValores((prev) => ({ ...prev, [s.id]: e.target.value }))
-                      }
+                      onChange={(e) => setValores((prev) => ({ ...prev, [s.id]: e.target.value }))}
                       placeholder="0,00"
                     />
                   </div>
