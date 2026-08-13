@@ -189,6 +189,7 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
     ],
   },
   { label: "Pessoas", modules: ["rh", "tasks"] },
+  { label: "Documentos", modules: ["documentos"] },
 ];
 
 // Subcategorias do Financeiro, na mesma ordem do menu lateral.

@@ -16,6 +16,7 @@ import {
   Settings,
   LogOut,
   FileCheck2,
+  FileText,
   TrendingUp,
   KanbanSquare,
   CalendarDays,
@@ -375,6 +376,7 @@ function AppShell() {
   const showDiario = canView("diario");
   const showColonia = canView("colonia") || canView("colonia_financeiro");
   const showEsportes = canView("esportes");
+  const showDocumentos = canView("documentos");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -473,6 +475,14 @@ function AppShell() {
       ...group("pessoas", "Pessoas", [
         ...item(showRh, { kind: "item", to: "/rh", icon: Users, label: "Recursos Humanos" }),
         ...item(showTasks, { kind: "item", to: "/tasks", icon: ListTodo, label: "Tasks" }),
+      ]),
+      ...group("documentos", "Documentos", [
+        ...item(showDocumentos, {
+          kind: "item",
+          to: "/documentos",
+          icon: FileText,
+          label: "Recibos e Documentos",
+        }),
       ]),
       ...group("financeiro", "Financeiro", [
         ...group("fin-bancario", "Bancário", [

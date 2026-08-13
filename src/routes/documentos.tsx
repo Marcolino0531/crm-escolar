@@ -1,0 +1,1026 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { toast } from "sonner";
+import {
+  Building2,
+  Download,
+  FileText,
+  History,
+  Image as ImageIcon,
+  Loader2,
+  Receipt,
+  Save,
+  Search,
+  User,
+} from "lucide-react";
+import { AccessDenied } from "@/components/AccessDenied";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth, usePermissions } from "@/lib/app-context";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  buscarAlunosSponte,
+  buscarDadosCadastraisAluno,
+  type AlunoBuscaSponte,
+  type ResponsavelCadastroSponte,
+} from "@/lib/sponte.functions";
+import { parseBRLNumber } from "@/lib/currency";
+import { baixarPdfRecibo, carregarLogo, type LogoRecibo } from "@/lib/recibo-pdf";
+import {
+  formatarBRL,
+  formatarDataBR,
+  itensDoRecibo,
+  montarRecibo,
+  TOPICOS_RECIBO,
+  validarRecibo,
+  type AlunoRecibo,
+  type ColegioRecibo,
+  type ResponsavelRecibo,
+} from "@/lib/recibos";
+
+export const Route = createFileRoute("/documentos")({
+  head: () => ({ meta: [{ title: "Documentos — School Hub" }] }),
+  component: DocumentosGate,
+});
+
+function DocumentosGate() {
+  const { canView, loading } = usePermissions();
+  if (loading) return null;
+  if (!canView("documentos"))
+    return <AccessDenied message="Você não tem permissão para acessar Documentos." />;
+  return <DocumentosPage />;
+}
+
+const UNIDADES = ["CEC", "CEC Baby", "Núcleo Vale do Sereno", "Núcleo Belvedere"];
+const DOCUMENTOS_BUCKET = "documentos";
+
+type ColegioRow = {
+  unidade: string;
+  razao_social: string;
+  nome_fantasia: string;
+  cnpj: string;
+  inscricao_municipal: string;
+  endereco: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+  cep: string;
+  telefone: string;
+  email: string;
+  site: string;
+  assinante_nome: string;
+  assinante_cargo: string;
+  observacao: string;
+  logo_path: string | null;
+  updated_at: string;
+  updated_by_nome: string;
+};
+
+type ReciboSnapshot = {
+  colegio: ColegioRecibo;
+  aluno: AlunoRecibo;
+  responsavel: ResponsavelRecibo;
+  valores: Record<string, number>;
+};
+
+type ReciboRow = {
+  id: string;
+  numero: number;
+  unidade: string;
+  aluno_id: string;
+  aluno_nome: string;
+  responsavel_nome: string;
+  data_recibo: string;
+  valor_total: number;
+  created_at: string;
+  created_by_nome: string;
+  snapshot: ReciboSnapshot;
+};
+
+const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder?: string }[] = [
+  { key: "razao_social", label: "Razão social" },
+  { key: "nome_fantasia", label: "Nome fantasia" },
+  { key: "cnpj", label: "CNPJ", placeholder: "00.000.000/0000-00" },
+  { key: "inscricao_municipal", label: "Inscrição municipal" },
+  { key: "endereco", label: "Endereço (rua/av.)" },
+  { key: "numero", label: "Número" },
+  { key: "complemento", label: "Complemento" },
+  { key: "bairro", label: "Bairro" },
+  { key: "cidade", label: "Cidade" },
+  { key: "uf", label: "UF", placeholder: "MG" },
+  { key: "cep", label: "CEP" },
+  { key: "telefone", label: "Telefone" },
+  { key: "email", label: "E-mail" },
+  { key: "site", label: "Site" },
+  { key: "assinante_nome", label: "Assina o recibo (nome)" },
+  { key: "assinante_cargo", label: "Cargo de quem assina" },
+];
+
+function colegioVazio(unidade: string): ColegioRow {
+  return {
+    unidade,
+    razao_social: "",
+    nome_fantasia: "",
+    cnpj: "",
+    inscricao_municipal: "",
+    endereco: "",
+    numero: "",
+    complemento: "",
+    bairro: "",
+    cidade: "",
+    uf: "",
+    cep: "",
+    telefone: "",
+    email: "",
+    site: "",
+    assinante_nome: "",
+    assinante_cargo: "",
+    observacao: "",
+    logo_path: null,
+    updated_at: "",
+    updated_by_nome: "",
+  };
+}
+
+function paraColegioRecibo(row: ColegioRow): ColegioRecibo {
+  return {
+    unidade: row.unidade,
+    razaoSocial: row.razao_social,
+    nomeFantasia: row.nome_fantasia,
+    cnpj: row.cnpj,
+    inscricaoMunicipal: row.inscricao_municipal,
+    endereco: row.endereco,
+    numero: row.numero,
+    complemento: row.complemento,
+    bairro: row.bairro,
+    cidade: row.cidade,
+    uf: row.uf,
+    cep: row.cep,
+    telefone: row.telefone,
+    email: row.email,
+    site: row.site,
+    assinanteNome: row.assinante_nome,
+    assinanteCargo: row.assinante_cargo,
+    observacao: row.observacao,
+  };
+}
+
+function hojeYMD(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+async function carregarLogoDoColegio(logoPath: string | null): Promise<LogoRecibo | null> {
+  if (!logoPath) return null;
+  const { data } = await supabase.storage.from(DOCUMENTOS_BUCKET).createSignedUrl(logoPath, 120);
+  if (!data?.signedUrl) return null;
+  return await carregarLogo(data.signedUrl);
+}
+
+function useColegios() {
+  return useQuery({
+    queryKey: ["documentos_colegios"],
+    queryFn: async (): Promise<ColegioRow[]> => {
+      const { data, error } = await supabase.from("documentos_colegios" as never).select("*");
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as unknown as ColegioRow[];
+      return UNIDADES.map((u) => rows.find((r) => r.unidade === u) ?? colegioVazio(u));
+    },
+  });
+}
+
+function DocumentosPage() {
+  return (
+    <div className="space-y-4 p-4 md:p-6">
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <FileText className="h-6 w-6 text-primary" /> Documentos
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Emissão de documentos oficiais do colégio com os dados do Sponte. Nada aqui altera o
+          cadastro financeiro do aluno: o recibo é um documento, não uma baixa.
+        </p>
+      </div>
+
+      <Tabs defaultValue="recibo">
+        <TabsList>
+          <TabsTrigger value="recibo" className="gap-1">
+            <Receipt className="h-4 w-4" /> Gerar Recibo
+          </TabsTrigger>
+          <TabsTrigger value="historico" className="gap-1">
+            <History className="h-4 w-4" /> Histórico
+          </TabsTrigger>
+          <TabsTrigger value="colegios" className="gap-1">
+            <Building2 className="h-4 w-4" /> Configuração dos Colégios
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="recibo" className="mt-4">
+          <GerarRecibo />
+        </TabsContent>
+        <TabsContent value="historico" className="mt-4">
+          <HistoricoRecibos />
+        </TabsContent>
+        <TabsContent value="colegios" className="mt-4">
+          <ConfiguracaoColegios />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ─── Passo a passo do recibo ────────────────────────────────────────────────
+function GerarRecibo() {
+  const { canEdit } = usePermissions();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const podeEditar = canEdit("documentos");
+
+  const { data: colegios = [] } = useColegios();
+  const buscar = useServerFn(buscarAlunosSponte);
+  const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
+
+  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
+  const [responsaveis, setResponsaveis] = useState<ResponsavelCadastroSponte[]>([]);
+  const [responsavelId, setResponsavelId] = useState<string>("");
+  const [valores, setValores] = useState<Record<string, string>>({});
+  const [dataRecibo, setDataRecibo] = useState<string>(hojeYMD());
+
+  const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
+
+  const responsavel = useMemo<ResponsavelRecibo | null>(() => {
+    const r = responsaveis.find((x) => x.responsavelId === responsavelId);
+    return r ? { ...r } : null;
+  }, [responsaveis, responsavelId]);
+
+  const valoresNumericos = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(valores)) {
+      const n = parseBRLNumber(v);
+      if (Number.isFinite(n)) out[k] = n;
+    }
+    return out;
+  }, [valores]);
+
+  const itens = useMemo(() => itensDoRecibo(valoresNumericos), [valoresNumericos]);
+  const total = useMemo(() => itens.reduce((acc, i) => acc + i.valor, 0), [itens]);
+
+  const erros = validarRecibo({
+    colegio: colegio ? paraColegioRecibo(colegio) : null,
+    aluno,
+    responsavel,
+    itens,
+    dataRecibo,
+  });
+
+  const limparAluno = () => {
+    setAluno(null);
+    setResponsaveis([]);
+    setResponsavelId("");
+    setValores({});
+  };
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => setResultados(alunos),
+    onError: (e) => {
+      setResultados(null);
+      toast.error(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  const selecionarAluno = useMutation({
+    mutationFn: async (encontrado: AlunoBuscaSponte) => {
+      const r = await buscarCadastro({ data: { alunoId: encontrado.alunoId, unidade } });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+    onSuccess: (r) => {
+      if (!r.aluno) {
+        toast.error("Aluno não encontrado no Sponte.");
+        return;
+      }
+      setAluno({
+        alunoId: r.aluno.alunoId,
+        nome: r.aluno.nome,
+        cpf: r.aluno.cpf,
+        turma: r.aluno.turma,
+        matricula: r.aluno.matricula,
+      });
+      setResponsaveis(r.responsaveis);
+      setResponsavelId(r.responsaveis[0]?.responsavelId ?? "");
+      setResultados(null);
+      setTermo("");
+      if (r.responsaveis.length === 0) {
+        toast.error("O aluno não tem responsável cadastrado no Sponte.");
+      }
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao carregar o aluno."),
+  });
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      if (!colegio || !aluno || !responsavel) throw new Error("Recibo incompleto.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const snapshot: ReciboSnapshot = {
+        colegio: paraColegioRecibo(colegio),
+        aluno,
+        responsavel,
+        valores: Object.fromEntries(itens.map((i) => [i.id, i.valor])),
+      };
+      // O número impresso vem da sequência do banco: gravamos primeiro e só
+      // então montamos o PDF, para que documento e histórico nunca divirjam.
+      const { data, error } = await supabase
+        .from("documentos_recibos" as never)
+        .insert({
+          unidade,
+          aluno_id: aluno.alunoId,
+          aluno_nome: aluno.nome,
+          responsavel_id: responsavel.responsavelId,
+          responsavel_nome: responsavel.nome,
+          responsavel_cpf: responsavel.cpf,
+          data_recibo: dataRecibo,
+          valor_total: total,
+          itens,
+          snapshot,
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never)
+        .select("numero")
+        .single();
+      if (error) throw new Error(error.message);
+      const numero = Number((data as unknown as { numero: number }).numero);
+      const documento = montarRecibo({
+        numero,
+        dataRecibo,
+        colegio: snapshot.colegio,
+        aluno: snapshot.aluno,
+        responsavel: snapshot.responsavel,
+        valores: snapshot.valores,
+      });
+      await baixarPdfRecibo(documento, await carregarLogoDoColegio(colegio.logo_path));
+      return numero;
+    },
+    onSuccess: (numero) => {
+      toast.success(`Recibo nº ${numero} gerado e baixado.`);
+      qc.invalidateQueries({ queryKey: ["documentos_recibos"] });
+      setValores({});
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar o recibo."),
+  });
+
+  const t = termo.trim();
+  const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
+
+  if (!podeEditar) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        Você tem acesso somente de leitura em Documentos: consulte os recibos já emitidos na aba
+        Histórico.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Passo 1 — aluno */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Search className="h-4 w-4 text-primary" /> 1. Aluno
+          </h2>
+        </header>
+        <div className="space-y-3 px-4 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+              <Select
+                value={unidade}
+                onValueChange={(v) => {
+                  setUnidade(v);
+                  setResultados(null);
+                  limparAluno();
+                }}
+              >
+                <SelectTrigger className="h-9 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNIDADES.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="doc-busca" className="text-[11px] text-muted-foreground">
+                Aluno (nome ou AlunoID do Sponte)
+              </Label>
+              <Input
+                id="doc-busca"
+                value={termo}
+                onChange={(e) => setTermo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
+                }}
+                placeholder="ex.: Bento ou 672"
+                className="h-9 w-64"
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 gap-1"
+              disabled={!termoValido || buscarAlunos.isPending}
+              onClick={() => buscarAlunos.mutate()}
+            >
+              {buscarAlunos.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              Buscar no Sponte
+            </Button>
+          </div>
+
+          {resultados && resultados.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              Nenhum aluno encontrado para “{t}” em {unidade}.
+            </div>
+          )}
+
+          {resultados && resultados.length > 0 && (
+            <div className="max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                  disabled={selecionarAluno.isPending}
+                  onClick={() => selecionarAluno.mutate(a)}
+                >
+                  <span>
+                    <span className="font-medium">{a.nome}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      #{a.alunoId} · {a.turma || "sem turma"} · {a.situacao}
+                    </span>
+                  </span>
+                  {selecionarAluno.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <User className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {aluno && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">
+                  {aluno.nome}{" "}
+                  <span className="text-xs text-muted-foreground">#{aluno.alunoId}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {[
+                    aluno.cpf ? `CPF ${aluno.cpf}` : "",
+                    aluno.matricula ? `Matrícula ${aluno.matricula}` : "",
+                    aluno.turma,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              </div>
+              <Button variant="ghost" className="h-8 text-xs" onClick={limparAluno}>
+                Trocar aluno
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Passo 2 — responsável */}
+      {aluno && (
+        <section className="rounded-xl border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <User className="h-4 w-4 text-primary" /> 2. Responsável que consta no recibo
+            </h2>
+          </header>
+          <div className="space-y-2 px-4 py-3">
+            {responsaveis.length === 0 && (
+              <div className="text-sm text-muted-foreground">
+                Nenhum responsável vinculado a este aluno no Sponte.
+              </div>
+            )}
+            {responsaveis.map((r) => (
+              <label
+                key={r.responsavelId}
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm ${
+                  r.responsavelId === responsavelId
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  name="responsavel-recibo"
+                  checked={r.responsavelId === responsavelId}
+                  onChange={() => setResponsavelId(r.responsavelId)}
+                />
+                <span>
+                  <span className="font-medium">{r.nome}</span>
+                  {r.financeiro && (
+                    <span className="ml-2 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-primary">
+                      Responsável financeiro
+                    </span>
+                  )}
+                  <span className="block text-xs text-muted-foreground">
+                    {[r.parentesco, r.cpf ? `CPF ${r.cpf}` : "", r.telefone, r.email]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Passo 3 — valores e data */}
+      {aluno && (
+        <section className="rounded-xl border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Receipt className="h-4 w-4 text-primary" /> 3. Valores e data
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Todos os tópicos começam zerados. Entram no recibo apenas os que você preencher.
+            </p>
+          </header>
+          <div className="space-y-4 px-4 py-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {TOPICOS_RECIBO.map((topico) => (
+                <div key={topico.id} className="flex flex-col gap-1">
+                  <Label
+                    htmlFor={`valor-${topico.id}`}
+                    className="text-[11px] text-muted-foreground"
+                  >
+                    {topico.descricao}
+                  </Label>
+                  <Input
+                    id={`valor-${topico.id}`}
+                    inputMode="decimal"
+                    value={valores[topico.id] ?? ""}
+                    placeholder="0,00"
+                    className="h-9"
+                    onChange={(e) =>
+                      setValores((prev) => ({ ...prev, [topico.id]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="data-recibo" className="text-[11px] text-muted-foreground">
+                  Data que consta no recibo
+                </Label>
+                <Input
+                  id="data-recibo"
+                  type="date"
+                  value={dataRecibo}
+                  className="h-9 w-44"
+                  onChange={(e) => setDataRecibo(e.target.value)}
+                />
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Total do recibo
+                </div>
+                <div className="text-2xl font-semibold text-primary">{formatarBRL(total)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {itens.length} tópico(s) incluído(s)
+                </div>
+              </div>
+            </div>
+
+            {erros.length > 0 && (
+              <ul className="list-inside list-disc rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {erros.map((erro) => (
+                  <li key={erro}>{erro}</li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                className="gap-1"
+                disabled={erros.length > 0 || gerar.isPending}
+                onClick={() => gerar.mutate()}
+              >
+                {gerar.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                Gerar Recibo (PDF)
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── Histórico ──────────────────────────────────────────────────────────────
+function HistoricoRecibos() {
+  const { data: colegios = [] } = useColegios();
+  const [unidade, setUnidade] = useState<string>("todas");
+  const [busca, setBusca] = useState("");
+  const [baixando, setBaixando] = useState<string | null>(null);
+
+  const { data: recibos = [], isLoading } = useQuery({
+    queryKey: ["documentos_recibos"],
+    queryFn: async (): Promise<ReciboRow[]> => {
+      const { data, error } = await supabase
+        .from("documentos_recibos" as never)
+        .select(
+          "id, numero, unidade, aluno_id, aluno_nome, responsavel_nome, data_recibo, valor_total, created_at, created_by_nome, snapshot",
+        )
+        .order("numero", { ascending: false })
+        .limit(500);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as ReciboRow[];
+    },
+  });
+
+  const filtrados = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return recibos.filter(
+      (r) =>
+        (unidade === "todas" || r.unidade === unidade) &&
+        (!termo ||
+          r.aluno_nome.toLowerCase().includes(termo) ||
+          r.aluno_id.includes(termo) ||
+          r.responsavel_nome.toLowerCase().includes(termo) ||
+          String(r.numero).includes(termo)),
+    );
+  }, [recibos, unidade, busca]);
+
+  // Reimpressão: reusa o snapshot gravado, então o PDF sai idêntico ao original
+  // mesmo que o cadastro do colégio ou do responsável tenha mudado depois.
+  const reimprimir = async (row: ReciboRow) => {
+    setBaixando(row.id);
+    try {
+      const snap = row.snapshot;
+      const documento = montarRecibo({
+        numero: row.numero,
+        dataRecibo: row.data_recibo.slice(0, 10),
+        colegio: snap.colegio,
+        aluno: snap.aluno,
+        responsavel: snap.responsavel,
+        valores: snap.valores,
+      });
+      const logoPath = colegios.find((c) => c.unidade === row.unidade)?.logo_path ?? null;
+      await baixarPdfRecibo(documento, await carregarLogoDoColegio(logoPath));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao reimprimir o recibo.");
+    } finally {
+      setBaixando(null);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 py-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <History className="h-4 w-4 text-primary" /> Recibos emitidos
+        </h2>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+            <Select value={unidade} onValueChange={setUnidade}>
+              <SelectTrigger className="h-9 w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todos os colégios</SelectItem>
+                {UNIDADES.map((u) => (
+                  <SelectItem key={u} value={u}>
+                    {u}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="hist-busca" className="text-[11px] text-muted-foreground">
+              Aluno, responsável ou nº
+            </Label>
+            <Input
+              id="hist-busca"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="h-9 w-56"
+              placeholder="ex.: Bento, 672 ou 00007"
+            />
+          </div>
+        </div>
+      </header>
+
+      {isLoading ? (
+        <div className="space-y-2 p-4">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-full" />
+        </div>
+      ) : filtrados.length === 0 ? (
+        <div className="p-4 text-sm text-muted-foreground">Nenhum recibo emitido ainda.</div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Nº</TableHead>
+              <TableHead>Data</TableHead>
+              <TableHead>Colégio</TableHead>
+              <TableHead>Aluno</TableHead>
+              <TableHead>Responsável</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Emitido por</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtrados.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-mono text-xs">
+                  {String(r.numero).padStart(5, "0")}
+                </TableCell>
+                <TableCell>{formatarDataBR(r.data_recibo.slice(0, 10))}</TableCell>
+                <TableCell>{r.unidade}</TableCell>
+                <TableCell>
+                  {r.aluno_nome}
+                  <span className="ml-1 text-xs text-muted-foreground">#{r.aluno_id}</span>
+                </TableCell>
+                <TableCell>{r.responsavel_nome}</TableCell>
+                <TableCell className="text-right font-medium">
+                  {formatarBRL(Number(r.valor_total))}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {r.created_by_nome || "—"}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="outline"
+                    className="h-8 gap-1 text-xs"
+                    disabled={baixando === r.id}
+                    onClick={() => reimprimir(r)}
+                  >
+                    {baixando === r.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    PDF
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
+// ─── Configuração dos colégios ──────────────────────────────────────────────
+function ConfiguracaoColegios() {
+  const { canEdit } = usePermissions();
+  const podeEditar = canEdit("documentos");
+  const { data: colegios = [], isLoading } = useColegios();
+  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+
+  const atual = colegios.find((c) => c.unidade === unidade);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+          <Select value={unidade} onValueChange={setUnidade}>
+            <SelectTrigger className="h-9 w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {UNIDADES.map((u) => (
+                <SelectItem key={u} value={u}>
+                  {u}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {isLoading || !atual ? (
+        <Skeleton className="h-64 w-full" />
+      ) : (
+        <FormularioColegio key={atual.unidade} colegio={atual} podeEditar={podeEditar} />
+      )}
+    </div>
+  );
+}
+
+function FormularioColegio({ colegio, podeEditar }: { colegio: ColegioRow; podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const { session } = useAuth();
+  const [form, setForm] = useState<ColegioRow>(colegio);
+  const [enviandoLogo, setEnviandoLogo] = useState(false);
+
+  const { data: logoUrl } = useQuery({
+    queryKey: ["documentos_logo", colegio.unidade, colegio.logo_path],
+    enabled: !!colegio.logo_path,
+    queryFn: async (): Promise<string | null> => {
+      const { data } = await supabase.storage
+        .from(DOCUMENTOS_BUCKET)
+        .createSignedUrl(colegio.logo_path as string, 300);
+      return data?.signedUrl ?? null;
+    },
+  });
+
+  const salvar = useMutation({
+    mutationFn: async (extra?: Partial<ColegioRow>) => {
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const {
+        unidade,
+        updated_at: _updatedAt,
+        updated_by_nome: _updatedBy,
+        ...campos
+      } = {
+        ...form,
+        ...extra,
+      };
+      const { error } = await supabase.from("documentos_colegios" as never).upsert(
+        {
+          unidade,
+          ...campos,
+          updated_by: session?.user?.id ?? null,
+          updated_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never,
+        { onConflict: "unidade" },
+      );
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Dados do colégio salvos.");
+      qc.invalidateQueries({ queryKey: ["documentos_colegios"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar."),
+  });
+
+  const enviarLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!/^image\/(png|jpeg|jpg|webp|svg\+xml)$/.test(file.type)) {
+      toast.error("Envie a logo em PNG, JPG, WEBP ou SVG.");
+      return;
+    }
+    setEnviandoLogo(true);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const path = `logos/${colegio.unidade.replace(/[^\w]+/g, "-")}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from(DOCUMENTOS_BUCKET)
+        .upload(path, file, { contentType: file.type });
+      if (upErr) {
+        toast.error(`Falha ao enviar a logo: ${upErr.message}`);
+        return;
+      }
+      setForm((prev) => ({ ...prev, logo_path: path }));
+      await salvar.mutateAsync({ logo_path: path });
+      if (colegio.logo_path && colegio.logo_path !== path) {
+        await supabase.storage.from(DOCUMENTOS_BUCKET).remove([colegio.logo_path]);
+      }
+    } finally {
+      setEnviandoLogo(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex h-24 w-40 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/30">
+          {logoUrl ? (
+            <img src={logoUrl} alt={`Logo ${colegio.unidade}`} className="max-h-24 max-w-40" />
+          ) : (
+            <span className="flex flex-col items-center gap-1 text-[11px] text-muted-foreground">
+              <ImageIcon className="h-5 w-5" /> Sem logo
+            </span>
+          )}
+        </div>
+        {podeEditar && (
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
+            {enviandoLogo ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ImageIcon className="h-4 w-4" />
+            )}
+            {colegio.logo_path ? "Trocar logo" : "Enviar logo"}
+            <input type="file" accept="image/*" className="hidden" onChange={enviarLogo} />
+          </label>
+        )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {COLEGIO_CAMPOS.map((campo) => (
+          <div key={campo.key} className="flex flex-col gap-1">
+            <Label htmlFor={`col-${campo.key}`} className="text-[11px] text-muted-foreground">
+              {campo.label}
+            </Label>
+            <Input
+              id={`col-${campo.key}`}
+              value={String(form[campo.key] ?? "")}
+              placeholder={campo.placeholder}
+              disabled={!podeEditar}
+              className="h-9"
+              onChange={(e) => setForm((prev) => ({ ...prev, [campo.key]: e.target.value }))}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="col-observacao" className="text-[11px] text-muted-foreground">
+          Observação impressa no pé do recibo
+        </Label>
+        <Textarea
+          id="col-observacao"
+          value={form.observacao}
+          disabled={!podeEditar}
+          rows={2}
+          onChange={(e) => setForm((prev) => ({ ...prev, observacao: e.target.value }))}
+        />
+      </div>
+
+      {podeEditar && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {colegio.updated_at
+              ? `Atualizado em ${formatarDataBR(colegio.updated_at.slice(0, 10))}${
+                  colegio.updated_by_nome ? ` por ${colegio.updated_by_nome}` : ""
+                }`
+              : "Ainda não cadastrado."}
+          </span>
+          <Button
+            className="gap-1"
+            disabled={salvar.isPending}
+            onClick={() => salvar.mutate(undefined)}
+          >
+            {salvar.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            Salvar dados do colégio
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
