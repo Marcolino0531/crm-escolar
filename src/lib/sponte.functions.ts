@@ -1272,6 +1272,122 @@ export const buscarAlunosSponte = createServerFn({ method: "POST" })
     };
   });
 
+// ─── Dados cadastrais para documentos (recibo) ───────────────────────────────
+// GetResponsaveis por AlunoID devolve TODOS os responsáveis vinculados com o
+// cadastro completo (CPF/CNPJ, endereço, e-mail, celular, parentesco) — é dele
+// que sai a lista para o usuário escolher quem consta no recibo, e os dados que
+// o documento precisa. Somente leitura.
+
+export interface ResponsavelCadastroSponte {
+  responsavelId: string;
+  nome: string;
+  cpf: string;
+  parentesco: string;
+  endereco: string;
+  numero: string;
+  bairro: string;
+  cidade: string;
+  cep: string;
+  email: string;
+  telefone: string;
+  financeiro: boolean;
+}
+
+export interface AlunoCadastroSponte {
+  alunoId: string;
+  nome: string;
+  cpf: string;
+  turma: string;
+  matricula: string;
+  situacao: string;
+}
+
+export interface DadosCadastraisAlunoResult {
+  aluno: AlunoCadastroSponte | null;
+  responsaveis: ResponsavelCadastroSponte[];
+  error?: string;
+}
+
+const DadosCadastraisInputSchema = z.object({
+  alunoId: z.string().regex(/^\d+$/, "AlunoID inválido."),
+  unidade: z.string().min(1),
+});
+
+export const buscarDadosCadastraisAluno = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DadosCadastraisInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DadosCadastraisAlunoResult> => {
+    const { alunoId, unidade } = data;
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { aluno: null, responsaveis: [], error: "Unidade sem integração Sponte." };
+
+    let xmlAluno: string;
+    let xmlResp: string;
+    try {
+      [xmlAluno, xmlResp] = await Promise.all([
+        callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+        callSponte("GetResponsaveis", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+      ]);
+    } catch (e) {
+      return {
+        aluno: null,
+        responsaveis: [],
+        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+      };
+    }
+    const fault = checkFault(xmlAluno) || checkFault(xmlResp);
+    if (fault) return { aluno: null, responsaveis: [], error: fault };
+
+    const nodeAluno = parseXmlList(xmlAluno, "wsAluno").find((n) =>
+      parseXmlValue(n, "RetornoOperacao").startsWith("01"),
+    );
+    if (!nodeAluno) return { aluno: null, responsaveis: [], error: "Aluno não encontrado." };
+
+    const respFinanceiroId = parseXmlValue(nodeAluno, "ResponsavelFinanceiroID");
+    const aluno: AlunoCadastroSponte = {
+      alunoId,
+      nome: parseXmlValue(nodeAluno, "Nome"),
+      cpf: parseXmlValue(nodeAluno, "CPF") || parseXmlValue(nodeAluno, "CPFCNPJ"),
+      turma: parseXmlValue(nodeAluno, "TurmaAtual"),
+      matricula: parseXmlValue(nodeAluno, "NumeroMatricula"),
+      situacao: parseXmlValue(nodeAluno, "Situacao"),
+    };
+
+    const responsaveis: ResponsavelCadastroSponte[] = [];
+    for (const node of parseXmlList(xmlResp, "wsResponsavel")) {
+      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+      const responsavelId = parseXmlValue(node, "ResponsavelID");
+      const nome = parseXmlValue(node, "Nome");
+      if (!responsavelId || !nome) continue;
+      responsaveis.push({
+        responsavelId,
+        nome,
+        cpf: parseXmlValue(node, "CPFCNPJ") || parseXmlValue(node, "CPF"),
+        parentesco: parseXmlValue(node, "Parentesco"),
+        endereco: parseXmlValue(node, "Endereco"),
+        numero: parseXmlValue(node, "NumeroEndereco"),
+        bairro: parseXmlValue(node, "Bairro"),
+        cidade: parseXmlValue(node, "Cidade"),
+        cep: parseXmlValue(node, "CEP"),
+        email: parseXmlValue(node, "Email"),
+        telefone: parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone"),
+        financeiro: responsavelId === respFinanceiroId,
+      });
+    }
+
+    // Responsável financeiro primeiro (escolha mais comum no recibo).
+    responsaveis.sort(
+      (a, b) => Number(b.financeiro) - Number(a.financeiro) || a.nome.localeCompare(b.nome),
+    );
+
+    return { aluno, responsaveis };
+  });
+
 export interface TituloSponteAluno {
   contaReceberID: string;
   numeroParcela: string;
