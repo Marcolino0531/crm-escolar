@@ -101,6 +101,44 @@ export function parcelasCobraveis(
   );
 }
 
+// Contato de destino da cobrança (responsável financeiro).
+export interface ContatoResponsavel {
+  nome: string;
+  telefone: string;
+}
+
+export interface ContatoResolvido extends ContatoResponsavel {
+  // De onde veio o contato usado no disparo.
+  origem: "sponte" | "historico";
+  // O responsável financeiro atual mudou em relação ao último disparo.
+  trocou: boolean;
+}
+
+// Contato a usar no disparo de HOJE. O responsável financeiro do Sponte é a
+// verdade: trocar o responsável no cadastro tem de redirecionar a cobrança na
+// mesma rodada, e o contato do histórico só serve como último recurso.
+//
+// `sponte` é null quando a consulta em si não pôde ser feita (erro/timeout da
+// API): aí o histórico segue valendo, para um problema de rede não derrubar o
+// dia. Já um responsável SEM telefone no cadastro é resposta legítima — o
+// telefone fica vazio e o grupo não é disparado, em vez de a mensagem ir para o
+// número antigo.
+export function resolverContatoResponsavel(
+  historico: ContatoResponsavel,
+  sponte: ContatoResponsavel | null,
+): ContatoResolvido {
+  if (!sponte) {
+    return { ...historico, origem: "historico", trocou: false };
+  }
+  const trocou = chaveTelefone(sponte.telefone) !== chaveTelefone(historico.telefone);
+  return {
+    nome: sponte.nome || historico.nome,
+    telefone: sponte.telefone,
+    origem: "sponte",
+    trocou,
+  };
+}
+
 // Chave de agrupamento do responsável: últimos 8 dígitos do telefone (imune a
 // formatação, DDI e ao 9º dígito).
 export function chaveTelefone(telefone: string): string {

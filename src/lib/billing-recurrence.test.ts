@@ -9,6 +9,7 @@ import {
   parcelaQuitada,
   parcelasCobraveis,
   primeiroDiaCobranca,
+  resolverContatoResponsavel,
   toleranciaCumprida,
   vencimentosEntrandoEmCobranca,
   type ParcelaCobranca,
@@ -190,6 +191,80 @@ describe("agrupamento em uma mensagem diária por responsável", () => {
     expect(juntarNomes(["Ana", "Bia"])).toBe("Ana e Bia");
     expect(juntarNomes(["Ana", "Bia", "Caio"])).toBe("Ana, Bia e Caio");
     expect(juntarNomes(["Ana", "Ana"])).toBe("Ana");
+  });
+});
+
+describe("responsável financeiro atual no momento do disparo", () => {
+  // Caso real: Luísa Mascarenhas (AlunoID 862) teve o responsável financeiro
+  // trocado do pai para a mãe no Sponte; o histórico de disparos ainda guarda o
+  // telefone do pai.
+  const HISTORICO = { nome: "Areno Mascarenhas da Silva", telefone: "(31) 99110-8686" };
+  const SPONTE = { nome: "Michelle Batista Marcelino", telefone: "(31) 99430-0959" };
+
+  it("troca recente redireciona a cobrança para o responsável atual", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, SPONTE);
+    expect(contato.telefone).toBe("(31) 99430-0959");
+    expect(contato.nome).toBe("Michelle Batista Marcelino");
+    expect(contato.origem).toBe("sponte");
+    expect(contato.trocou).toBe(true);
+  });
+
+  it("sem troca, o contato do Sponte confirma o histórico", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, { ...HISTORICO });
+    expect(contato.telefone).toBe(HISTORICO.telefone);
+    expect(contato.trocou).toBe(false);
+    expect(contato.origem).toBe("sponte");
+  });
+
+  it("mesma pessoa com o número reformatado não conta como troca", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, {
+      nome: HISTORICO.nome,
+      telefone: "+55 (31) 9 9110-8686",
+    });
+    expect(contato.trocou).toBe(false);
+    expect(contato.telefone).toBe("+55 (31) 9 9110-8686");
+  });
+
+  it("responsável atual sem telefone no cadastro não cai no número antigo", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, {
+      nome: "Debora Larissa Santos Ribeiro",
+      telefone: "",
+    });
+    expect(contato.telefone).toBe("");
+    expect(contato.nome).toBe("Debora Larissa Santos Ribeiro");
+    expect(chaveTelefone(contato.telefone)).toBe("");
+  });
+
+  it("falha na consulta ao Sponte mantém o contato do histórico", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, null);
+    expect(contato).toEqual({ ...HISTORICO, origem: "historico", trocou: false });
+  });
+
+  it("Sponte sem nome preserva o nome conhecido do histórico", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, { nome: "", telefone: SPONTE.telefone });
+    expect(contato.nome).toBe(HISTORICO.nome);
+    expect(contato.telefone).toBe(SPONTE.telefone);
+  });
+
+  it("o agrupamento de irmãos passa a usar o telefone atual", () => {
+    const contato = resolverContatoResponsavel(HISTORICO, SPONTE);
+    const grupos = agruparPorResponsavel(
+      parcelasCobraveis(
+        [
+          parcela({ alunoId: "862", telefone: contato.telefone, responsavelNome: contato.nome }),
+          parcela({ alunoId: "863", telefone: contato.telefone, responsavelNome: contato.nome }),
+          // Irmão cujo cadastro ainda aponta para o responsável antigo fica em outro grupo.
+          parcela({ alunoId: "864", telefone: HISTORICO.telefone }),
+        ],
+        "2026-08-11",
+        DATA_BASE,
+      ),
+      "2026-08-11",
+    );
+    expect(grupos).toHaveLength(2);
+    const atual = grupos.find((g) => g.chave === chaveTelefone(SPONTE.telefone));
+    expect(atual?.alunoIds).toEqual(["862", "863"]);
+    expect(atual?.responsavelNome).toBe(SPONTE.nome);
   });
 });
 

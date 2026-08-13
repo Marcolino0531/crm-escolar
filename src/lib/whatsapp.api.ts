@@ -24,6 +24,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { onlyDigits } from "@/lib/phone";
 import {
   buscarLinhaDigitavelPorUnidade,
+  buscarResponsavelFinanceiroAluno,
   coletarDividaAbertaAluno,
   coletarPendenciasPorVencimento,
   type BoletoAberto,
@@ -46,6 +47,7 @@ import {
   agruparPorResponsavel,
   jaCobradoHoje,
   parcelasCobraveis,
+  resolverContatoResponsavel,
   vencimentosEntrandoEmCobranca,
   type GrupoCobranca,
   type ParcelaCobranca,
@@ -259,14 +261,34 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   const linhaPorAluno = new Map<string, string>();
   for (let i = 0; i < candidatos.length; i += CONCORRENCIA_SPONTE) {
     const lote = candidatos.slice(i, i + CONCORRENCIA_SPONTE);
+    // Dívida E responsável financeiro reconsultados juntos: o candidato vindo do
+    // histórico traz o contato do disparo anterior, que fica obsoleto assim que a
+    // escola troca o responsável no Sponte.
     const resultados = await Promise.all(
-      lote.map(async (c) => ({
-        candidato: c,
-        divida: await coletarDividaAbertaAluno(c.unidade, c.alunoId),
-      })),
+      lote.map(async (c) => {
+        const [divida, respSponte] = await Promise.all([
+          coletarDividaAbertaAluno(c.unidade, c.alunoId),
+          buscarResponsavelFinanceiroAluno(c.unidade, c.alunoId),
+        ]);
+        return { candidato: c, divida, respSponte };
+      }),
     );
-    for (const { candidato: c, divida } of resultados) {
+    for (const { candidato: c, divida, respSponte } of resultados) {
       if (!divida) continue;
+      const contato = resolverContatoResponsavel(
+        { nome: c.responsavelNome, telefone: c.telefone },
+        respSponte,
+      );
+      if (contato.trocou) {
+        console.log(
+          `[whatsapp] aluno ${c.alunoId}: responsável financeiro do Sponte difere do último disparo — cobrança redirecionada.`,
+        );
+      }
+      if (!contato.telefone || contato.telefone === "-") {
+        console.warn(
+          `[whatsapp] aluno ${c.alunoId}: responsável financeiro sem telefone no Sponte — sem disparo hoje.`,
+        );
+      }
       vencidasPorAluno.set(
         c.alunoId,
         filtrarPorAcordoDoAluno(c.alunoId, parcelasVencidas(divida.boletos, hoje), excecoes),
@@ -276,8 +298,8 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
           alunoId: c.alunoId,
           alunoNome: c.alunoNome,
           unidade: c.unidade,
-          telefone: c.telefone,
-          responsavelNome: c.responsavelNome,
+          telefone: contato.telefone,
+          responsavelNome: contato.nome,
           vencimento: b.vencimento,
           saldo: b.saldo,
           dataPagamento: b.dataPagamento,
@@ -434,7 +456,8 @@ async function carregarExcecoesAcordo(): Promise<Map<string, string>> {
 async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
   const mapa = new Map<string, CandidatoCobranca>();
 
-  // Já em cobrança primeiro; os dados frescos do Sponte (abaixo) prevalecem.
+  // Já em cobrança primeiro; os dados frescos do Sponte (abaixo) prevalecem. O
+  // contato de qualquer candidato é reconsultado no Sponte na hora do disparo.
   for (const c of await candidatosDoHistorico(hoje)) mapa.set(c.alunoId, c);
 
   const novos = vencimentosEntrandoEmCobranca(hoje).filter((v) => v >= DATA_BASE_COBRANCA);
@@ -459,6 +482,10 @@ async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
 // Alunos com disparo bem-sucedido nos últimos `JANELA_RECORRENCIA_DIAS` dias.
 // É o que sustenta a recorrência diária: enquanto a dívida existir, o aluno
 // continua na régua; quitada, ele simplesmente deixa de gerar parcela cobrável.
+//
+// O histórico serve para descobrir QUEM avaliar, não para saber a quem enviar: o
+// responsável/telefone daqui são só um fallback, sobrescritos pelo cadastro atual
+// do Sponte antes do disparo.
 async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]> {
   const desde = addDaysYMD(hoje, -JANELA_RECORRENCIA_DIAS);
   const { data } = await supabaseAdmin
