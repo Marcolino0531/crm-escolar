@@ -1300,69 +1300,78 @@ const TitulosAlunoInputSchema = z.object({
   unidade: z.string().min(1),
 });
 
+// Todas as parcelas de um aluno (categoria, valor, valor pago, baixa). Não
+// checa acesso: quem chama é responsável por autorizar. Extraído para ser
+// reutilizado pelos Esportes Extracurriculares, cuja autorização é por
+// MODALIDADE (parceiro externo), e não por unidade.
+export async function coletarTitulosAluno(
+  unidade: string,
+  alunoId: string,
+): Promise<TitulosAlunoResult> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return { titulos: [], indisponivel: true };
+
+  let xml: string;
+  try {
+    xml = await callSponte("GetParcelas", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token);
+  } catch (e) {
+    return {
+      titulos: [],
+      error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+    };
+  }
+  const fault = checkFault(xml);
+  if (fault) return { titulos: [], error: fault };
+
+  const titulos: TituloSponteAluno[] = [];
+  for (const node of parseXmlList(xml, "wsParcela")) {
+    if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+    const situacao = parseXmlValue(node, "SituacaoParcela");
+    if (normalizarTexto(situacao) === "cancelada") continue;
+
+    const valor = parseBrDecimal(parseXmlValue(node, "ValorParcela"));
+    const valorPago = parseBrDecimal(parseXmlValue(node, "ValorPago"));
+    const quitada = SITUACOES_BAIXADA.has(normalizarTexto(situacao));
+    const tiposRecebimento = [
+      ...new Set(
+        parseXmlList(node, "wsRateioLancamento")
+          .map((r) => parseXmlValue(r, "TipoRecebimento"))
+          .filter(Boolean),
+      ),
+    ];
+
+    titulos.push({
+      contaReceberID: parseXmlValue(node, "ContaReceberID"),
+      numeroParcela: parseXmlValue(node, "NumeroParcela"),
+      numeroBoleto: parseXmlValue(node, "NumeroBoleto"),
+      vencimento: paraYMD(parseXmlValue(node, "Vencimento")) ?? "",
+      categoria: parseXmlValue(node, "Categoria") || "Outros",
+      valor,
+      valorPago,
+      saldo: Math.round((valor - valorPago) * 100) / 100,
+      situacao,
+      quitada,
+      dataPagamento: paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "",
+      formaCobranca: parseXmlValue(node, "FormaCobranca"),
+      tipoRecebimento: tiposRecebimento.join(" / "),
+    });
+  }
+
+  // Mais recentes primeiro: é onde está o pagamento que o operador procura.
+  titulos.sort((a, b) => b.vencimento.localeCompare(a.vencimento));
+  return { titulos };
+}
+
 export const fetchTitulosAlunoSponte = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => TitulosAlunoInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<TitulosAlunoResult> => {
-    const { alunoId, unidade } = data;
-
     // RBAC por unidade (server-side).
     const allowed = await allowedSponteUnidades(context.userId);
-    if (allowed !== null && !allowed.includes(unidade)) {
+    if (allowed !== null && !allowed.includes(data.unidade)) {
       return { titulos: [], error: "Sem permissão para esta unidade." };
     }
-    const creds = resolverCredenciais(unidade);
-    if (!creds) return { titulos: [], indisponivel: true };
-
-    let xml: string;
-    try {
-      xml = await callSponte("GetParcelas", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token);
-    } catch (e) {
-      return {
-        titulos: [],
-        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
-      };
-    }
-    const fault = checkFault(xml);
-    if (fault) return { titulos: [], error: fault };
-
-    const titulos: TituloSponteAluno[] = [];
-    for (const node of parseXmlList(xml, "wsParcela")) {
-      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
-      const situacao = parseXmlValue(node, "SituacaoParcela");
-      if (normalizarTexto(situacao) === "cancelada") continue;
-
-      const valor = parseBrDecimal(parseXmlValue(node, "ValorParcela"));
-      const valorPago = parseBrDecimal(parseXmlValue(node, "ValorPago"));
-      const quitada = SITUACOES_BAIXADA.has(normalizarTexto(situacao));
-      const tiposRecebimento = [
-        ...new Set(
-          parseXmlList(node, "wsRateioLancamento")
-            .map((r) => parseXmlValue(r, "TipoRecebimento"))
-            .filter(Boolean),
-        ),
-      ];
-
-      titulos.push({
-        contaReceberID: parseXmlValue(node, "ContaReceberID"),
-        numeroParcela: parseXmlValue(node, "NumeroParcela"),
-        numeroBoleto: parseXmlValue(node, "NumeroBoleto"),
-        vencimento: paraYMD(parseXmlValue(node, "Vencimento")) ?? "",
-        categoria: parseXmlValue(node, "Categoria") || "Outros",
-        valor,
-        valorPago,
-        saldo: Math.round((valor - valorPago) * 100) / 100,
-        situacao,
-        quitada,
-        dataPagamento: paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "",
-        formaCobranca: parseXmlValue(node, "FormaCobranca"),
-        tipoRecebimento: tiposRecebimento.join(" / "),
-      });
-    }
-
-    // Mais recentes primeiro: é onde está o pagamento que o operador procura.
-    titulos.sort((a, b) => b.vencimento.localeCompare(a.vencimento));
-    return { titulos };
+    return coletarTitulosAluno(data.unidade, data.alunoId);
   });
 
 const InputSchema = z.object({

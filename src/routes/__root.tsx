@@ -32,6 +32,7 @@ import {
   Package,
   BookOpen,
   PartyPopper,
+  Dumbbell,
   CreditCard,
   Menu,
   ChevronDown,
@@ -373,6 +374,7 @@ function AppShell() {
   const showEstoqueMaterial = canView("estoque_material");
   const showDiario = canView("diario");
   const showColonia = canView("colonia") || canView("colonia_financeiro");
+  const showEsportes = canView("esportes");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -460,6 +462,12 @@ function AppShell() {
           to: "/colonia",
           icon: PartyPopper,
           label: "Colônia de Férias",
+        }),
+        ...item(showEsportes, {
+          kind: "item",
+          to: "/esportes",
+          icon: Dumbbell,
+          label: "Esportes Extracurriculares",
         }),
       ]),
       ...group("pessoas", "Pessoas", [
@@ -552,6 +560,7 @@ function AppShell() {
     showEstoqueMaterial,
     showDiario,
     showColonia,
+    showEsportes,
     showFinanceiro,
     showDashboard,
     showUpload,

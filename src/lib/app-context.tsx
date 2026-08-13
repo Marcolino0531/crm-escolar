@@ -219,6 +219,7 @@ export const APP_MODULES = [
   "diario",
   "colonia",
   "colonia_financeiro",
+  "esportes",
   "financeiro",
   "configuracoes",
 ] as const;
@@ -254,6 +255,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   diario: "Diário do Aluno",
   colonia: "Colônia — Registros (Operacional)",
   colonia_financeiro: "Colônia — Fechamento Financeiro",
+  esportes: "Esportes Extracurriculares",
   financeiro: "Financeiro",
   configuracoes: "Configurações",
   financeiro_dashboard: "Dashboard",

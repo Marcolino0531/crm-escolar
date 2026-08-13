@@ -15,6 +15,7 @@ const APP_MODULES = [
   "diario",
   "colonia",
   "colonia_financeiro",
+  "esportes",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)
@@ -56,6 +57,23 @@ async function persistSchools(userId: string, schoolIds: string[]) {
   if (unique.length === 0) return;
   const rows = unique.map((school_id) => ({ user_id: userId, school_id }));
   const { error } = await supabaseAdmin.from("user_schools" as any).insert(rows);
+  if (error) throw new Error(error.message);
+}
+
+// Persist the extracurricular modalities a user may see. Empty = unrestricted
+// (an internal user sees every modality); one or more rows turn the user into a
+// PARTNER, restricted to those modalities and blocked from writing.
+async function persistEsporteModalidades(userId: string, modalidadeIds: string[]) {
+  await supabaseAdmin
+    .from("esportes_modalidade_acessos" as never)
+    .delete()
+    .eq("user_id", userId);
+  const unique = Array.from(new Set(modalidadeIds));
+  if (unique.length === 0) return;
+  const rows = unique.map((modalidade_id) => ({ user_id: userId, modalidade_id }));
+  const { error } = await supabaseAdmin
+    .from("esportes_modalidade_acessos" as never)
+    .insert(rows as never);
   if (error) throw new Error(error.message);
 }
 
@@ -121,6 +139,17 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push(s.school_id);
       schoolMap.set(s.user_id, arr);
     });
+    const { data: modalidadeAcessos } = await supabaseAdmin
+      .from("esportes_modalidade_acessos" as never)
+      .select("user_id, modalidade_id");
+    const modalidadeMap = new Map<string, string[]>();
+    ((modalidadeAcessos ?? []) as unknown as { user_id: string; modalidade_id: string }[]).forEach(
+      (m) => {
+        const arr = modalidadeMap.get(m.user_id) ?? [];
+        arr.push(m.modalidade_id);
+        modalidadeMap.set(m.user_id, arr);
+      },
+    );
     return (
       usersResp.users
         .map((u) => {
@@ -137,6 +166,7 @@ export const listManagedUsers = createServerFn({ method: "GET" })
             roles: roleMap.get(u.id) ?? [],
             permissions: permMap.get(u.id) ?? [],
             schoolIds: schoolMap.get(u.id) ?? [],
+            esporteModalidadeIds: modalidadeMap.get(u.id) ?? [],
           };
         })
         // Ordenação alfabética crescente (fallback no e-mail quando sem nome).
@@ -157,6 +187,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
         isAdmin: z.boolean().default(false),
         permissions: z.array(permissionSchema).default([]),
         schoolIds: z.array(z.string().uuid()).default([]),
+        esporteModalidadeIds: z.array(z.string().uuid()).default([]),
       })
       .parse(input),
   )
@@ -180,6 +211,7 @@ export const createManagedUser = createServerFn({ method: "POST" })
     if (!userId) throw new Error("Falha ao criar usuário.");
     await persistAccess(userId, data.isAdmin, data.permissions);
     await persistSchools(userId, data.schoolIds);
+    await persistEsporteModalidades(userId, data.esporteModalidadeIds);
     return { id: userId, email: data.email };
   });
 
@@ -192,6 +224,7 @@ export const updateUserAccess = createServerFn({ method: "POST" })
         isAdmin: z.boolean().default(false),
         permissions: z.array(permissionSchema).default([]),
         schoolIds: z.array(z.string().uuid()).default([]),
+        esporteModalidadeIds: z.array(z.string().uuid()).default([]),
         name: z.string().trim().max(120).optional(),
         email: z.string().trim().email().max(255).optional(),
         // Empty string means "leave password unchanged".
@@ -230,6 +263,7 @@ export const updateUserAccess = createServerFn({ method: "POST" })
 
     await persistAccess(data.userId, data.isAdmin, data.permissions);
     await persistSchools(data.userId, data.schoolIds);
+    await persistEsporteModalidades(data.userId, data.esporteModalidadeIds);
     return { ok: true };
   });
 
