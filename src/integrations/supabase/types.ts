@@ -238,6 +238,7 @@ export type Database = {
           data_inicio: string | null;
           data_nascimento: string | null;
           data_rescisao: string | null;
+          email: string | null;
           estado_civil: string | null;
           faltas: Json;
           ferias: Json;
@@ -261,6 +262,7 @@ export type Database = {
           data_inicio?: string | null;
           data_nascimento?: string | null;
           data_rescisao?: string | null;
+          email?: string | null;
           estado_civil?: string | null;
           faltas?: Json;
           ferias?: Json;
@@ -284,6 +286,7 @@ export type Database = {
           data_inicio?: string | null;
           data_nascimento?: string | null;
           data_rescisao?: string | null;
+          email?: string | null;
           estado_civil?: string | null;
           faltas?: Json;
           ferias?: Json;

@@ -76,6 +76,7 @@ export function rowToFuncionario(r: Tables<"funcionarios">): Funcionario {
     unidade: "", // filled by the hook from the schools list
     nomeCompleto: r.nome_completo,
     cpf: r.cpf ?? undefined,
+    email: r.email ?? undefined,
     dataNascimento: r.data_nascimento ?? undefined,
     genero: (r.genero as Genero) ?? undefined,
     estadoCivil: (r.estado_civil as EstadoCivil) ?? undefined,

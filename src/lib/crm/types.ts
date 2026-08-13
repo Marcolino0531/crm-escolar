@@ -160,6 +160,7 @@ export interface Funcionario {
   unidade: string; // school name (display); resolved from schoolId
   nomeCompleto: string;
   cpf?: string;
+  email?: string;
   dataNascimento?: string;
   genero?: Genero;
   estadoCivil?: EstadoCivil;
