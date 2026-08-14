@@ -14,11 +14,17 @@ export function getResendConfig(): ResendConfig | null {
   return { apiKey, from };
 }
 
+export type EmailAttachment = {
+  filename: string;
+  content: string; // base64
+};
+
 export type EmailInput = {
   to: string[];
   subject: string;
   html: string;
   text?: string;
+  attachments?: EmailAttachment[];
 };
 
 export async function sendEmail(cfg: ResendConfig, input: EmailInput): Promise<{ id: string }> {
@@ -34,6 +40,7 @@ export async function sendEmail(cfg: ResendConfig, input: EmailInput): Promise<{
       subject: input.subject,
       html: input.html,
       ...(input.text ? { text: input.text } : {}),
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     }),
   });
 

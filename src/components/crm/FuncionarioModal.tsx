@@ -179,6 +179,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
   const [form, setForm] = useState({
     nomeCompleto: funcionarioExistente?.nomeCompleto || "",
     cpf: funcionarioExistente?.cpf || "",
+    email: funcionarioExistente?.email || "",
     dataNascimentoDisplay: converterParaBR(funcionarioExistente?.dataNascimento || ""),
     dataNascimento: funcionarioExistente?.dataNascimento || "",
     genero: funcionarioExistente?.genero || "",
@@ -558,6 +559,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     onSalvar({
       nomeCompleto: form.nomeCompleto,
       cpf: form.cpf,
+      email: form.email.trim() || undefined,
       dataNascimento: form.dataNascimento,
       genero: form.genero as Genero,
       estadoCivil: form.estadoCivil as EstadoCivil,
@@ -656,6 +658,21 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 className={inputClass}
               />
             </div>
+          </div>
+
+          {/* Email — destino do envio automático de contracheque */}
+          <div>
+            <label className={labelClass}>Email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+              placeholder="nome@email.com"
+              className={inputClass}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Usado no envio automático de contracheques.
+            </p>
           </div>
 
           {/* Gênero + Estado Civil */}

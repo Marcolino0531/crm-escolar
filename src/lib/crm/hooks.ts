@@ -282,6 +282,7 @@ function funcionarioToRow(schoolId: string, f: FuncionarioFormData) {
     school_id: schoolId,
     nome_completo: f.nomeCompleto,
     cpf: f.cpf ?? null,
+    email: f.email?.trim() || null,
     data_nascimento: f.dataNascimento || null,
     genero: f.genero ?? null,
     estado_civil: f.estadoCivil ?? null,
