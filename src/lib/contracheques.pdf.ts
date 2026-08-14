@@ -12,6 +12,7 @@ import {
   type PaginaPdf,
   textoDosItens,
 } from "./contracheques";
+import { lerItensDeTexto } from "./pdf-text";
 
 // Teto do arquivo único da contabilidade. Acima disso o navegador começa a
 // engasgar na leitura em memória, e é melhor dizer isso do que travar a aba.
@@ -86,8 +87,7 @@ export async function extrairPaginasPdf(
 
   for (let p = 1; p <= totalPaginas; p++) {
     const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const texto = textoDosItens((content as { items?: unknown } | null)?.items);
+    const texto = textoDosItens(await lerItensDeTexto(page));
     if (!texto.trim()) paginasSemTexto.push(p);
     paginas.push({ pagina: p, texto });
   }
