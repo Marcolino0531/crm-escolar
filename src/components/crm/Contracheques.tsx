@@ -20,6 +20,8 @@ import {
   senhaDoCpf,
   type FuncionarioContracheque,
   type PaginaContracheque,
+  detalheTecnicoErro,
+  mensagemErroProcessamento,
 } from "@/lib/contracheques";
 import {
   ErroLeituraPdf,
@@ -27,7 +29,7 @@ import {
   paraBase64,
   recortarPaginaProtegida,
 } from "@/lib/contracheques.pdf";
-import { enviarContracheque } from "@/lib/contracheques.functions";
+import { enviarContracheque, registrarFalhaContracheque } from "@/lib/contracheques.functions";
 
 type EnvioRow = {
   id: string;
@@ -128,10 +130,13 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
         );
       }
     } catch (err) {
-      const mensagem = err instanceof Error ? err.message : "Não foi possível ler o PDF.";
+      const mensagem = mensagemErroProcessamento(err);
       const precisaSenha =
         err instanceof ErroLeituraPdf &&
         (err.motivo === "senha" || err.motivo === "senha_incorreta");
+      // Falha sem causa conhecida é bug: o usuário vê texto amigável e o stack
+      // trace vai para o log do servidor.
+      if (!(err instanceof ErroLeituraPdf)) reportarFalha("leitura", err, file);
       setFalha(mensagem);
       toast.error(mensagem);
       // Com senha pendente o arquivo continua carregado: o usuário digita a
@@ -142,6 +147,21 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
     } finally {
       setLendo(false);
     }
+  };
+
+  const reportarFalha = (etapa: "leitura" | "recorte" | "envio", erro: unknown, file?: File) => {
+    const detalhe = detalheTecnicoErro(erro);
+    void registrarFalhaContracheque({
+      data: {
+        etapa,
+        erroName: detalhe.name,
+        erroMessage: detalhe.message,
+        stack: detalhe.stack || undefined,
+        userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent.slice(0, 500),
+        arquivoNome: file?.name,
+        arquivoTamanho: file?.size,
+      },
+    }).catch(() => undefined);
   };
 
   const handleArquivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -199,7 +219,8 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
         if (res.ok) sucessos += 1;
         else falhas.push(`${pagina.funcionarioNome}: ${res.error ?? "falha no envio"}`);
       } catch (err) {
-        falhas.push(`${pagina.funcionarioNome}: ${err instanceof Error ? err.message : "erro"}`);
+        reportarFalha("envio", err, arquivo);
+        falhas.push(`${pagina.funcionarioNome}: ${mensagemErroProcessamento(err)}`);
       }
       setEnviando({ feitos: indice + 1, total: enviaveis.length });
     }

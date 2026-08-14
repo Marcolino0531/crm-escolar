@@ -35,6 +35,31 @@ async function nomeDoUsuario(userId: string): Promise<string> {
   return nome || (data?.user?.email ?? "");
 }
 
+const FalhaLeituraSchema = z.object({
+  etapa: z.enum(["leitura", "recorte", "envio"]),
+  erroName: z.string().max(200),
+  erroMessage: z.string().max(2000),
+  stack: z.string().max(4000).optional(),
+  userAgent: z.string().max(500).optional(),
+  arquivoNome: z.string().max(300).optional(),
+  arquivoTamanho: z.number().nonnegative().optional(),
+  paginas: z.number().int().nonnegative().optional(),
+});
+
+// O processamento do PDF roda no navegador, então erro técnico do cliente não
+// aparece em nenhum log. Isto traz o detalhe para o log do servidor (Vercel),
+// onde é possível investigar, sem mostrar stack trace ao usuário.
+export const registrarFalhaContracheque = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => FalhaLeituraSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    console.error(
+      "[contracheques] falha no processamento do PDF",
+      JSON.stringify({ ...data, userId: context.userId, at: new Date().toISOString() }),
+    );
+    return { ok: true };
+  });
+
 const EnviarInputSchema = z.object({
   employeeId: z.string().uuid(),
   competencia: z.string().regex(/^\d{4}-\d{2}$/, "Competência inválida."),
