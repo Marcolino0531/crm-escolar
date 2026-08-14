@@ -69,6 +69,40 @@ function tokensDoNome(nome: string): string[] {
     .filter((t) => t.length > 1 && !CONECTIVOS.has(t.toLowerCase()));
 }
 
+// Reconstrói o texto de UMA página a partir dos itens soltos do pdfjs: itens na
+// mesma coordenada Y viram a mesma linha, que é o que o usuário vê na
+// conferência. Aceita `unknown` de propósito — quando a lib devolve algo fora
+// do contrato (undefined, objeto, item sem `transform`), a página vira "sem
+// texto" em vez de derrubar a leitura do arquivo inteiro.
+export function textoDosItens(itens: unknown): string {
+  if (!Array.isArray(itens)) return "";
+
+  const linhas: string[] = [];
+  let ultimoY: number | null = null;
+
+  for (const item of itens) {
+    if (typeof item !== "object" || item === null) continue;
+    const it = item as { str?: unknown; transform?: unknown };
+    if (typeof it.str !== "string") continue;
+    const str = it.str.trim();
+    if (!str) continue;
+
+    const transform = it.transform;
+    const bruto = Array.isArray(transform) ? transform[5] : undefined;
+    if (typeof bruto !== "number" || !Number.isFinite(bruto)) continue;
+    const y = Math.round(bruto);
+
+    if (ultimoY !== null && Math.abs(y - ultimoY) <= 2) {
+      linhas[linhas.length - 1] = `${linhas[linhas.length - 1]} ${str}`;
+    } else {
+      linhas.push(str);
+      ultimoY = y;
+    }
+  }
+
+  return linhas.join("\n");
+}
+
 export function somenteDigitos(valor: string): string {
   return (valor ?? "").replace(/\D+/g, "");
 }
@@ -81,8 +115,8 @@ export function senhaDoCpf(cpf: string, digitos: number = DIGITOS_SENHA_CPF): st
 }
 
 function statusDoFuncionario(f: FuncionarioContracheque): StatusPagina {
-  if (!f.email.trim()) return "sem_email";
-  if (!senhaDoCpf(f.cpf)) return "sem_cpf";
+  if (!(f.email ?? "").trim()) return "sem_email";
+  if (!senhaDoCpf(f.cpf ?? "")) return "sem_cpf";
   return "pronta";
 }
 
@@ -109,8 +143,8 @@ function vincular(
     texto: pagina.texto,
     funcionarioId: funcionario.id,
     funcionarioNome: funcionario.nomeCompleto,
-    email: funcionario.email.trim(),
-    cpf: funcionario.cpf,
+    email: (funcionario.email ?? "").trim(),
+    cpf: funcionario.cpf ?? "",
     status: statusDoFuncionario(funcionario),
     origem,
     duplicada: false,
@@ -121,7 +155,13 @@ function vincular(
 // desligado (contracheque de desligado é exceção) e, empatando, nome mais longo
 // (mais específico) primeiro.
 function ordenarCandidatos(funcionarios: readonly FuncionarioContracheque[]) {
-  return [...funcionarios].sort((a, b) => {
+  // Cadastro incompleto (sem id ou sem nome) não identifica ninguém e antes
+  // derrubava a conferência inteira; fica de fora do casamento.
+  const validos = (Array.isArray(funcionarios) ? funcionarios : []).filter(
+    (f): f is FuncionarioContracheque =>
+      Boolean(f) && typeof f.id === "string" && typeof f.nomeCompleto === "string",
+  );
+  return validos.sort((a, b) => {
     if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
     return b.nomeCompleto.length - a.nomeCompleto.length;
   });
@@ -135,7 +175,7 @@ export function identificarFuncionarioDaPagina(
   texto: string,
   funcionarios: readonly FuncionarioContracheque[],
 ): { funcionario: FuncionarioContracheque; origem: OrigemVinculo } | null {
-  const alvo = normalizarTexto(texto);
+  const alvo = normalizarTexto(texto ?? "");
   if (!alvo) return null;
 
   const candidatos = ordenarCandidatos(funcionarios);
@@ -192,7 +232,7 @@ export function conferirPaginas(
   paginas: readonly PaginaPdf[],
   funcionarios: readonly FuncionarioContracheque[],
 ): PaginaContracheque[] {
-  const vinculadas = paginas.map((p) => {
+  const vinculadas = (Array.isArray(paginas) ? paginas : []).map((p) => {
     const achado = identificarFuncionarioDaPagina(p.texto, funcionarios);
     return vincular(p, achado?.funcionario ?? null, achado?.origem ?? null);
   });
@@ -314,6 +354,44 @@ export function mensagemFalhaPdf(
     default:
       return "Não foi possível ler o PDF. O formato pode não ser suportado pelo leitor.";
   }
+}
+
+// Fallback de qualquer falha não prevista: mensagem de erro de JavaScript
+// ("undefined is not a function…") não diz nada a quem usa o sistema. O detalhe
+// técnico vai para o log do servidor, não para a tela.
+export const MENSAGEM_ERRO_TECNICO =
+  "Não foi possível processar o PDF por um problema técnico do sistema (não é o seu arquivo). " +
+  "Tente novamente; se o erro persistir, acione o suporte — o detalhe técnico já foi registrado " +
+  "no servidor para investigação.";
+
+// Toda falha do processamento passa por aqui antes de virar texto na tela:
+// causas conhecidas explicam o que fazer, o resto cai na mensagem técnica.
+export function mensagemErroProcessamento(erro: unknown): string {
+  if (nomeDoErro(erro) === "ErroLeituraPdf") {
+    const msg = mensagemDoErro(erro);
+    if (msg) return msg;
+  }
+  return MENSAGEM_ERRO_TECNICO;
+}
+
+// Detalhe enviado ao log do servidor. Não inclui nada do conteúdo do PDF (é
+// folha de pagamento): só identificação do erro e metadados do arquivo.
+export function detalheTecnicoErro(erro: unknown): {
+  name: string;
+  message: string;
+  stack: string;
+} {
+  const stack =
+    typeof erro === "object" &&
+    erro !== null &&
+    typeof (erro as { stack?: unknown }).stack === "string"
+      ? ((erro as { stack: string }).stack as string)
+      : "";
+  return {
+    name: nomeDoErro(erro) || typeof erro,
+    message: mensagemDoErro(erro) || String(erro ?? ""),
+    stack: stack.slice(0, 4000),
+  };
 }
 
 export const LABEL_STATUS: Record<StatusPagina, string> = {

@@ -1,8 +1,11 @@
 // Parser do PDF de retorno de cobranças (formato Sponte "Situação das Cobranças").
 // Roda no client com pdfjs-dist.
 
-import * as pdfjsLib from "pdfjs-dist";
-import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+// Build "legacy": o build moderno do pdfjs 5.x depende de
+// `Uint8Array.prototype.toHex()`, ainda indisponível na maioria dos navegadores,
+// e falha com "a.toHex is not a function" ao abrir qualquer documento.
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import workerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc as string;
 

@@ -10,6 +10,7 @@ import {
   mensagemFalhaPdf,
   type MotivoFalhaPdf,
   type PaginaPdf,
+  textoDosItens,
 } from "./contracheques";
 
 // Teto do arquivo único da contabilidade. Acima disso o navegador começa a
@@ -29,9 +30,14 @@ export class ErroLeituraPdf extends Error {
 
 // pdfjs e o gerador de PDF cifrado só existem no navegador; import dinâmico
 // mantém os dois fora do bundle de SSR.
+//
+// Build "legacy" de propósito: o build moderno do pdfjs 5.x usa
+// `Uint8Array.prototype.toHex()` (proposta recente, ainda ausente na maioria dos
+// navegadores) ao calcular o fingerprint do documento, e o worker quebra com
+// "a.toHex is not a function" em QUALQUER PDF. O legacy traz o polyfill.
 async function carregarPdfjs() {
-  const pdfjsLib = await import("pdfjs-dist");
-  const { default: workerSrc } = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const { default: workerSrc } = await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url");
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc as string;
   return pdfjsLib;
 }
@@ -76,30 +82,12 @@ export async function extrairPaginasPdf(
   const paginas: PaginaPdf[] = [];
   const paginasSemTexto: number[] = [];
 
-  for (let p = 1; p <= pdf.numPages; p++) {
+  const totalPaginas = typeof pdf.numPages === "number" ? pdf.numPages : 0;
+
+  for (let p = 1; p <= totalPaginas; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const linhas: string[] = [];
-    let ultimoY: number | null = null;
-
-    for (const item of content.items as unknown[]) {
-      if (typeof item !== "object" || item === null) continue;
-      if (!("str" in item) || !("transform" in item)) continue;
-      const it = item as { str: string; transform: number[] };
-      if (!it.str.trim()) continue;
-
-      const y = Math.round(it.transform[5]);
-      // Itens do pdfjs vêm soltos; agrupar por Y reconstrói as linhas, que é o
-      // que o usuário vê na conferência.
-      if (ultimoY !== null && Math.abs(y - ultimoY) <= 2) {
-        linhas[linhas.length - 1] = `${linhas[linhas.length - 1]} ${it.str.trim()}`;
-      } else {
-        linhas.push(it.str.trim());
-        ultimoY = y;
-      }
-    }
-
-    const texto = linhas.join("\n");
+    const texto = textoDosItens((content as { items?: unknown } | null)?.items);
     if (!texto.trim()) paginasSemTexto.push(p);
     paginas.push({ pagina: p, texto });
   }

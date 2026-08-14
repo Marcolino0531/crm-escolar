@@ -13,6 +13,10 @@ import {
   removerPagina,
   resumirConferencia,
   senhaDoCpf,
+  textoDosItens,
+  detalheTecnicoErro,
+  mensagemErroProcessamento,
+  MENSAGEM_ERRO_TECNICO,
   type FuncionarioContracheque,
   type PaginaPdf,
 } from "./contracheques";
@@ -309,5 +313,111 @@ describe("classificação de falha na leitura do PDF", () => {
 
   it("mensagem genérica só sobra para o motivo desconhecido", () => {
     expect(mensagemFalhaPdf("desconhecido")).toContain("Não foi possível ler o PDF");
+  });
+});
+
+describe("reconstrução do texto da página (itens do pdfjs)", () => {
+  function item(str: string, y: number) {
+    return { str, transform: [1, 0, 0, 1, 10, y] };
+  }
+
+  it("agrupa itens da mesma linha e separa linhas diferentes", () => {
+    expect(
+      textoDosItens([
+        item("Funcionário:", 700),
+        item("Ana Maria de Souza Ferreira", 701),
+        item("Competência: 06/2026", 680),
+      ]),
+    ).toBe("Funcionário: Ana Maria de Souza Ferreira\nCompetência: 06/2026");
+  });
+
+  it("resposta fora do contrato da lib não quebra a leitura da página", () => {
+    // Era isto que estourava "undefined is not a function" no for...of.
+    expect(textoDosItens(undefined)).toBe("");
+    expect(textoDosItens(null)).toBe("");
+    expect(textoDosItens({ items: [] })).toBe("");
+    expect(textoDosItens("texto")).toBe("");
+    expect(textoDosItens([])).toBe("");
+  });
+
+  it("itens inválidos são ignorados sem derrubar os válidos", () => {
+    expect(
+      textoDosItens([
+        null,
+        "solto",
+        { str: "sem transform" },
+        { str: 42, transform: [1, 0, 0, 1, 0, 700] },
+        { str: "   ", transform: [1, 0, 0, 1, 0, 700] },
+        { str: "sem Y", transform: [1, 0, 0, 1, 0, "x"] },
+        item("Valor líquido 2.980,45", 660),
+      ]),
+    ).toBe("Valor líquido 2.980,45");
+  });
+});
+
+describe("cadastro incompleto de funcionário", () => {
+  it("funcionário sem nome não derruba a conferência dos outros", () => {
+    const quebrado = { id: "x", ativo: true } as unknown as FuncionarioContracheque;
+    const conf = conferirPaginas([paginaDe(BRUNO.nomeCompleto, 1)], [quebrado, BRUNO]);
+    expect(conf[0].funcionarioId).toBe(BRUNO.id);
+  });
+
+  it("lista de funcionários vazia ou inválida devolve 'sem correspondência'", () => {
+    expect(conferirPaginas([paginaDe(ANA.nomeCompleto, 1)], [])[0].status).toBe(
+      "sem_correspondencia",
+    );
+    expect(
+      identificarFuncionarioDaPagina(
+        "qualquer texto",
+        undefined as unknown as FuncionarioContracheque[],
+      ),
+    ).toBeNull();
+    expect(identificarFuncionarioDaPagina(undefined as unknown as string, EQUIPE)).toBeNull();
+  });
+
+  it("email/CPF ausentes no cadastro viram status, não exceção", () => {
+    const semNada = {
+      id: "z",
+      nomeCompleto: "Zeca Pagodinho Silva",
+      unidade: "CEC",
+      ativo: true,
+    } as unknown as FuncionarioContracheque;
+    const conf = conferirPaginas([paginaDe("Zeca Pagodinho Silva", 1)], [semNada]);
+    expect(conf[0].status).toBe("sem_email");
+    expect(conf[0].email).toBe("");
+    expect(conf[0].cpf).toBe("");
+  });
+});
+
+describe("erro técnico não aparece cru para o usuário", () => {
+  it("falha conhecida da leitura mantém a mensagem explicativa", () => {
+    const erro = new Error("Este PDF está protegido por senha. Informe a senha…");
+    erro.name = "ErroLeituraPdf";
+    expect(mensagemErroProcessamento(erro)).toContain("protegido por senha");
+  });
+
+  it("erro de JavaScript vira mensagem amigável, sem o texto minificado", () => {
+    const bug = new TypeError("undefined is not a function (near '...i of e...')");
+    const msg = mensagemErroProcessamento(bug);
+    expect(msg).toBe(MENSAGEM_ERRO_TECNICO);
+    expect(msg).not.toContain("undefined is not a function");
+    expect(mensagemErroProcessamento(null)).toBe(MENSAGEM_ERRO_TECNICO);
+    expect(mensagemErroProcessamento("boom")).toBe(MENSAGEM_ERRO_TECNICO);
+  });
+
+  it("o detalhe técnico é preservado para o log do servidor", () => {
+    const bug = new TypeError("a.toHex is not a function");
+    const d = detalheTecnicoErro(bug);
+    expect(d.name).toBe("TypeError");
+    expect(d.message).toBe("a.toHex is not a function");
+    expect(d.stack.length).toBeGreaterThan(0);
+
+    const semStack = detalheTecnicoErro("falhou");
+    expect(semStack.message).toBe("falhou");
+    expect(semStack.stack).toBe("");
+
+    const gigante = new Error("x");
+    gigante.stack = "y".repeat(9000);
+    expect(detalheTecnicoErro(gigante).stack.length).toBe(4000);
   });
 });
