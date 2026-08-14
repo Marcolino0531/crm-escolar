@@ -43,7 +43,7 @@ export const Route = createFileRoute("/atendimento")({
 function AtendimentoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro") || !canView("financeiro_atendimento"))
+  if (!canView("financeiro_atendimento"))
     return <AccessDenied message="Você não tem permissão para acessar o Atendimento." />;
   return <AtendimentoPage />;
 }
