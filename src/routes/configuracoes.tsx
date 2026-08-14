@@ -176,36 +176,34 @@ function PermRow({
 // Agrupamento das permissões espelhando as categorias do menu lateral, para que
 // o administrador encontre cada módulo na mesma ordem que já vê na navegação.
 const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
-  { label: "Comercial e Admissões", modules: ["agenda", "admissoes", "onboarding"] },
+  { label: "Comercial", modules: ["agenda", "admissoes", "onboarding"] },
   {
-    label: "Pedagógico e Operacional",
+    label: "Pedagógico",
     modules: [
       "diario",
-      "uniformes",
-      "estoque_material",
       "colonia",
       "colonia_financeiro",
+      "uniformes",
+      "estoque_material",
       "esportes",
     ],
   },
-  { label: "Pessoas", modules: ["rh", "tasks"] },
-  { label: "Documentos", modules: ["documentos"] },
+  {
+    label: "Operacional",
+    modules: ["rh", "tasks", "financeiro_atendimento", "documentos"],
+  },
 ];
 
-// Subcategorias do Financeiro, na mesma ordem do menu lateral.
-const FIN_SUBCATEGORIES: { label: string; modules: AppModule[] }[] = [
-  {
-    label: "Bancário",
-    modules: ["financeiro_dashboard", "financeiro_upload", "financeiro_cartao"],
-  },
-  {
-    label: "Faturamento e Investimentos",
-    modules: ["financeiro_conciliacao", "financeiro_fluxo", "financeiro_fundos"],
-  },
-  {
-    label: "Cobrança",
-    modules: ["financeiro_inadimplencia", "financeiro_cobranca", "financeiro_atendimento"],
-  },
+// Sub-abas do Financeiro, na mesma ordem do menu lateral (lista única).
+const FIN_SUBMODULES: AppModule[] = [
+  "financeiro_dashboard",
+  "financeiro_upload",
+  "financeiro_conciliacao",
+  "financeiro_fluxo",
+  "financeiro_fundos",
+  "financeiro_cartao",
+  "financeiro_inadimplencia",
+  "financeiro_cobranca",
 ];
 
 function CategoryLabel({ children }: { children: React.ReactNode }) {
@@ -279,20 +277,15 @@ function PermissionMatrix({
             Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o módulo
             Financeiro estiver com <strong>Visualizar</strong> ligado.
           </p>
-          {FIN_SUBCATEGORIES.map((sub) => (
-            <div key={sub.label} className="space-y-2">
-              <CategoryLabel>{sub.label}</CategoryLabel>
-              {sub.modules.map((sm) => (
-                <PermRow
-                  key={sm}
-                  module={sm}
-                  value={value}
-                  onChange={onChange}
-                  disabled={disabled}
-                  indent
-                />
-              ))}
-            </div>
+          {FIN_SUBMODULES.map((sm) => (
+            <PermRow
+              key={sm}
+              module={sm}
+              value={value}
+              onChange={onChange}
+              disabled={disabled}
+              indent
+            />
           ))}
         </CollapsibleContent>
       </Collapsible>

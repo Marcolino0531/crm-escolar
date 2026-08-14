@@ -385,7 +385,8 @@ function AppShell() {
   const showInadimplencia = canView("financeiro_inadimplencia");
   // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
   const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
-  const showAtendimento = canView("financeiro") && canView("financeiro_atendimento");
+  // Atendimento vive em Operacional: não depende mais do guarda-chuva Financeiro.
+  const showAtendimento = canView("financeiro_atendimento");
   const showCartao = canView("financeiro") && canView("financeiro_cartao");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
@@ -398,16 +399,14 @@ function AppShell() {
       showFluxo ||
       showInadimplencia ||
       showCobranca ||
-      showAtendimento ||
       showCartao ||
       showFundos);
   const showConfig = canView("configuracoes");
 
   // Modelo de navegação em árvore (mesma ordem do menu): categorias colapsáveis
-  // e, dentro de Financeiro, subcategorias. Itens avulsos (Dashboard,
-  // Configurações) ficam no nível superior. Categorias/subcategorias sem itens
-  // visíveis são omitidas. Usado para renderizar a sidebar e para achar a
-  // primeira rota permitida.
+  // com itens dentro. Itens avulsos (Dashboard, Configurações) ficam no nível
+  // superior. Categorias sem itens visíveis são omitidas. Usado para renderizar
+  // a sidebar e para achar a primeira rota permitida.
   const tree = useMemo<NavTreeNode[]>(() => {
     const item = (show: boolean, node: NavItemNode): NavTreeNode[] => (show ? [node] : []);
     const group = (id: string, label: string, children: NavTreeNode[]): NavTreeNode[] =>
@@ -419,7 +418,7 @@ function AppShell() {
         icon: LayoutDashboard,
         label: "Dashboard",
       }),
-      ...group("comercial", "Comercial e Admissões", [
+      ...group("comercial", "Comercial", [
         ...item(showAgenda, { kind: "item", to: "/agenda", icon: CalendarDays, label: "Agenda" }),
         ...item(showAdmissoes, {
           kind: "item",
@@ -440,12 +439,18 @@ function AppShell() {
           label: "Onboarding",
         }),
       ]),
-      ...group("pedagogico", "Pedagógico e Operacional", [
+      ...group("pedagogico", "Pedagógico", [
         ...item(showDiario, {
           kind: "item",
           to: "/diario",
           icon: BookOpen,
           label: "Diário do Aluno",
+        }),
+        ...item(showColonia, {
+          kind: "item",
+          to: "/colonia",
+          icon: PartyPopper,
+          label: "Colônia de Férias",
         }),
         ...item(showUniformes, {
           kind: "item",
@@ -457,100 +462,86 @@ function AppShell() {
           kind: "item",
           to: "/estoque-material",
           icon: Package,
-          label: "Estoque de Material Escolar",
-        }),
-        ...item(showColonia, {
-          kind: "item",
-          to: "/colonia",
-          icon: PartyPopper,
-          label: "Colônia de Férias",
+          label: "Material Pedagógico",
         }),
         ...item(showEsportes, {
           kind: "item",
           to: "/esportes",
           icon: Dumbbell,
-          label: "Esportes Extracurriculares",
+          label: "Esportes",
         }),
       ]),
-      ...group("pessoas", "Pessoas", [
+      ...group("operacional", "Operacional", [
         ...item(showRh, { kind: "item", to: "/rh", icon: Users, label: "Recursos Humanos" }),
         ...item(showTasks, { kind: "item", to: "/tasks", icon: ListTodo, label: "Tasks" }),
-      ]),
-      ...group("documentos", "Documentos", [
+        ...item(showAtendimento, {
+          kind: "item",
+          to: "/atendimento",
+          icon: MessageSquare,
+          label: "Atendimento",
+        }),
         ...item(showDocumentos, {
           kind: "item",
           to: "/documentos",
           icon: FileText,
-          label: "Recibos e Documentos",
+          label: "Documentos",
         }),
       ]),
       ...group("financeiro", "Financeiro", [
-        ...group("fin-bancario", "Bancário", [
-          ...item(showFinanceiro && showDashboard, {
-            kind: "item",
-            to: "/extrato-bancario",
-            icon: Landmark,
-            label: "Extrato Bancário",
-          }),
-          ...item(showFinanceiro && showUpload, {
-            kind: "item",
-            to: "/upload",
-            icon: Upload,
-            label: "Importar Extrato",
-          }),
-          ...item(showFinanceiro && showCartao, {
-            kind: "item",
-            to: "/cartao-credito",
-            icon: CreditCard,
-            label: "Cartão de Crédito",
-          }),
-        ]),
-        ...group("fin-faturamento", "Faturamento e Investimentos", [
-          ...item(showFinanceiro && showConciliacao, {
-            kind: "item",
-            to: "/conciliacao",
-            icon: FileCheck2,
-            label: "Faturamento",
-          }),
-          ...item(showFinanceiro && showFluxo, {
-            kind: "item",
-            to: "/fluxo-futuro",
-            icon: TrendingUp,
-            label: "Fluxo Futuro",
-          }),
-          ...item(showFinanceiro && showFundos, {
-            kind: "item",
-            to: "/fundos",
-            icon: PiggyBank,
-            label: "Fundos",
-          }),
-        ]),
-        ...group("fin-cobranca", "Cobrança", [
-          ...item(showFinanceiro && showInadimplencia, {
-            kind: "item",
-            to: "/inadimplencia",
-            icon: AlertCircle,
-            label: "Inadimplência",
-          }),
-          ...item(showFinanceiro && showCobranca, {
-            kind: "item",
-            to: "/cobranca",
-            icon: HandCoins,
-            label: "Cobrança",
-          }),
-          ...item(showFinanceiro && showCobranca, {
-            kind: "item",
-            to: "/cobranca-automatica",
-            icon: Bot,
-            label: "Cobrança Automática",
-          }),
-          ...item(showFinanceiro && showAtendimento, {
-            kind: "item",
-            to: "/atendimento",
-            icon: MessageSquare,
-            label: "Atendimento",
-          }),
-        ]),
+        ...item(showFinanceiro && showDashboard, {
+          kind: "item",
+          to: "/extrato-bancario",
+          icon: Landmark,
+          label: "Extrato Bancário",
+        }),
+        ...item(showFinanceiro && showUpload, {
+          kind: "item",
+          to: "/upload",
+          icon: Upload,
+          label: "Importar Extrato",
+        }),
+        ...item(showFinanceiro && showConciliacao, {
+          kind: "item",
+          to: "/conciliacao",
+          icon: FileCheck2,
+          label: "Faturamento",
+        }),
+        ...item(showFinanceiro && showFluxo, {
+          kind: "item",
+          to: "/fluxo-futuro",
+          icon: TrendingUp,
+          label: "Fluxo Futuro",
+        }),
+        ...item(showFinanceiro && showFundos, {
+          kind: "item",
+          to: "/fundos",
+          icon: PiggyBank,
+          label: "Investimentos",
+        }),
+        ...item(showFinanceiro && showCartao, {
+          kind: "item",
+          to: "/cartao-credito",
+          icon: CreditCard,
+          label: "Cartão de Crédito",
+        }),
+        ...item(showFinanceiro && showInadimplencia, {
+          kind: "item",
+          to: "/inadimplencia",
+          icon: AlertCircle,
+          label: "Inadimplência",
+        }),
+        ...item(showFinanceiro && showCobranca, {
+          kind: "item",
+          to: "/cobranca-automatica",
+          icon: Bot,
+          label: "Cobrança Automática",
+        }),
+        ...item(showFinanceiro && showCobranca, {
+          kind: "item",
+          to: "/cobranca",
+          icon: HandCoins,
+          label: "Régua de Cobrança",
+        }),
       ]),
       ...item(showConfig, {
         kind: "item",
@@ -571,6 +562,7 @@ function AppShell() {
     showDiario,
     showColonia,
     showEsportes,
+    showDocumentos,
     showFinanceiro,
     showDashboard,
     showUpload,
