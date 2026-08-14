@@ -6,6 +6,7 @@
 // e falha com "a.toHex is not a function" ao abrir qualquer documento.
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
+import { lerItensDeTexto } from "./pdf-text";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc as string;
 
@@ -50,8 +51,7 @@ export async function parseBoletoPdf(file: File): Promise<BoletoParseResult> {
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-    const items: Item[] = (content.items as unknown[])
+    const items: Item[] = (await lerItensDeTexto(page))
       .filter((it): it is { str: string; transform: number[] } =>
         typeof it === "object" && it !== null && "str" in it && "transform" in it,
       )
