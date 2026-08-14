@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   assuntoEmailContracheque,
+  classificarErroPdf,
   competenciaExtenso,
   conferirPaginas,
   corpoEmailContracheque,
   corrigirVinculo,
   identificarFuncionarioDaPagina,
+  mensagemFalhaPdf,
   nomeArquivoContracheque,
   paginasEnviaveis,
   removerPagina,
@@ -247,5 +249,65 @@ describe("senha e textos do email", () => {
     expect(nomeArquivoContracheque("Ana Maria de Souza Ferreira", "2026-08")).toBe(
       "contracheque-ana-maria-de-souza-ferreira-2026-08.pdf",
     );
+  });
+});
+
+// Erros de leitura do PDF: o motivo precisa chegar ao usuário, porque a ação de
+// correção é diferente em cada caso (senha, arquivo escaneado, corrompido…).
+// Os erros abaixo são os que o pdfjs 5.x realmente lança (verificado contra a
+// lib com PDFs cifrado, escaneado, corrompido e vazio).
+describe("classificação de falha na leitura do PDF", () => {
+  function erroPdfjs(name: string, message: string, code?: number) {
+    const e = new Error(message) as Error & { code?: number };
+    e.name = name;
+    if (code !== undefined) e.code = code;
+    return e;
+  }
+
+  it("PDF protegido por senha é identificado como senha ausente", () => {
+    expect(classificarErroPdf(erroPdfjs("PasswordException", "No password given", 1))).toBe(
+      "senha",
+    );
+  });
+
+  it("senha errada é distinguida de senha ausente", () => {
+    expect(classificarErroPdf(erroPdfjs("PasswordException", "Incorrect Password", 2))).toBe(
+      "senha_incorreta",
+    );
+  });
+
+  it("PDF corrompido e arquivo vazio caem em 'inválido'", () => {
+    expect(classificarErroPdf(erroPdfjs("InvalidPDFException", "Invalid PDF structure."))).toBe(
+      "invalido",
+    );
+    expect(
+      classificarErroPdf(
+        erroPdfjs("InvalidPDFException", "The PDF file is empty, i.e. its size is zero bytes."),
+      ),
+    ).toBe("invalido");
+  });
+
+  it("erro desconhecido não é classificado como senha nem como inválido", () => {
+    expect(classificarErroPdf(erroPdfjs("TypeError", "x is not a function"))).toBe("desconhecido");
+    expect(classificarErroPdf(null)).toBe("desconhecido");
+    expect(classificarErroPdf("falhou")).toBe("desconhecido");
+  });
+
+  it("cada motivo vira uma mensagem específica, com a ação de correção", () => {
+    expect(mensagemFalhaPdf("senha")).toContain("protegido por senha");
+    expect(mensagemFalhaPdf("senha_incorreta")).toContain("não abre");
+    expect(mensagemFalhaPdf("invalido")).toContain("corrompido");
+
+    const escaneado = mensagemFalhaPdf("sem_texto", { paginas: 95 });
+    expect(escaneado).toContain("95 páginas");
+    expect(escaneado).toContain("imagem escaneada");
+
+    const grande = mensagemFalhaPdf("tamanho", { tamanhoMaximoMb: 50, tamanhoMb: 73.4 });
+    expect(grande).toContain("50 MB");
+    expect(grande).toContain("73.4 MB");
+  });
+
+  it("mensagem genérica só sobra para o motivo desconhecido", () => {
+    expect(mensagemFalhaPdf("desconhecido")).toContain("Não foi possível ler o PDF");
   });
 });

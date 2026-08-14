@@ -234,6 +234,88 @@ export function resumirConferencia(paginas: readonly PaginaContracheque[]): Resu
   };
 }
 
+// ---------- Falhas de leitura do PDF ----------
+//
+// pdfjs sinaliza cada problema de um jeito diferente e o motivo real é o que o
+// usuário precisa saber para resolver (remover a senha, pedir o PDF com texto,
+// dividir o arquivo). A classificação é pura: recebe o erro e devolve o motivo.
+
+export type MotivoFalhaPdf =
+  | "senha"
+  | "senha_incorreta"
+  | "tamanho"
+  | "invalido"
+  | "sem_texto"
+  | "desconhecido";
+
+function nomeDoErro(erro: unknown): string {
+  if (typeof erro !== "object" || erro === null) return "";
+  const e = erro as { name?: unknown };
+  return typeof e.name === "string" ? e.name : "";
+}
+
+function mensagemDoErro(erro: unknown): string {
+  if (typeof erro !== "object" || erro === null) return String(erro ?? "");
+  const e = erro as { message?: unknown };
+  return typeof e.message === "string" ? e.message : "";
+}
+
+export function classificarErroPdf(erro: unknown): MotivoFalhaPdf {
+  const nome = nomeDoErro(erro);
+  const msg = mensagemDoErro(erro).toLowerCase();
+
+  if (nome === "PasswordException" || msg.includes("password")) {
+    // pdfjs: code 1 = senha não informada, code 2 = senha errada.
+    const code = (erro as { code?: unknown }).code;
+    if (code === 2 || msg.includes("incorrect")) return "senha_incorreta";
+    return "senha";
+  }
+  if (
+    nome === "InvalidPDFException" ||
+    nome === "MissingPDFException" ||
+    nome === "UnexpectedResponseException" ||
+    msg.includes("invalid pdf") ||
+    msg.includes("file is empty")
+  ) {
+    return "invalido";
+  }
+  return "desconhecido";
+}
+
+export function mensagemFalhaPdf(
+  motivo: MotivoFalhaPdf,
+  ctx?: { tamanhoMaximoMb?: number; tamanhoMb?: number; paginas?: number },
+): string {
+  switch (motivo) {
+    case "senha":
+      return (
+        "Este PDF está protegido por senha. Informe a senha de abertura no campo " +
+        '"Senha do PDF" e envie de novo, ou peça à contabilidade um arquivo sem proteção.'
+      );
+    case "senha_incorreta":
+      return "A senha informada não abre este PDF. Confira a senha e tente de novo.";
+    case "tamanho": {
+      const max = ctx?.tamanhoMaximoMb ?? 0;
+      const atual = ctx?.tamanhoMb;
+      const tem = atual ? ` O arquivo enviado tem ${atual.toFixed(1)} MB.` : "";
+      return `O arquivo excede o tamanho máximo de ${max} MB.${tem} Divida o PDF em partes e envie uma por vez.`;
+    }
+    case "invalido":
+      return "O arquivo não é um PDF válido ou está corrompido. Gere o PDF novamente e tente de novo.";
+    case "sem_texto": {
+      const n = ctx?.paginas;
+      const quantas = n ? `Todas as ${n} páginas` : "O arquivo";
+      return (
+        `${quantas} vieram sem texto legível — o PDF parece ser uma imagem escaneada. ` +
+        "Como não há texto, não é possível identificar o funcionário de cada página; " +
+        "peça à contabilidade o PDF original (gerado pelo sistema, não escaneado)."
+      );
+    }
+    default:
+      return "Não foi possível ler o PDF. O formato pode não ser suportado pelo leitor.";
+  }
+}
+
 export const LABEL_STATUS: Record<StatusPagina, string> = {
   pronta: "Pronta para envio",
   sem_correspondencia: "Nome não localizado no RH",
