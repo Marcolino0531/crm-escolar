@@ -21,7 +21,12 @@ import {
   type FuncionarioContracheque,
   type PaginaContracheque,
 } from "@/lib/contracheques";
-import { extrairPaginasPdf, paraBase64, recortarPaginaProtegida } from "@/lib/contracheques.pdf";
+import {
+  ErroLeituraPdf,
+  extrairPaginasPdf,
+  paraBase64,
+  recortarPaginaProtegida,
+} from "@/lib/contracheques.pdf";
 import { enviarContracheque } from "@/lib/contracheques.functions";
 
 type EnvioRow = {
@@ -70,6 +75,12 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [paginas, setPaginas] = useState<PaginaContracheque[] | null>(null);
   const [lendo, setLendo] = useState(false);
+  // PDF da contabilidade que vem cifrado: guardamos a senha de abertura para
+  // reabrir o arquivo no recorte de cada página.
+  const [senhaPdf, setSenhaPdf] = useState("");
+  const [pedeSenha, setPedeSenha] = useState(false);
+  const [protegido, setProtegido] = useState(false);
+  const [falha, setFalha] = useState<string | null>(null);
   const [expandida, setExpandida] = useState<number | null>(null);
   const [confirmando, setConfirmando] = useState(false);
   const [enviando, setEnviando] = useState<{ feitos: number; total: number } | null>(null);
@@ -94,6 +105,45 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
     },
   });
 
+  // Leitura do PDF. `senha` só é usada quando o arquivo da contabilidade vem
+  // cifrado — o motivo real de cada falha é mostrado ao usuário, em vez de um
+  // erro genérico, porque a ação de correção é diferente em cada caso.
+  const processarArquivo = async (file: File, senha: string) => {
+    setLendo(true);
+    setPaginas(null);
+    setFalha(null);
+    try {
+      const { paginas: extraidas, paginasSemTexto } = await extrairPaginasPdf(
+        file,
+        senha || undefined,
+      );
+      setArquivo(file);
+      setProtegido(Boolean(senha));
+      setPedeSenha(false);
+      setPaginas(conferirPaginas(extraidas, elenco));
+      if (paginasSemTexto.length > 0) {
+        toast.warning(
+          `${paginasSemTexto.length} página(s) sem texto legível (${paginasSemTexto.join(", ")}): ` +
+            "vincule o funcionário manualmente ou remova a página.",
+        );
+      }
+    } catch (err) {
+      const mensagem = err instanceof Error ? err.message : "Não foi possível ler o PDF.";
+      const precisaSenha =
+        err instanceof ErroLeituraPdf &&
+        (err.motivo === "senha" || err.motivo === "senha_incorreta");
+      setFalha(mensagem);
+      toast.error(mensagem);
+      // Com senha pendente o arquivo continua carregado: o usuário digita a
+      // senha e tenta de novo sem reescolher o PDF.
+      setPedeSenha(precisaSenha);
+      setArquivo(precisaSenha ? file : null);
+      if (!precisaSenha) setProtegido(false);
+    } finally {
+      setLendo(false);
+    }
+  };
+
   const handleArquivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -102,28 +152,17 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
       toast.error("Envie o arquivo em PDF.");
       return;
     }
-    setLendo(true);
-    setPaginas(null);
-    setArquivo(file);
-    try {
-      const extraidas = await extrairPaginasPdf(file);
-      if (extraidas.length === 0) {
-        toast.error("O PDF não tem páginas legíveis.");
-        setArquivo(null);
-        return;
-      }
-      setPaginas(conferirPaginas(extraidas, elenco));
-    } catch {
-      toast.error("Não foi possível ler o PDF.");
-      setArquivo(null);
-    } finally {
-      setLendo(false);
-    }
+    setSenhaPdf("");
+    await processarArquivo(file, "");
   };
 
   const limpar = () => {
     setArquivo(null);
     setPaginas(null);
+    setSenhaPdf("");
+    setPedeSenha(false);
+    setProtegido(false);
+    setFalha(null);
     setExpandida(null);
     setEnviando(null);
   };
@@ -143,13 +182,18 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
         continue;
       }
       try {
-        const protegido = await recortarPaginaProtegida(arquivo, pagina.pagina, senha);
+        const recorte = await recortarPaginaProtegida(
+          arquivo,
+          pagina.pagina,
+          senha,
+          protegido ? senhaPdf : undefined,
+        );
         const res = await enviarFn({
           data: {
             employeeId: pagina.funcionarioId,
             competencia,
             pagina: pagina.pagina,
-            pdfBase64: paraBase64(protegido),
+            pdfBase64: paraBase64(recorte),
           },
         });
         if (res.ok) sucessos += 1;
@@ -219,6 +263,31 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
             edição.
           </p>
         )}
+        {pedeSenha && arquivo && (
+          <div className="mt-4 flex flex-wrap items-end gap-3 border border-amber-200 bg-amber-50 rounded-xl p-3">
+            <div>
+              <label className="block text-xs font-medium text-amber-800 mb-1">
+                Senha do PDF ({arquivo.name})
+              </label>
+              <input
+                type="password"
+                value={senhaPdf}
+                onChange={(e) => setSenhaPdf(e.target.value)}
+                placeholder="Senha de abertura do arquivo"
+                className={inputClass}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void processarArquivo(arquivo, senhaPdf)}
+              disabled={!senhaPdf.trim() || lendo}
+              className="px-4 py-2 text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
+            >
+              Abrir PDF
+            </button>
+          </div>
+        )}
+        {falha && !lendo && <p className="text-sm text-red-600 mt-3">{falha}</p>}
         {lendo && <p className="text-sm text-gray-500 mt-3">Lendo o PDF…</p>}
       </section>
 
