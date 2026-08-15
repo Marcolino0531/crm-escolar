@@ -234,6 +234,7 @@ export const FINANCEIRO_SUBMODULES = [
   "financeiro_inadimplencia",
   "financeiro_cobranca",
   "financeiro_atendimento",
+  "financeiro_atendimento_ia",
   "financeiro_cartao",
   "financeiro_fundos",
 ] as const;
@@ -267,6 +268,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   financeiro_inadimplencia: "Inadimplência",
   financeiro_cobranca: "Régua de Cobrança",
   financeiro_atendimento: "Atendimento",
+  financeiro_atendimento_ia: "Atendimento — Assistente de IA",
   financeiro_cartao: "Cartão de Crédito",
   financeiro_fundos: "Investimentos",
 };

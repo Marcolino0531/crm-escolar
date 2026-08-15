@@ -29,6 +29,7 @@ import { Route as ColoniaRouteImport } from './routes/colonia'
 import { Route as CobrancaAutomaticaRouteImport } from './routes/cobranca-automatica'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
 import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
+import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
 import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
@@ -134,6 +135,11 @@ const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
   path: '/cartao-credito',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtendimentoIaRoute = AtendimentoIaRouteImport.update({
+  id: '/atendimento-ia',
+  path: '/atendimento-ia',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AtendimentoRoute = AtendimentoRouteImport.update({
   id: '/atendimento',
   path: '/atendimento',
@@ -160,6 +166,7 @@ export interface FileRoutesByFullPath {
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
+  '/atendimento-ia': typeof AtendimentoIaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -186,6 +193,7 @@ export interface FileRoutesByTo {
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
+  '/atendimento-ia': typeof AtendimentoIaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -213,6 +221,7 @@ export interface FileRoutesById {
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
+  '/atendimento-ia': typeof AtendimentoIaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/admissoes'
     | '/agenda'
     | '/atendimento'
+    | '/atendimento-ia'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -267,6 +277,7 @@ export interface FileRouteTypes {
     | '/admissoes'
     | '/agenda'
     | '/atendimento'
+    | '/atendimento-ia'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -293,6 +304,7 @@ export interface FileRouteTypes {
     | '/admissoes'
     | '/agenda'
     | '/atendimento'
+    | '/atendimento-ia'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -320,6 +332,7 @@ export interface RootRouteChildren {
   AdmissoesRoute: typeof AdmissoesRoute
   AgendaRoute: typeof AgendaRoute
   AtendimentoRoute: typeof AtendimentoRoute
+  AtendimentoIaRoute: typeof AtendimentoIaRoute
   CartaoCreditoRoute: typeof CartaoCreditoRoute
   CobrancaRoute: typeof CobrancaRoute
   CobrancaAutomaticaRoute: typeof CobrancaAutomaticaRoute
@@ -484,6 +497,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CartaoCreditoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/atendimento-ia': {
+      id: '/atendimento-ia'
+      path: '/atendimento-ia'
+      fullPath: '/atendimento-ia'
+      preLoaderRoute: typeof AtendimentoIaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/atendimento': {
       id: '/atendimento'
       path: '/atendimento'
@@ -520,6 +540,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdmissoesRoute: AdmissoesRoute,
   AgendaRoute: AgendaRoute,
   AtendimentoRoute: AtendimentoRoute,
+  AtendimentoIaRoute: AtendimentoIaRoute,
   CartaoCreditoRoute: CartaoCreditoRoute,
   CobrancaRoute: CobrancaRoute,
   CobrancaAutomaticaRoute: CobrancaAutomaticaRoute,

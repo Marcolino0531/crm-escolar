@@ -29,6 +29,7 @@ import {
   HandCoins,
   Bot,
   MessageSquare,
+  Sparkles,
   Shirt,
   Package,
   BookOpen,
@@ -387,6 +388,8 @@ function AppShell() {
   const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
   // Atendimento vive em Operacional: não depende mais do guarda-chuva Financeiro.
   const showAtendimento = canView("financeiro_atendimento");
+  // Assistente de IA: permissão própria (manda dados a serviço externo e tem custo).
+  const showAtendimentoIa = canView("financeiro_atendimento_ia");
   const showCartao = canView("financeiro") && canView("financeiro_cartao");
   const showFundos = canView("financeiro_fundos");
   // The Financeiro section appears if the umbrella is granted AND at least one
@@ -480,6 +483,12 @@ function AppShell() {
           icon: MessageSquare,
           label: "Atendimento",
         }),
+        ...item(showAtendimentoIa, {
+          kind: "item",
+          to: "/atendimento-ia",
+          icon: Sparkles,
+          label: "Instruções da IA",
+        }),
         ...item(showDocumentos, {
           kind: "item",
           to: "/documentos",
@@ -571,6 +580,7 @@ function AppShell() {
     showInadimplencia,
     showCobranca,
     showAtendimento,
+    showAtendimentoIa,
     showCartao,
     showFundos,
     showConfig,
