@@ -9,6 +9,7 @@ import FechamentoVT from "./FechamentoVT";
 import FolhasPagamentoVT from "./FolhasPagamentoVT";
 import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
+import FolhaPonto from "./FolhaPonto";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -141,9 +142,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [exportModalAberto, setExportModalAberto] = useState(false);
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
-  const [abaRh, setAbaRh] = useState<"funcionarios" | "terceirizados" | "folhas" | "contracheques">(
-    "funcionarios",
-  );
+  const [abaRh, setAbaRh] = useState<
+    "funcionarios" | "terceirizados" | "folhas" | "contracheques" | "ponto"
+  >("funcionarios");
   const [folhasRefresh, setFolhasRefresh] = useState(0);
 
   const isAtivo = (f: Funcionario) => !f.dataRescisao;
@@ -258,6 +259,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             { id: "terceirizados", label: "Terceirizados" },
             { id: "folhas", label: "Folhas Salvas" },
             { id: "contracheques", label: "Contracheques" },
+            { id: "ponto", label: "Folha de Ponto" },
           ] as const
         ).map((aba) => (
           <button
@@ -275,7 +277,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         ))}
       </div>
 
-      {abaRh === "contracheques" ? (
+      {abaRh === "ponto" ? (
+        <FolhaPonto funcionarios={funcionarios} isAdmin={isAdmin} />
+      ) : abaRh === "contracheques" ? (
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} />
       ) : abaRh === "folhas" ? (
         <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
