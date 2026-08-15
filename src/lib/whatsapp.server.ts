@@ -105,6 +105,76 @@ export async function sendTextMessage(
   return { messageId: respBody.messages[0].id };
 }
 
+// ─── Envio de mídia (imagem, PDF e áudio) ────────────────────────────────────
+// Fluxo em duas etapas, como a Meta exige: (1) sobe o binário para
+// /{phone-number-id}/media e recebe um media id; (2) envia a mensagem referindo
+// esse id. Enviar por `link` exigiria expor o arquivo publicamente, então o
+// upload é sempre pelo id.
+
+// Passo 1: sobe o arquivo e devolve o media id da Meta.
+export async function uploadMediaToMeta(
+  cfg: WhatsAppSendConfig,
+  file: { bytes: Uint8Array; mime: string; filename: string },
+): Promise<string> {
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/media`;
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", file.mime);
+  form.append("file", new Blob([new Uint8Array(file.bytes)], { type: file.mime }), file.filename);
+
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${cfg.token}` },
+    body: form,
+  });
+
+  const body = (await resp.json().catch(() => null)) as {
+    id?: string;
+    error?: { message?: string; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !body?.id) {
+    const detail =
+      body?.error?.error_data?.details ||
+      body?.error?.message ||
+      `HTTP ${resp.status} ao subir a mídia para a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+  return body.id;
+}
+
+// Passo 2: envia a mensagem de mídia. O payload já vem montado (por tipo) da
+// lógica pura em whatsapp-send-media.ts. Lança em caso de erro, com o detalhe da
+// Meta preservado (ex.: janela de 24h fechada, formato recusado).
+export async function sendMediaMessage(
+  cfg: WhatsAppSendConfig,
+  payload: Record<string, unknown>,
+): Promise<SendResult> {
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/messages`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const body = (await resp.json().catch(() => null)) as {
+    messages?: { id: string }[];
+    error?: { message?: string; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !body?.messages?.[0]?.id) {
+    const detail =
+      body?.error?.error_data?.details ||
+      body?.error?.message ||
+      `HTTP ${resp.status} ao chamar a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+  return { messageId: body.messages[0].id };
+}
+
 // ─── Download de mídia recebida (imagens) ────────────────────────────────────
 // Fluxo em duas etapas exigido pela Meta: (1) resolver o media_id para uma URL
 // temporária no Graph API; (2) baixar o binário dessa URL (a URL expira em

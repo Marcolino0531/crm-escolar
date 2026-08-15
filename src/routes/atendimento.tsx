@@ -22,6 +22,10 @@ import {
   FileX,
   Download,
   MicOff,
+  Mic,
+  Paperclip,
+  Square,
+  Trash2,
   Sparkles,
   ShieldAlert,
   Loader2,
@@ -36,13 +40,25 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { enviarMensagemChat, arquivarConversas } from "@/lib/atendimento.functions";
+import {
+  enviarMensagemChat,
+  enviarMidiaChat,
+  arquivarConversas,
+} from "@/lib/atendimento.functions";
 import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimento-ia.functions";
 import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.functions";
 import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
 import { agruparPorDia } from "@/lib/atendimento-dias";
+import {
+  caminhoMidiaSaida,
+  estadoJanela24h,
+  MIMES_ACEITOS_LABEL,
+  nomePadrao,
+  validarArquivoEnvio,
+  type EstadoJanela,
+} from "@/lib/whatsapp-send-media";
 
 export const Route = createFileRoute("/atendimento")({
   head: () => ({ meta: [{ title: "Atendimento — School Hub" }] }),
@@ -483,8 +499,10 @@ function ThreadConversa({
 }) {
   const queryClient = useQueryClient();
   const enviarFn = useServerFn(enviarMensagemChat);
+  const enviarMidiaFn = useServerFn(enviarMidiaChat);
   const registrarEnvioFn = useServerFn(registrarEnvioDaSugestao);
   const [texto, setTexto] = useState("");
+  const arquivoRef = useRef<HTMLInputElement>(null);
   // Sugestão viva na tela e o texto exato que a IA propôs, para saber depois se
   // foi enviada como está ou editada à mão.
   const [sugestao, setSugestao] = useState<Sugestao | null>(null);
@@ -581,6 +599,51 @@ function ThreadConversa({
     enviar.mutate(body);
   };
 
+  // Envio de mídia em duas etapas: sobe o arquivo para o bucket privado com o
+  // próprio login do operador (a função serverless tem teto de corpo bem menor
+  // que o limite de mídia da Meta) e depois pede o envio ao servidor, que lê o
+  // objeto, sobe para a Meta e registra a mensagem no histórico.
+  const enviarMidia = useMutation({
+    mutationFn: async (arquivo: File) => {
+      const validacao = validarArquivoEnvio({
+        name: arquivo.name,
+        type: arquivo.type,
+        size: arquivo.size,
+      });
+      if (!validacao.ok) throw new Error(validacao.erro);
+
+      const path = caminhoMidiaSaida(crypto.randomUUID(), validacao.mime);
+      const up = await supabase.storage
+        .from(WHATSAPP_MEDIA_BUCKET)
+        .upload(path, arquivo, { contentType: validacao.mime, upsert: false });
+      if (up.error) throw new Error(`Falha ao subir o arquivo: ${up.error.message}`);
+
+      return enviarMidiaFn({
+        data: {
+          conversationId: conversa.id,
+          storagePath: path,
+          filename: validacao.filename,
+          // Texto já digitado acompanha a imagem/PDF como legenda (áudio não
+          // aceita legenda na Cloud API; o servidor ignora nesse caso).
+          caption: validacao.tipo === "audio" ? undefined : texto.trim() || undefined,
+        },
+      });
+    },
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.error ?? "Falha ao enviar o arquivo.");
+        return;
+      }
+      setTexto("");
+      queryClient.invalidateQueries({ queryKey: ["atendimento-mensagens", conversa.id] });
+      queryClient.invalidateQueries({ queryKey: ["atendimento-conversas"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao enviar o arquivo."),
+  });
+
+  const janela = useMemo(() => estadoJanela24h(mensagens, new Date()), [mensagens]);
+  const ocupado = enviar.isPending || enviarMidia.isPending;
+
   return (
     <>
       <div className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -673,7 +736,37 @@ function ThreadConversa({
               onFechar={() => setExemploCandidato(null)}
             />
           )}
+          <AvisoJanela24h janela={janela} />
           <div className="flex items-end gap-2">
+            <input
+              ref={arquivoRef}
+              type="file"
+              accept="image/jpeg,image/png,application/pdf,audio/*"
+              className="hidden"
+              onChange={(e) => {
+                const arquivo = e.target.files?.[0];
+                e.target.value = "";
+                if (arquivo) enviarMidia.mutate(arquivo);
+              }}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              disabled={ocupado}
+              onClick={() => arquivoRef.current?.click()}
+              title={`Anexar arquivo (${MIMES_ACEITOS_LABEL})`}
+            >
+              {enviarMidia.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Paperclip className="h-4 w-4" />
+              )}
+            </Button>
+            <GravadorAudio
+              desabilitado={ocupado}
+              onGravado={(arquivo) => enviarMidia.mutate(arquivo)}
+            />
             <Textarea
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
@@ -689,15 +782,15 @@ function ThreadConversa({
             />
             <Button
               className="h-10 gap-1"
-              disabled={!texto.trim() || enviar.isPending}
+              disabled={!texto.trim() || ocupado}
               onClick={handleEnviar}
             >
               <Send className="h-4 w-4" /> {enviar.isPending ? "Enviando…" : "Enviar"}
             </Button>
           </div>
           <p className="mt-1 text-[10px] text-muted-foreground">
-            Respostas de texto livre só são entregues dentro da janela de 24h após a última mensagem
-            do responsável (regra da Meta).
+            Texto livre, imagem, PDF e áudio só são entregues dentro da janela de 24h após a última
+            mensagem do responsável (regra da Meta). Limites: imagem 5 MB, áudio 16 MB, PDF 20 MB.
           </p>
         </div>
       ) : (
@@ -706,6 +799,174 @@ function ThreadConversa({
         </div>
       )}
     </>
+  );
+}
+
+// Estado da janela de atendimento da Meta, na mesma régua para texto e mídia:
+// fora dela nada de conteúdo livre é entregue, só template aprovado. O aviso não
+// bloqueia o envio — o histórico local pode estar incompleto (conversa iniciada
+// por cobrança, mensagem antiga não sincronizada) e travar a caixa deixaria o
+// atendimento sem saída; quando a Meta recusa, o erro aparece no próprio balão.
+function AvisoJanela24h({ janela }: { janela: EstadoJanela }) {
+  if (janela.estado !== "fechada") return null;
+  const desde = janela.ultimaEntrada.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return (
+    <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900">
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        A janela de 24h fechou (última mensagem do responsável em {desde}). A Meta pode recusar
+        texto, imagem, PDF e áudio até que ele escreva de novo — nesse caso, use um template de
+        cobrança.
+      </span>
+    </div>
+  );
+}
+
+// Formatos de gravação que a Cloud API aceita, em ordem de preferência. O
+// navegador escolhe o primeiro que sabe produzir; o webm/opus do Chrome fica
+// fora de propósito, porque a Meta o recusa (nesse caso o botão sai do ar e o
+// operador anexa um arquivo de áudio pelo clipe).
+const MIMES_GRAVACAO = ["audio/mp4", "audio/ogg;codecs=opus", "audio/ogg", "audio/mpeg"];
+
+function mimeDeGravacao(): string | null {
+  if (typeof window === "undefined" || typeof MediaRecorder === "undefined") return null;
+  return MIMES_GRAVACAO.find((m) => MediaRecorder.isTypeSupported(m)) ?? null;
+}
+
+function duracaoCurta(segundos: number): string {
+  const m = Math.floor(segundos / 60);
+  const s = segundos % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Gravação de áudio pelo navegador, no estilo do WhatsApp: um toque começa,
+// outro encerra e envia. O microfone só é aberto ao clicar (nunca antes), e a
+// trilha é encerrada assim que a gravação termina.
+function GravadorAudio({
+  desabilitado,
+  onGravado,
+}: {
+  desabilitado: boolean;
+  onGravado: (arquivo: File) => void;
+}) {
+  const [gravando, setGravando] = useState(false);
+  const [segundos, setSegundos] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const cancelarRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mime = useMemo(() => mimeDeGravacao(), []);
+
+  const pararTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => pararTimer, []);
+
+  const iniciar = async () => {
+    if (!mime) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      chunksRef.current = [];
+      cancelarRef.current = false;
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        pararTimer();
+        setGravando(false);
+        setSegundos(0);
+        if (cancelarRef.current) return;
+        const tipo = mime.split(";")[0];
+        const blob = new Blob(chunksRef.current, { type: tipo });
+        if (blob.size === 0) {
+          toast.error("Nada foi gravado.");
+          return;
+        }
+        onGravado(new File([blob], nomePadrao("audio", tipo), { type: tipo }));
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setGravando(true);
+      setSegundos(0);
+      timerRef.current = setInterval(() => setSegundos((s) => s + 1), 1000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(
+        `Não foi possível acessar o microfone: ${msg}. Você pode anexar um arquivo de áudio pelo clipe.`,
+      );
+    }
+  };
+
+  const encerrar = (cancelar: boolean) => {
+    cancelarRef.current = cancelar;
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+  };
+
+  if (!mime) {
+    return (
+      <Button
+        variant="outline"
+        size="icon"
+        className="h-10 w-10 shrink-0"
+        disabled
+        title="Este navegador só grava em um formato que o WhatsApp não aceita. Anexe um arquivo de áudio pelo clipe."
+      >
+        <MicOff className="h-4 w-4" />
+      </Button>
+    );
+  }
+
+  if (gravando) {
+    return (
+      <div className="flex shrink-0 items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-2 py-1">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+        <span className="w-9 text-center text-xs font-medium tabular-nums text-red-800">
+          {duracaoCurta(segundos)}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-red-700 hover:bg-red-100"
+          onClick={() => encerrar(true)}
+          title="Descartar gravação"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+        <Button
+          size="icon"
+          className="h-7 w-7 bg-red-600 hover:bg-red-700"
+          onClick={() => encerrar(false)}
+          title="Encerrar e enviar"
+        >
+          <Square className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      className="h-10 w-10 shrink-0"
+      disabled={desabilitado}
+      onClick={() => void iniciar()}
+      title="Gravar áudio"
+    >
+      <Mic className="h-4 w-4" />
+    </Button>
   );
 }
 
@@ -950,7 +1211,7 @@ function ImagemMensagem({ path }: { path: string }) {
     <a href={url} target="_blank" rel="noopener noreferrer" className="block">
       <img
         src={url}
-        alt="Imagem recebida"
+        alt="Imagem da conversa"
         loading="lazy"
         onError={() => setErro(true)}
         className="max-h-64 max-w-full cursor-zoom-in rounded-lg object-cover"
