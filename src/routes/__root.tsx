@@ -487,7 +487,7 @@ function AppShell() {
           kind: "item",
           to: "/atendimento-ia",
           icon: Sparkles,
-          label: "Instruções da IA",
+          label: "Assistente de IA",
         }),
         ...item(showDocumentos, {
           kind: "item",
