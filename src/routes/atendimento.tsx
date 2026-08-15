@@ -22,7 +22,12 @@ import {
   FileX,
   Download,
   MicOff,
+  Sparkles,
+  ShieldAlert,
+  Loader2,
+  ClipboardCheck,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
@@ -31,6 +36,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { enviarMensagemChat, arquivarConversas } from "@/lib/atendimento.functions";
+import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimento-ia.functions";
+import { competenciaDeIso, contarSugestoesDoMes } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
 import { agruparPorDia } from "@/lib/atendimento-dias";
@@ -80,7 +87,46 @@ type ChatMessage = {
   media_filename: string | null;
 };
 
+// Sugestão de IA viva na tela (nada é enviado sem clique humano).
+type Sugestao = {
+  id: string | null;
+  texto: string;
+  sensivel: boolean;
+  motivoSensivel: string;
+  baseFinanceira: string;
+  tokens: number;
+};
+
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
+
+// Uso do mês do assistente (a API da Anthropic cobra por token processado).
+function useUsoIaDoMes(ativo: boolean) {
+  return useQuery({
+    queryKey: ["atendimento-ia-uso"],
+    enabled: ativo,
+    queryFn: async () => {
+      const desde = new Date(Date.now() - 62 * 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("ai_suggestions" as never)
+        .select("gerado_em, tokens_entrada, tokens_saida")
+        .gte("gerado_em", desde)
+        .limit(2000);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as unknown as {
+        gerado_em: string;
+        tokens_entrada: number;
+        tokens_saida: number;
+      }[];
+      const competencia = competenciaDeIso(new Date().toISOString());
+      const doMes = rows.filter((r) => competenciaDeIso(r.gerado_em) === competencia);
+      return {
+        competencia,
+        total: contarSugestoesDoMes(rows, competencia),
+        tokens: doMes.reduce((s, r) => s + (r.tokens_entrada ?? 0) + (r.tokens_saida ?? 0), 0),
+      };
+    },
+  });
+}
 
 // Rótulo primário da conversa: o responsável (quem escreve pelo WhatsApp).
 function nomeResponsavel(c: Conversation): string {
@@ -97,6 +143,7 @@ function horaCurta(iso: string | null): string {
 function AtendimentoPage() {
   const { canEdit } = usePermissions();
   const podeResponder = canEdit("financeiro_atendimento");
+  const podeUsarIa = canEdit("financeiro_atendimento_ia");
   const queryClient = useQueryClient();
   const arquivarFn = useServerFn(arquivarConversas);
   const [selecionadaId, setSelecionadaId] = useState<string | null>(null);
@@ -400,6 +447,7 @@ function AtendimentoPage() {
             <ThreadConversa
               conversa={selecionada}
               podeResponder={podeResponder}
+              podeUsarIa={podeUsarIa}
               onVoltar={() => setSelecionadaId(null)}
               onArquivar={() => alternarArquivo([selecionada.id], !selecionada.archived)}
               arquivando={arquivarMut.isPending}
@@ -419,19 +467,26 @@ function AtendimentoPage() {
 function ThreadConversa({
   conversa,
   podeResponder,
+  podeUsarIa,
   onVoltar,
   onArquivar,
   arquivando,
 }: {
   conversa: Conversation;
   podeResponder: boolean;
+  podeUsarIa: boolean;
   onVoltar: () => void;
   onArquivar: () => void;
   arquivando: boolean;
 }) {
   const queryClient = useQueryClient();
   const enviarFn = useServerFn(enviarMensagemChat);
+  const registrarEnvioFn = useServerFn(registrarEnvioDaSugestao);
   const [texto, setTexto] = useState("");
+  // Sugestão viva na tela e o texto exato que a IA propôs, para saber depois se
+  // foi enviada como está ou editada à mão.
+  const [sugestao, setSugestao] = useState<Sugestao | null>(null);
+  const sugestaoUsadaRef = useRef<{ id: string; texto: string } | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
 
   const mensagensQuery = useQuery({
@@ -470,10 +525,26 @@ function ThreadConversa({
     fimRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [mensagens.length]);
 
+  // Sugestão viva pertence à conversa aberta: trocar de conversa limpa o card.
+  useEffect(() => {
+    setSugestao(null);
+    sugestaoUsadaRef.current = null;
+  }, [conversa.id]);
+
   const enviar = useMutation({
     mutationFn: (body: string) => enviarFn({ data: { conversationId: conversa.id, body } }),
-    onSuccess: (res) => {
+    onSuccess: (res, body) => {
       if (res.ok) {
+        // Fecha o par sugestão/versão-final quando o texto enviado veio de uma
+        // sugestão (igual ou editado). Falha aqui não invalida o envio.
+        const usada = sugestaoUsadaRef.current;
+        if (usada) {
+          void registrarEnvioFn({ data: { suggestionId: usada.id, enviado: body } }).catch(
+            () => {},
+          );
+          sugestaoUsadaRef.current = null;
+        }
+        setSugestao(null);
         setTexto("");
         queryClient.invalidateQueries({ queryKey: ["atendimento-mensagens", conversa.id] });
         queryClient.invalidateQueries({ queryKey: ["atendimento-conversas"] });
@@ -561,6 +632,17 @@ function ThreadConversa({
 
       {podeResponder ? (
         <div className="border-t border-border p-3">
+          {podeUsarIa && (
+            <CardSugestaoIa
+              conversaId={conversa.id}
+              sugestao={sugestao}
+              onSugestao={setSugestao}
+              onUsar={(s) => {
+                setTexto(s.texto);
+                sugestaoUsadaRef.current = s.id ? { id: s.id, texto: s.texto } : null;
+              }}
+            />
+          )}
           <div className="flex items-end gap-2">
             <Textarea
               value={texto}
@@ -594,6 +676,140 @@ function ThreadConversa({
         </div>
       )}
     </>
+  );
+}
+
+// Card "Sugestão de resposta (IA)" — modo treinamento: gera um rascunho a partir
+// do histórico da conversa e da situação financeira consultada no Sponte na hora,
+// e só coloca o texto na caixa de envio quando o operador clica em "Usar esta
+// resposta". A IA nunca envia nada por conta própria.
+function CardSugestaoIa({
+  conversaId,
+  sugestao,
+  onSugestao,
+  onUsar,
+}: {
+  conversaId: string;
+  sugestao: Sugestao | null;
+  onSugestao: (s: Sugestao | null) => void;
+  onUsar: (s: Sugestao) => void;
+}) {
+  const queryClient = useQueryClient();
+  const gerarFn = useServerFn(gerarSugestaoResposta);
+  const uso = useUsoIaDoMes(true);
+
+  const gerar = useMutation({
+    mutationFn: () => gerarFn({ data: { conversationId: conversaId } }),
+    onSuccess: (res) => {
+      if (!res.ok || !res.sugestao) {
+        toast.error(res.error ?? "Não foi possível gerar a sugestão.");
+        return;
+      }
+      onSugestao({
+        id: res.suggestionId ?? null,
+        texto: res.sugestao,
+        sensivel: res.sensivel === true,
+        motivoSensivel: res.motivoSensivel ?? "",
+        baseFinanceira: res.baseFinanceira ?? "",
+        tokens: (res.tokens?.entrada ?? 0) + (res.tokens?.saida ?? 0),
+      });
+      void queryClient.invalidateQueries({ queryKey: ["atendimento-ia-uso"] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a sugestão."),
+  });
+
+  return (
+    <div className="mb-3 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-700">
+          <Sparkles className="h-3.5 w-3.5" /> Sugestão de resposta (IA)
+        </span>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/atendimento-ia"
+            className="text-[11px] text-violet-700 underline-offset-2 hover:underline"
+          >
+            Instruções da IA
+          </Link>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 border-violet-300 text-violet-800 hover:bg-violet-100"
+            disabled={gerar.isPending}
+            onClick={() => gerar.mutate()}
+          >
+            {gerar.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            {gerar.isPending ? "Gerando…" : sugestao ? "Gerar outra" : "Gerar sugestão"}
+          </Button>
+        </div>
+      </div>
+
+      {sugestao ? (
+        sugestao.sensivel ? (
+          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2.5">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+              <ShieldAlert className="h-4 w-4" /> Assunto sensível, recomendo responder
+              pessoalmente.
+            </div>
+            <p className="mt-1 text-xs text-amber-900">
+              Motivo: {sugestao.motivoSensivel}. Nenhum texto foi gerado para este caso.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-2 space-y-2">
+            <div className="whitespace-pre-wrap rounded-md border border-violet-200 bg-card p-2.5 text-sm">
+              {sugestao.texto}
+            </div>
+            {sugestao.baseFinanceira && (
+              <p className="text-[11px] text-muted-foreground">
+                Base usada: {sugestao.baseFinanceira}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                className="h-7 gap-1"
+                onClick={() => {
+                  onUsar(sugestao);
+                  toast.success(
+                    "Sugestão copiada para o campo de resposta. Revise antes de enviar.",
+                  );
+                }}
+              >
+                <ClipboardCheck className="h-3.5 w-3.5" /> Usar esta resposta
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1 text-muted-foreground"
+                onClick={() => onSugestao(null)}
+              >
+                <X className="h-3.5 w-3.5" /> Descartar
+              </Button>
+            </div>
+          </div>
+        )
+      ) : (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          A IA lê o histórico desta conversa e consulta as parcelas em aberto no Sponte na hora de
+          sugerir. Ela nunca envia nada: o texto só vai para o campo de resposta se você clicar em
+          &quot;Usar esta resposta&quot;.
+        </p>
+      )}
+
+      <p className="mt-2 text-[10px] text-muted-foreground">
+        Uso pago por token na API da Anthropic — cada geração tem custo, que cresce com o tamanho do
+        histórico.
+        {uso.data
+          ? ` ${uso.data.total} sugestão(ões) em ${uso.data.competencia} · ${uso.data.tokens.toLocaleString("pt-BR")} tokens.`
+          : ""}
+      </p>
+    </div>
   );
 }
 
