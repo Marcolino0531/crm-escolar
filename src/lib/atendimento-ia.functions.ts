@@ -30,28 +30,16 @@ import {
   type FinanceiroContexto,
   type MensagemContexto,
 } from "@/lib/atendimento-ia";
+import {
+  blocoExemplos,
+  selecionarExemplos,
+  MAX_EXEMPLOS_CONTEXTO,
+} from "@/lib/atendimento-ia-exemplos";
+import { carregarExemplosAtivos } from "@/lib/atendimento-ia-exemplos.functions";
+import { assertPermissaoIA, nomeDoUsuario, type MensagemBanco } from "@/lib/atendimento-ia.server";
 import { calcularTotalVencido } from "@/lib/billing-debt";
 import { isMesReferencia } from "@/lib/billing-exceptions";
 import { buscarResponsavelFinanceiroAluno, coletarDividaAbertaAluno } from "@/lib/sponte.functions";
-
-async function assertPermissaoIA(userId: string, edicao: boolean, acao: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "financeiro_atendimento_ia" } as never,
-  );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error(`Você não tem permissão para ${acao}.`);
-}
-
-async function nomeDoUsuario(userId: string): Promise<string> {
-  const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
-  const meta = (data?.user?.user_metadata ?? {}) as Record<string, unknown>;
-  const nome =
-    (typeof meta.full_name === "string" && meta.full_name) ||
-    (typeof meta.name === "string" && meta.name) ||
-    "";
-  return nome || (data?.user?.email ?? "");
-}
 
 type ConversaIA = {
   id: string;
@@ -61,13 +49,6 @@ type ConversaIA = {
   responsavel_name: string;
   contact_name: string;
   unidade: string;
-};
-
-type MensagemBanco = {
-  direction: "in" | "out";
-  body: string;
-  message_type: MensagemContexto["tipo"];
-  origem: "chat" | "cobranca";
 };
 
 // Data de hoje em São Paulo (YYYY-MM-DD): a Vercel roda em UTC, e o corte de
@@ -143,6 +124,8 @@ export interface GerarSugestaoResult {
   situacao?: string;
   // Resumo do que foi enviado à IA, para a tela mostrar em que dados ela se baseou.
   baseFinanceira?: string;
+  // Quantos exemplos de treinamento entraram no contexto desta sugestão.
+  exemplosUsados?: number;
   tokens?: { entrada: number; saida: number };
   error?: string;
   motivo?: MotivoFalhaIA;
@@ -218,12 +201,24 @@ export const gerarSugestaoResposta = createServerFn({ method: "POST" })
       };
     }
 
-    const financeiro = await coletarFinanceiro(conversa, hojeYMD);
+    const [financeiro, instrucoes, exemplosSalvos] = await Promise.all([
+      coletarFinanceiro(conversa, hojeYMD),
+      lerInstrucoes(),
+      carregarExemplosAtivos(),
+    ]);
+
+    // Few-shot: casos reais parecidos com a situação atual. Poucos, porque cada
+    // exemplo entra em toda sugestão e é cobrado por token.
+    const exemplos = selecionarExemplos(exemplosSalvos, {
+      mensagens,
+      max: MAX_EXEMPLOS_CONTEXTO,
+    });
     const prompt = montarPromptIA({
-      instrucoes: await lerInstrucoes(),
+      instrucoes,
       financeiro,
       mensagens,
       hojeYMD,
+      exemplos: blocoExemplos(exemplos),
     });
 
     let resposta;
@@ -268,6 +263,7 @@ export const gerarSugestaoResposta = createServerFn({ method: "POST" })
       sugestao: resposta.texto,
       sensivel: false,
       situacao: classificarSituacao(mensagens),
+      exemplosUsados: exemplos.length,
       baseFinanceira: semDados
         ? "Sponte não consultado (conversa sem aluno vinculado ou consulta indisponível): a sugestão não cita valores."
         : `${financeiro.parcelas.length} parcela(s) em aberto no Sponte · total vencido considerado hoje.`,

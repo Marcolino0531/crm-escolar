@@ -319,12 +319,17 @@ export function montarPromptIA(input: {
   mensagens: MensagemContexto[];
   hojeYMD: string;
   maxMensagens?: number;
+  // Bloco few-shot já formatado (biblioteca de exemplos de treinamento). Vazio
+  // quando não há exemplo relevante salvo.
+  exemplos?: string;
 }): PromptIA {
   const instrucoes = input.instrucoes.trim() || PROMPT_PADRAO;
   const historico = limitarHistorico(input.mensagens, input.maxMensagens ?? MAX_MENSAGENS_CONTEXTO);
 
+  const exemplos = (input.exemplos ?? "").trim();
   const system = [
     instrucoes,
+    ...(exemplos ? ["--- Exemplos de treinamento (casos reais da escola) ---", exemplos] : []),
     "--- Situação financeira (Sponte), consultada agora ---",
     blocoFinanceiro(input.financeiro, input.hojeYMD),
   ].join("\n\n");

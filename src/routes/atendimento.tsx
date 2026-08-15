@@ -26,6 +26,7 @@ import {
   ShieldAlert,
   Loader2,
   ClipboardCheck,
+  BookmarkPlus,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { usePermissions } from "@/lib/app-context";
@@ -37,7 +38,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { enviarMensagemChat, arquivarConversas } from "@/lib/atendimento.functions";
 import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimento-ia.functions";
-import { competenciaDeIso, contarSugestoesDoMes } from "@/lib/atendimento-ia";
+import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.functions";
+import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
 import { agruparPorDia } from "@/lib/atendimento-dias";
@@ -487,6 +489,13 @@ function ThreadConversa({
   // foi enviada como está ou editada à mão.
   const [sugestao, setSugestao] = useState<Sugestao | null>(null);
   const sugestaoUsadaRef = useRef<{ id: string; texto: string } | null>(null);
+  // Última sugestão gerada nesta conversa, mesmo que descartada: é a referência
+  // para saber se a resposta enviada vale como exemplo de treinamento.
+  const ultimaGeradaRef = useRef<{ id: string | null; texto: string } | null>(null);
+  const [exemploCandidato, setExemploCandidato] = useState<{
+    suggestionId: string | null;
+    respostaFinal: string;
+  } | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
 
   const mensagensQuery = useQuery({
@@ -529,6 +538,8 @@ function ThreadConversa({
   useEffect(() => {
     setSugestao(null);
     sugestaoUsadaRef.current = null;
+    ultimaGeradaRef.current = null;
+    setExemploCandidato(null);
   }, [conversa.id]);
 
   const enviar = useMutation({
@@ -544,6 +555,15 @@ function ThreadConversa({
           );
           sugestaoUsadaRef.current = null;
         }
+        // Oferece salvar o par como exemplo quando a resposta enviada difere
+        // bastante do que a IA sugeriu — inclusive quando a sugestão foi
+        // descartada e o texto foi escrito do zero.
+        const gerada = ultimaGeradaRef.current;
+        setExemploCandidato(
+          gerada && edicaoSignificativa(gerada.texto, body)
+            ? { suggestionId: gerada.id, respostaFinal: body }
+            : null,
+        );
         setSugestao(null);
         setTexto("");
         queryClient.invalidateQueries({ queryKey: ["atendimento-mensagens", conversa.id] });
@@ -636,11 +656,21 @@ function ThreadConversa({
             <CardSugestaoIa
               conversaId={conversa.id}
               sugestao={sugestao}
-              onSugestao={setSugestao}
+              onSugestao={(s) => {
+                setSugestao(s);
+                if (s) ultimaGeradaRef.current = { id: s.id, texto: s.texto };
+              }}
               onUsar={(s) => {
                 setTexto(s.texto);
                 sugestaoUsadaRef.current = s.id ? { id: s.id, texto: s.texto } : null;
               }}
+            />
+          )}
+          {exemploCandidato && (
+            <BarraSalvarExemplo
+              conversaId={conversa.id}
+              candidato={exemploCandidato}
+              onFechar={() => setExemploCandidato(null)}
             />
           )}
           <div className="flex items-end gap-2">
@@ -809,6 +839,69 @@ function CardSugestaoIa({
           ? ` ${uso.data.total} sugestão(ões) em ${uso.data.competencia} · ${uso.data.tokens.toLocaleString("pt-BR")} tokens.`
           : ""}
       </p>
+    </div>
+  );
+}
+
+// Oferece guardar a resposta realmente enviada como exemplo de treinamento, logo
+// depois do envio, quando ela ficou bem diferente do que a IA sugeriu. Salvar é
+// sempre decisão do operador: nada entra na biblioteca sozinho.
+function BarraSalvarExemplo({
+  conversaId,
+  candidato,
+  onFechar,
+}: {
+  conversaId: string;
+  candidato: { suggestionId: string | null; respostaFinal: string };
+  onFechar: () => void;
+}) {
+  const salvarFn = useServerFn(salvarExemploTreinamento);
+
+  const salvar = useMutation({
+    mutationFn: () =>
+      salvarFn({
+        data: {
+          conversationId: conversaId,
+          suggestionId: candidato.suggestionId,
+          respostaFinal: candidato.respostaFinal,
+        },
+      }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.error ?? "Não foi possível salvar o exemplo.");
+        return;
+      }
+      toast.success("Exemplo de treinamento salvo. A IA passa a usá-lo como referência.");
+      onFechar();
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar o exemplo."),
+  });
+
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50/60 p-2.5">
+      <span className="flex-1 text-[11px] text-violet-900">
+        Você reescreveu boa parte da sugestão. Guardar este caso ajuda a IA a acertar o tom da
+        próxima vez.
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1 border-violet-300 text-violet-800 hover:bg-violet-100"
+        disabled={salvar.isPending}
+        onClick={() => salvar.mutate()}
+      >
+        <BookmarkPlus className="h-3.5 w-3.5" />
+        {salvar.isPending ? "Salvando…" : "Salvar como exemplo de treinamento"}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 gap-1 text-muted-foreground"
+        onClick={onFechar}
+      >
+        <X className="h-3.5 w-3.5" /> Agora não
+      </Button>
     </div>
   );
 }
