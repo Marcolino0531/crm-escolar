@@ -286,6 +286,7 @@ export type MotivoFalhaPdf =
   | "tamanho"
   | "invalido"
   | "sem_texto"
+  | "formato_nao_reconhecido"
   | "desconhecido";
 
 function nomeDoErro(erro: unknown): string {
@@ -351,6 +352,12 @@ export function mensagemFalhaPdf(
         "peça à contabilidade o PDF original (gerado pelo sistema, não escaneado)."
       );
     }
+    case "formato_nao_reconhecido":
+      return (
+        "O PDF abriu e tem texto, mas o layout não é reconhecido — nenhuma página " +
+        "traz os dados esperados. Confira se o arquivo é o relatório certo, gerado " +
+        "pelo próprio sistema (uma página por funcionário)."
+      );
     default:
       return "Não foi possível ler o PDF. O formato pode não ser suportado pelo leitor.";
   }
