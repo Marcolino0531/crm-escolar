@@ -14,6 +14,11 @@
 //                                 erro do Sponte), a seguinte cobre o dia. Não duplica envio:
 //                                 o responsável já cobrado hoje é pulado. Toda execução — até
 //                                 as que não enviam nada — fica em `whatsapp_cron_runs`.
+//   GET  /api/whatsapp/cron/lembretes[-2]
+//                               — régua PREVENTIVA (Lembretes Automáticos): lembra o
+//                                 responsável 5 dias antes, 3 dias antes e no dia do
+//                                 vencimento de cada parcela em aberto. Roda depois da
+//                                 cobrança, que tem prioridade no mesmo dia/responsável.
 //   GET  /api/whatsapp/webhook  — verificação do webhook (hub.challenge da Meta).
 //   POST /api/whatsapp/webhook  — eventos de status (enviado/entregue/lido/falha).
 //
@@ -36,8 +41,11 @@ import {
   downloadMedia,
   renderBillingMessage,
   renderBillingMessageMultipla,
+  renderReminderMessage,
   sendBillingTemplate,
   sendBillingTemplateMultipla,
+  sendReminderTemplate,
+  type WhatsAppConfig,
   type WhatsAppSendConfig,
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
@@ -58,8 +66,17 @@ import {
   mapaExcecoes,
   type ExcecaoCobranca,
 } from "@/lib/billing-exceptions";
+import {
+  agruparLembretesPorResponsavel,
+  etiquetaPrazo,
+  filtrarPorPrioridadeCobranca,
+  rotuloPrazo,
+  vencimentosLembreteHoje,
+  type GrupoLembrete,
+  type ParcelaLembrete,
+} from "@/lib/billing-reminders";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
-import { slotDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
+import { slotDaRota, slotLembreteDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
 import {
   parseIncomingMessage,
   buildMessageFields,
@@ -165,6 +182,39 @@ interface CandidatoCobranca {
   responsavelNome: string;
 }
 
+// Régua de origem do disparo, gravada em `whatsapp_billing_logs.tipo`. Separa o
+// histórico das duas abas e impede que quem recebeu lembrete preventivo entre na
+// régua de cobrança pelo histórico.
+type TipoDisparo = "cobranca" | "lembrete";
+
+// Coluna ausente no Postgres (migration ainda não aplicada em produção).
+function erroColunaInexistente(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "42703" || /column .* does not exist/i.test(error.message ?? "");
+}
+
+// Grava o log do disparo. Se as colunas da régua preventiva ainda não existirem,
+// regrava sem elas: um disparo real não pode ficar sem registro por causa de uma
+// migration pendente.
+async function inserirBillingLog(row: Record<string, unknown>): Promise<void> {
+  const { error } = await supabaseAdmin.from("whatsapp_billing_logs" as never).insert(row as never);
+  if (!error) return;
+  if (!erroColunaInexistente(error)) {
+    console.error("[whatsapp] falha ao gravar o log do disparo:", error.message);
+    return;
+  }
+  const legado = { ...row };
+  delete legado.tipo;
+  delete legado.prazo_lembrete;
+  delete legado.data_ref;
+  const { error: erroLegado } = await supabaseAdmin
+    .from("whatsapp_billing_logs" as never)
+    .insert(legado as never);
+  if (erroLegado) {
+    console.error("[whatsapp] falha ao gravar o log do disparo:", erroLegado.message);
+  }
+}
+
 // Kill switch: envio do dia bloqueado quando `paused_date` == hoje (fuso SP).
 async function envioPausadoHoje(hojeYMD: string): Promise<boolean> {
   const { data } = await supabaseAdmin
@@ -188,7 +238,16 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
     if (cronSecret && bearer(request) !== cronSecret) {
       return json({ ok: false, error: "não autorizado" }, 401);
     }
-    return await runCronRegistrado(slot);
+    return await runCronRegistrado(slot, runCron);
+  }
+
+  const slotLembrete = request.method === "GET" ? slotLembreteDaRota(pathname) : null;
+  if (slotLembrete) {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && bearer(request) !== cronSecret) {
+      return json({ ok: false, error: "não autorizado" }, 401);
+    }
+    return await runCronRegistrado(slotLembrete, runCronLembretes);
   }
 
   if (pathname === "/api/whatsapp/webhook" && request.method === "GET") {
@@ -337,7 +396,7 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   }
 
   // Idempotência do dia: telefones que já receberam disparo hoje (cron reexecutado).
-  const telefonesHoje = await telefonesJaCobradosHoje(hoje);
+  const telefonesHoje = await telefonesComDisparoHoje(hoje, "cobranca");
 
   let enviados = 0;
   let falhas = 0;
@@ -384,7 +443,10 @@ interface ResultadoCron {
 // tentativa perdida ou com erro fica gravada com o motivo, e a tentativa
 // seguinte do dia cobre o disparo — sem duplicar, porque quem já foi cobrado
 // hoje é pulado no envio.
-async function runCronRegistrado(slot: string): Promise<Response> {
+async function runCronRegistrado(
+  slot: string,
+  rotina: (hoje: string) => Promise<ResultadoCron>,
+): Promise<Response> {
   const hoje = diaYMD(0);
   const inicio = Date.now();
 
@@ -412,7 +474,7 @@ async function runCronRegistrado(slot: string): Promise<Response> {
   };
 
   try {
-    const r = await runCron(hoje);
+    const r = await rotina(hoje);
     await finalizar({
       status: r.status,
       motivo: r.motivo ?? null,
@@ -488,12 +550,18 @@ async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
 // do Sponte antes do disparo.
 async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]> {
   const desde = addDaysYMD(hoje, -JANELA_RECORRENCIA_DIAS);
-  const { data } = await supabaseAdmin
-    .from("whatsapp_billing_logs" as never)
-    .select("fatura_id, alunos_cobrados, aluno_name, responsavel_name, telefone, unidade")
-    .gte("data_envio", `${desde}T00:00:00Z`)
-    .in("status", STATUS_ENVIADO)
-    .order("data_envio", { ascending: true });
+  const consulta = () =>
+    supabaseAdmin
+      .from("whatsapp_billing_logs" as never)
+      .select("fatura_id, alunos_cobrados, aluno_name, responsavel_name, telefone, unidade")
+      .gte("data_envio", `${desde}T00:00:00Z`)
+      .in("status", STATUS_ENVIADO)
+      .order("data_envio", { ascending: true });
+
+  // Só disparos da régua de COBRANÇA: um lembrete preventivo não coloca o aluno
+  // na recorrência de cobrança (a parcela dele nem venceu).
+  const comTipo = await consulta().eq("tipo", "cobranca");
+  const { data } = erroColunaInexistente(comTipo.error) ? await consulta() : comTipo;
 
   const rows = (data ?? []) as unknown as {
     fatura_id: string | null;
@@ -525,14 +593,21 @@ async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]>
   return [...mapa.values()].filter((c) => UNIDADES_COBRANCA_AUTOMATICA.has(c.unidade));
 }
 
-// Telefones com disparo bem-sucedido hoje (janela do dia no fuso de São Paulo).
-async function telefonesJaCobradosHoje(hoje: string): Promise<string[]> {
-  const { data } = await supabaseAdmin
-    .from("whatsapp_billing_logs" as never)
-    .select("telefone")
-    .gte("data_envio", `${hoje}T00:00:00-03:00`)
-    .lte("data_envio", `${hoje}T23:59:59-03:00`)
-    .in("status", STATUS_ENVIADO);
+// Telefones com disparo bem-sucedido hoje na régua indicada (janela do dia no
+// fuso de São Paulo). É a idempotência do dia de cada régua: um lembrete
+// preventivo não impede a cobrança do vencido, e vice-versa — a exclusão entre
+// as duas é decidida por `filtrarPorPrioridadeCobranca`, não aqui.
+async function telefonesComDisparoHoje(hoje: string, tipo: TipoDisparo): Promise<string[]> {
+  const consulta = () =>
+    supabaseAdmin
+      .from("whatsapp_billing_logs" as never)
+      .select("telefone")
+      .gte("data_envio", `${hoje}T00:00:00-03:00`)
+      .lte("data_envio", `${hoje}T23:59:59-03:00`)
+      .in("status", STATUS_ENVIADO);
+
+  const comTipo = await consulta().eq("tipo", tipo);
+  const { data } = erroColunaInexistente(comTipo.error) ? await consulta() : comTipo;
   return ((data ?? []) as unknown as { telefone: string | null }[]).map((r) => r.telefone ?? "");
 }
 
@@ -593,24 +668,22 @@ async function dispararGrupo(
       nome: grupo.parcelas.find((p) => p.alunoId === id)?.alunoNome ?? "",
     })),
     message_body: messageBody,
+    tipo: "cobranca",
+    data_ref: hoje,
   };
 
   if (!grupo.telefone || grupo.telefone === "-") {
-    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+    await inserirBillingLog({
       ...base,
       status: "falha",
       erro_mensagem: "Responsável sem telefone cadastrado no Sponte.",
-    } as never);
+    });
     return { enviado: false };
   }
 
   try {
     const { messageId } = await enviar();
-    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
-      ...base,
-      status: "enviado",
-      wa_message_id: messageId,
-    } as never);
+    await inserirBillingLog({ ...base, status: "enviado", wa_message_id: messageId });
     // Espelha o disparo no histórico do chat de Atendimento.
     await registrarTemplateNoChat({
       telefone: grupo.telefone,
@@ -625,11 +698,174 @@ async function dispararGrupo(
     });
     return { enviado: true };
   } catch (e) {
-    await supabaseAdmin.from("whatsapp_billing_logs" as never).insert({
+    await inserirBillingLog({
       ...base,
       status: "falha",
       erro_mensagem: e instanceof Error ? e.message : String(e),
-    } as never);
+    });
+    return { enviado: false };
+  }
+}
+
+// ─── Cron: lembretes preventivos (D-5, D-3 e D-0) ─────────────────────────────
+//
+// Régua oposta à da cobrança: aqui a parcela ainda NÃO venceu. Fluxo do dia:
+//   1. Uma consulta ao Sponte por prazo (hoje+5, hoje+3 e hoje), que devolve as
+//      parcelas EM ABERTO daquele vencimento — quem pagou antes simplesmente não
+//      aparece, e o lembrete daquele prazo não sai.
+//   2. As parcelas são agrupadas por responsável, que recebe UM lembrete no dia,
+//      pelo prazo mais urgente.
+//   3. Quem já é cobrado hoje por algo vencido fica de fora: cobrança tem
+//      prioridade sobre o lembrete preventivo.
+async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
+  const cfg = getWhatsAppConfig();
+  if (!cfg) {
+    throw new Error(
+      "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
+    );
+  }
+
+  if (!isDiaUtil(hoje)) {
+    return { status: "nao_util", motivo: "dia não útil (fim de semana/feriado)" };
+  }
+  if (await envioPausadoHoje(hoje)) {
+    return { status: "pausado", motivo: "envios pausados para hoje (kill switch)" };
+  }
+
+  const parcelas: ParcelaLembrete[] = [];
+  for (const { venc } of vencimentosLembreteHoje(hoje)) {
+    const pendencias = (await coletarPendenciasPorVencimento(venc)).filter((p) =>
+      UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
+    );
+    for (const p of pendencias) {
+      parcelas.push({
+        alunoId: p.alunoId,
+        alunoNome: p.nomeAluno || "",
+        unidade: p.unidade || "CEC",
+        telefone: p.telefone || "",
+        responsavelNome: p.nomeResponsavel || "",
+        // Vencimento da consulta, não o do boleto agrupado: a busca é por um dia
+        // específico, então é ele que define o prazo do lembrete.
+        vencimento: venc,
+        saldo: p.valorTotalBoleto,
+        linhaDigitavel: p.linhaDigitavel ?? "",
+      });
+    }
+  }
+
+  const alunos = new Set(parcelas.map((p) => p.alunoId)).size;
+  const comCobrancaHoje = await telefonesComDisparoHoje(hoje, "cobranca");
+  const grupos = filtrarPorPrioridadeCobranca(
+    agruparLembretesPorResponsavel(parcelas, hoje),
+    comCobrancaHoje,
+  );
+  if (grupos.length === 0) {
+    return { status: "sem_envio", motivo: "nenhum lembrete a enviar hoje", alunos };
+  }
+
+  // Idempotência do dia: quem já recebeu lembrete hoje não recebe de novo, mesmo
+  // que a rotina rode outra vez (segunda tentativa, reexecução manual).
+  const lembradosHoje = await telefonesComDisparoHoje(hoje, "lembrete");
+
+  let enviados = 0;
+  let falhas = 0;
+  let pulados = 0;
+  for (const grupo of grupos) {
+    if (jaCobradoHoje(lembradosHoje, grupo.telefone)) {
+      pulados++;
+      continue;
+    }
+    lembradosHoje.push(grupo.telefone);
+    const r = await dispararLembrete(cfg, grupo, hoje);
+    enviados += r.enviado ? 1 : 0;
+    falhas += r.enviado ? 0 : 1;
+  }
+
+  console.log(
+    `[whatsapp] lembretes ${hoje}: ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) em ${grupos.length} responsável(is).`,
+  );
+  return {
+    status: enviados > 0 || falhas > 0 ? "ok" : "sem_envio",
+    motivo: enviados === 0 && falhas === 0 ? "todos os responsáveis já lembrados hoje" : null,
+    responsaveis: grupos.length,
+    alunos,
+    enviados,
+    falhas,
+    pulados,
+  };
+}
+
+// Dispara (e registra) o lembrete preventivo de UM responsável.
+async function dispararLembrete(
+  cfg: WhatsAppConfig,
+  grupo: GrupoLembrete,
+  hoje: string,
+): Promise<{ enviado: boolean }> {
+  const linhaDigitavel = grupo.linhaDigitavel.trim()
+    ? grupo.linhaDigitavel
+    : "Entre em contato com a secretaria da escola";
+
+  const vars = {
+    to: grupo.telefone,
+    responsavel: grupo.responsavelNome,
+    aluno: grupo.alunosLabel,
+    valor: formatBRL(grupo.valorTotal),
+    prazo: rotuloPrazo(grupo.prazo),
+    linhaDigitavel,
+  };
+  const messageBody = renderReminderMessage(vars);
+
+  const base = {
+    responsavel_name: grupo.responsavelNome || "",
+    aluno_name: grupo.alunosLabel || "",
+    telefone: grupo.telefone || "",
+    unidade: grupo.unidade || "",
+    valor: grupo.valorTotal,
+    vencimento: grupo.vencimento,
+    template_name: cfg.templateLembreteName,
+    fatura_id: grupo.alunoIds[0] ?? null,
+    alunos_cobrados: grupo.alunoIds.map((id) => ({
+      id,
+      nome: grupo.parcelas.find((p) => p.alunoId === id)?.alunoNome ?? "",
+    })),
+    message_body: messageBody,
+    tipo: "lembrete",
+    prazo_lembrete: etiquetaPrazo(grupo.prazo),
+    // Dia do disparo no fuso de São Paulo: é a chave da trava de duplicidade no
+    // banco (índice único por telefone + dia).
+    data_ref: hoje,
+  };
+
+  if (!grupo.telefone || grupo.telefone === "-") {
+    await inserirBillingLog({
+      ...base,
+      status: "falha",
+      erro_mensagem: "Responsável sem telefone cadastrado no Sponte.",
+    });
+    return { enviado: false };
+  }
+
+  try {
+    const { messageId } = await sendReminderTemplate(cfg, vars);
+    await inserirBillingLog({ ...base, status: "enviado", wa_message_id: messageId });
+    await registrarTemplateNoChat({
+      telefone: grupo.telefone,
+      waMessageId: messageId,
+      body: messageBody,
+      vinculo: {
+        aluno_id: grupo.alunoIds[0] ?? null,
+        aluno_name: grupo.alunosLabel || "",
+        responsavel_name: grupo.responsavelNome || "",
+        unidade: grupo.unidade || "",
+      },
+    });
+    return { enviado: true };
+  } catch (e) {
+    await inserirBillingLog({
+      ...base,
+      status: "falha",
+      erro_mensagem: e instanceof Error ? e.message : String(e),
+    });
     return { enviado: false };
   }
 }

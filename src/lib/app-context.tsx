@@ -266,7 +266,7 @@ export const MODULE_LABELS: Record<AppModule, string> = {
   financeiro_conciliacao: "Faturamento",
   financeiro_fluxo: "Fluxo Futuro",
   financeiro_inadimplencia: "Inadimplência",
-  financeiro_cobranca: "Régua de Cobrança",
+  financeiro_cobranca: "Mensagens Automáticas",
   financeiro_atendimento: "Atendimento",
   financeiro_atendimento_ia: "Atendimento — Assistente de IA",
   financeiro_cartao: "Cartão de Crédito",

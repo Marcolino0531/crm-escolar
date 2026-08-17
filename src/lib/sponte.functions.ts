@@ -570,10 +570,13 @@ async function coletarPendencias(
       // um boleto pode reunir parcelas de vencimentos diferentes, e o menor é o
       // que o banco imprime (confirmado pelo fator de vencimento da linha
       // digitável). Sem isso o vencimento exibido dependia da ordem da API.
-      vencimento: items.reduce(
-        (menor, it) => (it.vencimento && (!menor || it.vencimento < menor) ? it.vencimento : menor),
-        "",
-      ),
+      vencimento: items.reduce((menor, it) => {
+        const atual = paraYMD(it.vencimento);
+        const referencia = paraYMD(menor);
+        if (!atual) return menor;
+        if (!referencia) return it.vencimento;
+        return atual < referencia ? it.vencimento : menor;
+      }, ""),
       valorTotalBoleto,
       valorAcordo,
       valorComDesconto,

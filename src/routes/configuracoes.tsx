@@ -190,7 +190,16 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
   },
   {
     label: "Operacional",
-    modules: ["rh", "tasks", "financeiro_atendimento", "financeiro_atendimento_ia", "documentos"],
+    modules: [
+      "rh",
+      "tasks",
+      "financeiro_atendimento",
+      "financeiro_atendimento_ia",
+      "documentos",
+      // Mensagens Automáticas: a permissão continua sendo `financeiro_cobranca`
+      // (nada a reconfigurar), mas o módulo agora é Operacional.
+      "financeiro_cobranca",
+    ],
   },
 ];
 
@@ -203,7 +212,6 @@ const FIN_SUBMODULES: AppModule[] = [
   "financeiro_fundos",
   "financeiro_cartao",
   "financeiro_inadimplencia",
-  "financeiro_cobranca",
 ];
 
 function CategoryLabel({ children }: { children: React.ReactNode }) {

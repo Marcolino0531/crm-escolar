@@ -20,6 +20,9 @@ export interface WhatsAppConfig {
   // Template para responsáveis com MÚLTIPLOS boletos em aberto (mês vigente +
   // meses anteriores). Configurável por env; default "aviso_cobranca_multipla".
   templateMultiplaName: string;
+  // Template PREVENTIVO (lembrete antes do vencimento). Configurável por env;
+  // default "lembrete_vencimento_boleto".
+  templateLembreteName: string;
   templateLang: string;
   graphVersion: string;
 }
@@ -34,6 +37,8 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
     phoneNumberId,
     templateName,
     templateMultiplaName: process.env.WHATSAPP_TEMPLATE_MULTIPLA_NAME || "aviso_cobranca_multipla",
+    templateLembreteName:
+      process.env.WHATSAPP_TEMPLATE_LEMBRETE_NAME || "lembrete_vencimento_boleto",
     templateLang: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
     graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
   };
@@ -281,6 +286,86 @@ export function renderBillingMessageMultipla(vars: BillingMultiplaVars): string 
     `Para os demais meses, entre em contato com a secretaria. ` +
     `Caso os pagamentos já tenham sido efetuados, desconsidere esta mensagem. Estamos à disposição.`
   );
+}
+
+export interface ReminderTemplateVars {
+  to: string;
+  responsavel: string;
+  aluno: string;
+  valor: string; // já formatado (ex.: "R$ 1.936,70")
+  prazo: string; // "em 5 dias" | "em 3 dias" | "hoje"
+  linhaDigitavel: string;
+}
+
+// Texto fiel do template PREVENTIVO "lembrete_vencimento_boleto" (Utilidade,
+// pt_BR), aprovado pela Meta: {{1}} Responsável · {{2}} Aluno · {{3}} Valor ·
+// {{4}} Prazo · {{5}} Linha digitável.
+export function renderReminderMessage(vars: ReminderTemplateVars): string {
+  return (
+    `Olá ${vars.responsavel}, identificamos que a mensalidade do(a) aluno(a) ${vars.aluno} ` +
+    `no valor de ${vars.valor} vence ${vars.prazo}. ` +
+    `Utilize a linha digitável: ${vars.linhaDigitavel}. ` +
+    `Descontos são válidos até a data de vencimento e calculados automaticamente pelo aplicativo ` +
+    `do seu banco ao ler o código de barras ou digitar a linha digitável. ` +
+    `Caso o pagamento já tenha sido efetuado, desconsidere esta mensagem. Estamos à disposição.`
+  );
+}
+
+// Dispara o lembrete preventivo. Mesma mecânica do sendBillingTemplate, com as 5
+// variáveis do template "lembrete_vencimento_boleto". Lança em caso de erro.
+export async function sendReminderTemplate(
+  cfg: WhatsAppConfig,
+  vars: ReminderTemplateVars,
+): Promise<SendResult> {
+  const to = toMetaPhone(vars.to);
+  if (!to) throw new Error("Telefone do responsável ausente ou inválido.");
+
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: cfg.templateLembreteName,
+      language: { code: cfg.templateLang },
+      components: [
+        {
+          type: "body",
+          parameters: [
+            textParam(vars.responsavel),
+            textParam(vars.aluno),
+            textParam(vars.valor),
+            textParam(vars.prazo),
+            textParam(vars.linhaDigitavel),
+          ],
+        },
+      ],
+    },
+  };
+
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const body = (await resp.json().catch(() => null)) as {
+    messages?: { id: string }[];
+    error?: { message?: string; code?: number; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !body?.messages?.[0]?.id) {
+    const detail =
+      body?.error?.error_data?.details ||
+      body?.error?.message ||
+      `HTTP ${resp.status} ao chamar a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+
+  return { messageId: body.messages[0].id };
 }
 
 // Dispara o template de cobrança MÚLTIPLA. Mesma mecânica do sendBillingTemplate,
