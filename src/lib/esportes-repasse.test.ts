@@ -14,9 +14,23 @@ import {
   somaValoresFixos,
   statusMesModalidade,
   totalArrecadado,
+  totalEsperado,
   type ParceiroModalidade,
   type ParcelaSponte,
+  type PagamentoAlunoModalidade,
 } from "./esportes-repasse";
+
+function pagamento(over: Partial<PagamentoAlunoModalidade> = {}): PagamentoAlunoModalidade {
+  return {
+    alunoId: "1",
+    alunoNome: "A",
+    valorPago: 0,
+    dataPagamento: "",
+    frequenciaNome: "",
+    valorEsperado: 0,
+    ...over,
+  };
+}
 
 function parcela(over: Partial<ParcelaSponte> = {}): ParcelaSponte {
   return {
@@ -95,9 +109,9 @@ describe("valor pago por aluno na modalidade", () => {
 describe("arrecadação e repasse da modalidade", () => {
   it("soma o arrecadado de todos os alunos matriculados", () => {
     const pagamentos = [
-      { alunoId: "1", alunoNome: "A", valorPago: 200, dataPagamento: "2026-08-05" },
-      { alunoId: "2", alunoNome: "B", valorPago: 200, dataPagamento: "2026-08-07" },
-      { alunoId: "3", alunoNome: "C", valorPago: 0, dataPagamento: "" },
+      pagamento({ alunoId: "1", alunoNome: "A", valorPago: 200, dataPagamento: "2026-08-05" }),
+      pagamento({ alunoId: "2", alunoNome: "B", valorPago: 200, dataPagamento: "2026-08-07" }),
+      pagamento({ alunoId: "3", alunoNome: "C", valorPago: 0, dataPagamento: "" }),
     ];
     expect(totalArrecadado(pagamentos)).toBe(400);
   });
@@ -153,6 +167,65 @@ describe("arrecadação e repasse da modalidade", () => {
     const total = totalArrecadado(pagamentos);
     expect(total).toBe(180);
     expect(calcularRepasse(total, 50)).toMatchObject({ valorRepasse: 90, valorRetido: 90 });
+  });
+});
+
+describe("frequência do aluno e valor esperado", () => {
+  const duasVezes = { id: "f-2x", nome: "2x semana (seg e qua)", valorMensal: 230 };
+  const umaVez = { id: "f-1x-seg", nome: "1x semana (segunda)", valorMensal: 210 };
+
+  it("o esperado do aluno vem da frequência escolhida, não do que ele pagou", () => {
+    const pago = pagamentoDoAluno(
+      { alunoId: "862", alunoNome: "Luísa", frequencia: umaVez },
+      [parcela({ valorPago: 0, quitada: false, dataPagamento: "" })],
+      "Teatro",
+      "2026-08",
+    );
+    expect(pago.frequenciaNome).toBe("1x semana (segunda)");
+    expect(pago.valorEsperado).toBe(210);
+    expect(pago.valorPago).toBe(0);
+  });
+
+  it("aluno sem frequência definida não soma esperado", () => {
+    const pago = pagamentoDoAluno(
+      { alunoId: "895", alunoNome: "Lais" },
+      [parcela({ valorPago: 230 })],
+      "Teatro",
+      "2026-08",
+    );
+    expect(pago.frequenciaNome).toBe("");
+    expect(pago.valorEsperado).toBe(0);
+  });
+
+  it("o esperado da modalidade soma as frequências de cada aluno", () => {
+    const alunos = [
+      { alunoId: "1", alunoNome: "A", frequencia: duasVezes },
+      { alunoId: "2", alunoNome: "B", frequencia: umaVez },
+      { alunoId: "3", alunoNome: "C", frequencia: null },
+    ];
+    const pagamentos = alunos.map((a) => pagamentoDoAluno(a, [], "Teatro", "2026-08"));
+    expect(totalEsperado(pagamentos)).toBe(440);
+    // O esperado não vira arrecadação: sem parcela paga, o repasse continua zero.
+    expect(totalArrecadado(pagamentos)).toBe(0);
+  });
+
+  it("trocar de frequência troca o esperado sem mexer no arrecadado", () => {
+    const parcelas = [parcela({ valorPago: 210 })];
+    const antes = pagamentoDoAluno(
+      { alunoId: "1", alunoNome: "A", frequencia: umaVez },
+      parcelas,
+      "Teatro",
+      "2026-08",
+    );
+    const depois = pagamentoDoAluno(
+      { alunoId: "1", alunoNome: "A", frequencia: duasVezes },
+      parcelas,
+      "Teatro",
+      "2026-08",
+    );
+    expect(antes.valorEsperado).toBe(210);
+    expect(depois.valorEsperado).toBe(230);
+    expect(depois.valorPago).toBe(antes.valorPago);
   });
 });
 

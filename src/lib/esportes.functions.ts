@@ -18,7 +18,9 @@ import {
   pagamentoDoAluno,
   statusMesModalidade,
   totalArrecadado,
+  totalEsperado,
   type AjustesDoMes,
+  type FrequenciaModalidade,
   type PagamentoAlunoModalidade,
   type ParceiroModalidade,
   type RepasseModalidadeCalculado,
@@ -55,6 +57,13 @@ interface MatriculaRow {
   aluno_id: string;
   aluno_nome: string;
   turma: string;
+  frequencia_id: string | null;
+}
+
+interface FrequenciaRow {
+  id: string;
+  nome: string;
+  valor_mensal: number;
 }
 
 export interface ArrecadacaoModalidadeResult extends RepasseModalidadeCalculado {
@@ -64,6 +73,9 @@ export interface ArrecadacaoModalidadeResult extends RepasseModalidadeCalculado 
   // modalidade também não; nesses casos os valores vêm zerados.
   statusMes: StatusMesModalidade;
   alunos: PagamentoAlunoModalidade[];
+  // Soma das mensalidades das frequências dos alunos matriculados: o que a
+  // modalidade deveria arrecadar. Não entra em nenhum cálculo de repasse.
+  totalEsperado: number;
   // Falhas de consulta ao Sponte (por aluno) — o total mostrado fica parcial.
   avisos: string[];
   error?: string;
@@ -98,6 +110,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
       mesReferencia,
       statusMes: "ativo" as StatusMesModalidade,
       alunos: [],
+      totalEsperado: 0,
       avisos: [],
       ...calcularRepasseModalidade("percentual", [], 0),
     };
@@ -155,11 +168,24 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
 
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
-      .select("aluno_id, aluno_nome, turma")
+      .select("aluno_id, aluno_nome, turma, frequencia_id")
       .eq("modalidade_id", modalidadeId)
       .order("aluno_nome", { ascending: true });
     if (matErr) return { ...vazio, statusMes, error: matErr.message };
     const matriculas = (matRows ?? []) as unknown as MatriculaRow[];
+
+    // Frequências da modalidade (2x/semana, 1x/semana...) para saber o valor
+    // esperado de cada aluno. Inclui as inativas: um aluno pode continuar numa
+    // frequência que deixou de ser oferecida a novos.
+    const { data: freqRows, error: freqErr } = await supabaseAdmin
+      .from("esportes_frequencias" as never)
+      .select("id, nome, valor_mensal")
+      .eq("modalidade_id", modalidadeId);
+    if (freqErr) return { ...vazio, statusMes, error: freqErr.message };
+    const frequencias = new Map<string, FrequenciaModalidade>();
+    for (const f of (freqRows ?? []) as unknown as FrequenciaRow[]) {
+      frequencias.set(f.id, { id: f.id, nome: f.nome, valorMensal: Number(f.valor_mensal) || 0 });
+    }
 
     const alunos: PagamentoAlunoModalidade[] = [];
     const avisos: string[] = [];
@@ -182,7 +208,13 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
         }
         alunos.push(
           pagamentoDoAluno(
-            { alunoId: matricula.aluno_id, alunoNome: nome },
+            {
+              alunoId: matricula.aluno_id,
+              alunoNome: nome,
+              frequencia: matricula.frequencia_id
+                ? (frequencias.get(matricula.frequencia_id) ?? null)
+                : null,
+            },
             titulos.titulos,
             modalidade.categoria_sponte,
             mesReferencia,
@@ -197,6 +229,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
       mesReferencia,
       statusMes,
       alunos,
+      totalEsperado: totalEsperado(alunos),
       avisos,
       ...calcularRepasseModalidade(modalidade.tipo_repasse, parceiros, total, ajustes),
     };
