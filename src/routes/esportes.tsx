@@ -71,6 +71,7 @@ const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale d
 const COLUNAS_MODALIDADE =
   "id, nome, categoria_sponte, tipo_repasse, dia_pagamento, mes_inicio, unidade";
 const COLUNAS_PARCEIRO = "id, nome, percentual_parceiro, valor_fixo_mensal, ordem, ativo";
+const COLUNAS_FREQUENCIA = "id, nome, valor_mensal, ordem, ativo";
 
 type Modalidade = {
   id: string;
@@ -100,6 +101,17 @@ type Matricula = {
   aluno_id: string;
   aluno_nome: string;
   turma: string;
+  frequencia_id: string | null;
+};
+
+// Frequência (turma) oferecida pela modalidade, com a mensalidade dela: o Jazz
+// tem 2x/semana a R$ 230,00 e 1x/semana a R$ 210,00.
+type Frequencia = {
+  id: string;
+  nome: string;
+  valor_mensal: number;
+  ordem: number;
+  ativo: boolean;
 };
 
 type Repasse = {
@@ -264,6 +276,7 @@ function EsportesPage() {
                 podeEditar={podeEditar}
               />
               <ParceirosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
+              <FrequenciasDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
               <AlunosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
             </>
           )}
@@ -941,7 +954,12 @@ function PainelMensal({
             </div>
           )}
 
-          <div className="grid gap-3 px-4 py-3 sm:grid-cols-3">
+          <div className="grid gap-3 px-4 py-3 sm:grid-cols-4">
+            <Indicador
+              label="Esperado (frequências)"
+              valor={formatBRL(data.totalEsperado)}
+              icone={<CalendarClock className="h-4 w-4 text-muted-foreground" />}
+            />
             <Indicador label="Total arrecadado" valor={formatBRL(data.valorArrecadado)} />
             <Indicador
               label={ehFixo ? "Total fixo aos parceiros" : "Repasse aos parceiros"}
@@ -1015,6 +1033,8 @@ function PainelMensal({
               <TableRow>
                 <TableHead>Aluno</TableHead>
                 <TableHead>AlunoID</TableHead>
+                <TableHead>Frequência</TableHead>
+                <TableHead className="text-right">Esperado</TableHead>
                 <TableHead className="text-right">Valor pago</TableHead>
                 <TableHead>Pagamento</TableHead>
               </TableRow>
@@ -1022,7 +1042,7 @@ function PainelMensal({
             <TableBody>
               {data.alunos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                     Nenhum aluno matriculado nesta modalidade.
                   </TableCell>
                 </TableRow>
@@ -1031,6 +1051,10 @@ function PainelMensal({
                   <TableRow key={a.alunoId}>
                     <TableCell className="text-sm font-medium">{a.alunoNome}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{a.alunoId}</TableCell>
+                    <TableCell className="text-sm">{a.frequenciaNome || "—"}</TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">
+                      {a.valorEsperado > 0 ? formatBRL(a.valorEsperado) : "—"}
+                    </TableCell>
                     <TableCell className="text-right text-sm">{formatBRL(a.valorPago)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {a.dataPagamento ? formatData(a.dataPagamento) : "em aberto"}
@@ -1304,6 +1328,238 @@ function Indicador({
   );
 }
 
+// Frequências (turmas) da modalidade, cada uma com sua mensalidade. É o cadastro
+// que define quais existem — não há lista fixa no código, para qualquer
+// modalidade poder ter as suas ("2x semana", "sábado", "turma avançada"…).
+function FrequenciasDaModalidade({
+  modalidade,
+  podeEditar,
+}: {
+  modalidade: Modalidade;
+  podeEditar: boolean;
+}) {
+  const qc = useQueryClient();
+  const { session } = useAuth();
+  const [nome, setNome] = useState("");
+  const [valor, setValor] = useState("");
+
+  const { data: frequencias = [] } = useQuery({
+    queryKey: ["esportes_frequencias", modalidade.id],
+    queryFn: () => carregarFrequencias(modalidade.id),
+  });
+
+  const invalidar = () => {
+    qc.invalidateQueries({ queryKey: ["esportes_frequencias", modalidade.id] });
+    qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
+  };
+
+  const criar = useMutation({
+    mutationFn: async () => {
+      const v = parseValorBR(valor);
+      if (!nome.trim()) throw new Error("Informe o nome da frequência.");
+      if (!Number.isFinite(v) || v < 0) throw new Error("Informe um valor mensal válido.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const { error } = await supabase.from("esportes_frequencias" as never).insert({
+        modalidade_id: modalidade.id,
+        nome: nome.trim(),
+        valor_mensal: v,
+        ordem: frequencias.length,
+        created_by: session?.user?.id ?? null,
+        created_by_nome: meta?.full_name || session?.user?.email || "",
+      } as never);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Frequência adicionada.");
+      setNome("");
+      setValor("");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar a frequência."),
+  });
+
+  const atualizarValor = useMutation({
+    mutationFn: async ({ id, texto }: { id: string; texto: string }) => {
+      const v = parseValorBR(texto);
+      if (!Number.isFinite(v) || v < 0) throw new Error("Informe um valor mensal válido.");
+      const { error } = await supabase
+        .from("esportes_frequencias" as never)
+        .update({ valor_mensal: v } as never)
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Valor atualizado.");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao atualizar o valor."),
+  });
+
+  const remover = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("esportes_frequencias" as never)
+        .delete()
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Frequência removida.");
+      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover a frequência."),
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <CalendarClock className="h-4 w-4 text-primary" /> Frequências e valores
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          O valor da frequência é o esperado do aluno; o arrecadado continua vindo do Sponte.
+        </span>
+      </div>
+
+      {frequencias.length === 0 ? (
+        <div className="px-4 py-4 text-sm text-muted-foreground">
+          Nenhuma frequência cadastrada — todos os alunos ficam sem valor esperado.
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Frequência</TableHead>
+              <TableHead className="w-56">Valor mensal (R$)</TableHead>
+              {podeEditar && <TableHead className="w-10" />}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {frequencias.map((f) => (
+              <TableRow key={f.id}>
+                <TableCell className="text-sm font-medium">{f.nome}</TableCell>
+                <TableCell>
+                  {podeEditar ? (
+                    <ValorFrequencia
+                      valorInicial={f.valor_mensal}
+                      salvando={atualizarValor.isPending}
+                      onSalvar={(texto) => atualizarValor.mutate({ id: f.id, texto })}
+                    />
+                  ) : (
+                    <span className="text-sm">{formatBRL(f.valor_mensal)}</span>
+                  )}
+                </TableCell>
+                {podeEditar && (
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                      title="Remover frequência (os alunos ficam sem frequência definida)"
+                      disabled={remover.isPending}
+                      onClick={() => remover.mutate(f.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {podeEditar && (
+        <div className="flex flex-wrap items-end gap-3 border-t border-border px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="freq-nome" className="text-[11px] text-muted-foreground">
+              Nova frequência
+            </Label>
+            <Input
+              id="freq-nome"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="ex.: 2x semana (seg e qua)"
+              className="h-9 w-64"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="freq-valor" className="text-[11px] text-muted-foreground">
+              Valor mensal (R$)
+            </Label>
+            <Input
+              id="freq-valor"
+              value={valor}
+              onChange={(e) => setValor(e.target.value)}
+              placeholder="230,00"
+              className="h-9 w-32"
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="h-9 gap-1"
+            disabled={criar.isPending}
+            onClick={() => criar.mutate()}
+          >
+            <Plus className="h-4 w-4" /> Adicionar
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Valor de uma frequência já cadastrada: só habilita o Salvar quando o texto
+// muda, para não gravar por engano ao passar pelo campo.
+function ValorFrequencia({
+  valorInicial,
+  salvando,
+  onSalvar,
+}: {
+  valorInicial: number;
+  salvando: boolean;
+  onSalvar: (texto: string) => void;
+}) {
+  const original = Number(valorInicial ?? 0)
+    .toFixed(2)
+    .replace(".", ",");
+  const [texto, setTexto] = useState(original);
+  useEffect(() => setTexto(original), [original]);
+  const mudou = texto.trim() !== original;
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        className="h-9 w-28"
+        aria-label="Valor mensal da frequência"
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 gap-1"
+        disabled={!mudou || salvando}
+        onClick={() => onSalvar(texto)}
+      >
+        <Save className="h-3.5 w-3.5" /> Salvar
+      </Button>
+    </div>
+  );
+}
+
+async function carregarFrequencias(modalidadeId: string): Promise<Frequencia[]> {
+  const { data, error } = await supabase
+    .from("esportes_frequencias" as never)
+    .select(COLUNAS_FREQUENCIA)
+    .eq("modalidade_id", modalidadeId)
+    .order("ordem", { ascending: true })
+    .order("nome", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as Frequencia[];
+}
+
 // Alunos matriculados na modalidade. A busca segue o padrão das outras telas:
 // nome (3+ letras) ou AlunoID, direto no Sponte.
 function AlunosDaModalidade({
@@ -1319,13 +1575,26 @@ function AlunosDaModalidade({
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [erroBusca, setErroBusca] = useState<string | null>(null);
+  // Frequência que será usada ao vincular os alunos encontrados na busca.
+  const [frequenciaNova, setFrequenciaNova] = useState<string>("");
+
+  const { data: frequencias = [] } = useQuery({
+    queryKey: ["esportes_frequencias", modalidade.id],
+    queryFn: () => carregarFrequencias(modalidade.id),
+  });
+
+  const frequenciasAtivas = useMemo(() => frequencias.filter((f) => f.ativo), [frequencias]);
+
+  useEffect(() => {
+    if (!frequenciaNova && frequenciasAtivas.length > 0) setFrequenciaNova(frequenciasAtivas[0].id);
+  }, [frequenciaNova, frequenciasAtivas]);
 
   const { data: matriculas = [] } = useQuery({
     queryKey: ["esportes_matriculas", modalidade.id],
     queryFn: async (): Promise<Matricula[]> => {
       const { data, error } = await supabase
         .from("esportes_matriculas" as never)
-        .select("id, aluno_id, aluno_nome, turma")
+        .select("id, aluno_id, aluno_nome, turma, frequencia_id")
         .eq("modalidade_id", modalidade.id)
         .order("aluno_nome", { ascending: true });
       if (error) throw new Error(error.message);
@@ -1360,6 +1629,7 @@ function AlunosDaModalidade({
           aluno_id: aluno.alunoId,
           aluno_nome: aluno.nome,
           turma: aluno.turma ?? "",
+          frequencia_id: frequenciaNova || null,
           created_by: session?.user?.id ?? null,
           created_by_nome: meta?.full_name || session?.user?.email || "",
         } as never,
@@ -1393,6 +1663,29 @@ function AlunosDaModalidade({
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover o aluno."),
   });
 
+  // Trocar de frequência é um UPDATE da matrícula: o aluno não precisa ser
+  // removido e recadastrado (o vínculo e o histórico dele continuam os mesmos).
+  const trocarFrequencia = useMutation({
+    mutationFn: async ({ id, frequenciaId }: { id: string; frequenciaId: string }) => {
+      const { error } = await supabase
+        .from("esportes_matriculas" as never)
+        .update({ frequencia_id: frequenciaId || null } as never)
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Frequência do aluno atualizada.");
+      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
+      qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao trocar a frequência."),
+  });
+
+  const valorDaFrequencia = (id: string | null): number | null => {
+    const f = frequencias.find((x) => x.id === id);
+    return f ? Number(f.valor_mensal) : null;
+  };
+
   const t = termo.trim();
   const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
 
@@ -1425,6 +1718,23 @@ function AlunosDaModalidade({
                 className="h-9 w-64"
               />
             </div>
+            {frequenciasAtivas.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Frequência do aluno</Label>
+                <Select value={frequenciaNova} onValueChange={setFrequenciaNova}>
+                  <SelectTrigger className="h-9 w-64">
+                    <SelectValue placeholder="Selecione a frequência" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {frequenciasAtivas.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.nome} · {formatBRL(f.valor_mensal)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <Button
               variant="outline"
               className="h-9 gap-1"
@@ -1486,6 +1796,8 @@ function AlunosDaModalidade({
               <TableHead>Aluno</TableHead>
               <TableHead>AlunoID</TableHead>
               <TableHead>Turma</TableHead>
+              <TableHead className="w-72">Frequência</TableHead>
+              <TableHead className="text-right">Valor esperado</TableHead>
               {podeEditar && <TableHead className="w-10" />}
             </TableRow>
           </TableHeader>
@@ -1495,6 +1807,35 @@ function AlunosDaModalidade({
                 <TableCell className="text-sm font-medium">{m.aluno_nome || "—"}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{m.aluno_id}</TableCell>
                 <TableCell className="text-sm">{m.turma || "—"}</TableCell>
+                <TableCell>
+                  {podeEditar && frequencias.length > 0 ? (
+                    <Select
+                      value={m.frequencia_id ?? ""}
+                      onValueChange={(v) => trocarFrequencia.mutate({ id: m.id, frequenciaId: v })}
+                      disabled={trocarFrequencia.isPending}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Sem frequência" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {frequencias.map((f) => (
+                          <SelectItem key={f.id} value={f.id}>
+                            {f.nome} · {formatBRL(f.valor_mensal)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="text-sm">
+                      {frequencias.find((f) => f.id === m.frequencia_id)?.nome ?? "—"}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-sm">
+                  {valorDaFrequencia(m.frequencia_id) === null
+                    ? "—"
+                    : formatBRL(valorDaFrequencia(m.frequencia_id) as number)}
+                </TableCell>
                 {podeEditar && (
                   <TableCell>
                     <Button

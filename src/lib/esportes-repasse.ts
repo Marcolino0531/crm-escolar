@@ -26,6 +26,18 @@ export interface PagamentoAlunoModalidade {
   valorPago: number;
   // Data do último pagamento identificado no mês ("" quando nada foi pago).
   dataPagamento: string;
+  // Frequência do aluno no cadastro e a mensalidade dela. "" / 0 quando a
+  // modalidade não usa frequências ou o aluno ainda não tem uma escolhida.
+  frequenciaNome: string;
+  valorEsperado: number;
+}
+
+// Frequência (turma) oferecida pela modalidade, cada uma com sua mensalidade:
+// Jazz 2x/semana R$ 230,00 e 1x/semana R$ 210,00.
+export interface FrequenciaModalidade {
+  id: string;
+  nome: string;
+  valorMensal: number;
 }
 
 export interface RepasseCalculado {
@@ -76,7 +88,11 @@ export function parcelasDaModalidade(
 // Quanto o aluno efetivamente pagou na modalidade no mês. Só parcela quitada
 // entra: parcela em aberto não é arrecadação e não pode gerar repasse.
 export function pagamentoDoAluno(
-  aluno: { alunoId: string; alunoNome: string },
+  aluno: {
+    alunoId: string;
+    alunoNome: string;
+    frequencia?: FrequenciaModalidade | null;
+  },
   parcelas: ParcelaSponte[],
   categoriaSponte: string,
   mesReferencia: string,
@@ -91,11 +107,20 @@ export function pagamentoDoAluno(
     alunoNome: aluno.alunoNome,
     valorPago,
     dataPagamento: datas.length ? datas.sort()[datas.length - 1] : "",
+    frequenciaNome: aluno.frequencia?.nome ?? "",
+    valorEsperado: arredondarCentavos(Number(aluno.frequencia?.valorMensal) || 0),
   };
 }
 
 export function totalArrecadado(pagamentos: PagamentoAlunoModalidade[]): number {
   return arredondarCentavos(pagamentos.reduce((s, p) => s + (Number(p.valorPago) || 0), 0));
+}
+
+// Quanto a modalidade DEVERIA arrecadar no mês pela frequência de cada aluno.
+// Não entra em nenhum cálculo de repasse: serve para comparar com o arrecadado e
+// mostrar o que falta receber.
+export function totalEsperado(pagamentos: PagamentoAlunoModalidade[]): number {
+  return arredondarCentavos(pagamentos.reduce((s, p) => s + (Number(p.valorEsperado) || 0), 0));
 }
 
 // Repasse do parceiro e parte retida pelo colégio. O retido é a diferença (e não
