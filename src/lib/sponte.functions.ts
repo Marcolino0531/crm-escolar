@@ -566,7 +566,14 @@ async function coletarPendencias(
       nomeAluno: alunoNomeMap[first.alunoId] || first.nomeAluno,
       nomeResponsavel: resp ? resp.nome : "-",
       telefone: resp ? resp.celular : "-",
-      vencimento: first.vencimento,
+      // Menor vencimento do grupo, não o da primeira parcela devolvida pelo XML:
+      // um boleto pode reunir parcelas de vencimentos diferentes, e o menor é o
+      // que o banco imprime (confirmado pelo fator de vencimento da linha
+      // digitável). Sem isso o vencimento exibido dependia da ordem da API.
+      vencimento: items.reduce(
+        (menor, it) => (it.vencimento && (!menor || it.vencimento < menor) ? it.vencimento : menor),
+        "",
+      ),
       valorTotalBoleto,
       valorAcordo,
       valorComDesconto,
@@ -1779,9 +1786,16 @@ export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<Pe
 }
 
 // ─── Histórico de dívida em aberto de UM aluno (bifurcação do cron) ──────────
-// Retorna TODOS os boletos em aberto do aluno (mês vigente + anteriores),
-// agrupados por boleto e ordenados por vencimento. Usado pelo cron para decidir
-// entre o template padrão (1 boleto) e o de cobrança múltipla (vários boletos).
+// Retorna TODAS as parcelas em aberto do aluno (mês vigente + anteriores),
+// agrupadas por boleto E VENCIMENTO, ordenadas por vencimento. Usado pelo cron
+// para decidir entre o template padrão (1 parcela) e o de cobrança múltipla.
+//
+// O agrupamento inclui o vencimento porque um mesmo `NumeroBoleto` do Sponte
+// pode reunir parcelas com vencimentos DIFERENTES (ex.: material vencendo dia 5
+// e mensalidade dia 17 no boleto impresso do dia 5). Agrupar só pelo número do
+// boleto fazia a parcela herdar o vencimento da primeira que o XML devolvesse,
+// tornando a multa/juros — e a própria classificação de vencida — dependente da
+// ordem de retorno da API.
 export interface BoletoAberto {
   vencimento: string; // YYYY-MM-DD
   saldo: number;
@@ -1831,7 +1845,8 @@ export async function coletarDividaAbertaAluno(
     const numeroBoleto = parseXmlValue(node, "NumeroBoleto");
     const vencimento = paraYMD(parseXmlValue(node, "Vencimento")) ?? "";
     const dataPagamento = paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "";
-    const key = numeroBoleto && numeroBoleto !== "0" ? `bol_${numeroBoleto}` : vencimento;
+    const key =
+      numeroBoleto && numeroBoleto !== "0" ? `bol_${numeroBoleto}|${vencimento}` : vencimento;
     const cur = grupos.get(key);
     if (cur) {
       cur.saldo += saldo;

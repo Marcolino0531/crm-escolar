@@ -39,11 +39,17 @@ export function valorAtualizadoParcela(
 }
 
 // Filtra as parcelas que entram no total da cobrança: apenas as VENCIDAS na data
-// do disparo — vencimento preenchido e já passado (<= hoje) — e com saldo em
-// aberto (> 0). Nunca inclui parcelas com vencimento futuro (ainda não vencidas)
-// nem já quitadas (saldo <= 0). É o coração da correção do cálculo.
+// do disparo — vencimento preenchido e ESTRITAMENTE anterior a hoje — e com
+// saldo em aberto (> 0). Nunca inclui parcelas com vencimento futuro nem já
+// quitadas (saldo <= 0). É o coração da correção do cálculo.
+//
+// A parcela que vence HOJE fica de fora: o cron dispara às 09h e o pagador tem o
+// dia inteiro para pagar, então ela não está em atraso (nem gera multa/juros).
+// Incluí-la inflava o "valor total atualizado da dívida" com uma parcela do dia.
+// Isso não deixa de cobrar nada: a régua só dispara 2 dias úteis após o
+// vencimento, nunca no próprio dia.
 export function parcelasVencidas<T extends ParcelaAberta>(boletos: T[], hojeYMD: string): T[] {
-  return boletos.filter((b) => b.vencimento && b.vencimento <= hojeYMD && b.saldo > 0);
+  return boletos.filter((b) => b.vencimento && b.vencimento < hojeYMD && b.saldo > 0);
 }
 
 // Soma o valor ATUALIZADO no dia do disparo apenas das parcelas VENCIDAS (o
