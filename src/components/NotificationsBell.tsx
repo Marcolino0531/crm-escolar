@@ -13,7 +13,7 @@ import {
   Tags,
   FileSpreadsheet,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -50,6 +50,13 @@ import {
   type TransacaoPendencia,
 } from "@/lib/financeiro-pendencias";
 import { alertaExecucaoCron, type ExecucaoCron } from "@/lib/billing-cron-runs";
+import {
+  contadorNaoLidas,
+  idsParaConcluirAutomaticamente,
+  momentoLocal,
+  notificacoesPendentes,
+  type NotificacaoReuniao,
+} from "@/lib/agenda-notifications";
 import { isDiaUtil } from "@/lib/billing-schedule";
 
 type Notification = {
@@ -64,14 +71,6 @@ type OpenTask = {
   id: string;
   title: string;
   created_at: string;
-};
-
-type AgendaNotification = {
-  id: string;
-  message: string;
-  read: boolean;
-  created_at: string;
-  reuniao: { data: string | null } | null;
 };
 
 type Forecast = {
@@ -379,27 +378,28 @@ export function NotificationsBell() {
     },
   });
 
-  // --- Agenda notifications (dismissible: clear on open) — geradas quando o
-  // usuário é incluído no campo "Equipe" de uma reunião. ---
-  const { data: agendaNotifications = [] } = useQuery({
+  // --- Agenda notifications — geradas quando o usuário é incluído no campo
+  // "Equipe" de uma reunião. Concluir (check ou reunião que passou) tira da
+  // lista sem apagar do banco. ---
+  const { data: agendaTodas = [] } = useQuery({
     queryKey: ["agenda_notifications", userId ?? "anon"],
     enabled: !!userId && canAgenda,
     refetchInterval: 30000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("agenda_notifications" as any)
-        .select("id, message, read, created_at, reuniao:reuniao_id(data)")
+        .select("id, message, read, created_at, concluded_at, reuniao:reuniao_id(data, horario)")
+        .is("concluded_at", null)
         .order("created_at", { ascending: false })
         .limit(30);
-      if (error) return [] as AgendaNotification[];
-      const hoje = todayISOLocal();
-      // Oculta avisos de reuniões já ocorridas (data anterior à data atual).
-      return ((data ?? []) as unknown as AgendaNotification[]).filter((n) => {
-        const dataReuniao = n.reuniao?.data;
-        return !dataReuniao || dataReuniao >= hoje;
-      });
+      if (error) return [] as NotificacaoReuniao[];
+      return (data ?? []) as unknown as NotificacaoReuniao[];
     },
   });
+
+  // Reunião que já aconteceu sai da lista sozinha; a conclusão é gravada num
+  // efeito, para o histórico acompanhar o que a tela deixou de mostrar.
+  const agoraLocal = momentoLocal(new Date());
 
   // --- Colônia de Férias: verificação de fim de semana. Lista os alunos que
   // têm consumos registrados na semana Mon–Fri encerrada mas cujo fechamento
@@ -596,6 +596,26 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["task_notifications"] }),
   });
 
+  const concluirAgenda = useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return;
+      const { error } = await supabase
+        .from("agenda_notifications" as any)
+        .update({ concluded_at: new Date().toISOString(), read: true })
+        .in("id", ids);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agenda_notifications"] }),
+  });
+
+  // Conclusão automática das reuniões que já passaram.
+  const idsAutoConcluir = idsParaConcluirAutomaticamente(agendaTodas, agoraLocal);
+  const chaveAutoConcluir = idsAutoConcluir.join(",");
+  useEffect(() => {
+    if (chaveAutoConcluir) concluirAgenda.mutate(chaveAutoConcluir.split(","));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveAutoConcluir]);
+
   const markAgendaRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -634,6 +654,7 @@ export function NotificationsBell() {
   const overdue = forecasts.filter((f) => (f.due_date ?? "") < today);
   const dueToday = forecasts.filter((f) => (f.due_date ?? "") === today);
   const unreadTasks = notifications.filter((n) => !n.read);
+  const agendaNotifications = notificacoesPendentes(agendaTodas, agoraLocal);
   const unreadAgenda = agendaNotifications.filter((n) => !n.read);
 
   // Fluxo alerts + persistent new-task alerts always count as active; the
@@ -645,7 +666,7 @@ export function NotificationsBell() {
     lowStockStores.length +
     availableReceivables.length +
     extraEvents.length +
-    unreadAgenda.length +
+    contadorNaoLidas(agendaTodas, agoraLocal) +
     coloniaPendencias.length +
     coloniaIncompletos.length +
     plannerDue.length +
@@ -873,23 +894,31 @@ export function NotificationsBell() {
                 Agenda
               </div>
               {agendaNotifications.map((n) => (
-                <Link
+                <div
                   key={n.id}
-                  to="/agenda"
-                  className={`block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent ${
-                    n.read ? "text-muted-foreground" : "font-medium"
-                  }`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
                 >
-                  <div className="flex items-start gap-2">
-                    <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-                    <div className="min-w-0">
-                      <div>{n.message}</div>
-                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                        {formatDateBR(n.created_at)}
-                      </span>
-                    </div>
-                  </div>
-                </Link>
+                  <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+                  <Link
+                    to="/agenda"
+                    className={`min-w-0 flex-1 ${n.read ? "text-muted-foreground" : "font-medium"}`}
+                  >
+                    <div>{n.message}</div>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {formatDateBR(n.created_at)}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Marcar reunião como concluída"
+                    aria-label="Marcar reunião como concluída"
+                    onClick={() => concluirAgenda.mutate([n.id])}
+                    disabled={concluirAgenda.isPending}
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
               ))}
             </div>
           )}
