@@ -115,6 +115,143 @@ export function calcularRepasse(
   };
 }
 
+// ---------- Repasse com múltiplos parceiros ----------
+// Duas formas de contrato, escolhidas por modalidade (nunca misturadas):
+//
+// percentual — cada parceiro leva um % do que foi efetivamente arrecadado; o que
+//   sobra fica com o colégio. É o modelo original (Jazz, 70/30).
+// fixo — cada parceiro tem um valor mensal GARANTIDO, que não se move quando
+//   entra ou sai aluno. O colégio absorve a diferença: se arrecadou mais que a
+//   soma dos fixos, sobra; se arrecadou menos, ele completa do próprio bolso.
+
+export type TipoRepasse = "percentual" | "fixo";
+
+export interface ParceiroModalidade {
+  id: string;
+  nome: string;
+  // Preenchido conforme o tipo da modalidade; o outro fica nulo.
+  percentualParceiro: number | null;
+  valorFixoMensal: number | null;
+}
+
+export interface RepasseParceiroCalculado {
+  parceiroId: string;
+  parceiroNome: string;
+  percentualParceiro: number | null;
+  // O que a regra do cadastro produz para o mês.
+  valorPadrao: number;
+  // O que será pago: o ajuste manual do mês prevalece sobre o valor padrão.
+  valorRepasse: number;
+  ajustadoManualmente: boolean;
+}
+
+export interface RepasseModalidadeCalculado {
+  tipo: TipoRepasse;
+  valorArrecadado: number;
+  parceiros: RepasseParceiroCalculado[];
+  totalRepasse: number;
+  // Arrecadado − repassado. No percentual é o retido e nunca fica negativo; no
+  // fixo pode ficar negativo, e o sinal é a informação que importa.
+  saldoColegio: number;
+}
+
+// Ajuste manual do mês: sobrescreve o valor de UM parceiro em UM mês, sem tocar
+// no cadastro. Existe porque mês parcial (modalidade que começou no dia 15) não
+// segue regra previsível de proporção — quem decide o valor é a escola.
+export type AjustesDoMes = Record<string, number | null | undefined>;
+
+export function somaPercentuais(parceiros: ParceiroModalidade[]): number {
+  return arredondarCentavos(parceiros.reduce((s, p) => s + (Number(p.percentualParceiro) || 0), 0));
+}
+
+export function somaValoresFixos(parceiros: ParceiroModalidade[]): number {
+  return arredondarCentavos(parceiros.reduce((s, p) => s + (Number(p.valorFixoMensal) || 0), 0));
+}
+
+export function calcularRepasseModalidade(
+  tipo: TipoRepasse,
+  parceiros: ParceiroModalidade[],
+  valorArrecadado: number,
+  ajustes: AjustesDoMes = {},
+): RepasseModalidadeCalculado {
+  const arrecadado = arredondarCentavos(valorArrecadado);
+
+  const calculados = parceiros.map((p): RepasseParceiroCalculado => {
+    // No percentual o valor do mês é derivado do arrecadado (regra original); no
+    // fixo é o contratado, indiferente ao que entrou de mensalidade.
+    const doPercentual =
+      tipo === "percentual" ? calcularRepasse(arrecadado, Number(p.percentualParceiro) || 0) : null;
+    const percentual = doPercentual?.percentualParceiro ?? null;
+    const valorPadrao =
+      doPercentual?.valorRepasse ?? arredondarCentavos(Number(p.valorFixoMensal) || 0);
+
+    const ajuste = ajustes[p.id];
+    const temAjuste = ajuste !== null && ajuste !== undefined && Number.isFinite(Number(ajuste));
+    const valorRepasse = temAjuste ? arredondarCentavos(Number(ajuste)) : valorPadrao;
+
+    return {
+      parceiroId: p.id,
+      parceiroNome: p.nome,
+      percentualParceiro: percentual,
+      valorPadrao,
+      valorRepasse,
+      // Só sinaliza quando o ajuste realmente mudou o valor: um ajuste igual ao
+      // padrão não é uma exceção a lembrar.
+      ajustadoManualmente: temAjuste && valorRepasse !== valorPadrao,
+    };
+  });
+
+  const totalRepasse = arredondarCentavos(calculados.reduce((s, p) => s + p.valorRepasse, 0));
+  return {
+    tipo,
+    valorArrecadado: arrecadado,
+    parceiros: calculados,
+    totalRepasse,
+    saldoColegio: arredondarCentavos(arrecadado - totalRepasse),
+  };
+}
+
+// ---------- Calendário do repasse fixo ----------
+
+// Janeiro: o colégio não funciona, então nenhum mês de janeiro gera repasse,
+// qualquer que seja a data de início da modalidade.
+export const MES_SEM_ATIVIDADE = "01";
+
+export type StatusMesModalidade = "ativo" | "janeiro" | "antes_do_inicio";
+
+export function statusMesModalidade(
+  mesReferencia: string,
+  mesInicio: string | null | undefined,
+): StatusMesModalidade {
+  if (mesReferencia.slice(5, 7) === MES_SEM_ATIVIDADE) return "janeiro";
+  const inicio = (mesInicio ?? "").slice(0, 7);
+  if (inicio && mesReferencia < inicio) return "antes_do_inicio";
+  return "ativo";
+}
+
+export function geraRepasseNoMes(
+  mesReferencia: string,
+  mesInicio: string | null | undefined,
+): boolean {
+  return statusMesModalidade(mesReferencia, mesInicio) === "ativo";
+}
+
+// Data prevista do repasse no mês. Um dia 31 configurado cai no último dia dos
+// meses curtos em vez de virar data inválida (ou pular para o mês seguinte).
+export function dataPrevistaRepasse(
+  mesReferencia: string,
+  diaPagamento: number | null | undefined,
+): string | null {
+  const dia = Number(diaPagamento);
+  if (!Number.isInteger(dia) || dia < 1 || dia > 31) return null;
+  const ano = Number(mesReferencia.slice(0, 4));
+  const mes = Number(mesReferencia.slice(5, 7));
+  if (!Number.isInteger(ano) || !Number.isInteger(mes) || mes < 1 || mes > 12) return null;
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const diaFinal = Math.min(dia, ultimoDia);
+  return `${mesReferencia}-${String(diaFinal).padStart(2, "0")}`;
+}
+
 // ---------- Visibilidade por modalidade ----------
 // Espelha a regra do banco (can_view_modalidade_esporte): parceiro externo
 // recebe o módulo 'esportes' + as modalidades dele e passa a ver SÓ elas.

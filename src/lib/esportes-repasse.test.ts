@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   calcularRepasse,
+  calcularRepasseModalidade,
+  dataPrevistaRepasse,
+  geraRepasseNoMes,
   mesmaCategoria,
   modalidadesVisiveis,
   pagamentoDoAluno,
   parcelasDaModalidade,
   podeVerModalidade,
   restritoPorModalidade,
+  somaPercentuais,
+  somaValoresFixos,
+  statusMesModalidade,
   totalArrecadado,
+  type ParceiroModalidade,
   type ParcelaSponte,
 } from "./esportes-repasse";
 
@@ -146,6 +153,145 @@ describe("arrecadação e repasse da modalidade", () => {
     const total = totalArrecadado(pagamentos);
     expect(total).toBe(180);
     expect(calcularRepasse(total, 50)).toMatchObject({ valorRepasse: 90, valorRetido: 90 });
+  });
+});
+
+describe("repasse com múltiplos parceiros", () => {
+  const jazz: ParceiroModalidade[] = [
+    { id: "p-jazz", nome: "Professora de Jazz", percentualParceiro: 70, valorFixoMensal: null },
+  ];
+  const jiujitsu: ParceiroModalidade[] = [
+    { id: "p-prof", nome: "Professor", percentualParceiro: null, valorFixoMensal: 1200 },
+    { id: "p-aux", nome: "Auxiliar", percentualParceiro: null, valorFixoMensal: 800 },
+  ];
+
+  it("um parceiro percentual: repasse sobre o arrecadado e o resto retido", () => {
+    const r = calcularRepasseModalidade("percentual", jazz, 3000);
+    expect(r.parceiros).toEqual([
+      {
+        parceiroId: "p-jazz",
+        parceiroNome: "Professora de Jazz",
+        percentualParceiro: 70,
+        valorPadrao: 2100,
+        valorRepasse: 2100,
+        ajustadoManualmente: false,
+      },
+    ]);
+    expect(r.totalRepasse).toBe(2100);
+    expect(r.saldoColegio).toBe(900);
+  });
+
+  it("percentual: a soma dos percentuais não pode passar de 100", () => {
+    const dois: ParceiroModalidade[] = [
+      { id: "a", nome: "A", percentualParceiro: 60, valorFixoMensal: null },
+      { id: "b", nome: "B", percentualParceiro: 30, valorFixoMensal: null },
+    ];
+    expect(somaPercentuais(dois)).toBe(90);
+    const r = calcularRepasseModalidade("percentual", dois, 1000);
+    expect(r.parceiros.map((p) => p.valorRepasse)).toEqual([600, 300]);
+    expect(r.saldoColegio).toBe(100);
+  });
+
+  it("múltiplos parceiros fixos: cada um recebe o valor contratado", () => {
+    const r = calcularRepasseModalidade("fixo", jiujitsu, 2600);
+    expect(r.parceiros.map((p) => [p.parceiroNome, p.valorRepasse])).toEqual([
+      ["Professor", 1200],
+      ["Auxiliar", 800],
+    ]);
+    expect(r.parceiros.every((p) => p.percentualParceiro === null)).toBe(true);
+    expect(somaValoresFixos(jiujitsu)).toBe(2000);
+    expect(r.totalRepasse).toBe(2000);
+  });
+
+  it("valor fixo não muda quando entra ou sai aluno", () => {
+    const cheio = calcularRepasseModalidade("fixo", jiujitsu, 3400);
+    const vazio = calcularRepasseModalidade("fixo", jiujitsu, 0);
+    expect(cheio.totalRepasse).toBe(2000);
+    expect(vazio.totalRepasse).toBe(2000);
+  });
+
+  it("saldo do colégio positivo quando arrecadou mais que os fixos", () => {
+    expect(calcularRepasseModalidade("fixo", jiujitsu, 2600).saldoColegio).toBe(600);
+  });
+
+  it("saldo do colégio negativo quando arrecadou menos que os fixos", () => {
+    const r = calcularRepasseModalidade("fixo", jiujitsu, 1450.5);
+    expect(r.totalRepasse).toBe(2000);
+    expect(r.saldoColegio).toBe(-549.5);
+  });
+
+  it("modalidade sem parceiro não gera repasse e o arrecadado fica todo com o colégio", () => {
+    const r = calcularRepasseModalidade("fixo", [], 500);
+    expect(r.totalRepasse).toBe(0);
+    expect(r.saldoColegio).toBe(500);
+  });
+});
+
+describe("calendário do repasse fixo", () => {
+  const jiujitsu: ParceiroModalidade[] = [
+    { id: "p-prof", nome: "Professor", percentualParceiro: null, valorFixoMensal: 1200 },
+    { id: "p-aux", nome: "Auxiliar", percentualParceiro: null, valorFixoMensal: 800 },
+  ];
+
+  it("mês anterior ao início da modalidade não gera repasse", () => {
+    expect(statusMesModalidade("2026-07", "2026-08")).toBe("antes_do_inicio");
+    expect(geraRepasseNoMes("2026-07", "2026-08")).toBe(false);
+    expect(geraRepasseNoMes("2026-08", "2026-08")).toBe(true);
+    expect(geraRepasseNoMes("2026-09", "2026-08")).toBe(true);
+  });
+
+  it("sem mês de início configurado, todo mês (fora de janeiro) gera repasse", () => {
+    expect(geraRepasseNoMes("2026-03", null)).toBe(true);
+    expect(geraRepasseNoMes("2026-03", "")).toBe(true);
+  });
+
+  it("janeiro é sempre pulado, inclusive quando é o próprio mês de início", () => {
+    expect(statusMesModalidade("2027-01", "2026-08")).toBe("janeiro");
+    expect(statusMesModalidade("2026-01", "2026-01")).toBe("janeiro");
+    expect(geraRepasseNoMes("2027-01", null)).toBe(false);
+    expect(geraRepasseNoMes("2026-12", "2026-08")).toBe(true);
+    expect(geraRepasseNoMes("2027-02", "2026-08")).toBe(true);
+  });
+
+  it("data prevista do repasse cai no dia configurado, sem estourar o mês", () => {
+    expect(dataPrevistaRepasse("2026-08", 10)).toBe("2026-08-10");
+    expect(dataPrevistaRepasse("2027-02", 31)).toBe("2027-02-28");
+    expect(dataPrevistaRepasse("2028-02", 31)).toBe("2028-02-29");
+    expect(dataPrevistaRepasse("2026-08", null)).toBe(null);
+    expect(dataPrevistaRepasse("2026-08", 0)).toBe(null);
+  });
+
+  it("ajuste manual do mês prevalece sobre o valor fixo do cadastro", () => {
+    const r = calcularRepasseModalidade("fixo", jiujitsu, 1000, { "p-prof": 600 });
+    expect(r.parceiros[0]).toMatchObject({
+      parceiroNome: "Professor",
+      valorPadrao: 1200,
+      valorRepasse: 600,
+      ajustadoManualmente: true,
+    });
+    // O outro parceiro segue no valor do cadastro.
+    expect(r.parceiros[1]).toMatchObject({ valorRepasse: 800, ajustadoManualmente: false });
+    expect(r.totalRepasse).toBe(1400);
+    expect(r.saldoColegio).toBe(-400);
+  });
+
+  it("ajuste vale só para o mês ajustado: o cadastro continua valendo nos outros", () => {
+    const comAjuste = calcularRepasseModalidade("fixo", jiujitsu, 2000, { "p-prof": 600 });
+    const mesSeguinte = calcularRepasseModalidade("fixo", jiujitsu, 2000);
+    expect(comAjuste.parceiros[0].valorRepasse).toBe(600);
+    expect(mesSeguinte.parceiros[0].valorRepasse).toBe(1200);
+    expect(mesSeguinte.parceiros[0].ajustadoManualmente).toBe(false);
+  });
+
+  it("ajuste de zero é um ajuste válido (mês sem pagamento ao parceiro)", () => {
+    const r = calcularRepasseModalidade("fixo", jiujitsu, 2000, { "p-aux": 0 });
+    expect(r.parceiros[1]).toMatchObject({ valorRepasse: 0, ajustadoManualmente: true });
+    expect(r.totalRepasse).toBe(1200);
+  });
+
+  it("ajuste igual ao valor padrão não é sinalizado como exceção do mês", () => {
+    const r = calcularRepasseModalidade("fixo", jiujitsu, 2000, { "p-prof": 1200 });
+    expect(r.parceiros[0]).toMatchObject({ valorRepasse: 1200, ajustadoManualmente: false });
   });
 });
 

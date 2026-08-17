@@ -13,11 +13,17 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { coletarTitulosAluno } from "@/lib/sponte.functions";
 import {
-  calcularRepasse,
+  calcularRepasseModalidade,
+  geraRepasseNoMes,
   pagamentoDoAluno,
+  statusMesModalidade,
   totalArrecadado,
+  type AjustesDoMes,
   type PagamentoAlunoModalidade,
-  type RepasseCalculado,
+  type ParceiroModalidade,
+  type RepasseModalidadeCalculado,
+  type StatusMesModalidade,
+  type TipoRepasse,
 } from "@/lib/esportes-repasse";
 
 // Consultas ao Sponte em paralelo, no mesmo teto usado pela cobrança automática.
@@ -27,9 +33,22 @@ interface ModalidadeRow {
   id: string;
   nome: string;
   categoria_sponte: string;
-  parceiro_nome: string;
-  percentual_parceiro: number;
+  tipo_repasse: TipoRepasse;
+  dia_pagamento: number | null;
+  mes_inicio: string | null;
   unidade: string;
+}
+
+interface ParceiroRow {
+  id: string;
+  nome: string;
+  percentual_parceiro: number | null;
+  valor_fixo_mensal: number | null;
+}
+
+interface RepasseAjusteRow {
+  parceiro_id: string | null;
+  valor_ajustado: number | null;
 }
 
 interface MatriculaRow {
@@ -38,9 +57,12 @@ interface MatriculaRow {
   turma: string;
 }
 
-export interface ArrecadacaoModalidadeResult extends RepasseCalculado {
+export interface ArrecadacaoModalidadeResult extends RepasseModalidadeCalculado {
   modalidadeId: string;
   mesReferencia: string;
+  // Janeiro nunca gera repasse (colégio fechado) e mês anterior ao início da
+  // modalidade também não; nesses casos os valores vêm zerados.
+  statusMes: StatusMesModalidade;
   alunos: PagamentoAlunoModalidade[];
   // Falhas de consulta ao Sponte (por aluno) — o total mostrado fica parcial.
   avisos: string[];
@@ -74,26 +96,69 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     const vazio = {
       modalidadeId,
       mesReferencia,
+      statusMes: "ativo" as StatusMesModalidade,
       alunos: [],
       avisos: [],
-      ...calcularRepasse(0, 0),
+      ...calcularRepasseModalidade("percentual", [], 0),
     };
 
     const { data: modRow, error: modErr } = await supabaseAdmin
       .from("esportes_modalidades" as never)
-      .select("id, nome, categoria_sponte, parceiro_nome, percentual_parceiro, unidade")
+      .select("id, nome, categoria_sponte, tipo_repasse, dia_pagamento, mes_inicio, unidade")
       .eq("id", modalidadeId)
       .maybeSingle();
     if (modErr) return { ...vazio, error: modErr.message };
     const modalidade = modRow as unknown as ModalidadeRow | null;
     if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
 
+    const { data: parcRows, error: parcErr } = await supabaseAdmin
+      .from("esportes_parceiros" as never)
+      .select("id, nome, percentual_parceiro, valor_fixo_mensal")
+      .eq("modalidade_id", modalidadeId)
+      .eq("ativo", true)
+      .order("ordem", { ascending: true })
+      .order("nome", { ascending: true });
+    if (parcErr) return { ...vazio, error: parcErr.message };
+    const parceiros: ParceiroModalidade[] = ((parcRows ?? []) as unknown as ParceiroRow[]).map(
+      (p) => ({
+        id: p.id,
+        nome: p.nome,
+        percentualParceiro: p.percentual_parceiro === null ? null : Number(p.percentual_parceiro),
+        valorFixoMensal: p.valor_fixo_mensal === null ? null : Number(p.valor_fixo_mensal),
+      }),
+    );
+
+    const statusMes = statusMesModalidade(mesReferencia, modalidade.mes_inicio);
+
+    // Mês sem repasse: não vale consultar o Sponte aluno por aluno para depois
+    // zerar tudo. A tela explica o motivo pelo statusMes.
+    if (!geraRepasseNoMes(mesReferencia, modalidade.mes_inicio)) {
+      return {
+        ...vazio,
+        statusMes,
+        ...calcularRepasseModalidade(modalidade.tipo_repasse, [], 0),
+      };
+    }
+
+    const { data: ajusteRows, error: ajusteErr } = await supabaseAdmin
+      .from("esportes_repasses" as never)
+      .select("parceiro_id, valor_ajustado")
+      .eq("modalidade_id", modalidadeId)
+      .eq("mes_referencia", mesReferencia);
+    if (ajusteErr) return { ...vazio, statusMes, error: ajusteErr.message };
+    const ajustes: AjustesDoMes = {};
+    for (const row of (ajusteRows ?? []) as unknown as RepasseAjusteRow[]) {
+      if (row.parceiro_id && row.valor_ajustado !== null) {
+        ajustes[row.parceiro_id] = Number(row.valor_ajustado);
+      }
+    }
+
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
       .select("aluno_id, aluno_nome, turma")
       .eq("modalidade_id", modalidadeId)
       .order("aluno_nome", { ascending: true });
-    if (matErr) return { ...vazio, error: matErr.message };
+    if (matErr) return { ...vazio, statusMes, error: matErr.message };
     const matriculas = (matRows ?? []) as unknown as MatriculaRow[];
 
     const alunos: PagamentoAlunoModalidade[] = [];
@@ -130,8 +195,9 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     return {
       modalidadeId,
       mesReferencia,
+      statusMes,
       alunos,
       avisos,
-      ...calcularRepasse(total, Number(modalidade.percentual_parceiro)),
+      ...calcularRepasseModalidade(modalidade.tipo_repasse, parceiros, total, ajustes),
     };
   });
