@@ -17,6 +17,8 @@ import {
   frequenciaPorDias,
   geraRepasseNoMes,
   pagamentoDoAluno,
+  parcelasAlunoNaModalidade,
+  resumoParcelas,
   statusMesModalidade,
   totalArrecadado,
   totalEsperado,
@@ -24,6 +26,8 @@ import {
   type FrequenciaModalidade,
   type PagamentoAlunoModalidade,
   type ParceiroModalidade,
+  type ParcelaAlunoModalidade,
+  type ResumoParcelas,
   type RepasseModalidadeCalculado,
   type StatusMesModalidade,
   type TipoRepasse,
@@ -101,6 +105,94 @@ async function assertPodeVerModalidade(userId: string, modalidadeId: string) {
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Você não tem acesso a esta modalidade.");
 }
+
+export interface ParcelasModalidadeResult {
+  modalidadeId: string;
+  categoriaSponte: string;
+  parcelas: ParcelaAlunoModalidade[];
+  resumo: ResumoParcelas;
+  // Falhas de consulta ao Sponte (por aluno) — a relação fica parcial.
+  avisos: string[];
+  error?: string;
+}
+
+const ParcelasInputSchema = z.object({ modalidadeId: z.string().uuid() });
+
+// "Relação de valores": as parcelas REAIS da categoria da modalidade no boleto
+// de cada aluno matriculado, mês a mês. Nada é recalculado aqui — a primeira
+// parcela proporcional (meio mês) aparece com o valor que está no Sponte.
+export const fetchParcelasModalidade = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ParcelasInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ParcelasModalidadeResult> => {
+    const { modalidadeId } = data;
+    await assertPodeVerModalidade(context.userId, modalidadeId);
+
+    const vazio: ParcelasModalidadeResult = {
+      modalidadeId,
+      categoriaSponte: "",
+      parcelas: [],
+      resumo: resumoParcelas([]),
+      avisos: [],
+    };
+
+    const { data: modRow, error: modErr } = await supabaseAdmin
+      .from("esportes_modalidades" as never)
+      .select("id, nome, categoria_sponte, tipo_repasse, dia_pagamento, mes_inicio, unidade")
+      .eq("id", modalidadeId)
+      .maybeSingle();
+    if (modErr) return { ...vazio, error: modErr.message };
+    const modalidade = modRow as unknown as ModalidadeRow | null;
+    if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
+
+    const { data: matRows, error: matErr } = await supabaseAdmin
+      .from("esportes_matriculas" as never)
+      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana")
+      .eq("modalidade_id", modalidadeId)
+      .order("aluno_nome", { ascending: true });
+    if (matErr)
+      return { ...vazio, categoriaSponte: modalidade.categoria_sponte, error: matErr.message };
+    const matriculas = (matRows ?? []) as unknown as MatriculaRow[];
+
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const parcelas: ParcelaAlunoModalidade[] = [];
+    const avisos: string[] = [];
+
+    for (let i = 0; i < matriculas.length; i += CONCORRENCIA_SPONTE) {
+      const lote = matriculas.slice(i, i + CONCORRENCIA_SPONTE);
+      const resultados = await Promise.all(
+        lote.map(async (m) => ({
+          matricula: m,
+          titulos: await coletarTitulosAluno(modalidade.unidade, m.aluno_id),
+        })),
+      );
+      for (const { matricula, titulos } of resultados) {
+        const nome = matricula.aluno_nome || `AlunoID ${matricula.aluno_id}`;
+        if (titulos.error || titulos.indisponivel) {
+          avisos.push(
+            `${nome}: ${titulos.error ?? `integração Sponte indisponível para "${modalidade.unidade}"`}`,
+          );
+          continue;
+        }
+        parcelas.push(
+          ...parcelasAlunoNaModalidade(
+            { alunoId: matricula.aluno_id, alunoNome: nome },
+            titulos.titulos,
+            modalidade.categoria_sponte,
+            hoje,
+          ),
+        );
+      }
+    }
+
+    return {
+      modalidadeId,
+      categoriaSponte: modalidade.categoria_sponte,
+      parcelas,
+      resumo: resumoParcelas(parcelas),
+      avisos,
+    };
+  });
 
 export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
