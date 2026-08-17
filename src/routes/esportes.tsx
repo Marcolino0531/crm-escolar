@@ -5,6 +5,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   CalendarClock,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Dumbbell,
   Loader2,
@@ -13,6 +15,7 @@ import {
   Plus,
   Save,
   Search,
+  Settings,
   Trash2,
   User,
   Users,
@@ -46,6 +49,8 @@ import { fetchArrecadacaoModalidade, fetchParcelasModalidade } from "@/lib/espor
 import {
   dataPrevistaRepasse,
   normalizarDias,
+  parcelasDoMes,
+  resumoParcelas,
   rotuloDias,
   somaPercentuais,
   somaValoresFixos,
@@ -181,6 +186,8 @@ function EsportesPage() {
   const [modalidadeId, setModalidadeId] = useState<string>("");
   const [inicioMes, setInicioMes] = useState<string>(() => `${hojeYMD().slice(0, 7)}-01`);
   const mesReferencia = inicioMes.slice(0, 7);
+  // Parceiros/repasse e turmas mudam pouco: ficam fora da tela do dia a dia.
+  const [configAberta, setConfigAberta] = useState(false);
 
   // O RLS já devolve somente as modalidades visíveis: o parceiro externo recebe
   // apenas as dele, então a tela não precisa (nem pode) filtrar por conta própria.
@@ -269,10 +276,21 @@ function EsportesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-[11px] text-muted-foreground">Mês</Label>
-              <MonthYearPicker startDate={inicioMes} onChange={(start) => setInicioMes(start)} />
-            </div>
+            {modalidade && (
+              <Button
+                variant="outline"
+                className="h-9 gap-1"
+                onClick={() => setConfigAberta((v) => !v)}
+                title="Parceiros, repasse e turmas da modalidade"
+              >
+                <Settings className="h-4 w-4" /> Configurações da Modalidade
+                {configAberta ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </Button>
+            )}
             {modalidade && (
               <div className="ml-auto text-xs text-muted-foreground">
                 Categoria no Sponte: <strong>{modalidade.categoria_sponte}</strong> ·{" "}
@@ -290,8 +308,22 @@ function EsportesPage() {
             )}
           </div>
 
-          {modalidade && (
-            <>
+          {modalidade && configAberta && (
+            <div className="space-y-4 rounded-xl border border-dashed border-primary/40 bg-muted/20 p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    Mês do acompanhamento de repasse
+                  </Label>
+                  <MonthYearPicker
+                    startDate={inicioMes}
+                    onChange={(start) => setInicioMes(start)}
+                  />
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setConfigAberta(false)}>
+                  Fechar configurações
+                </Button>
+              </div>
               <PainelMensal
                 modalidade={modalidade}
                 mesReferencia={mesReferencia}
@@ -299,6 +331,11 @@ function EsportesPage() {
               />
               <ParceirosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
               <TurmasDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
+            </div>
+          )}
+
+          {modalidade && (
+            <>
               <AlunosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
               <RelacaoDeValores modalidade={modalidade} />
             </>
@@ -1315,22 +1352,32 @@ function Indicador({
 // aluno entrou aparece exatamente como está no Sponte.
 function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
   const buscarParcelas = useServerFn(fetchParcelasModalidade);
+  // Filtro de mês próprio da seção: a consulta ao Sponte traz o ano todo de uma
+  // vez (uma chamada por aluno), e trocar o mês só refiltra o que já está em memória.
+  const [inicioMes, setInicioMes] = useState<string>(() => `${hojeYMD().slice(0, 7)}-01`);
+  const mesReferencia = inicioMes.slice(0, 7);
 
   const { data, isFetching, isError } = useQuery({
     queryKey: ["esportes_parcelas", modalidade.id],
     queryFn: () => buscarParcelas({ data: { modalidadeId: modalidade.id } }),
   });
 
-  // Uma linha por parcela, agrupada por aluno em ordem de vencimento.
+  const doMes = useMemo(
+    () => parcelasDoMes(data?.parcelas ?? [], mesReferencia),
+    [data, mesReferencia],
+  );
+  const resumo = useMemo(() => resumoParcelas(doMes), [doMes]);
+
+  // Uma linha por parcela do mês, agrupada por aluno.
   const porAluno = useMemo(() => {
     const grupos = new Map<string, { nome: string; parcelas: ParcelaAlunoModalidade[] }>();
-    for (const p of data?.parcelas ?? []) {
+    for (const p of doMes) {
       const atual = grupos.get(p.alunoId) ?? { nome: p.alunoNome, parcelas: [] };
       atual.parcelas.push(p);
       grupos.set(p.alunoId, atual);
     }
     return [...grupos.entries()].sort((a, b) => a[1].nome.localeCompare(b[1].nome, "pt-BR"));
-  }, [data]);
+  }, [doMes]);
 
   return (
     <div className="rounded-xl border border-border bg-card">
@@ -1339,10 +1386,13 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
           <Wallet className="h-4 w-4 text-primary" /> Relação de valores
           {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </h2>
-        <span className="text-xs text-muted-foreground">
-          Parcelas da categoria &ldquo;{modalidade.categoria_sponte}&rdquo; no boleto de cada aluno,
-          direto do Sponte.
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-muted-foreground">
+            Parcelas da categoria &ldquo;{modalidade.categoria_sponte}&rdquo; no boleto de cada
+            aluno, direto do Sponte.
+          </span>
+          <MonthYearPicker startDate={inicioMes} onChange={(start) => setInicioMes(start)} />
+        </div>
       </div>
 
       {isError ? (
@@ -1364,19 +1414,19 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
           )}
 
           <div className="grid gap-3 px-4 py-3 sm:grid-cols-3">
-            <Indicador label="Quitado" valor={formatBRL(data.resumo.quitado)} />
+            <Indicador label="Quitado" valor={formatBRL(resumo.quitado)} />
             <Indicador
               label="Vencido"
-              valor={formatBRL(data.resumo.vencido)}
-              negativo={data.resumo.vencido > 0}
+              valor={formatBRL(resumo.vencido)}
+              negativo={resumo.vencido > 0}
             />
-            <Indicador label="A vencer" valor={formatBRL(data.resumo.aVencer)} />
+            <Indicador label="A vencer" valor={formatBRL(resumo.aVencer)} />
           </div>
 
           {porAluno.length === 0 ? (
             <div className="px-4 py-6 text-sm text-muted-foreground">
-              Nenhuma parcela da categoria &ldquo;{modalidade.categoria_sponte}&rdquo; encontrada no
-              Sponte para os alunos matriculados.
+              Nenhuma parcela da categoria &ldquo;{modalidade.categoria_sponte}&rdquo; em{" "}
+              {rotuloMesReferencia(mesReferencia)} para os alunos matriculados.
             </div>
           ) : (
             porAluno.map(([alunoId, grupo]) => (
@@ -1392,7 +1442,6 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-28">Parcela</TableHead>
-                      <TableHead className="w-40">Mês</TableHead>
                       <TableHead className="w-40">Vencimento</TableHead>
                       <TableHead className="w-32 text-right">Valor</TableHead>
                       <TableHead>Situação</TableHead>
@@ -1403,9 +1452,6 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
                       <TableRow key={`${p.numeroParcela}-${p.vencimento}`}>
                         <TableCell className="text-sm text-muted-foreground">
                           {p.numeroParcela || "—"}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {rotuloMesReferencia(p.mesReferencia)}
                         </TableCell>
                         <TableCell className="text-sm">{formatData(p.vencimento)}</TableCell>
                         <TableCell className="text-right text-sm font-medium">

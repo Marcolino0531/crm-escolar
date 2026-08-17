@@ -230,6 +230,15 @@ export function parcelasAlunoNaModalidade(
     .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
 }
 
+// Parcelas de um mês (YYYY-MM) pelo mês do VENCIMENTO: é o mês que a secretaria
+// vê no boleto, mesmo que a baixa tenha caído em outro.
+export function parcelasDoMes(
+  parcelas: readonly ParcelaAlunoModalidade[],
+  mesReferencia: string,
+): ParcelaAlunoModalidade[] {
+  return parcelas.filter((p) => p.mesReferencia === mesReferencia);
+}
+
 export interface ResumoParcelas {
   quitado: number;
   vencido: number;

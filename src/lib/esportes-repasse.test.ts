@@ -9,6 +9,7 @@ import {
   pagamentoDoAluno,
   parcelasAlunoNaModalidade,
   parcelasDaModalidade,
+  parcelasDoMes,
   podeVerModalidade,
   resumoParcelas,
   situacaoParcela,
@@ -598,6 +599,102 @@ describe("relação de valores (parcelas reais do Sponte)", () => {
       vencido: 210,
       aVencer: 345,
       total: 785,
+    });
+  });
+});
+
+// A relação de valores mostra um mês por vez: os cards de resumo têm de somar só
+// o mês filtrado, senão o "Vencido" de meses antigos assombra o mês atual.
+describe("filtro de mês da relação de valores", () => {
+  const ana = { alunoId: "290", alunoNome: "Ana Clara Miranda Ramos" };
+  const bruno = { alunoId: "301", alunoNome: "Bruno Alves" };
+
+  const parcela = (over: Partial<ParcelaCategoriaSponte>): ParcelaCategoriaSponte => ({
+    vencimento: "2026-09-07",
+    categoria: "Jazz",
+    valor: 230,
+    valorPago: 0,
+    quitada: false,
+    dataPagamento: "",
+    numeroParcela: "2",
+    ...over,
+  });
+
+  const HOJE = "2026-09-15";
+
+  const todas = [
+    ...parcelasAlunoNaModalidade(
+      ana,
+      [
+        parcela({
+          numeroParcela: "1",
+          vencimento: "2026-08-20",
+          valor: 115,
+          quitada: true,
+          valorPago: 115,
+          dataPagamento: "2026-08-19",
+        }),
+        parcela({ numeroParcela: "2", vencimento: "2026-09-07" }),
+        parcela({ numeroParcela: "3", vencimento: "2026-10-05" }),
+      ],
+      "Jazz",
+      HOJE,
+    ),
+    ...parcelasAlunoNaModalidade(
+      bruno,
+      [
+        parcela({
+          numeroParcela: "1",
+          vencimento: "2026-09-07",
+          valor: 210,
+          quitada: true,
+          valorPago: 210,
+          dataPagamento: "2026-09-05",
+        }),
+        parcela({ numeroParcela: "2", vencimento: "2026-10-05", valor: 210 }),
+      ],
+      "Jazz",
+      HOJE,
+    ),
+  ];
+
+  it("mostra uma linha por aluno no mês escolhido", () => {
+    const setembro = parcelasDoMes(todas, "2026-09");
+    expect(setembro.map((p) => [p.alunoId, p.valor, p.situacao])).toEqual([
+      ["290", 230, "vencido"],
+      ["301", 210, "quitado"],
+    ]);
+    expect(parcelasDoMes(todas, "2026-08").map((p) => p.alunoId)).toEqual(["290"]);
+  });
+
+  it("mês sem parcela nenhuma volta vazio, não a lista inteira", () => {
+    expect(parcelasDoMes(todas, "2026-07")).toEqual([]);
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-07"))).toEqual({
+      quitado: 0,
+      vencido: 0,
+      aVencer: 0,
+      total: 0,
+    });
+  });
+
+  it("totais consideram apenas o mês filtrado", () => {
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-09"))).toEqual({
+      quitado: 210,
+      vencido: 230,
+      aVencer: 0,
+      total: 440,
+    });
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-08"))).toEqual({
+      quitado: 115,
+      vencido: 0,
+      aVencer: 0,
+      total: 115,
+    });
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-10"))).toEqual({
+      quitado: 0,
+      vencido: 0,
+      aVencer: 440,
+      total: 440,
     });
   });
 });

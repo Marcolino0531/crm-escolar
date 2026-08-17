@@ -18,7 +18,6 @@ import {
   geraRepasseNoMes,
   pagamentoDoAluno,
   parcelasAlunoNaModalidade,
-  resumoParcelas,
   statusMesModalidade,
   totalArrecadado,
   totalEsperado,
@@ -27,7 +26,6 @@ import {
   type PagamentoAlunoModalidade,
   type ParceiroModalidade,
   type ParcelaAlunoModalidade,
-  type ResumoParcelas,
   type RepasseModalidadeCalculado,
   type StatusMesModalidade,
   type TipoRepasse,
@@ -110,7 +108,6 @@ export interface ParcelasModalidadeResult {
   modalidadeId: string;
   categoriaSponte: string;
   parcelas: ParcelaAlunoModalidade[];
-  resumo: ResumoParcelas;
   // Falhas de consulta ao Sponte (por aluno) — a relação fica parcial.
   avisos: string[];
   error?: string;
@@ -132,7 +129,6 @@ export const fetchParcelasModalidade = createServerFn({ method: "POST" })
       modalidadeId,
       categoriaSponte: "",
       parcelas: [],
-      resumo: resumoParcelas([]),
       avisos: [],
     };
 
@@ -189,7 +185,6 @@ export const fetchParcelasModalidade = createServerFn({ method: "POST" })
       modalidadeId,
       categoriaSponte: modalidade.categoria_sponte,
       parcelas,
-      resumo: resumoParcelas(parcelas),
       avisos,
     };
   });
