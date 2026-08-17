@@ -9,18 +9,27 @@ import {
 const HOJE = "2026-08-07";
 
 describe("parcelasVencidas", () => {
-  it("mantém apenas parcelas com vencimento <= hoje e saldo > 0", () => {
+  it("mantém apenas parcelas com vencimento anterior a hoje e saldo > 0", () => {
     const boletos: ParcelaAberta[] = [
       { vencimento: "2026-07-05", saldo: 100 }, // vencida
-      { vencimento: "2026-08-07", saldo: 200 }, // vence hoje → conta
+      { vencimento: "2026-08-07", saldo: 200 }, // vence hoje → fora (ainda no prazo)
       { vencimento: "2026-09-05", saldo: 300 }, // futura → fora
       { vencimento: "2026-06-05", saldo: 0 }, // paga (saldo 0) → fora
       { vencimento: "", saldo: 50 }, // sem vencimento → fora
     ];
-    expect(parcelasVencidas(boletos, HOJE).map((b) => b.vencimento)).toEqual([
-      "2026-07-05",
-      "2026-08-07",
-    ]);
+    expect(parcelasVencidas(boletos, HOJE).map((b) => b.vencimento)).toEqual(["2026-07-05"]);
+  });
+
+  it("a parcela que vence HOJE não entra no total (pagador tem o dia inteiro)", () => {
+    const comHoje: ParcelaAberta[] = [
+      { vencimento: "2026-07-05", saldo: 100 },
+      { vencimento: HOJE, saldo: 1936.7 },
+    ];
+    const soVencida: ParcelaAberta[] = [{ vencimento: "2026-07-05", saldo: 100 }];
+    expect(calcularTotalVencido(comHoje, HOJE)).toBeCloseTo(
+      calcularTotalVencido(soVencida, HOJE),
+      2,
+    );
   });
 
   it("nunca inclui parcelas com vencimento futuro", () => {
@@ -128,6 +137,43 @@ describe("cenário aluno Anthony Castilho Marques (AlunoID 883)", () => {
 
   it("total corrigido (com juros) ≈ R$ 2.833,05, não R$ 10.076,85", () => {
     expect(calcularTotalVencido(planoCompleto, HOJE)).toBeCloseTo(2833.05, 2);
+  });
+});
+
+// Cenário real da aluna Lara Mena Barreto Pereira (AlunoID 543) em 17/08/2026:
+// o Sponte emite UM boleto (18322) juntando o material que vence 05/08 com a
+// mensalidade que vence 17/08. Cada parcela tem de valer pelo SEU vencimento.
+describe("cenário aluna Lara Mena Barreto Pereira (AlunoID 543)", () => {
+  const HOJE_LARA = "2026-08-17";
+  const parcelas: ParcelaAberta[] = [
+    { vencimento: "2026-06-15", saldo: 1936.7 }, // Mensalidade 5/11
+    { vencimento: "2026-06-25", saldo: 408.98 }, // Material 5/5
+    { vencimento: "2026-07-06", saldo: 431.63 }, // Material 1/3
+    { vencimento: "2026-08-05", saldo: 431.63 }, // Material 2/3 (boleto 18322)
+    { vencimento: "2026-08-17", saldo: 1936.7 }, // Mensalidade 7/11 (boleto 18322, vence hoje)
+    { vencimento: "2026-08-20", saldo: 180.0 }, // futuras...
+    { vencimento: "2026-09-07", saldo: 431.63 },
+    { vencimento: "2026-09-15", saldo: 1936.7 },
+  ];
+
+  it("conta 4 parcelas vencidas: a do dia e as futuras ficam de fora", () => {
+    expect(parcelasVencidas(parcelas, HOJE_LARA).map((p) => p.vencimento)).toEqual([
+      "2026-06-15",
+      "2026-06-25",
+      "2026-07-06",
+      "2026-08-05",
+    ]);
+  });
+
+  it("cada parcela rende juros pelo SEU vencimento (material de 25/06 não herda 15/06)", () => {
+    const total = calcularTotalVencido(parcelas, HOJE_LARA);
+    const somaPorParcela =
+      valorAtualizadoParcela(1936.7, "2026-06-15", HOJE_LARA) +
+      valorAtualizadoParcela(408.98, "2026-06-25", HOJE_LARA) +
+      valorAtualizadoParcela(431.63, "2026-07-06", HOJE_LARA) +
+      valorAtualizadoParcela(431.63, "2026-08-05", HOJE_LARA);
+    expect(total).toBeCloseTo(Math.round(somaPorParcela * 100) / 100, 2);
+    expect(total).toBeCloseTo(3328.78, 2);
   });
 });
 
