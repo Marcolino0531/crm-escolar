@@ -1694,11 +1694,24 @@ function TurmasDaModalidade({
   const [nome, setNome] = useState("");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
+  // Turma sendo editada na própria linha, com um rascunho à parte para o Cancelar
+  // não deixar meia edição gravada.
+  const [editando, setEditando] = useState<string | null>(null);
+  const [rascunho, setRascunho] = useState({ nome: "", inicio: "", fim: "" });
 
   const { data: turmas = [] } = useQuery({
     queryKey: ["esportes_turmas", modalidade.id],
     queryFn: () => carregarTurmas(modalidade.id),
   });
+
+  const abrirEdicao = (t: Turma) => {
+    setEditando(t.id);
+    setRascunho({
+      nome: t.nome,
+      inicio: formatarHora(t.hora_inicio),
+      fim: formatarHora(t.hora_fim),
+    });
+  };
 
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ["esportes_turmas", modalidade.id] });
@@ -1728,6 +1741,29 @@ function TurmasDaModalidade({
       invalidar();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar a turma."),
+  });
+
+  // Editar nome/horário é UPDATE da turma: os alunos seguem vinculados por
+  // `turma_id`, então nada precisa ser revinculado.
+  const salvarEdicao = useMutation({
+    mutationFn: async (id: string) => {
+      if (!rascunho.nome.trim()) throw new Error("Informe o nome da turma.");
+      const { error } = await supabase
+        .from("esportes_turmas" as never)
+        .update({
+          nome: rascunho.nome.trim(),
+          hora_inicio: rascunho.inicio || null,
+          hora_fim: rascunho.fim || null,
+        } as never)
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Turma atualizada.");
+      setEditando(null);
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao atualizar a turma."),
   });
 
   const remover = useMutation({
@@ -1765,31 +1801,102 @@ function TurmasDaModalidade({
           <TableHeader>
             <TableRow>
               <TableHead>Turma</TableHead>
-              <TableHead className="w-52">Horário</TableHead>
-              {podeEditar && <TableHead className="w-10" />}
+              <TableHead className="w-64">Horário</TableHead>
+              {podeEditar && <TableHead className="w-40" />}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {turmas.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell className="text-sm font-medium">{t.nome}</TableCell>
-                <TableCell className="text-sm">{rotuloHorario(t) || "—"}</TableCell>
-                {podeEditar && (
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
-                      title="Remover turma (os alunos ficam sem turma definida)"
-                      disabled={remover.isPending}
-                      onClick={() => remover.mutate(t.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+            {turmas.map((t) => {
+              const emEdicao = editando === t.id;
+              const ocupado = salvarEdicao.isPending || remover.isPending;
+              return (
+                <TableRow key={t.id}>
+                  <TableCell className="text-sm font-medium">
+                    {emEdicao ? (
+                      <Input
+                        value={rascunho.nome}
+                        onChange={(e) => setRascunho((r) => ({ ...r, nome: e.target.value }))}
+                        className="h-9"
+                        aria-label="Nome da turma"
+                      />
+                    ) : (
+                      t.nome
+                    )}
                   </TableCell>
-                )}
-              </TableRow>
-            ))}
+                  <TableCell className="text-sm">
+                    {emEdicao ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="time"
+                          value={rascunho.inicio}
+                          onChange={(e) => setRascunho((r) => ({ ...r, inicio: e.target.value }))}
+                          className="h-9 w-28"
+                          aria-label="Horário de início da turma"
+                        />
+                        <span className="text-muted-foreground">às</span>
+                        <Input
+                          type="time"
+                          value={rascunho.fim}
+                          onChange={(e) => setRascunho((r) => ({ ...r, fim: e.target.value }))}
+                          className="h-9 w-28"
+                          aria-label="Horário de fim da turma"
+                        />
+                      </div>
+                    ) : (
+                      rotuloHorario(t) || "—"
+                    )}
+                  </TableCell>
+                  {podeEditar && (
+                    <TableCell>
+                      {emEdicao ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            size="sm"
+                            className="h-8 gap-1"
+                            disabled={ocupado}
+                            onClick={() => salvarEdicao.mutate(t.id)}
+                          >
+                            <Save className="h-3.5 w-3.5" /> Salvar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={ocupado}
+                            onClick={() => setEditando(null)}
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            title="Editar nome e horário da turma"
+                            disabled={ocupado}
+                            onClick={() => abrirEdicao(t)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                            title="Remover turma (os alunos ficam sem turma definida)"
+                            disabled={ocupado}
+                            onClick={() => remover.mutate(t.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
