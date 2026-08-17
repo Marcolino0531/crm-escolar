@@ -8,6 +8,7 @@ import {
   Send,
   FlaskConical,
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   Handshake,
   Inbox,
@@ -44,6 +45,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -58,17 +60,52 @@ import { useAuth } from "@/lib/app-context";
 import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca-automatica")({
-  head: () => ({ meta: [{ title: "Cobrança Automática — School Hub" }] }),
-  component: CobrancaAutomaticaGate,
+  head: () => ({ meta: [{ title: "Mensagens Automáticas — School Hub" }] }),
+  component: MensagensAutomaticasGate,
 });
 
-// Mesma cadeia da Cobrança: macro Financeiro E o submódulo financeiro_cobranca.
-function CobrancaAutomaticaGate() {
+// O módulo passou a ser Operacional, mas a permissão continua a mesma
+// (`financeiro_cobranca`): quem já tinha acesso à Cobrança Automática não precisa
+// ser reconfigurado. A macro Financeiro deixou de ser exigida.
+function MensagensAutomaticasGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro") || !canView("financeiro_cobranca"))
-    return <AccessDenied message="Você não tem permissão para acessar a Cobrança Automática." />;
-  return <CobrancaAutomaticaPage />;
+  if (!canView("financeiro_cobranca"))
+    return <AccessDenied message="Você não tem permissão para acessar as Mensagens Automáticas." />;
+  return <MensagensAutomaticasPage />;
+}
+
+// Duas réguas de WhatsApp no mesmo módulo, cada uma em sua aba:
+//   • Cobranças Automáticas — após o vencimento (recorrente até a quitação);
+//   • Lembretes Automáticos — antes do vencimento (D-5, D-3 e D-0).
+function MensagensAutomaticasPage() {
+  const [tab, setTab] = useState("cobrancas");
+  return (
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-bold">
+          <Bot className="h-6 w-6 text-primary" /> Mensagens Automáticas
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Disparos automáticos via WhatsApp (Cloud API da Meta): cobrança do que já venceu e
+          lembrete preventivo antes do vencimento, com histórico e rastreamento de status.
+        </p>
+      </div>
+
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <TabsList>
+          <TabsTrigger value="cobrancas">Cobranças Automáticas</TabsTrigger>
+          <TabsTrigger value="lembretes">Lembretes Automáticos</TabsTrigger>
+        </TabsList>
+        <TabsContent value="cobrancas" className="pt-4">
+          <CobrancasAutomaticasTab />
+        </TabsContent>
+        <TabsContent value="lembretes" className="pt-4">
+          <LembretesAutomaticosTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
 }
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
@@ -88,6 +125,7 @@ type BillingLog = {
   erro_mensagem: string | null;
   fatura_id: string | null;
   message_body: string | null;
+  prazo_lembrete?: string | null;
 };
 
 type LogsResponse = {
@@ -128,7 +166,7 @@ function formatDataHora(iso: string): string {
   });
 }
 
-function CobrancaAutomaticaPage() {
+function CobrancasAutomaticasTab() {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("financeiro_cobranca");
   const [page, setPage] = useState(1);
@@ -141,7 +179,11 @@ function CobrancaAutomaticaPage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error("Sessão inválida — faça login novamente.");
-      const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(PER_PAGE),
+        tipo: "cobranca",
+      });
       const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -156,17 +198,7 @@ function CobrancaAutomaticaPage() {
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          <Bot className="h-6 w-6 text-primary" /> Cobrança Automática
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Auditoria dos disparos de cobrança via WhatsApp (Cloud API da Meta): teste manual,
-          histórico completo e rastreamento de status (enviada → entregue → lida).
-        </p>
-      </div>
-
+    <div className="space-y-6">
       <KillSwitch podeEditar={podeEditar} />
 
       <ExecucoesDoCron />
@@ -280,6 +312,190 @@ function CobrancaAutomaticaPage() {
   );
 }
 
+const PRAZO_STYLE: Record<string, { label: string; cls: string }> = {
+  "D-5": { label: "D-5 · 5 dias antes", cls: "bg-sky-100 text-sky-700" },
+  "D-3": { label: "D-3 · 3 dias antes", cls: "bg-indigo-100 text-indigo-700" },
+  "D-0": { label: "D-0 · vence hoje", cls: "bg-amber-100 text-amber-800" },
+};
+
+// Régua PREVENTIVA: o lembrete sai antes do vencimento (D-5, D-3 e D-0) e para
+// de sair no momento em que a parcela é quitada. Não há ambiente de teste próprio
+// nem kill switch próprio: a pausa do dia e o calendário de dias úteis são os
+// mesmos da aba de Cobranças.
+function LembretesAutomaticosTab() {
+  const [page, setPage] = useState(1);
+  const [selecionado, setSelecionado] = useState<BillingLog | null>(null);
+
+  const { data, isFetching, isError, error } = useQuery({
+    queryKey: ["lembretes-automaticos-logs", page],
+    refetchInterval: 60000,
+    queryFn: async (): Promise<LogsResponse> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(PER_PAGE),
+        tipo: "lembrete",
+      });
+      const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as LogsResponse;
+      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar os logs.");
+      return body;
+    },
+  });
+
+  const rows = data?.data ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4">
+        <CalendarClock className="mt-0.5 h-6 w-6 shrink-0 text-sky-600" />
+        <div className="text-sm">
+          <div className="font-semibold text-sky-900">Lembrete preventivo do boleto</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Cada parcela em aberto no Sponte gera lembrete <strong>5 dias antes</strong>,{" "}
+            <strong>3 dias antes</strong> e <strong>no dia do vencimento</strong>, pelo vencimento
+            real da própria parcela, com valor e linha digitável do boleto. Parcela quitada antes do
+            prazo não gera o lembrete daquele prazo. Quando o responsável tem cobrança de parcela
+            vencida no mesmo dia, o lembrete é pulado — a cobrança tem prioridade. Vale a mesma
+            pausa de fim de semana, feriado e kill switch da aba de Cobranças.
+          </p>
+        </div>
+      </div>
+
+      <ExecucoesDoCron
+        tipo="lembrete"
+        legenda="Tentativas diárias às 10h e 16h (BRT) · um lembrete por responsável por dia"
+      />
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-base font-semibold">Histórico de Disparos</h2>
+          <span className="text-xs text-muted-foreground">
+            {total} registro(s) · clique em uma linha para ver o conteúdo enviado
+          </span>
+        </div>
+        {isError ? (
+          <div className="px-4 py-6 text-sm text-red-600">
+            {error instanceof Error ? error.message : "Falha ao carregar os logs."}
+          </div>
+        ) : isFetching && rows.length === 0 ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+            <Inbox className="h-8 w-8 text-muted-foreground/60" />
+            <p className="text-sm font-medium">Nenhum lembrete disparado.</p>
+            <p className="text-xs text-muted-foreground">
+              Os lembretes saem automaticamente quando há parcela vencendo em 5 dias, 3 dias ou
+              hoje.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Data e Hora</TableHead>
+                <TableHead>Prazo</TableHead>
+                <TableHead>Aluno</TableHead>
+                <TableHead>Responsável</TableHead>
+                <TableHead>Vencimento</TableHead>
+                <TableHead>Valor</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((log) => {
+                const style = STATUS_STYLE[log.status] ?? STATUS_STYLE.pendente;
+                const prazo = log.prazo_lembrete ? PRAZO_STYLE[log.prazo_lembrete] : null;
+                const falhou = log.status === "falha" || log.status === "erro";
+                return (
+                  <TableRow
+                    key={log.id}
+                    onClick={() => setSelecionado(log)}
+                    className="cursor-pointer transition-colors hover:bg-muted/50"
+                  >
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {formatDataHora(log.data_envio)}
+                    </TableCell>
+                    <TableCell>
+                      {prazo ? (
+                        <span
+                          className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${prazo.cls}`}
+                        >
+                          {prazo.label}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{log.aluno_name || "—"}</TableCell>
+                    <TableCell className="text-sm">{log.responsavel_name || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {log.vencimento ? formatDiaBR(log.vencimento) : "—"}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {log.valor ? formatBRL(log.valor) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}
+                      >
+                        {falhou ? (
+                          <AlertTriangle className="h-3 w-3" />
+                        ) : (
+                          <CheckCircle2 className="h-3 w-3" />
+                        )}
+                        {style.label}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+
+        {total > 0 && (
+          <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm text-muted-foreground">
+            <span>
+              Página {page} de {totalPages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || isFetching}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <DetalheDisparo log={selecionado} onClose={() => setSelecionado(null)} />
+    </div>
+  );
+}
+
 type CronRun = {
   id: string;
   data_ref: string;
@@ -307,15 +523,21 @@ const RUN_STATUS_STYLE: Record<CronRun["status"], { label: string; cls: string }
 
 // Execuções do cron — inclusive as que não enviaram nada. É aqui que um disparo
 // perdido (deploy na hora do agendamento, timeout, erro do Sponte) fica visível.
-function ExecucoesDoCron() {
+function ExecucoesDoCron({
+  tipo = "cobranca",
+  legenda = "Tentativas diárias às 09h, 12h, 15h e 18h · quem já foi cobrado no dia não recebe de novo",
+}: {
+  tipo?: "cobranca" | "lembrete";
+  legenda?: string;
+}) {
   const { data: runs = [], isError } = useQuery({
-    queryKey: ["cobranca-cron-runs"],
+    queryKey: ["cobranca-cron-runs", tipo],
     refetchInterval: 60000,
     queryFn: async (): Promise<CronRun[]> => {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error("Sessão inválida — faça login novamente.");
-      const resp = await fetch("/api/cobrancas/cron-runs?limit=12", {
+      const resp = await fetch(`/api/cobrancas/cron-runs?limit=12&tipo=${tipo}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = (await resp.json()) as { ok: boolean; data?: CronRun[]; error?: string };
@@ -332,7 +554,10 @@ function ExecucoesDoCron() {
       hour12: false,
     }),
   );
-  const alerta = alertaExecucaoCron(runs, hoje, horaBRT, isDiaUtil(hoje));
+  // O alerta de execução perdida vale só para a cobrança: os horários de referência
+  // (09h em diante) são os dela.
+  const alerta =
+    tipo === "cobranca" ? alertaExecucaoCron(runs, hoje, horaBRT, isDiaUtil(hoje)) : null;
 
   return (
     <div className="rounded-xl border border-border bg-card">
@@ -340,9 +565,7 @@ function ExecucoesDoCron() {
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Timer className="h-4 w-4 text-primary" /> Execuções da Automação
         </h2>
-        <span className="text-xs text-muted-foreground">
-          Tentativas diárias às 09h, 12h, 15h e 18h · quem já foi cobrado no dia não recebe de novo
-        </span>
+        <span className="text-xs text-muted-foreground">{legenda}</span>
       </div>
 
       {alerta && (
@@ -921,6 +1144,20 @@ function DetalheDisparo({ log, onClose }: { log: BillingLog | null; onClose: () 
               <Campo label="Unidade" valor={log.unidade || "—"} />
               <Campo label="Valor" valor={log.valor ? formatBRL(log.valor) : "—"} />
               <Campo label="AlunoID (Sponte)" valor={log.fatura_id || "—"} />
+              {log.prazo_lembrete && (
+                <Campo
+                  label="Prazo do lembrete"
+                  valor={
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        PRAZO_STYLE[log.prazo_lembrete]?.cls ?? ""
+                      }`}
+                    >
+                      {PRAZO_STYLE[log.prazo_lembrete]?.label ?? log.prazo_lembrete}
+                    </span>
+                  }
+                />
+              )}
             </dl>
 
             <div>

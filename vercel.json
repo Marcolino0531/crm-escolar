@@ -33,6 +33,14 @@
       "schedule": "0 21 * * *"
     },
     {
+      "path": "/api/whatsapp/cron/lembretes",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/whatsapp/cron/lembretes-2",
+      "schedule": "0 19 * * *"
+    },
+    {
       "path": "/api/agenda/cron",
       "schedule": "0 10 * * *"
     }

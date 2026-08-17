@@ -726,7 +726,7 @@ export function NotificationsBell() {
           {alertaCron && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Cobrança Automática
+                Mensagens Automáticas
               </div>
               <Link
                 to="/cobranca-automatica"
@@ -737,7 +737,7 @@ export function NotificationsBell() {
                   <div className="min-w-0">
                     <div className="font-medium text-red-600">{alertaCron}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      Veja as execuções da automação na tela de Cobrança Automática.
+                      Veja as execuções da automação em Mensagens Automáticas.
                     </div>
                   </div>
                 </div>

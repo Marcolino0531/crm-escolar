@@ -384,8 +384,10 @@ function AppShell() {
   const showConciliacao = canView("financeiro_conciliacao");
   const showFluxo = canView("financeiro_fluxo");
   const showInadimplencia = canView("financeiro_inadimplencia");
-  // Cobrança em cadeia: macro Financeiro E o submódulo financeiro_cobranca.
-  const showCobranca = canView("financeiro") && canView("financeiro_cobranca");
+  // Mensagens Automáticas vive em Operacional: como o Atendimento, não depende
+  // mais do guarda-chuva Financeiro. A permissão segue sendo financeiro_cobranca,
+  // que também libera a Régua de Cobrança dentro do Financeiro.
+  const showCobranca = canView("financeiro_cobranca");
   // Atendimento vive em Operacional: não depende mais do guarda-chuva Financeiro.
   const showAtendimento = canView("financeiro_atendimento");
   // Assistente de IA: permissão própria (manda dados a serviço externo e tem custo).
@@ -495,6 +497,12 @@ function AppShell() {
           icon: FileText,
           label: "Documentos",
         }),
+        ...item(showCobranca, {
+          kind: "item",
+          to: "/cobranca-automatica",
+          icon: Bot,
+          label: "Mensagens Automáticas",
+        }),
       ]),
       ...group("financeiro", "Financeiro", [
         ...item(showFinanceiro && showDashboard, {
@@ -538,12 +546,6 @@ function AppShell() {
           to: "/inadimplencia",
           icon: AlertCircle,
           label: "Inadimplência",
-        }),
-        ...item(showFinanceiro && showCobranca, {
-          kind: "item",
-          to: "/cobranca-automatica",
-          icon: Bot,
-          label: "Cobrança Automática",
         }),
         ...item(showFinanceiro && showCobranca, {
           kind: "item",

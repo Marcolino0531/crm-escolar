@@ -17,8 +17,24 @@ export const SLOTS_CRON: Record<string, string> = {
   "/api/whatsapp/cron/tentativa-4": "18h",
 };
 
+// Tentativas da régua PREVENTIVA (lembretes antes do vencimento). Rodam depois
+// da 1ª tentativa da cobrança, para que a cobrança do vencido tenha prioridade
+// sobre o lembrete no mesmo dia e no mesmo responsável.
+export const SLOTS_CRON_LEMBRETE: Record<string, string> = {
+  "/api/whatsapp/cron/lembretes": "lembretes-10h",
+  "/api/whatsapp/cron/lembretes-2": "lembretes-16h",
+};
+
+// Prefixo que distingue, em `whatsapp_cron_runs`, as execuções da régua
+// preventiva das da cobrança. O histórico das duas abas é separado por ele.
+export const PREFIXO_SLOT_LEMBRETE = "lembretes";
+
 export function slotDaRota(pathname: string): string | null {
   return SLOTS_CRON[pathname] ?? null;
+}
+
+export function slotLembreteDaRota(pathname: string): string | null {
+  return SLOTS_CRON_LEMBRETE[pathname] ?? null;
 }
 
 export type StatusExecucao =
