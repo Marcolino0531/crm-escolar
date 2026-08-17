@@ -21,7 +21,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { usePermissions, useAuth } from "@/lib/app-context";
+import { usePermissions, useAuth, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,14 @@ import {
   type TipoRepasse,
 } from "@/lib/esportes-repasse";
 import { WEEKDAYS } from "@/lib/diario";
+import {
+  agruparPorUnidade,
+  modalidadesDaUnidade,
+  podeOperarModalidade,
+  selecaoValida,
+  unidadeDaSelecao,
+  unidadeParaCadastro,
+} from "@/lib/esportes-unidades";
 import { rotuloMesReferencia } from "@/lib/billing-exceptions";
 
 export const Route = createFileRoute("/esportes")({
@@ -76,8 +84,6 @@ function EsportesGate() {
     );
   return <EsportesPage />;
 }
-
-const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 const COLUNAS_MODALIDADE =
   "id, nome, categoria_sponte, tipo_repasse, dia_pagamento, mes_inicio, unidade";
@@ -182,6 +188,11 @@ function hojeYMD(): string {
 function EsportesPage() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();
+  const { selected, schools } = useSchool();
+
+  // Unidade selecionada no topo. `null` = "Todas as Unidades", que aqui é uma
+  // visão consolidada somente leitura: cada modalidade pertence a UMA unidade.
+  const unidadeAtiva = useMemo(() => unidadeDaSelecao(selected, schools), [selected, schools]);
 
   const [modalidadeId, setModalidadeId] = useState<string>("");
   const [inicioMes, setInicioMes] = useState<string>(() => `${hojeYMD().slice(0, 7)}-01`);
@@ -192,7 +203,7 @@ function EsportesPage() {
   // O RLS já devolve somente as modalidades visíveis: o parceiro externo recebe
   // apenas as dele, então a tela não precisa (nem pode) filtrar por conta própria.
   const {
-    data: modalidades = [],
+    data: todasModalidades = [],
     isLoading,
     isError,
   } = useQuery({
@@ -223,16 +234,26 @@ function EsportesPage() {
   });
 
   const ehParceiro = minhasModalidades.length > 0;
-  const podeEditar = canEdit("esportes") && !ehParceiro;
+  const podeEditarModulo = canEdit("esportes") && !ehParceiro;
 
+  // Só as modalidades da unidade ativa; no consolidado, nenhuma é operável.
+  const modalidades = useMemo(
+    () => modalidadesDaUnidade(todasModalidades, unidadeAtiva),
+    [todasModalidades, unidadeAtiva],
+  );
+
+  // Trocar a unidade no topo descarta a modalidade da unidade anterior.
   useEffect(() => {
-    if (!modalidadeId && modalidades.length > 0) setModalidadeId(modalidades[0].id);
-  }, [modalidades, modalidadeId]);
+    const valida = selecaoValida(todasModalidades, unidadeAtiva, modalidadeId);
+    if (valida !== modalidadeId) setModalidadeId(valida);
+  }, [todasModalidades, unidadeAtiva, modalidadeId]);
 
   const modalidade = useMemo(
     () => modalidades.find((m) => m.id === modalidadeId) ?? null,
     [modalidades, modalidadeId],
   );
+
+  const podeEditar = podeOperarModalidade(modalidade, unidadeAtiva, podeEditarModulo);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -242,11 +263,14 @@ function EsportesPage() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Modalidades ministradas por parceiros externos: alunos matriculados, valor efetivamente
-          pago na categoria da modalidade dentro do boleto do Sponte e repasse ao parceiro.
+          pago na categoria da modalidade dentro do boleto do Sponte e repasse ao parceiro. Cada
+          unidade tem as suas próprias modalidades, com turmas, alunos e parceiros separados.
         </p>
       </div>
 
-      {podeEditar && <CadastroModalidade onCriada={setModalidadeId} />}
+      {podeEditarModulo && unidadeAtiva && (
+        <CadastroModalidade unidade={unidadeAtiva} onCriada={setModalidadeId} />
+      )}
 
       {isError ? (
         <div className="rounded-xl border border-border bg-card px-4 py-6 text-sm text-red-600">
@@ -254,9 +278,11 @@ function EsportesPage() {
         </div>
       ) : isLoading ? (
         <Skeleton className="h-24 w-full" />
+      ) : !unidadeAtiva ? (
+        <ConsolidadoUnidades modalidades={todasModalidades} />
       ) : modalidades.length === 0 ? (
         <div className="rounded-xl border border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
-          Nenhuma modalidade disponível para você.
+          Nenhuma modalidade cadastrada em <strong>{unidadeAtiva}</strong>.
         </div>
       ) : (
         <>
@@ -342,6 +368,83 @@ function EsportesPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Visão consolidada de "Todas as Unidades": só leitura. Lista as modalidades de
+// todas as unidades, cada uma rotulada com a sua — nada é operado daqui, porque
+// turmas, alunos, parceiros e parcelas pertencem a uma unidade específica.
+function ConsolidadoUnidades({ modalidades }: { modalidades: Modalidade[] }) {
+  const grupos = useMemo(() => agruparPorUnidade(modalidades), [modalidades]);
+
+  const { data: matriculasPorModalidade = {} } = useQuery({
+    queryKey: ["esportes_matriculas_contagem"],
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await supabase
+        .from("esportes_matriculas" as never)
+        .select("modalidade_id");
+      if (error) throw new Error(error.message);
+      const contagem: Record<string, number> = {};
+      for (const row of (data ?? []) as unknown as { modalidade_id: string }[]) {
+        contagem[row.modalidade_id] = (contagem[row.modalidade_id] ?? 0) + 1;
+      }
+      return contagem;
+    },
+  });
+
+  if (grupos.length === 0)
+    return (
+      <div className="rounded-xl border border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+        Nenhuma modalidade disponível para você.
+      </div>
+    );
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+        Visão consolidada de todas as unidades, <strong>somente leitura</strong>. Para cadastrar,
+        matricular alunos ou alterar turmas e repasse, selecione a unidade no topo da tela.
+      </div>
+
+      {grupos.map((g) => (
+        <div key={g.unidade} className="rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Dumbbell className="h-4 w-4 text-primary" /> {g.unidade}
+              <span className="text-xs font-normal text-muted-foreground">
+                {g.modalidades.length} modalidade{g.modalidades.length === 1 ? "" : "s"}
+              </span>
+            </h2>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Modalidade</TableHead>
+                <TableHead>Unidade</TableHead>
+                <TableHead>Categoria no Sponte</TableHead>
+                <TableHead>Repasse</TableHead>
+                <TableHead className="text-right">Alunos</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {g.modalidades.map((m) => (
+                <TableRow key={m.id}>
+                  <TableCell className="font-medium">{m.nome}</TableCell>
+                  <TableCell className="text-muted-foreground">{m.unidade}</TableCell>
+                  <TableCell className="text-muted-foreground">{m.categoria_sponte}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {m.tipo_repasse === "fixo"
+                      ? `valor fixo mensal${m.dia_pagamento ? ` · dia ${m.dia_pagamento}` : ""}`
+                      : "percentual do arrecadado"}
+                  </TableCell>
+                  <TableCell className="text-right">{matriculasPorModalidade[m.id] ?? 0}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
     </div>
   );
 }
@@ -493,12 +596,19 @@ function validarParceiros(
 // Cadastro da modalidade: um ou mais parceiros, forma de repasse (percentual do
 // arrecadado ou valor fixo mensal garantido) e a categoria com que a mensalidade
 // da modalidade é lançada no boleto do Sponte.
-function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
+// A unidade vem do seletor do topo, não do formulário: a modalidade nasce
+// pertencendo à unidade em que está sendo cadastrada, e nunca fica "solta".
+function CadastroModalidade({
+  unidade,
+  onCriada,
+}: {
+  unidade: string;
+  onCriada: (id: string) => void;
+}) {
   const qc = useQueryClient();
   const { session } = useAuth();
   const [nome, setNome] = useState("");
   const [categoria, setCategoria] = useState("");
-  const [unidade, setUnidade] = useState("");
   const [tipo, setTipo] = useState<TipoRepasse>("percentual");
   const [diaPagamento, setDiaPagamento] = useState("");
   const [mesInicio, setMesInicio] = useState("");
@@ -508,7 +618,8 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
 
   const criar = useMutation({
     mutationFn: async (): Promise<Modalidade> => {
-      if (!nome.trim() || !unidade) throw new Error("Preencha modalidade e unidade.");
+      if (!nome.trim()) throw new Error("Informe o nome da modalidade.");
+      const unidadeDestino = unidadeParaCadastro(unidade);
       const parceiros = validarParceiros(tipo, linhas);
 
       const dia = diaPagamento.trim() ? Number(diaPagamento) : null;
@@ -531,7 +642,7 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
           tipo_repasse: tipo,
           dia_pagamento: tipo === "fixo" ? dia : null,
           mes_inicio: mesInicio || null,
-          unidade,
+          unidade: unidadeDestino,
           created_by: session?.user?.id ?? null,
           created_by_nome: autor,
         } as never)
@@ -565,7 +676,6 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
       toast.success("Modalidade cadastrada.");
       setNome("");
       setCategoria("");
-      setUnidade("");
       setTipo("percentual");
       setDiaPagamento("");
       setMesInicio("");
@@ -580,7 +690,7 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
     <div className="rounded-xl border border-border bg-card">
       <div className="border-b border-border px-4 py-3">
         <h2 className="flex items-center gap-2 text-base font-semibold">
-          <Plus className="h-4 w-4 text-primary" /> Nova modalidade
+          <Plus className="h-4 w-4 text-primary" /> Nova modalidade em {unidade}
         </h2>
       </div>
       <div className="space-y-3 px-4 py-3">
@@ -607,18 +717,9 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-[11px] text-muted-foreground">Unidade</Label>
-            <Select value={unidade} onValueChange={setUnidade}>
-              <SelectTrigger className="h-9 w-48">
-                <SelectValue placeholder="Selecione" />
-              </SelectTrigger>
-              <SelectContent>
-                {UNIDADES_SPONTE.map((u) => (
-                  <SelectItem key={u} value={u}>
-                    {u}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-muted-foreground">
+              {unidade}
+            </div>
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-[11px] text-muted-foreground">Tipo de repasse</Label>
@@ -662,11 +763,13 @@ function CadastroModalidade({ onCriada }: { onCriada: (id: string) => void }) {
         </Button>
       </div>
       <p className="border-t border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-        A categoria é o que identifica a mensalidade da modalidade dentro do boleto do aluno no
-        Sponte (como “Material Pedagógico”). O valor arrecadado nunca é digitado aqui: ele é lido do
-        Sponte, considerando somente o que foi <strong>efetivamente pago</strong>. No repasse{" "}
-        <strong>fixo</strong>, o parceiro recebe o valor combinado todo mês independentemente do que
-        foi arrecadado — a diferença fica com o colégio, para mais ou para menos.
+        A modalidade pertence à unidade selecionada no topo da tela (<strong>{unidade}</strong>) e
+        só aparece nela. A categoria é o que identifica a mensalidade da modalidade dentro do boleto
+        do aluno no Sponte (como “Material Pedagógico”). O valor arrecadado nunca é digitado aqui:
+        ele é lido do Sponte, considerando somente o que foi <strong>efetivamente pago</strong>. No
+        repasse <strong>fixo</strong>, o parceiro recebe o valor combinado todo mês
+        independentemente do que foi arrecadado — a diferença fica com o colégio, para mais ou para
+        menos.
       </p>
     </div>
   );
