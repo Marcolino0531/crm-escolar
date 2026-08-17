@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   CalendarClock,
+  Clock,
   Dumbbell,
   Loader2,
   Pencil,
@@ -44,11 +45,17 @@ import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.function
 import { fetchArrecadacaoModalidade } from "@/lib/esportes.functions";
 import {
   dataPrevistaRepasse,
+  frequenciaPorDias,
+  normalizarDias,
+  rotuloDias,
   somaPercentuais,
   somaValoresFixos,
+  vezesPorSemana,
+  type FrequenciaModalidade,
   type ParceiroModalidade,
   type TipoRepasse,
 } from "@/lib/esportes-repasse";
+import { WEEKDAYS } from "@/lib/diario";
 import { rotuloMesReferencia } from "@/lib/billing-exceptions";
 
 export const Route = createFileRoute("/esportes")({
@@ -71,7 +78,8 @@ const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale d
 const COLUNAS_MODALIDADE =
   "id, nome, categoria_sponte, tipo_repasse, dia_pagamento, mes_inicio, unidade";
 const COLUNAS_PARCEIRO = "id, nome, percentual_parceiro, valor_fixo_mensal, ordem, ativo";
-const COLUNAS_FREQUENCIA = "id, nome, valor_mensal, ordem, ativo";
+const COLUNAS_FREQUENCIA = "id, nome, valor_mensal, vezes_semana, ordem, ativo";
+const COLUNAS_TURMA = "id, nome, hora_inicio, hora_fim, ordem, ativo";
 
 type Modalidade = {
   id: string;
@@ -100,16 +108,31 @@ type Matricula = {
   id: string;
   aluno_id: string;
   aluno_nome: string;
+  // Turma escolar do aluno no Sponte ("2º Ano T / B"), não a turma da modalidade.
   turma: string;
   frequencia_id: string | null;
+  turma_id: string | null;
+  dias_semana: number[] | null;
 };
 
-// Frequência (turma) oferecida pela modalidade, com a mensalidade dela: o Jazz
-// tem 2x/semana a R$ 230,00 e 1x/semana a R$ 210,00.
+// Frequência oferecida pela modalidade, com a mensalidade dela: o Jazz tem
+// 2x/semana a R$ 230,00 e 1x/semana a R$ 210,00. `vezes_semana` é o que liga os
+// dias marcados no aluno ao preço.
 type Frequencia = {
   id: string;
   nome: string;
   valor_mensal: number;
+  vezes_semana: number | null;
+  ordem: number;
+  ativo: boolean;
+};
+
+// Turma da modalidade = HORÁRIO da aula ("Fundamental 1 e 2", 18h30–19h10).
+type Turma = {
+  id: string;
+  nome: string;
+  hora_inicio: string | null;
+  hora_fim: string | null;
   ordem: number;
   ativo: boolean;
 };
@@ -135,6 +158,35 @@ const COLUNAS_REPASSE =
 function parseValorBR(texto: string): number {
   const limpo = texto.trim().replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo);
+}
+
+// Dias por semana de uma frequência: inteiro de 1 a 7, ou null (frequência que
+// não é derivada dos dias marcados).
+function parseVezes(texto: string): number | null {
+  const t = texto.trim();
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < 1 || n > 7) return null;
+  return n;
+}
+
+function formatarValorEdicao(valor: number): string {
+  return Number(valor ?? 0)
+    .toFixed(2)
+    .replace(".", ",");
+}
+
+function formatarHora(hora: string | null): string {
+  return hora ? hora.slice(0, 5) : "";
+}
+
+// Horário da turma como a professora fala: "17h40 às 18h20".
+function rotuloHorario(turma: Turma): string {
+  const i = formatarHora(turma.hora_inicio);
+  const f = formatarHora(turma.hora_fim);
+  if (!i && !f) return "";
+  if (i && f) return `${i.replace(":", "h")} às ${f.replace(":", "h")}`;
+  return (i || f).replace(":", "h");
 }
 
 function formatBRL(n: number): string {
@@ -277,6 +329,7 @@ function EsportesPage() {
               />
               <ParceirosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
               <FrequenciasDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
+              <TurmasDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
               <AlunosDaModalidade modalidade={modalidade} podeEditar={podeEditar} />
             </>
           )}
@@ -1342,6 +1395,7 @@ function FrequenciasDaModalidade({
   const { session } = useAuth();
   const [nome, setNome] = useState("");
   const [valor, setValor] = useState("");
+  const [vezes, setVezes] = useState("");
 
   const { data: frequencias = [] } = useQuery({
     queryKey: ["esportes_frequencias", modalidade.id],
@@ -1358,11 +1412,15 @@ function FrequenciasDaModalidade({
       const v = parseValorBR(valor);
       if (!nome.trim()) throw new Error("Informe o nome da frequência.");
       if (!Number.isFinite(v) || v < 0) throw new Error("Informe um valor mensal válido.");
+      const n = parseVezes(vezes);
+      if (vezes.trim() && n === null)
+        throw new Error("Dias por semana deve ser um número de 1 a 7.");
       const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
       const { error } = await supabase.from("esportes_frequencias" as never).insert({
         modalidade_id: modalidade.id,
         nome: nome.trim(),
         valor_mensal: v,
+        vezes_semana: n,
         ordem: frequencias.length,
         created_by: session?.user?.id ?? null,
         created_by_nome: meta?.full_name || session?.user?.email || "",
@@ -1373,6 +1431,7 @@ function FrequenciasDaModalidade({
       toast.success("Frequência adicionada.");
       setNome("");
       setValor("");
+      setVezes("");
       invalidar();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar a frequência."),
@@ -1393,6 +1452,26 @@ function FrequenciasDaModalidade({
       invalidar();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao atualizar o valor."),
+  });
+
+  const atualizarVezes = useMutation({
+    mutationFn: async ({ id, texto }: { id: string; texto: string }) => {
+      const n = parseVezes(texto);
+      if (texto.trim() && n === null)
+        throw new Error("Dias por semana deve ser um número de 1 a 7.");
+      const { error } = await supabase
+        .from("esportes_frequencias" as never)
+        .update({ vezes_semana: n } as never)
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Dias por semana atualizados.");
+      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
+      invalidar();
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Falha ao atualizar os dias por semana."),
   });
 
   const remover = useMutation({
@@ -1418,7 +1497,7 @@ function FrequenciasDaModalidade({
           <CalendarClock className="h-4 w-4 text-primary" /> Frequências e valores
         </h2>
         <span className="text-xs text-muted-foreground">
-          O valor da frequência é o esperado do aluno; o arrecadado continua vindo do Sponte.
+          A frequência do aluno vem dos dias marcados nele: 2 dias usam a linha de 2 dias/semana.
         </span>
       </div>
 
@@ -1431,6 +1510,7 @@ function FrequenciasDaModalidade({
           <TableHeader>
             <TableRow>
               <TableHead>Frequência</TableHead>
+              <TableHead className="w-44">Dias/semana</TableHead>
               <TableHead className="w-56">Valor mensal (R$)</TableHead>
               {podeEditar && <TableHead className="w-10" />}
             </TableRow>
@@ -1441,8 +1521,23 @@ function FrequenciasDaModalidade({
                 <TableCell className="text-sm font-medium">{f.nome}</TableCell>
                 <TableCell>
                   {podeEditar ? (
-                    <ValorFrequencia
-                      valorInicial={f.valor_mensal}
+                    <CampoEditavel
+                      original={f.vezes_semana === null ? "" : String(f.vezes_semana)}
+                      largura="w-14"
+                      rotulo="Dias por semana da frequência"
+                      salvando={atualizarVezes.isPending}
+                      onSalvar={(texto) => atualizarVezes.mutate({ id: f.id, texto })}
+                    />
+                  ) : (
+                    <span className="text-sm">{f.vezes_semana ?? "—"}</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {podeEditar ? (
+                    <CampoEditavel
+                      original={formatarValorEdicao(f.valor_mensal)}
+                      largura="w-28"
+                      rotulo="Valor mensal da frequência"
                       salvando={atualizarValor.isPending}
                       onSalvar={(texto) => atualizarValor.mutate({ id: f.id, texto })}
                     />
@@ -1485,6 +1580,18 @@ function FrequenciasDaModalidade({
             />
           </div>
           <div className="flex flex-col gap-1">
+            <Label htmlFor="freq-vezes" className="text-[11px] text-muted-foreground">
+              Dias/semana
+            </Label>
+            <Input
+              id="freq-vezes"
+              value={vezes}
+              onChange={(e) => setVezes(e.target.value)}
+              placeholder="2"
+              className="h-9 w-20"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
             <Label htmlFor="freq-valor" className="text-[11px] text-muted-foreground">
               Valor mensal (R$)
             </Label>
@@ -1510,20 +1617,21 @@ function FrequenciasDaModalidade({
   );
 }
 
-// Valor de uma frequência já cadastrada: só habilita o Salvar quando o texto
-// muda, para não gravar por engano ao passar pelo campo.
-function ValorFrequencia({
-  valorInicial,
+// Campo de uma linha já cadastrada: só habilita o Salvar quando o texto muda,
+// para não gravar por engano ao passar pelo campo.
+function CampoEditavel({
+  original,
+  largura,
+  rotulo,
   salvando,
   onSalvar,
 }: {
-  valorInicial: number;
+  original: string;
+  largura: string;
+  rotulo: string;
   salvando: boolean;
   onSalvar: (texto: string) => void;
 }) {
-  const original = Number(valorInicial ?? 0)
-    .toFixed(2)
-    .replace(".", ",");
   const [texto, setTexto] = useState(original);
   useEffect(() => setTexto(original), [original]);
   const mudou = texto.trim() !== original;
@@ -1533,8 +1641,8 @@ function ValorFrequencia({
       <Input
         value={texto}
         onChange={(e) => setTexto(e.target.value)}
-        className="h-9 w-28"
-        aria-label="Valor mensal da frequência"
+        className={`h-9 ${largura}`}
+        aria-label={rotulo}
       />
       <Button
         variant="outline"
@@ -1560,6 +1668,222 @@ async function carregarFrequencias(modalidadeId: string): Promise<Frequencia[]> 
   return (data ?? []) as unknown as Frequencia[];
 }
 
+async function carregarTurmas(modalidadeId: string): Promise<Turma[]> {
+  const { data, error } = await supabase
+    .from("esportes_turmas" as never)
+    .select(COLUNAS_TURMA)
+    .eq("modalidade_id", modalidadeId)
+    .order("ordem", { ascending: true })
+    .order("hora_inicio", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as Turma[];
+}
+
+// Turmas (horários) da modalidade. Diferente da frequência: a turma diz QUANDO a
+// aula acontece e para quem, a frequência diz QUANTOS dias o aluno faz e quanto
+// custa.
+function TurmasDaModalidade({
+  modalidade,
+  podeEditar,
+}: {
+  modalidade: Modalidade;
+  podeEditar: boolean;
+}) {
+  const qc = useQueryClient();
+  const { session } = useAuth();
+  const [nome, setNome] = useState("");
+  const [inicio, setInicio] = useState("");
+  const [fim, setFim] = useState("");
+
+  const { data: turmas = [] } = useQuery({
+    queryKey: ["esportes_turmas", modalidade.id],
+    queryFn: () => carregarTurmas(modalidade.id),
+  });
+
+  const invalidar = () => {
+    qc.invalidateQueries({ queryKey: ["esportes_turmas", modalidade.id] });
+    qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
+  };
+
+  const criar = useMutation({
+    mutationFn: async () => {
+      if (!nome.trim()) throw new Error("Informe o nome da turma.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const { error } = await supabase.from("esportes_turmas" as never).insert({
+        modalidade_id: modalidade.id,
+        nome: nome.trim(),
+        hora_inicio: inicio || null,
+        hora_fim: fim || null,
+        ordem: turmas.length,
+        created_by: session?.user?.id ?? null,
+        created_by_nome: meta?.full_name || session?.user?.email || "",
+      } as never);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Turma adicionada.");
+      setNome("");
+      setInicio("");
+      setFim("");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar a turma."),
+  });
+
+  const remover = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("esportes_turmas" as never)
+        .delete()
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Turma removida.");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover a turma."),
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <Clock className="h-4 w-4 text-primary" /> Turmas e horários
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          A turma é o horário da aula; os dias de cada aluno ficam na matrícula dele.
+        </span>
+      </div>
+
+      {turmas.length === 0 ? (
+        <div className="px-4 py-4 text-sm text-muted-foreground">
+          Nenhuma turma cadastrada — os alunos ficam sem horário definido.
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Turma</TableHead>
+              <TableHead className="w-52">Horário</TableHead>
+              {podeEditar && <TableHead className="w-10" />}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {turmas.map((t) => (
+              <TableRow key={t.id}>
+                <TableCell className="text-sm font-medium">{t.nome}</TableCell>
+                <TableCell className="text-sm">{rotuloHorario(t) || "—"}</TableCell>
+                {podeEditar && (
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                      title="Remover turma (os alunos ficam sem turma definida)"
+                      disabled={remover.isPending}
+                      onClick={() => remover.mutate(t.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {podeEditar && (
+        <div className="flex flex-wrap items-end gap-3 border-t border-border px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="turma-nome" className="text-[11px] text-muted-foreground">
+              Nova turma
+            </Label>
+            <Input
+              id="turma-nome"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="ex.: Fundamental 1 e 2"
+              className="h-9 w-72"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="turma-inicio" className="text-[11px] text-muted-foreground">
+              Início
+            </Label>
+            <Input
+              id="turma-inicio"
+              type="time"
+              value={inicio}
+              onChange={(e) => setInicio(e.target.value)}
+              className="h-9 w-28"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="turma-fim" className="text-[11px] text-muted-foreground">
+              Fim
+            </Label>
+            <Input
+              id="turma-fim"
+              type="time"
+              value={fim}
+              onChange={(e) => setFim(e.target.value)}
+              className="h-9 w-28"
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="h-9 gap-1"
+            disabled={criar.isPending}
+            onClick={() => criar.mutate()}
+          >
+            <Plus className="h-4 w-4" /> Adicionar
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Dias da semana clicáveis, no mesmo padrão visual do card de frequência do
+// Diário do Aluno (inclusive a mesma lista de dias úteis).
+function DiasSemanaPicker({
+  dias,
+  desabilitado,
+  onToggle,
+}: {
+  dias: number[];
+  desabilitado: boolean;
+  onToggle: (dia: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {WEEKDAYS.map((d) => {
+        const ativo = dias.includes(d.value);
+        return (
+          <button
+            key={d.value}
+            type="button"
+            disabled={desabilitado}
+            onClick={() => onToggle(d.value)}
+            className={[
+              "flex h-9 w-11 items-center justify-center rounded-lg text-xs font-semibold transition disabled:opacity-50",
+              ativo
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-secondary text-muted-foreground hover:bg-secondary/70",
+            ].join(" ")}
+            aria-pressed={ativo}
+            aria-label={d.long}
+          >
+            {d.short}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Alunos matriculados na modalidade. A busca segue o padrão das outras telas:
 // nome (3+ letras) ou AlunoID, direto no Sponte.
 function AlunosDaModalidade({
@@ -1575,26 +1899,35 @@ function AlunosDaModalidade({
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [erroBusca, setErroBusca] = useState<string | null>(null);
-  // Frequência que será usada ao vincular os alunos encontrados na busca.
-  const [frequenciaNova, setFrequenciaNova] = useState<string>("");
+  // Turma e dias usados ao vincular os alunos encontrados na busca.
+  const [turmaNova, setTurmaNova] = useState<string>("");
+  const [diasNovos, setDiasNovos] = useState<number[]>([]);
+  // Visão da lista: por turma e por dia, para a professora saber quem esperar.
+  const [filtroTurma, setFiltroTurma] = useState<string>("todas");
+  const [filtroDia, setFiltroDia] = useState<string>("todos");
 
   const { data: frequencias = [] } = useQuery({
     queryKey: ["esportes_frequencias", modalidade.id],
     queryFn: () => carregarFrequencias(modalidade.id),
   });
 
-  const frequenciasAtivas = useMemo(() => frequencias.filter((f) => f.ativo), [frequencias]);
+  const { data: turmas = [] } = useQuery({
+    queryKey: ["esportes_turmas", modalidade.id],
+    queryFn: () => carregarTurmas(modalidade.id),
+  });
+
+  const turmasAtivas = useMemo(() => turmas.filter((t) => t.ativo), [turmas]);
 
   useEffect(() => {
-    if (!frequenciaNova && frequenciasAtivas.length > 0) setFrequenciaNova(frequenciasAtivas[0].id);
-  }, [frequenciaNova, frequenciasAtivas]);
+    if (!turmaNova && turmasAtivas.length > 0) setTurmaNova(turmasAtivas[0].id);
+  }, [turmaNova, turmasAtivas]);
 
   const { data: matriculas = [] } = useQuery({
     queryKey: ["esportes_matriculas", modalidade.id],
     queryFn: async (): Promise<Matricula[]> => {
       const { data, error } = await supabase
         .from("esportes_matriculas" as never)
-        .select("id, aluno_id, aluno_nome, turma, frequencia_id")
+        .select("id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana")
         .eq("modalidade_id", modalidade.id)
         .order("aluno_nome", { ascending: true });
       if (error) throw new Error(error.message);
@@ -1629,7 +1962,8 @@ function AlunosDaModalidade({
           aluno_id: aluno.alunoId,
           aluno_nome: aluno.nome,
           turma: aluno.turma ?? "",
-          frequencia_id: frequenciaNova || null,
+          turma_id: turmaNova || null,
+          dias_semana: normalizarDias(diasNovos),
           created_by: session?.user?.id ?? null,
           created_by_nome: meta?.full_name || session?.user?.email || "",
         } as never,
@@ -1641,8 +1975,7 @@ function AlunosDaModalidade({
       toast.success("Aluno vinculado à modalidade.");
       setResultados(null);
       setTermo("");
-      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
-      qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
+      invalidarMatriculas();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao vincular o aluno."),
   });
@@ -1657,34 +1990,95 @@ function AlunosDaModalidade({
     },
     onSuccess: () => {
       toast.success("Aluno removido da modalidade.");
-      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
-      qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
+      invalidarMatriculas();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover o aluno."),
   });
 
-  // Trocar de frequência é um UPDATE da matrícula: o aluno não precisa ser
+  // Trocar de turma ou de dias é um UPDATE da matrícula: o aluno não precisa ser
   // removido e recadastrado (o vínculo e o histórico dele continuam os mesmos).
-  const trocarFrequencia = useMutation({
-    mutationFn: async ({ id, frequenciaId }: { id: string; frequenciaId: string }) => {
+  const atualizarMatricula = useMutation({
+    mutationFn: async ({
+      id,
+      turmaId,
+      dias,
+    }: {
+      id: string;
+      turmaId?: string | null;
+      dias?: number[];
+    }) => {
+      const patch: { turma_id?: string | null; dias_semana?: number[] } = {};
+      if (turmaId !== undefined) patch.turma_id = turmaId || null;
+      if (dias !== undefined) patch.dias_semana = normalizarDias(dias);
       const { error } = await supabase
         .from("esportes_matriculas" as never)
-        .update({ frequencia_id: frequenciaId || null } as never)
+        .update(patch as never)
         .eq("id", id);
       if (error) throw new Error(error.message);
     },
-    onSuccess: () => {
-      toast.success("Frequência do aluno atualizada.");
-      qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
-      qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao trocar a frequência."),
+    onSuccess: () => invalidarMatriculas(),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao atualizar o aluno."),
   });
 
-  const valorDaFrequencia = (id: string | null): number | null => {
-    const f = frequencias.find((x) => x.id === id);
-    return f ? Number(f.valor_mensal) : null;
+  function invalidarMatriculas() {
+    qc.invalidateQueries({ queryKey: ["esportes_matriculas", modalidade.id] });
+    qc.invalidateQueries({ queryKey: ["esportes_arrecadacao", modalidade.id] });
+  }
+
+  // Frequências no formato da regra de cálculo, para derivar a do aluno a partir
+  // dos dias marcados nele (2 dias marcados = a frequência de 2 dias/semana).
+  const frequenciasCalculo = useMemo<FrequenciaModalidade[]>(
+    () =>
+      frequencias.map((f) => ({
+        id: f.id,
+        nome: f.nome,
+        valorMensal: Number(f.valor_mensal) || 0,
+        vezesSemana: f.vezes_semana === null ? null : Number(f.vezes_semana),
+      })),
+    [frequencias],
+  );
+
+  const frequenciaDoAluno = (m: Matricula): FrequenciaModalidade | null =>
+    frequenciaPorDias(frequenciasCalculo, m.dias_semana) ??
+    frequenciasCalculo.find((f) => f.id === m.frequencia_id) ??
+    null;
+
+  const dias = (m: Matricula) => normalizarDias(m.dias_semana);
+
+  const alternarDia = (m: Matricula, dia: number) => {
+    const atuais = dias(m);
+    const proximos = atuais.includes(dia) ? atuais.filter((d) => d !== dia) : [...atuais, dia];
+    atualizarMatricula.mutate({ id: m.id, dias: proximos });
   };
+
+  const visiveis = useMemo(() => {
+    const dia = filtroDia === "todos" ? null : Number(filtroDia);
+    return matriculas.filter((m) => {
+      if (filtroTurma === "sem-turma" && m.turma_id) return false;
+      if (filtroTurma !== "todas" && filtroTurma !== "sem-turma" && m.turma_id !== filtroTurma)
+        return false;
+      if (dia !== null && !normalizarDias(m.dias_semana).includes(dia)) return false;
+      return true;
+    });
+  }, [matriculas, filtroTurma, filtroDia]);
+
+  // Grupos na ordem do cadastro das turmas, com "Sem turma" no fim para não
+  // esconder aluno que ainda não foi encaixado em nenhum horário.
+  const grupos = useMemo(() => {
+    const porTurma = turmas.map((t) => ({
+      chave: t.id,
+      titulo: t.nome,
+      horario: rotuloHorario(t),
+      alunos: visiveis.filter((m) => m.turma_id === t.id),
+    }));
+    const semTurma = visiveis.filter(
+      (m) => !m.turma_id || !turmas.some((t) => t.id === m.turma_id),
+    );
+    if (semTurma.length > 0) {
+      porTurma.push({ chave: "sem-turma", titulo: "Sem turma", horario: "", alunos: semTurma });
+    }
+    return porTurma.filter((g) => g.alunos.length > 0);
+  }, [turmas, visiveis]);
 
   const t = termo.trim();
   const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
@@ -1718,23 +2112,45 @@ function AlunosDaModalidade({
                 className="h-9 w-64"
               />
             </div>
-            {frequenciasAtivas.length > 0 && (
+            {turmasAtivas.length > 0 && (
               <div className="flex flex-col gap-1">
-                <Label className="text-[11px] text-muted-foreground">Frequência do aluno</Label>
-                <Select value={frequenciaNova} onValueChange={setFrequenciaNova}>
-                  <SelectTrigger className="h-9 w-64">
-                    <SelectValue placeholder="Selecione a frequência" />
+                <Label className="text-[11px] text-muted-foreground">Turma (horário)</Label>
+                <Select value={turmaNova} onValueChange={setTurmaNova}>
+                  <SelectTrigger className="h-9 w-72">
+                    <SelectValue placeholder="Selecione a turma" />
                   </SelectTrigger>
                   <SelectContent>
-                    {frequenciasAtivas.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
-                        {f.nome} · {formatBRL(f.valor_mensal)}
+                    {turmasAtivas.map((tu) => (
+                      <SelectItem key={tu.id} value={tu.id}>
+                        {tu.nome}
+                        {rotuloHorario(tu) ? ` · ${rotuloHorario(tu)}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             )}
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">
+                Dias da semana
+                {diasNovos.length > 0
+                  ? ` · ${vezesPorSemana(diasNovos)}x/semana${
+                      frequenciaPorDias(frequenciasCalculo, diasNovos)
+                        ? ` · ${formatBRL(frequenciaPorDias(frequenciasCalculo, diasNovos)!.valorMensal)}`
+                        : ""
+                    }`
+                  : ""}
+              </Label>
+              <DiasSemanaPicker
+                dias={diasNovos}
+                desabilitado={false}
+                onToggle={(d) =>
+                  setDiasNovos((atuais) =>
+                    atuais.includes(d) ? atuais.filter((x) => x !== d) : [...atuais, d],
+                  )
+                }
+              />
+            </div>
             <Button
               variant="outline"
               className="h-9 gap-1"
@@ -1785,75 +2201,149 @@ function AlunosDaModalidade({
         </div>
       )}
 
+      {matriculas.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[11px] text-muted-foreground">Ver turma</Label>
+            <Select value={filtroTurma} onValueChange={setFiltroTurma}>
+              <SelectTrigger className="h-9 w-72">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as turmas</SelectItem>
+                {turmas.map((tu) => (
+                  <SelectItem key={tu.id} value={tu.id}>
+                    {tu.nome}
+                    {rotuloHorario(tu) ? ` · ${rotuloHorario(tu)}` : ""}
+                  </SelectItem>
+                ))}
+                <SelectItem value="sem-turma">Sem turma</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-[11px] text-muted-foreground">Ver dia</Label>
+            <Select value={filtroDia} onValueChange={setFiltroDia}>
+              <SelectTrigger className="h-9 w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os dias</SelectItem>
+                {WEEKDAYS.map((d) => (
+                  <SelectItem key={d.value} value={String(d.value)}>
+                    {d.long}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <span className="pb-2 text-xs text-muted-foreground">
+            {visiveis.length} de {matriculas.length} aluno(s)
+          </span>
+        </div>
+      )}
+
       {matriculas.length === 0 ? (
         <div className="px-4 py-6 text-sm text-muted-foreground">
           Nenhum aluno vinculado a esta modalidade.
         </div>
+      ) : grupos.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground">
+          Nenhum aluno neste filtro de turma/dia.
+        </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Aluno</TableHead>
-              <TableHead>AlunoID</TableHead>
-              <TableHead>Turma</TableHead>
-              <TableHead className="w-72">Frequência</TableHead>
-              <TableHead className="text-right">Valor esperado</TableHead>
-              {podeEditar && <TableHead className="w-10" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {matriculas.map((m) => (
-              <TableRow key={m.id}>
-                <TableCell className="text-sm font-medium">{m.aluno_nome || "—"}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{m.aluno_id}</TableCell>
-                <TableCell className="text-sm">{m.turma || "—"}</TableCell>
-                <TableCell>
-                  {podeEditar && frequencias.length > 0 ? (
-                    <Select
-                      value={m.frequencia_id ?? ""}
-                      onValueChange={(v) => trocarFrequencia.mutate({ id: m.id, frequenciaId: v })}
-                      disabled={trocarFrequencia.isPending}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Sem frequência" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {frequencias.map((f) => (
-                          <SelectItem key={f.id} value={f.id}>
-                            {f.nome} · {formatBRL(f.valor_mensal)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <span className="text-sm">
-                      {frequencias.find((f) => f.id === m.frequencia_id)?.nome ?? "—"}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right text-sm">
-                  {valorDaFrequencia(m.frequencia_id) === null
-                    ? "—"
-                    : formatBRL(valorDaFrequencia(m.frequencia_id) as number)}
-                </TableCell>
-                {podeEditar && (
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
-                      title="Remover aluno da modalidade"
-                      disabled={remover.isPending}
-                      onClick={() => remover.mutate(m.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        grupos.map((g) => (
+          <div key={g.chave}>
+            <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-4 py-2">
+              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-sm font-semibold">{g.titulo}</span>
+              {g.horario && <span className="text-xs text-muted-foreground">{g.horario}</span>}
+              <span className="text-xs text-muted-foreground">· {g.alunos.length} aluno(s)</span>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Aluno</TableHead>
+                  <TableHead>AlunoID</TableHead>
+                  <TableHead className="w-64">Turma (horário)</TableHead>
+                  <TableHead className="w-72">Dias</TableHead>
+                  <TableHead>Frequência</TableHead>
+                  <TableHead className="text-right">Valor esperado</TableHead>
+                  {podeEditar && <TableHead className="w-10" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {g.alunos.map((m) => {
+                  const freq = frequenciaDoAluno(m);
+                  return (
+                    <TableRow key={m.id}>
+                      <TableCell className="text-sm font-medium">{m.aluno_nome || "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{m.aluno_id}</TableCell>
+                      <TableCell>
+                        {podeEditar && turmas.length > 0 ? (
+                          <Select
+                            value={m.turma_id ?? ""}
+                            onValueChange={(v) =>
+                              atualizarMatricula.mutate({ id: m.id, turmaId: v })
+                            }
+                            disabled={atualizarMatricula.isPending}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue placeholder="Sem turma" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {turmas.map((tu) => (
+                                <SelectItem key={tu.id} value={tu.id}>
+                                  {tu.nome}
+                                  {rotuloHorario(tu) ? ` · ${rotuloHorario(tu)}` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className="text-sm">
+                            {turmas.find((tu) => tu.id === m.turma_id)?.nome ?? "—"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {podeEditar ? (
+                          <DiasSemanaPicker
+                            dias={dias(m)}
+                            desabilitado={atualizarMatricula.isPending}
+                            onToggle={(d) => alternarDia(m, d)}
+                          />
+                        ) : (
+                          <span className="text-sm">{rotuloDias(m.dias_semana) || "—"}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {freq ? freq.nome : dias(m).length > 0 ? "Frequência não cadastrada" : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {freq ? formatBRL(freq.valorMensal) : "—"}
+                      </TableCell>
+                      {podeEditar && (
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
+                            title="Remover aluno da modalidade"
+                            disabled={remover.isPending}
+                            onClick={() => remover.mutate(m.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        ))
       )}
     </div>
   );

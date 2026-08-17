@@ -32,12 +32,58 @@ export interface PagamentoAlunoModalidade {
   valorEsperado: number;
 }
 
-// Frequência (turma) oferecida pela modalidade, cada uma com sua mensalidade:
-// Jazz 2x/semana R$ 230,00 e 1x/semana R$ 210,00.
+// Frequência oferecida pela modalidade, cada uma com sua mensalidade: Jazz
+// 2x/semana R$ 230,00 e 1x/semana R$ 210,00. `vezesSemana` é o que liga os dias
+// marcados na matrícula ao preço.
 export interface FrequenciaModalidade {
   id: string;
   nome: string;
   valorMensal: number;
+  vezesSemana: number | null;
+}
+
+// ---------- Dias da semana do aluno na modalidade ----------
+// 1 = segunda … 7 = domingo (ISO), o mesmo índice do Diário do Aluno.
+
+export const DIAS_SEMANA_CURTO: Record<number, string> = {
+  1: "Seg",
+  2: "Ter",
+  3: "Qua",
+  4: "Qui",
+  5: "Sex",
+  6: "Sáb",
+  7: "Dom",
+};
+
+// Dia repetido não conta duas vezes: a frequência é quantos dias DISTINTOS o
+// aluno assiste na semana.
+export function normalizarDias(dias: readonly number[] | null | undefined): number[] {
+  const validos = (dias ?? [])
+    .map((d) => Number(d))
+    .filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  return Array.from(new Set(validos)).sort((a, b) => a - b);
+}
+
+export function vezesPorSemana(dias: readonly number[] | null | undefined): number {
+  return normalizarDias(dias).length;
+}
+
+export function rotuloDias(dias: readonly number[] | null | undefined): string {
+  return normalizarDias(dias)
+    .map((d) => DIAS_SEMANA_CURTO[d])
+    .join(" · ");
+}
+
+// Frequência (e portanto o valor) derivada dos dias marcados: 2 dias procuram a
+// frequência de 2x/semana. Sem dia marcado não há frequência derivada — o valor
+// esperado do aluno fica indefinido em vez de virar um preço chutado.
+export function frequenciaPorDias(
+  frequencias: readonly FrequenciaModalidade[],
+  dias: readonly number[] | null | undefined,
+): FrequenciaModalidade | null {
+  const vezes = vezesPorSemana(dias);
+  if (vezes === 0) return null;
+  return frequencias.find((f) => Number(f.vezesSemana) === vezes) ?? null;
 }
 
 export interface RepasseCalculado {

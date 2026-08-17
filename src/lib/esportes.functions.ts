@@ -14,6 +14,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { coletarTitulosAluno } from "@/lib/sponte.functions";
 import {
   calcularRepasseModalidade,
+  frequenciaPorDias,
   geraRepasseNoMes,
   pagamentoDoAluno,
   statusMesModalidade,
@@ -58,12 +59,15 @@ interface MatriculaRow {
   aluno_nome: string;
   turma: string;
   frequencia_id: string | null;
+  dias_semana: number[] | null;
 }
 
 interface FrequenciaRow {
   id: string;
   nome: string;
   valor_mensal: number;
+  vezes_semana: number | null;
+  ordem: number;
 }
 
 export interface ArrecadacaoModalidadeResult extends RepasseModalidadeCalculado {
@@ -168,7 +172,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
 
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
-      .select("aluno_id, aluno_nome, turma, frequencia_id")
+      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana")
       .eq("modalidade_id", modalidadeId)
       .order("aluno_nome", { ascending: true });
     if (matErr) return { ...vazio, statusMes, error: matErr.message };
@@ -179,12 +183,21 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     // frequência que deixou de ser oferecida a novos.
     const { data: freqRows, error: freqErr } = await supabaseAdmin
       .from("esportes_frequencias" as never)
-      .select("id, nome, valor_mensal")
-      .eq("modalidade_id", modalidadeId);
+      .select("id, nome, valor_mensal, vezes_semana, ordem")
+      .eq("modalidade_id", modalidadeId)
+      .order("ordem", { ascending: true });
     if (freqErr) return { ...vazio, statusMes, error: freqErr.message };
     const frequencias = new Map<string, FrequenciaModalidade>();
+    const listaFrequencias: FrequenciaModalidade[] = [];
     for (const f of (freqRows ?? []) as unknown as FrequenciaRow[]) {
-      frequencias.set(f.id, { id: f.id, nome: f.nome, valorMensal: Number(f.valor_mensal) || 0 });
+      const freq: FrequenciaModalidade = {
+        id: f.id,
+        nome: f.nome,
+        valorMensal: Number(f.valor_mensal) || 0,
+        vezesSemana: f.vezes_semana === null ? null : Number(f.vezes_semana),
+      };
+      frequencias.set(f.id, freq);
+      listaFrequencias.push(freq);
     }
 
     const alunos: PagamentoAlunoModalidade[] = [];
@@ -211,9 +224,14 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
             {
               alunoId: matricula.aluno_id,
               alunoNome: nome,
-              frequencia: matricula.frequencia_id
-                ? (frequencias.get(matricula.frequencia_id) ?? null)
-                : null,
+              // A frequência vem dos dias marcados na matrícula. O
+              // `frequencia_id` só atende quem foi cadastrado antes dos dias
+              // existirem e ainda não teve os dias marcados.
+              frequencia:
+                frequenciaPorDias(listaFrequencias, matricula.dias_semana) ??
+                (matricula.frequencia_id
+                  ? (frequencias.get(matricula.frequencia_id) ?? null)
+                  : null),
             },
             titulos.titulos,
             modalidade.categoria_sponte,

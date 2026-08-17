@@ -12,9 +12,14 @@ import {
   restritoPorModalidade,
   somaPercentuais,
   somaValoresFixos,
+  frequenciaPorDias,
+  normalizarDias,
+  rotuloDias,
   statusMesModalidade,
   totalArrecadado,
   totalEsperado,
+  vezesPorSemana,
+  type FrequenciaModalidade,
   type ParceiroModalidade,
   type ParcelaSponte,
   type PagamentoAlunoModalidade,
@@ -171,8 +176,18 @@ describe("arrecadação e repasse da modalidade", () => {
 });
 
 describe("frequência do aluno e valor esperado", () => {
-  const duasVezes = { id: "f-2x", nome: "2x semana (seg e qua)", valorMensal: 230 };
-  const umaVez = { id: "f-1x-seg", nome: "1x semana (segunda)", valorMensal: 210 };
+  const duasVezes = {
+    id: "f-2x",
+    nome: "2x semana (seg e qua)",
+    valorMensal: 230,
+    vezesSemana: 2,
+  };
+  const umaVez = {
+    id: "f-1x-seg",
+    nome: "1x semana (segunda)",
+    valorMensal: 210,
+    vezesSemana: 1,
+  };
 
   it("o esperado do aluno vem da frequência escolhida, não do que ele pagou", () => {
     const pago = pagamentoDoAluno(
@@ -365,6 +380,95 @@ describe("calendário do repasse fixo", () => {
   it("ajuste igual ao valor padrão não é sinalizado como exceção do mês", () => {
     const r = calcularRepasseModalidade("fixo", jiujitsu, 2000, { "p-prof": 1200 });
     expect(r.parceiros[0]).toMatchObject({ valorRepasse: 1200, ajustadoManualmente: false });
+  });
+});
+
+describe("frequência derivada dos dias da semana marcados no aluno", () => {
+  const frequencias: FrequenciaModalidade[] = [
+    { id: "f-2x", nome: "2x semana (seg e qua)", valorMensal: 230, vezesSemana: 2 },
+    { id: "f-1x", nome: "1x semana", valorMensal: 210, vezesSemana: 1 },
+  ];
+
+  it("um dia marcado é 1x/semana e dois dias são 2x/semana", () => {
+    expect(vezesPorSemana([1])).toBe(1);
+    expect(vezesPorSemana([3])).toBe(1);
+    expect(vezesPorSemana([1, 3])).toBe(2);
+    expect(vezesPorSemana([])).toBe(0);
+  });
+
+  it("dia repetido ou inválido não infla a frequência", () => {
+    expect(normalizarDias([3, 1, 3])).toEqual([1, 3]);
+    expect(vezesPorSemana([3, 3])).toBe(1);
+    expect(vezesPorSemana([0, 8, 2])).toBe(1);
+  });
+
+  it("o valor esperado vem da frequência que casa com o número de dias", () => {
+    expect(frequenciaPorDias(frequencias, [1, 3])?.valorMensal).toBe(230);
+    expect(frequenciaPorDias(frequencias, [1])?.valorMensal).toBe(210);
+    // Segunda ou quarta custam o mesmo: o preço depende de quantos dias, não de quais.
+    expect(frequenciaPorDias(frequencias, [3])?.valorMensal).toBe(210);
+  });
+
+  it("aluno sem dia marcado não tem frequência nem valor derivado", () => {
+    expect(frequenciaPorDias(frequencias, [])).toBe(null);
+    expect(frequenciaPorDias(frequencias, null)).toBe(null);
+  });
+
+  it("nº de dias sem frequência cadastrada não chuta preço", () => {
+    expect(frequenciaPorDias(frequencias, [1, 3, 5])).toBe(null);
+    expect(frequenciaPorDias([], [1])).toBe(null);
+  });
+
+  it("frequência sem dias/semana definidos nunca é derivada dos dias", () => {
+    const soNome: FrequenciaModalidade[] = [
+      { id: "f-x", nome: "turma avançada", valorMensal: 300, vezesSemana: null },
+    ];
+    expect(frequenciaPorDias(soNome, [1])).toBe(null);
+  });
+
+  it("trocar os dias troca o valor esperado do aluno", () => {
+    const antes = frequenciaPorDias(frequencias, [1]);
+    const depois = frequenciaPorDias(frequencias, [1, 3]);
+    expect(antes?.valorMensal).toBe(210);
+    expect(depois?.valorMensal).toBe(230);
+  });
+
+  it("o esperado do aluno usa a frequência derivada dos dias", () => {
+    const pago = pagamentoDoAluno(
+      { alunoId: "862", alunoNome: "Luísa", frequencia: frequenciaPorDias(frequencias, [1, 3]) },
+      [parcela({ valorPago: 0, quitada: false, dataPagamento: "" })],
+      "Teatro",
+      "2026-08",
+    );
+    expect(pago.frequenciaNome).toBe("2x semana (seg e qua)");
+    expect(pago.valorEsperado).toBe(230);
+    expect(pago.valorPago).toBe(0);
+  });
+
+  it("o esperado da modalidade soma o derivado de cada aluno", () => {
+    const pagamentos = [
+      { alunoId: "1", alunoNome: "A", dias: [1, 3] },
+      { alunoId: "2", alunoNome: "B", dias: [3] },
+      { alunoId: "3", alunoNome: "C", dias: [] },
+    ].map((a) =>
+      pagamentoDoAluno(
+        {
+          alunoId: a.alunoId,
+          alunoNome: a.alunoNome,
+          frequencia: frequenciaPorDias(frequencias, a.dias),
+        },
+        [],
+        "Teatro",
+        "2026-08",
+      ),
+    );
+    expect(totalEsperado(pagamentos)).toBe(440);
+    expect(totalArrecadado(pagamentos)).toBe(0);
+  });
+
+  it("rótulo dos dias sai na ordem da semana", () => {
+    expect(rotuloDias([3, 1])).toBe("Seg · Qua");
+    expect(rotuloDias([])).toBe("");
   });
 });
 
