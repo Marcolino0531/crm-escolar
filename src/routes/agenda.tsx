@@ -14,6 +14,9 @@ import {
   Trash2,
   UserRound,
   Building2,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLeads } from "@/lib/crm/hooks";
@@ -42,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { displayPhoneBR } from "@/lib/phone";
 import { toTitleCase } from "@/lib/name-format";
@@ -314,6 +318,8 @@ function AgendaPage() {
         />
       )}
 
+      <AvisosConcluidos />
+
       {podeEditar && (
         <NovaReuniaoDialog
           open={novaOpen}
@@ -328,6 +334,69 @@ function AgendaPage() {
     </div>
   );
 }
+
+// Histórico dos avisos de reunião já concluídos no sininho (check manual ou
+// reunião que passou). Recolhido: não é o dia a dia, é consulta.
+function AvisosConcluidos() {
+  const [aberto, setAberto] = useState(false);
+
+  const { data: avisos = [], isLoading } = useQuery({
+    queryKey: ["agenda_notifications_concluidas"],
+    enabled: aberto,
+    queryFn: async (): Promise<AvisoConcluido[]> => {
+      const { data, error } = await supabase
+        .from("agenda_notifications" as never)
+        .select("id, message, concluded_at")
+        .not("concluded_at", "is", null)
+        .order("concluded_at", { ascending: false })
+        .limit(100);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as AvisoConcluido[];
+    },
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-accent"
+      >
+        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        Avisos de reunião concluídos
+        <span className="ml-auto">
+          {aberto ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+      </button>
+
+      {aberto && (
+        <div className="border-t border-border">
+          {isLoading ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">Carregando…</p>
+          ) : avisos.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              Nenhum aviso de reunião concluído até agora.
+            </p>
+          ) : (
+            avisos.map((a) => (
+              <div
+                key={a.id}
+                className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-sm last:border-b-0"
+              >
+                <span className="min-w-0">{a.message}</span>
+                <span className="ml-auto text-[11px] text-muted-foreground">
+                  concluído em {formatDateBR(a.concluded_at)}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type AvisoConcluido = { id: string; message: string; concluded_at: string };
 
 function MonthView({
   cursor,
