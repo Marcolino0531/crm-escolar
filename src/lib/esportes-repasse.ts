@@ -169,6 +169,85 @@ export function totalEsperado(pagamentos: PagamentoAlunoModalidade[]): number {
   return arredondarCentavos(pagamentos.reduce((s, p) => s + (Number(p.valorEsperado) || 0), 0));
 }
 
+// ---------- Relação de valores (parcelas reais do Sponte) ----------
+
+// Situação da parcela como a secretaria fala. Derivada, nunca cadastrada: o
+// Sponte só diz se a parcela foi baixada; "vencido" é baixa ausente + data
+// passada.
+export type SituacaoParcela = "quitado" | "vencido" | "a_vencer";
+
+// Parcela do Sponte com o que a relação de valores mostra. O `valor` é o do
+// boleto — inclusive quando é proporcional (meio mês) e diverge da mensalidade
+// cheia da modalidade.
+export interface ParcelaCategoriaSponte extends ParcelaSponte {
+  valor: number;
+  numeroParcela: string;
+}
+
+export interface ParcelaAlunoModalidade {
+  alunoId: string;
+  alunoNome: string;
+  numeroParcela: string;
+  vencimento: string; // YYYY-MM-DD
+  mesReferencia: string; // YYYY-MM do vencimento
+  valor: number;
+  valorPago: number;
+  situacao: SituacaoParcela;
+  dataPagamento: string;
+}
+
+export function situacaoParcela(
+  parcela: { quitada: boolean; vencimento: string },
+  hoje: string,
+): SituacaoParcela {
+  if (parcela.quitada) return "quitado";
+  if (parcela.vencimento && parcela.vencimento < hoje) return "vencido";
+  return "a_vencer";
+}
+
+// Todas as parcelas do aluno na categoria da modalidade, em ordem de
+// vencimento. O valor é o que o Sponte devolve: a proporcional do primeiro mês
+// não é recalculada pela mensalidade da modalidade.
+export function parcelasAlunoNaModalidade(
+  aluno: { alunoId: string; alunoNome: string },
+  parcelas: readonly ParcelaCategoriaSponte[],
+  categoriaSponte: string,
+  hoje: string,
+): ParcelaAlunoModalidade[] {
+  return parcelas
+    .filter((p) => mesmaCategoria(p.categoria, categoriaSponte))
+    .map((p) => ({
+      alunoId: aluno.alunoId,
+      alunoNome: aluno.alunoNome,
+      numeroParcela: p.numeroParcela,
+      vencimento: p.vencimento,
+      mesReferencia: (p.vencimento ?? "").slice(0, 7),
+      valor: arredondarCentavos(p.valor),
+      valorPago: arredondarCentavos(p.valorPago),
+      situacao: situacaoParcela(p, hoje),
+      dataPagamento: p.dataPagamento,
+    }))
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+}
+
+export interface ResumoParcelas {
+  quitado: number;
+  vencido: number;
+  aVencer: number;
+  total: number;
+}
+
+export function resumoParcelas(parcelas: readonly ParcelaAlunoModalidade[]): ResumoParcelas {
+  const soma = (s: SituacaoParcela) =>
+    arredondarCentavos(
+      parcelas.filter((p) => p.situacao === s).reduce((acc, p) => acc + (Number(p.valor) || 0), 0),
+    );
+  const quitado = soma("quitado");
+  const vencido = soma("vencido");
+  const aVencer = soma("a_vencer");
+  return { quitado, vencido, aVencer, total: arredondarCentavos(quitado + vencido + aVencer) };
+}
+
 // Repasse do parceiro e parte retida pelo colégio. O retido é a diferença (e não
 // um segundo arredondamento), para que repasse + retido = arrecadado sempre.
 export function calcularRepasse(

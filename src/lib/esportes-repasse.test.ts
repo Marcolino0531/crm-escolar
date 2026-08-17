@@ -7,8 +7,11 @@ import {
   mesmaCategoria,
   modalidadesVisiveis,
   pagamentoDoAluno,
+  parcelasAlunoNaModalidade,
   parcelasDaModalidade,
   podeVerModalidade,
+  resumoParcelas,
+  situacaoParcela,
   restritoPorModalidade,
   somaPercentuais,
   somaValoresFixos,
@@ -21,6 +24,7 @@ import {
   vezesPorSemana,
   type FrequenciaModalidade,
   type ParceiroModalidade,
+  type ParcelaCategoriaSponte,
   type ParcelaSponte,
   type PagamentoAlunoModalidade,
 } from "./esportes-repasse";
@@ -504,5 +508,96 @@ describe("restrição de visualização por modalidade entre parceiros", () => {
     expect(restritoPorModalidade(["m-teatro"], true)).toBe(false);
     expect(modalidadesVisiveis(modalidades, ["m-teatro"], true)).toEqual(modalidades);
     expect(podeVerModalidade("m-jazz", ["m-teatro"], true)).toBe(true);
+  });
+});
+
+// A relação de valores mostra a parcela REAL do Sponte: a proporcional do mês em
+// que o aluno entrou não pode ser sobrescrita pela mensalidade da frequência.
+describe("relação de valores (parcelas reais do Sponte)", () => {
+  const parcela = (over: Partial<ParcelaCategoriaSponte> = {}): ParcelaCategoriaSponte => ({
+    vencimento: "2026-09-07",
+    categoria: "Jazz",
+    valor: 230,
+    valorPago: 0,
+    quitada: false,
+    dataPagamento: "",
+    numeroParcela: "2",
+    ...over,
+  });
+
+  const ana = { alunoId: "290", alunoNome: "Ana Clara Miranda Ramos" };
+
+  it("situação vem da baixa e da data: quitado, vencido ou a vencer", () => {
+    expect(situacaoParcela({ quitada: true, vencimento: "2026-07-05" }, "2026-08-17")).toBe(
+      "quitado",
+    );
+    expect(situacaoParcela({ quitada: false, vencimento: "2026-07-05" }, "2026-08-17")).toBe(
+      "vencido",
+    );
+    expect(situacaoParcela({ quitada: false, vencimento: "2026-08-20" }, "2026-08-17")).toBe(
+      "a_vencer",
+    );
+    // Vence hoje ainda não está vencida.
+    expect(situacaoParcela({ quitada: false, vencimento: "2026-08-17" }, "2026-08-17")).toBe(
+      "a_vencer",
+    );
+  });
+
+  it("lista as parcelas da categoria em ordem de vencimento, mês a mês", () => {
+    const lista = parcelasAlunoNaModalidade(
+      ana,
+      [
+        parcela({ numeroParcela: "3", vencimento: "2026-10-05" }),
+        parcela({ numeroParcela: "1", vencimento: "2026-08-20", valor: 115 }),
+        parcela({ numeroParcela: "2", vencimento: "2026-09-07" }),
+        parcela({ categoria: "Mensalidade", numeroParcela: "9", vencimento: "2026-09-07" }),
+      ],
+      "Jazz",
+      "2026-08-17",
+    );
+    expect(lista.map((p) => [p.numeroParcela, p.mesReferencia, p.valor])).toEqual([
+      ["1", "2026-08", 115],
+      ["2", "2026-09", 230],
+      ["3", "2026-10", 230],
+    ]);
+    expect(lista.every((p) => p.alunoId === "290")).toBe(true);
+  });
+
+  it("mantém a primeira parcela proporcional sem recalcular pela mensalidade", () => {
+    const [primeira] = parcelasAlunoNaModalidade(
+      ana,
+      [parcela({ numeroParcela: "1", vencimento: "2026-08-20", valor: 115 })],
+      "Jazz",
+      "2026-08-17",
+    );
+    expect(primeira.valor).toBe(115);
+    expect(primeira.situacao).toBe("a_vencer");
+  });
+
+  it("resumo soma por situação sem misturar o que ainda vai vencer", () => {
+    const lista = parcelasAlunoNaModalidade(
+      ana,
+      [
+        parcela({ numeroParcela: "1", vencimento: "2026-08-20", valor: 115 }),
+        parcela({ numeroParcela: "2", vencimento: "2026-09-07" }),
+        parcela({
+          numeroParcela: "0",
+          vencimento: "2026-07-05",
+          valor: 230,
+          valorPago: 230,
+          quitada: true,
+          dataPagamento: "2026-07-03",
+        }),
+        parcela({ numeroParcela: "-1", vencimento: "2026-06-05", valor: 210 }),
+      ],
+      "Jazz",
+      "2026-08-17",
+    );
+    expect(resumoParcelas(lista)).toEqual({
+      quitado: 230,
+      vencido: 210,
+      aVencer: 345,
+      total: 785,
+    });
   });
 });
