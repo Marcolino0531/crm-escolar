@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { X, Trash2, Sun, Sunset, CalendarDays } from "lucide-react";
+import { toast } from "sonner";
 import type { DiaSemana, GradeTurnos, Terceirizado, Turno, TurnoFalta } from "@/lib/crm/types";
 import {
   DIAS_SEMANA,
@@ -8,6 +9,12 @@ import {
   turnosDaFalta,
   type TerceirizadoFormData,
 } from "@/lib/crm/terceirizados";
+import {
+  conferirFalta,
+  dataComDiaSemana,
+  rotuloDiaSemana,
+  turnosDaGradeNaData,
+} from "@/lib/crm/terceirizados-datas";
 
 interface TerceirizadoModalProps {
   unidadeSelecionada: string;
@@ -34,13 +41,6 @@ const converterParaISO = (dataBR: string): string => {
   return `${ano}-${mes}-${dia}`;
 };
 
-const converterParaBR = (dataISO: string): string => {
-  if (!dataISO) return "";
-  const partes = dataISO.split("-");
-  if (partes.length !== 3) return "";
-  return `${partes[2]}/${partes[1]}/${partes[0]}`;
-};
-
 const validarData = (dataBR: string): boolean => {
   if (dataBR.length !== 10) return false;
   const partes = dataBR.split("/");
@@ -58,21 +58,6 @@ const parseValor = (v: string): number => {
 
 const fmtBRL = (n: number): string =>
   Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
-// getDay(): 0 Dom … 6 Sáb → índice em DIAS_SEMANA (seg=0 … sex=4); null no fim de semana.
-const DIA_POR_GETDAY: Record<number, DiaSemana | undefined> = {
-  1: "seg",
-  2: "ter",
-  3: "qua",
-  4: "qui",
-  5: "sex",
-};
-
-const diaSemanaDaISO = (iso: string): DiaSemana | null => {
-  if (!iso) return null;
-  const d = new Date(`${iso}T00:00:00`);
-  return DIA_POR_GETDAY[d.getDay()] ?? null;
-};
 
 const TURNO_FALTA_LABEL: Record<TurnoFalta, string> = {
   manha: "Manhã",
@@ -140,28 +125,21 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
     });
   };
 
-  // Turnos permitidos na data escolhida = turnos que existem na grade daquele dia.
-  const diaFalta = diaSemanaDaISO(faltaForm.data);
-  const gradeDoDia = diaFalta ? grade[diaFalta] : null;
-  const opcoesFalta: { valor: TurnoFalta; label: string }[] = (() => {
-    if (!gradeDoDia) return [];
-    const opcoes: { valor: TurnoFalta; label: string }[] = [];
-    if (gradeDoDia.manha) opcoes.push({ valor: "manha", label: "Manhã" });
-    if (gradeDoDia.tarde) opcoes.push({ valor: "tarde", label: "Tarde" });
-    if (gradeDoDia.manha && gradeDoDia.tarde) opcoes.push({ valor: "dia", label: "Dia completo" });
-    return opcoes;
-  })();
-
-  // Mantém o turno selecionado coerente com as opções disponíveis.
-  const turnoSelecionado = opcoesFalta.some((o) => o.valor === faltaForm.turno)
-    ? faltaForm.turno
-    : (opcoesFalta[0]?.valor ?? "dia");
-
-  const podeRegistrarFalta = !!faltaForm.data && opcoesFalta.length > 0;
+  // Turnos previstos pela grade na data escolhida. O select oferece todos os
+  // turnos: a grade é conferida no envio, para o usuário ver *por que* aquele
+  // dia/turno não vale, em vez de a opção simplesmente não existir.
+  const turnosPrevistos = faltaForm.data ? turnosDaGradeNaData(grade, faltaForm.data) : [];
+  const diaDaFalta = faltaForm.data ? rotuloDiaSemana(faltaForm.data) : "";
+  const conferencia = faltaForm.data ? conferirFalta(grade, faltaForm.data, faltaForm.turno) : null;
 
   const handleAdicionarFalta = () => {
-    if (!terceirizadoExistente || !onAdicionarFalta || !podeRegistrarFalta) return;
-    onAdicionarFalta(terceirizadoExistente.id, faltaForm.data, turnoSelecionado);
+    if (!terceirizadoExistente || !onAdicionarFalta) return;
+    const resultado = conferirFalta(grade, faltaForm.data, faltaForm.turno);
+    if (!resultado.ok) {
+      toast.error(resultado.mensagem);
+      return;
+    }
+    onAdicionarFalta(terceirizadoExistente.id, faltaForm.data, faltaForm.turno);
     setFaltaForm({ dataDisplay: "", data: "", turno: "dia" });
   };
 
@@ -303,42 +281,39 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
                         placeholder="dd/mm/aaaa"
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
                       />
+                      {diaDaFalta && (
+                        <p className="mt-1 text-xs font-medium text-gray-600">{diaDaFalta}</p>
+                      )}
                     </div>
                     <div className="flex-1">
                       <label className="mb-1 block text-xs font-medium text-gray-600">Turno</label>
                       <select
-                        value={turnoSelecionado}
+                        value={faltaForm.turno}
                         onChange={(e) =>
                           setFaltaForm((p) => ({ ...p, turno: e.target.value as TurnoFalta }))
                         }
-                        disabled={!podeRegistrarFalta}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none disabled:bg-gray-100"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
                       >
-                        {opcoesFalta.length === 0 ? (
-                          <option value="dia">—</option>
-                        ) : (
-                          opcoesFalta.map((o) => (
-                            <option key={o.valor} value={o.valor}>
-                              {o.label}
-                            </option>
-                          ))
-                        )}
+                        {(Object.keys(TURNO_FALTA_LABEL) as TurnoFalta[]).map((t) => (
+                          <option key={t} value={t}>
+                            {TURNO_FALTA_LABEL[t]}
+                            {turnosPrevistos.length > 0 && !turnosPrevistos.includes(t)
+                              ? " (fora da grade)"
+                              : ""}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <button
                       type="button"
                       onClick={handleAdicionarFalta}
-                      disabled={!podeRegistrarFalta}
-                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700"
                     >
                       Lançar falta
                     </button>
                   </div>
-                  {faltaForm.data && opcoesFalta.length === 0 && (
-                    <p className="mt-2 text-xs text-amber-600">
-                      Sem turnos na grade para esse dia da semana. Ajuste a grade acima ou escolha
-                      outra data.
-                    </p>
+                  {conferencia && !conferencia.ok && (
+                    <p className="mt-2 text-xs text-amber-600">{conferencia.mensagem}</p>
                   )}
                 </div>
               )}
@@ -358,7 +333,7 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
                         <div className="flex items-center gap-2">
                           <Icon className="h-4 w-4 text-gray-400" />
                           <span className="text-sm font-medium text-gray-700">
-                            {converterParaBR(f.data)}
+                            {dataComDiaSemana(f.data)}
                           </span>
                           <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
                             {TURNO_FALTA_LABEL[f.turno]}

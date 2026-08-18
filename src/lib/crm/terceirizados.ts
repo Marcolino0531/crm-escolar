@@ -2,34 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
-import type {
-  DiaSemana,
-  FaltaTerceirizado,
-  GradeTurnos,
-  Terceirizado,
-  Turno,
-  TurnoFalta,
-} from "./types";
+import type { FaltaTerceirizado, GradeTurnos, Terceirizado, TurnoFalta } from "./types";
+import { DIAS_SEMANA, gradeVazia } from "./terceirizados-datas";
 
-export const DIAS_SEMANA: { id: DiaSemana; label: string }[] = [
-  { id: "seg", label: "Segunda" },
-  { id: "ter", label: "Terça" },
-  { id: "qua", label: "Quarta" },
-  { id: "qui", label: "Quinta" },
-  { id: "sex", label: "Sexta" },
-];
-
-export const TURNOS: { id: Turno; label: string }[] = [
-  { id: "manha", label: "Manhã" },
-  { id: "tarde", label: "Tarde" },
-];
-
-export function gradeVazia(): GradeTurnos {
-  return DIAS_SEMANA.reduce((acc, d) => {
-    acc[d.id] = { manha: false, tarde: false };
-    return acc;
-  }, {} as GradeTurnos);
-}
+export { DIAS_SEMANA, TURNOS, gradeVazia } from "./terceirizados-datas";
 
 // Preenche dias/turnos ausentes para tolerar registros antigos ou parciais.
 function normalizarGrade(raw: unknown): GradeTurnos {
