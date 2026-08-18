@@ -16,6 +16,7 @@ import {
 import { usePermissions, useSchool } from "@/lib/app-context";
 import {
   storeKeyForUnitName,
+  abaixoDoEstoqueMinimo,
   motivoForaDaReposicao,
   notificaEstoqueBaixo,
   type StoreKey,
@@ -367,7 +368,7 @@ function UniformesPage() {
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Estoque mínimo (≤5)
+            Estoque mínimo (&lt;5)
           </div>
           <div
             className={`mt-1 text-2xl font-bold ${baixoEstoque > 0 ? "text-red-600" : "text-foreground"}`}
@@ -441,7 +442,7 @@ function UniformesPage() {
             </thead>
             <tbody>
               {sortedRows.map((v) => {
-                const abaixoDoMinimo = v.stock <= v.min_stock;
+                const abaixoDoMinimo = abaixoDoEstoqueMinimo(v.stock, v.min_stock);
                 const motivo = motivoForaDaReposicao(v.store_key, v.produto);
                 const critico = abaixoDoMinimo && motivo === null;
                 return (

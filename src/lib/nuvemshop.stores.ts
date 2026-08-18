@@ -92,14 +92,20 @@ export function motivoForaDaReposicao(
   return null;
 }
 
+// Saldo abaixo do mínimo — estritamente menor: com o mínimo em 5, a peça com 5
+// unidades ainda está no nível desejado e não é reposta.
+export function abaixoDoEstoqueMinimo(stock: number, minStock: number): boolean {
+  return stock < minStock;
+}
+
 // Regra única do alerta de estoque baixo, usada pelo sininho e pela tabela de
-// Uniformes: quantidade no/abaixo do mínimo E peça que ainda é reposta.
+// Uniformes: saldo abaixo do mínimo E peça que ainda é reposta.
 export function notificaEstoqueBaixo(variacao: {
   storeKey: StoreKey;
   produto: string | null | undefined;
   stock: number;
   minStock: number;
 }): boolean {
-  if (variacao.stock > variacao.minStock) return false;
+  if (!abaixoDoEstoqueMinimo(variacao.stock, variacao.minStock)) return false;
   return motivoForaDaReposicao(variacao.storeKey, variacao.produto) === null;
 }
