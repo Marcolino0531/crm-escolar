@@ -1,7 +1,7 @@
 // Endpoint nativo de exportação de pedidos de uniformes em Excel (.xlsx).
 // Montado a partir do server entry (`src/server.ts`), antes do roteador da app.
 //
-//   GET /api/uniformes/export-order  — planilha de reposição (saldo <= 5)
+//   GET /api/uniformes/export-order  — planilha de reposição (saldo < mínimo)
 //
 // Respeita a unidade selecionada no header: o frontend envia as lojas
 // (`?stores=belvedere,cec`); sem o parâmetro, exporta todas as lojas.
@@ -9,11 +9,12 @@
 import ExcelJS from "exceljs";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
-
-const LOW_STOCK_THRESHOLD = 5;
-const ORDER_QUANTITY = 10;
-
-const STORE_LABEL: Record<string, string> = Object.fromEntries(STORES.map((s) => [s.key, s.label]));
+import {
+  ORDER_QUANTITY,
+  linhasDoPedido,
+  type LinhaPedido,
+  type VariacaoPedido,
+} from "@/lib/uniformes.pedido";
 
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization") ?? request.headers.get("Authorization");
@@ -36,14 +37,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-type VariantRow = {
-  ns_variant_id: string;
-  ns_product_id: string;
-  store_key: StoreKey;
-  size: string | null;
-  sku: string | null;
-  stock: number;
-};
+type VariantRow = VariacaoPedido & { ns_variant_id: string };
 
 type ProductRow = {
   ns_product_id: string;
@@ -88,21 +82,28 @@ async function exportOrder(url: URL): Promise<Response> {
 
   // stores === [] significa unidade selecionada sem nenhuma loja correspondente:
   // nada a exportar.
-  let variantQuery = supabaseAdmin
-    .from("uniform_variants" as never)
-    .select("ns_variant_id, ns_product_id, store_key, size, sku, stock")
-    .lte("stock", LOW_STOCK_THRESHOLD)
-    .order("store_key", { ascending: true });
-  if (stores !== null) {
-    if (stores.length === 0) {
-      return buildWorkbookResponse([]);
-    }
-    variantQuery = variantQuery.in("store_key", stores);
+  if (stores !== null && stores.length === 0) {
+    return buildWorkbookResponse([]);
   }
 
-  const { data: variantsData, error: vErr } = await variantQuery;
-  if (vErr) throw new Error(vErr.message);
-  const variants = (variantsData ?? []) as unknown as VariantRow[];
+  // O saldo é comparado com o mínimo de cada variação (o PostgREST não compara
+  // duas colunas), então a filtragem é feita aqui — daí a paginação, para não
+  // parar no teto de linhas por resposta.
+  const variants: VariantRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let variantQuery = supabaseAdmin
+      .from("uniform_variants" as never)
+      .select("ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock")
+      .order("ns_variant_id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (stores !== null) variantQuery = variantQuery.in("store_key", stores);
+    const { data, error } = await variantQuery;
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as unknown as VariantRow[];
+    variants.push(...batch);
+    if (batch.length < PAGE) break;
+  }
 
   let productQuery = supabaseAdmin
     .from("uniform_products" as never)
@@ -119,33 +120,10 @@ async function exportOrder(url: URL): Promise<Response> {
     nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
   }
 
-  const rows = variants
-    .map((v) => ({
-      loja: STORE_LABEL[v.store_key] ?? v.store_key,
-      peca: nameByKey.get(`${v.store_key}:${v.ns_product_id}`) || "—",
-      tamanho: v.size || "—",
-      sku: v.sku || "—",
-      saldo: v.stock,
-      solicitar: ORDER_QUANTITY,
-    }))
-    .sort(
-      (a, b) =>
-        a.peca.localeCompare(b.peca, "pt-BR") || a.tamanho.localeCompare(b.tamanho, "pt-BR"),
-    );
-
-  return buildWorkbookResponse(rows);
+  return buildWorkbookResponse(linhasDoPedido(variants, nameByKey));
 }
 
-type ExportRow = {
-  loja: string;
-  peca: string;
-  tamanho: string;
-  sku: string;
-  saldo: number;
-  solicitar: number;
-};
-
-async function buildWorkbookResponse(rows: ExportRow[]): Promise<Response> {
+async function buildWorkbookResponse(rows: LinhaPedido[]): Promise<Response> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "School Hub";
   workbook.created = new Date();
