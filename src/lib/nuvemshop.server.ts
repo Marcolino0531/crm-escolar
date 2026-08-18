@@ -16,6 +16,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
+import type { PedidoVenda } from "@/lib/uniformes.vendas";
 
 const API_BASE = "https://api.nuvemshop.com.br/v1";
 
@@ -178,6 +179,43 @@ async function fetchAllProducts(store: StoreCreds): Promise<NuvemshopProduct[]> 
     page += 1;
   }
   return products;
+}
+
+// Pedidos pagos e não cancelados criados na janela informada (ISO 8601). A API
+// só filtra por data de CRIAÇÃO; a data de pagamento é conferida depois, na
+// agregação (`uniformes.vendas.ts`), que é quem define o ano da venda.
+//
+// `fields` enxuga a resposta para o que a agregação usa — sem isso cada pedido
+// vem com cliente, endereço e imagens.
+export async function fetchPaidOrders(
+  store: StoreCreds,
+  createdMin: string,
+  createdMax: string,
+): Promise<PedidoVenda[]> {
+  const orders: PedidoVenda[] = [];
+  const perPage = 200;
+  const fields = "id,status,payment_status,paid_at,cancelled_at,products";
+  for (let page = 1; ; page++) {
+    const query = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+      status: "any",
+      payment_status: "paid",
+      created_at_min: createdMin,
+      created_at_max: createdMax,
+      fields,
+    });
+    const res = await nuvemshopFetch(store, `/orders?${query.toString()}`);
+    if (res.status === 404) break;
+    if (!res.ok) {
+      throw new Error(`Nuvemshop GET /orders falhou: ${res.status} ${await res.text()}`);
+    }
+    const batch = (await res.json()) as PedidoVenda[];
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    orders.push(...batch);
+    if (batch.length < perPage) break;
+  }
+  return orders;
 }
 
 async function fetchProduct(

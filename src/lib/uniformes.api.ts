@@ -2,6 +2,7 @@
 // Montado a partir do server entry (`src/server.ts`), antes do roteador da app.
 //
 //   GET /api/uniformes/export-order  — planilha de reposição (saldo < mínimo)
+//   GET /api/uniformes/vendas        — vendas do ano por peça e tamanho (Nuvemshop)
 //
 // Respeita a unidade selecionada no header: o frontend envia as lojas
 // (`?stores=belvedere,cec`); sem o parâmetro, exporta todas as lojas.
@@ -15,6 +16,8 @@ import {
   type LinhaPedido,
   type VariacaoPedido,
 } from "@/lib/uniformes.pedido";
+import { agregaVendas, type CatalogoVariacoes, type VendaAgregada } from "@/lib/uniformes.vendas";
+import { configuredStores, fetchPaidOrders } from "@/lib/nuvemshop.server";
 
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization") ?? request.headers.get("Authorization");
@@ -63,7 +66,63 @@ export async function handleUniformesApi(request: Request): Promise<Response | n
     }
   }
 
+  if (pathname === "/api/uniformes/vendas" && request.method === "GET") {
+    if (!(await isAuthenticated(request))) {
+      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+    }
+    try {
+      const ano = Number(url.searchParams.get("ano"));
+      if (!Number.isInteger(ano) || ano < 2000 || ano > 2100) {
+        return json({ ok: false, error: "Parâmetro 'ano' inválido." }, 400);
+      }
+      const vendas = await vendasDoAno(ano, parseStores(url));
+      return json({ ok: true, ano, vendas });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[uniformes] /vendas falhou:", msg);
+      return json({ ok: false, error: msg }, 500);
+    }
+  }
+
   return json({ ok: false, error: "Rota não encontrada." }, 404);
+}
+
+// Catálogo espelhado no Supabase: dá o tamanho de cada variação vendida e o nome
+// atual de cada peça, sem depender do que ficou gravado no pedido.
+async function carregaCatalogo(stores: StoreKey[] | null): Promise<CatalogoVariacoes> {
+  const variacoes = await todasAsVariacoes(stores);
+  const tamanhoPorVariacao = new Map<string, string>();
+  for (const v of variacoes) {
+    tamanhoPorVariacao.set(`${v.store_key}:${v.ns_variant_id}`, v.size ?? "");
+  }
+  const nomePorProduto = await nomesDosProdutos(stores);
+  return { tamanhoPorVariacao, nomePorProduto };
+}
+
+async function vendasDoAno(ano: number, stores: StoreKey[] | null): Promise<VendaAgregada[]> {
+  if (stores !== null && stores.length === 0) return [];
+
+  const catalogo = await carregaCatalogo(stores);
+  const permitidas = stores === null ? null : new Set(stores);
+  const lojas = configuredStores().filter((s) => permitidas === null || permitidas.has(s.key));
+  if (lojas.length === 0) {
+    throw new Error(
+      "Nenhuma loja Nuvemshop configurada para a unidade selecionada: defina NUVEMSHOP_<LOJA>_STORE_ID e NUVEMSHOP_<LOJA>_TOKEN.",
+    );
+  }
+
+  // A API filtra por data de CRIAÇÃO e a venda é contada pela data de PAGAMENTO,
+  // então a janela começa antes do ano para alcançar o pedido criado em novembro
+  // e pago em janeiro. Pedido criado depois de 31/12 não pode ter sido pago no ano.
+  const createdMin = `${ano - 1}-11-01T00:00:00-03:00`;
+  const createdMax = `${ano}-12-31T23:59:59-03:00`;
+
+  const vendas: VendaAgregada[] = [];
+  for (const loja of lojas) {
+    const pedidos = await fetchPaidOrders(loja, createdMin, createdMax);
+    vendas.push(...agregaVendas(loja.key, pedidos, ano, catalogo));
+  }
+  return vendas;
 }
 
 function parseStores(url: URL): StoreKey[] | null {
@@ -77,6 +136,44 @@ function parseStores(url: URL): StoreKey[] | null {
   return keys.length > 0 ? keys : [];
 }
 
+// Variações espelhadas das lojas pedidas (`null` = todas). O saldo é comparado
+// com o mínimo de cada variação e o PostgREST não compara duas colunas, então a
+// filtragem acontece em memória — daí a paginação, para não parar no teto de
+// linhas por resposta.
+async function todasAsVariacoes(stores: StoreKey[] | null): Promise<VariantRow[]> {
+  const variants: VariantRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let query = supabaseAdmin
+      .from("uniform_variants" as never)
+      .select("ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock")
+      .order("ns_variant_id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (stores !== null) query = query.in("store_key", stores);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as unknown as VariantRow[];
+    variants.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return variants;
+}
+
+// `${storeKey}:${ns_product_id}` → nome do produto.
+async function nomesDosProdutos(stores: StoreKey[] | null): Promise<Map<string, string>> {
+  let query = supabaseAdmin
+    .from("uniform_products" as never)
+    .select("ns_product_id, store_key, name");
+  if (stores !== null) query = query.in("store_key", stores);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  const nameByKey = new Map<string, string>();
+  for (const p of (data ?? []) as unknown as ProductRow[]) {
+    nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
+  }
+  return nameByKey;
+}
+
 async function exportOrder(url: URL): Promise<Response> {
   const stores = parseStores(url);
 
@@ -86,40 +183,8 @@ async function exportOrder(url: URL): Promise<Response> {
     return buildWorkbookResponse([]);
   }
 
-  // O saldo é comparado com o mínimo de cada variação (o PostgREST não compara
-  // duas colunas), então a filtragem é feita aqui — daí a paginação, para não
-  // parar no teto de linhas por resposta.
-  const variants: VariantRow[] = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    let variantQuery = supabaseAdmin
-      .from("uniform_variants" as never)
-      .select("ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock")
-      .order("ns_variant_id", { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (stores !== null) variantQuery = variantQuery.in("store_key", stores);
-    const { data, error } = await variantQuery;
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as unknown as VariantRow[];
-    variants.push(...batch);
-    if (batch.length < PAGE) break;
-  }
-
-  let productQuery = supabaseAdmin
-    .from("uniform_products" as never)
-    .select("ns_product_id, store_key, name");
-  if (stores !== null && stores.length > 0) {
-    productQuery = productQuery.in("store_key", stores);
-  }
-  const { data: productsData, error: pErr } = await productQuery;
-  if (pErr) throw new Error(pErr.message);
-  const products = (productsData ?? []) as unknown as ProductRow[];
-
-  const nameByKey = new Map<string, string>();
-  for (const p of products) {
-    nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
-  }
-
+  const variants = await todasAsVariacoes(stores);
+  const nameByKey = await nomesDosProdutos(stores);
   return buildWorkbookResponse(linhasDoPedido(variants, nameByKey));
 }
 
