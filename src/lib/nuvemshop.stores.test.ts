@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { motivoForaDaReposicao, notificaEstoqueBaixo } from "./nuvemshop.stores";
+import {
+  abaixoDoEstoqueMinimo,
+  motivoForaDaReposicao,
+  notificaEstoqueBaixo,
+} from "./nuvemshop.stores";
 
 const MIN = 5;
 
@@ -27,7 +31,11 @@ describe("estoque baixo — CEC/CEC Baby em troca de uniforme", () => {
   it("notifica a peça do modelo novo ('/ Azul') abaixo do mínimo", () => {
     expect(alerta("cec", "BERMUDA TACTEL / Azul", 2)).toBe(true);
     expect(alerta("cec", "MANGA LONGA / Azul", 0)).toBe(true);
-    expect(alerta("cec", "CALÇA BAILARINA / Azul", MIN)).toBe(true);
+    expect(alerta("cec", "CALÇA BAILARINA / Azul", MIN - 1)).toBe(true);
+  });
+
+  it("não notifica a peça nova com saldo exatamente no mínimo", () => {
+    expect(alerta("cec", "CALÇA BAILARINA / Azul", MIN)).toBe(false);
   });
 
   it("aceita '/Azul' sem espaço depois da barra", () => {
@@ -52,8 +60,12 @@ describe("estoque baixo — CEC/CEC Baby em troca de uniforme", () => {
 describe("estoque baixo — Belvedere e Vale do Sereno (comportamento preservado)", () => {
   it("notifica peça do Belvedere abaixo do mínimo, sem exigir '/ Azul'", () => {
     expect(alerta("belvedere", "BELVEDERE - CAMISA MANGA CURTA", 2)).toBe(true);
-    expect(alerta("belvedere", "BELVEDERE - COLETE", MIN)).toBe(true);
+    expect(alerta("belvedere", "BELVEDERE - COLETE", MIN - 1)).toBe(true);
     expect(motivoForaDaReposicao("belvedere", "BELVEDERE - COLETE")).toBeNull();
+  });
+
+  it("não notifica a peça do Belvedere com saldo exatamente no mínimo", () => {
+    expect(alerta("belvedere", "BELVEDERE - COLETE", MIN)).toBe(false);
   });
 
   it("continua sem notificar o Vale do Sereno, em descontinuação", () => {
@@ -63,6 +75,15 @@ describe("estoque baixo — Belvedere e Vale do Sereno (comportamento preservado
 
   it("não notifica peça do Belvedere com saldo acima do mínimo", () => {
     expect(alerta("belvedere", "BELVEDERE - COLETE", MIN + 1)).toBe(false);
+  });
+});
+
+describe("estoque baixo — limite do mínimo", () => {
+  it("notifica abaixo do mínimo, não no valor exato nem acima", () => {
+    expect(abaixoDoEstoqueMinimo(0, MIN)).toBe(true);
+    expect(abaixoDoEstoqueMinimo(MIN - 1, MIN)).toBe(true);
+    expect(abaixoDoEstoqueMinimo(MIN, MIN)).toBe(false);
+    expect(abaixoDoEstoqueMinimo(MIN + 1, MIN)).toBe(false);
   });
 });
 
