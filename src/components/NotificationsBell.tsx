@@ -23,7 +23,7 @@ import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
-import { STORES, isValeDoSerenoProductName, type StoreKey } from "@/lib/nuvemshop.stores";
+import { STORES, notificaEstoqueBaixo, type StoreKey } from "@/lib/nuvemshop.stores";
 import {
   mondayOf,
   addDays,
@@ -328,13 +328,16 @@ export function NotificationsBell() {
       }[]) {
         nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
       }
-      return (
-        ((vRes.data ?? []) as unknown as LowStockVariant[])
-          .filter((v) => v.stock <= v.min_stock)
-          // Vale do Sereno em descontinuação: não dispara alerta no sininho.
-          .filter(
-            (v) => !isValeDoSerenoProductName(nameByKey.get(`${v.store_key}:${v.ns_product_id}`)),
-          )
+      // Só as peças que ainda são repostas: fora ficam as de algodão (sob
+      // encomenda), o uniforme antigo do CEC/CEC Baby (sem "/ Azul") e o Vale
+      // do Sereno, em descontinuação.
+      return ((vRes.data ?? []) as unknown as LowStockVariant[]).filter((v) =>
+        notificaEstoqueBaixo({
+          storeKey: v.store_key,
+          produto: nameByKey.get(`${v.store_key}:${v.ns_product_id}`),
+          stock: v.stock,
+          minStock: v.min_stock,
+        }),
       );
     },
   });
