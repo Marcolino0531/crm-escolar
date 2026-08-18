@@ -26,6 +26,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
+import { compareSize } from "@/lib/uniformes.sizes";
+import { VendasDoAno } from "@/components/uniformes/VendasDoAno";
 
 export const Route = createFileRoute("/uniformes")({
   head: () => ({ meta: [{ title: "Uniformes — School Hub" }] }),
@@ -72,28 +74,7 @@ type SyncLog = {
 
 type SortColumn = "produto" | "size";
 type SortDir = "asc" | "desc";
-
-// Ordem canônica de tamanhos por letra (quando o tamanho não é numérico).
-const LETTER_SIZE_ORDER = ["pp", "p", "m", "g", "gg", "xg", "xgg", "exg"];
-
-// Chave de ordenação de tamanho: numéricos primeiro (por valor), depois letras
-// na ordem canônica e, por fim, os demais em ordem alfabética.
-function sizeKey(size: string): [number, number, string] {
-  const s = (size ?? "").trim().toLowerCase();
-  const num = s.match(/^\d+(?:[.,]\d+)?/);
-  if (num) return [0, parseFloat(num[0].replace(",", ".")), s];
-  const idx = LETTER_SIZE_ORDER.indexOf(s);
-  if (idx >= 0) return [1, idx, s];
-  return [2, 0, s];
-}
-
-function compareSize(a: string, b: string): number {
-  const ka = sizeKey(a);
-  const kb = sizeKey(b);
-  if (ka[0] !== kb[0]) return ka[0] - kb[0];
-  if (ka[0] === 2) return ka[2].localeCompare(kb[2], "pt-BR");
-  return ka[1] - kb[1];
-}
+type Aba = "estoque" | "vendas";
 
 function UniformesPage() {
   const { canEdit } = usePermissions();
@@ -104,6 +85,7 @@ function UniformesPage() {
   const [gerandoPlanilha, setGerandoPlanilha] = useState(false);
   const [sortColumn, setSortColumn] = useState<SortColumn>("produto");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [aba, setAba] = useState<Aba>("estoque");
 
   function toggleSort(column: SortColumn) {
     if (column === sortColumn) {
@@ -339,157 +321,195 @@ function UniformesPage() {
             Controle de estoque das peças, sincronizado com a Nuvemshop.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={gerarPlanilha} disabled={gerandoPlanilha || isLoading}>
-            <FileSpreadsheet className={`mr-2 h-4 w-4 ${gerandoPlanilha ? "animate-pulse" : ""}`} />
-            Gerar Planilha de Pedidos
-          </Button>
-          {podeEditar && (
-            <Button onClick={sincronizar} disabled={sincronizando}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${sincronizando ? "animate-spin" : ""}`} />
-              Sincronizar com Nuvemshop
+        {aba === "estoque" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={gerarPlanilha}
+              disabled={gerandoPlanilha || isLoading}
+            >
+              <FileSpreadsheet
+                className={`mr-2 h-4 w-4 ${gerandoPlanilha ? "animate-pulse" : ""}`}
+              />
+              Gerar Planilha de Pedidos
             </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Peças
+            {podeEditar && (
+              <Button onClick={sincronizar} disabled={sincronizando}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${sincronizando ? "animate-spin" : ""}`} />
+                Sincronizar com Nuvemshop
+              </Button>
+            )}
           </div>
-          <div className="mt-1 text-2xl font-bold text-foreground">{visibleProducts.length}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Variações (tamanhos)
-          </div>
-          <div className="mt-1 text-2xl font-bold text-foreground">{unitFiltered.length}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Estoque mínimo (&lt;5)
-          </div>
-          <div
-            className={`mt-1 text-2xl font-bold ${baixoEstoque > 0 ? "text-red-600" : "text-foreground"}`}
-          >
-            {baixoEstoque}
-          </div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Valor em estoque
-          </div>
-          <div className="mt-1 text-2xl font-bold text-foreground">
-            {valorEstoque.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-          </div>
-        </div>
-      </div>
-
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar por peça, tamanho ou SKU..."
-          className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {isLoading ? (
-          <div className="space-y-2 p-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 px-4 py-16 text-center">
-            <PackageSearch className="h-10 w-10 text-muted-foreground/50" />
-            <p className="text-sm font-medium text-foreground">
-              Nenhum item de estoque encontrado.
-            </p>
-            <p className="max-w-md text-xs text-muted-foreground">
-              {variants.length === 0
-                ? "Sincronize com a Nuvemshop para importar o catálogo de uniformes."
-                : "Ajuste a busca para encontrar a peça desejada."}
-            </p>
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-3 font-medium">
-                  <SortHeader
-                    label="Peça"
-                    active={sortColumn === "produto"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("produto")}
-                  />
-                </th>
-                <th className="px-4 py-3 font-medium">
-                  <SortHeader
-                    label="Tamanho"
-                    active={sortColumn === "size"}
-                    dir={sortDir}
-                    onClick={() => toggleSort("size")}
-                  />
-                </th>
-                <th className="px-4 py-3 font-medium">SKU</th>
-                <th className="px-4 py-3 text-right font-medium">Saldo</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((v) => {
-                const abaixoDoMinimo = abaixoDoEstoqueMinimo(v.stock, v.min_stock);
-                const motivo = motivoForaDaReposicao(v.store_key, v.produto);
-                const critico = abaixoDoMinimo && motivo === null;
-                return (
-                  <tr
-                    key={v.id}
-                    className="border-b border-border last:border-b-0 hover:bg-muted/30"
-                  >
-                    <td className="px-4 py-3 font-medium text-foreground">{v.produto}</td>
-                    <td className="px-4 py-3 text-foreground">{v.size || "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                      {v.sku || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-foreground">
-                      {v.stock}
-                    </td>
-                    <td className="px-4 py-3">
-                      {critico ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
-                          <AlertTriangle className="h-3 w-3" />
-                          Estoque baixo
-                        </span>
-                      ) : abaixoDoMinimo && motivo !== null ? (
-                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
-                          {motivo === "algodao" ? "Sob encomenda" : "Descontinuado"}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">
-                          OK
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
         )}
       </div>
 
-      {lastSync && (
-        <p className="text-xs text-muted-foreground">
-          Última sincronização: {formatDateBR(lastSync.started_at)} · origem {lastSync.source} ·{" "}
-          {lastSync.variants_synced} variações
-          {lastSync.discrepancies > 0
-            ? ` · ${lastSync.discrepancies} divergência(s) corrigida(s)`
-            : ""}
-        </p>
+      <div className="flex gap-1 border-b border-border">
+        {(
+          [
+            ["estoque", "Estoque"],
+            ["vendas", "Vendas do Ano"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setAba(key)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              aba === key
+                ? "border-indigo-600 text-indigo-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {aba === "vendas" ? (
+        <VendasDoAno allowedStoreKeys={allowedStoreKeys} />
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Peças
+              </div>
+              <div className="mt-1 text-2xl font-bold text-foreground">
+                {visibleProducts.length}
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Variações (tamanhos)
+              </div>
+              <div className="mt-1 text-2xl font-bold text-foreground">{unitFiltered.length}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Estoque mínimo (&lt;5)
+              </div>
+              <div
+                className={`mt-1 text-2xl font-bold ${baixoEstoque > 0 ? "text-red-600" : "text-foreground"}`}
+              >
+                {baixoEstoque}
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Valor em estoque
+              </div>
+              <div className="mt-1 text-2xl font-bold text-foreground">
+                {valorEstoque.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </div>
+            </div>
+          </div>
+
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar por peça, tamanho ou SKU..."
+              className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            {isLoading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : rows.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 px-4 py-16 text-center">
+                <PackageSearch className="h-10 w-10 text-muted-foreground/50" />
+                <p className="text-sm font-medium text-foreground">
+                  Nenhum item de estoque encontrado.
+                </p>
+                <p className="max-w-md text-xs text-muted-foreground">
+                  {variants.length === 0
+                    ? "Sincronize com a Nuvemshop para importar o catálogo de uniformes."
+                    : "Ajuste a busca para encontrar a peça desejada."}
+                </p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">
+                      <SortHeader
+                        label="Peça"
+                        active={sortColumn === "produto"}
+                        dir={sortDir}
+                        onClick={() => toggleSort("produto")}
+                      />
+                    </th>
+                    <th className="px-4 py-3 font-medium">
+                      <SortHeader
+                        label="Tamanho"
+                        active={sortColumn === "size"}
+                        dir={sortDir}
+                        onClick={() => toggleSort("size")}
+                      />
+                    </th>
+                    <th className="px-4 py-3 font-medium">SKU</th>
+                    <th className="px-4 py-3 text-right font-medium">Saldo</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.map((v) => {
+                    const abaixoDoMinimo = abaixoDoEstoqueMinimo(v.stock, v.min_stock);
+                    const motivo = motivoForaDaReposicao(v.store_key, v.produto);
+                    const critico = abaixoDoMinimo && motivo === null;
+                    return (
+                      <tr
+                        key={v.id}
+                        className="border-b border-border last:border-b-0 hover:bg-muted/30"
+                      >
+                        <td className="px-4 py-3 font-medium text-foreground">{v.produto}</td>
+                        <td className="px-4 py-3 text-foreground">{v.size || "—"}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                          {v.sku || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums text-foreground">
+                          {v.stock}
+                        </td>
+                        <td className="px-4 py-3">
+                          {critico ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                              <AlertTriangle className="h-3 w-3" />
+                              Estoque baixo
+                            </span>
+                          ) : abaixoDoMinimo && motivo !== null ? (
+                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+                              {motivo === "algodao" ? "Sob encomenda" : "Descontinuado"}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">
+                              OK
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {lastSync && (
+            <p className="text-xs text-muted-foreground">
+              Última sincronização: {formatDateBR(lastSync.started_at)} · origem {lastSync.source} ·{" "}
+              {lastSync.variants_synced} variações
+              {lastSync.discrepancies > 0
+                ? ` · ${lastSync.discrepancies} divergência(s) corrigida(s)`
+                : ""}
+            </p>
+          )}
+        </>
       )}
     </div>
   );
