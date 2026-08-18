@@ -60,3 +60,46 @@ export function isValeDoSerenoProductName(name: string | null | undefined): bool
   if (!name) return false;
   return normalize(name).includes("vale do sereno");
 }
+
+// Peça de algodão ("Regata (Algodão)"): pedida sob encomenda para aluno com
+// alergia a outros tecidos, nunca reposta em lote junto à fábrica.
+export function isPecaAlgodao(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return normalize(name).includes("(algodao)");
+}
+
+// Uniforme NOVO do CEC/CEC Baby: identificado por "/ Azul" no nome
+// ("Bermuda Tactel / Azul"). Aceita com e sem espaço em volta da barra.
+export function isUniformeNovoCEC(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return /\/\s*azul\b/.test(normalize(name));
+}
+
+// Por que a peça está fora da reposição planejada — e portanto fora do alerta de
+// estoque baixo, mesmo zerada. `null` = a peça entra no alerta normalmente.
+export type MotivoForaDaReposicao = "algodao" | "uniforme_antigo_cec" | "vale_do_sereno";
+
+export function motivoForaDaReposicao(
+  storeKey: StoreKey,
+  produto: string | null | undefined,
+): MotivoForaDaReposicao | null {
+  // Vale antes de tudo: algodão é exceção em qualquer unidade.
+  if (isPecaAlgodao(produto)) return "algodao";
+  // CEC/CEC Baby em troca de uniforme: só o modelo novo ("/ Azul") é reposto.
+  if (storeKey === "cec" && !isUniformeNovoCEC(produto)) return "uniforme_antigo_cec";
+  // Vale do Sereno partilha a loja "belvedere" e é distinguido pelo nome.
+  if (isValeDoSerenoProductName(produto)) return "vale_do_sereno";
+  return null;
+}
+
+// Regra única do alerta de estoque baixo, usada pelo sininho e pela tabela de
+// Uniformes: quantidade no/abaixo do mínimo E peça que ainda é reposta.
+export function notificaEstoqueBaixo(variacao: {
+  storeKey: StoreKey;
+  produto: string | null | undefined;
+  stock: number;
+  minStock: number;
+}): boolean {
+  if (variacao.stock > variacao.minStock) return false;
+  return motivoForaDaReposicao(variacao.storeKey, variacao.produto) === null;
+}

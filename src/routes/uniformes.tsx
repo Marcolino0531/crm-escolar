@@ -16,7 +16,8 @@ import {
 import { usePermissions, useSchool } from "@/lib/app-context";
 import {
   storeKeyForUnitName,
-  isValeDoSerenoProductName,
+  motivoForaDaReposicao,
+  notificaEstoqueBaixo,
   type StoreKey,
 } from "@/lib/nuvemshop.stores";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -212,10 +213,16 @@ function UniformesPage() {
     });
   }, [rows, sortColumn, sortDir]);
 
-  // Vale do Sereno está sendo descontinuado: seus itens abaixo do mínimo não
-  // contam como estoque baixo (não poluem o indicador nem a tabela).
-  const baixoEstoque = rows.filter(
-    (v) => v.stock <= v.min_stock && !isValeDoSerenoProductName(v.produto),
+  // Só conta como estoque baixo a peça que ainda é reposta junto à fábrica:
+  // ficam de fora as de algodão (sob encomenda), o uniforme antigo do CEC/CEC
+  // Baby (sem "/ Azul") e o Vale do Sereno, em descontinuação.
+  const baixoEstoque = rows.filter((v) =>
+    notificaEstoqueBaixo({
+      storeKey: v.store_key,
+      produto: v.produto,
+      stock: v.stock,
+      minStock: v.min_stock,
+    }),
   ).length;
 
   // Patrimônio em estoque: soma de (preço de venda × saldo) de cada variação da
@@ -434,8 +441,9 @@ function UniformesPage() {
             </thead>
             <tbody>
               {sortedRows.map((v) => {
-                const descontinuado = isValeDoSerenoProductName(v.produto);
-                const critico = v.stock <= v.min_stock && !descontinuado;
+                const abaixoDoMinimo = v.stock <= v.min_stock;
+                const motivo = motivoForaDaReposicao(v.store_key, v.produto);
+                const critico = abaixoDoMinimo && motivo === null;
                 return (
                   <tr
                     key={v.id}
@@ -455,9 +463,9 @@ function UniformesPage() {
                           <AlertTriangle className="h-3 w-3" />
                           Estoque baixo
                         </span>
-                      ) : descontinuado && v.stock <= v.min_stock ? (
+                      ) : abaixoDoMinimo && motivo !== null ? (
                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
-                          Descontinuado
+                          {motivo === "algodao" ? "Sob encomenda" : "Descontinuado"}
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">
