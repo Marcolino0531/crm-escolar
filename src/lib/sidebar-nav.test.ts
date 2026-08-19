@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isExpanded, toggleExpanded, setExpanded, flattenTos, type NavNode } from "./sidebar-nav";
+import { isExpanded, toggleExclusive, collapseAll, flattenTos, type NavNode } from "./sidebar-nav";
 
 // Árvore de exemplo espelhando a hierarquia do menu (Financeiro com subcategorias).
 const tree: NavNode[] = [
@@ -49,39 +49,50 @@ describe("isExpanded", () => {
   });
 });
 
-describe("setExpanded", () => {
-  it("abre e fecha a categoria informada", () => {
-    const aberto = setExpanded({}, "financeiro", true);
-    expect(aberto.financeiro).toBe(true);
-    expect(setExpanded(aberto, "financeiro", false).financeiro).toBe(false);
+describe("toggleExclusive", () => {
+  const irmas = ["comercial", "financeiro"];
+
+  it("alterna a partir do padrão recolhido", () => {
+    const s1 = toggleExclusive({}, "financeiro", irmas);
+    expect(isExpanded(s1, "financeiro")).toBe(true);
+    const s2 = toggleExclusive(s1, "financeiro", irmas);
+    expect(isExpanded(s2, "financeiro")).toBe(false);
   });
 
-  it("mantém as outras categorias intactas", () => {
-    expect(setExpanded({ comercial: true }, "financeiro", true)).toEqual({
-      comercial: true,
-      financeiro: true,
-    });
+  it("abrir uma categoria recolhe as irmãs do mesmo nível", () => {
+    const state = toggleExclusive({ comercial: true }, "financeiro", irmas);
+    expect(isExpanded(state, "financeiro")).toBe(true);
+    expect(isExpanded(state, "comercial")).toBe(false);
   });
 
-  it("retorna a mesma referência quando nada muda (evita re-render)", () => {
-    const state = { financeiro: true };
-    expect(setExpanded(state, "financeiro", true)).toBe(state);
-    expect(setExpanded(state, "comercial", false)).toBe(state);
+  it("não mexe em grupos de outro nível ao abrir", () => {
+    const state = toggleExclusive({ "fin-cobranca": true }, "financeiro", irmas);
+    expect(isExpanded(state, "fin-cobranca")).toBe(true);
+  });
+
+  it("recolher não reabre nem altera as irmãs", () => {
+    const state = toggleExclusive({ financeiro: true, comercial: false }, "financeiro", irmas);
+    expect(isExpanded(state, "financeiro")).toBe(false);
+    expect(isExpanded(state, "comercial")).toBe(false);
   });
 
   it("não muta o estado original", () => {
-    const original = { pessoas: true };
-    setExpanded(original, "pessoas", false);
-    expect(original).toEqual({ pessoas: true });
+    const original = { comercial: true };
+    toggleExclusive(original, "financeiro", irmas);
+    expect(original).toEqual({ comercial: true });
   });
 });
 
-describe("toggleExpanded", () => {
-  it("alterna a partir do padrão recolhido", () => {
-    const s1 = toggleExpanded({}, "financeiro"); // recolhido → expandido
-    expect(s1.financeiro).toBe(true);
-    const s2 = toggleExpanded(s1, "financeiro"); // expandido → recolhido
-    expect(s2.financeiro).toBe(false);
+describe("collapseAll", () => {
+  it("recolhe todas as categorias abertas", () => {
+    expect(collapseAll({ comercial: true, financeiro: true, "fin-cobranca": true })).toEqual({});
+  });
+
+  it("retorna a mesma referência quando nada estava aberto (evita re-render)", () => {
+    const state = { comercial: false };
+    expect(collapseAll(state)).toBe(state);
+    const vazio = {};
+    expect(collapseAll(vazio)).toBe(vazio);
   });
 });
 

@@ -57,8 +57,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   isExpanded,
-  toggleExpanded,
-  setExpanded as setGroupExpanded,
+  toggleExclusive,
+  collapseAll,
   flattenTos,
   type ExpandedState,
 } from "@/lib/sidebar-nav";
@@ -201,7 +201,7 @@ function NavItem({
 }
 
 // Cabeçalho de uma categoria/subcategoria, com chevron de estado. O clique
-// alterna (necessário em telas de toque, onde não existe hover).
+// alterna; abrir uma recolhe as irmãs do mesmo nível.
 function NavGroupHeader({
   label,
   expanded,
@@ -234,16 +234,15 @@ function NavNodes({
   depth,
   expanded,
   onToggle,
-  onHoverChange,
   onNavigate,
 }: {
   nodes: NavTreeNode[];
   depth: number;
   expanded: ExpandedState;
-  onToggle: (id: string) => void;
-  onHoverChange: (id: string, hovering: boolean) => void;
+  onToggle: (id: string, siblingIds: string[]) => void;
   onNavigate?: () => void;
 }) {
+  const siblingIds = nodes.filter((node) => node.kind === "group").map((node) => node.id);
   return (
     <>
       {nodes.map((node) =>
@@ -257,20 +256,12 @@ function NavNodes({
             onNavigate={onNavigate}
           />
         ) : (
-          // A área de hover engloba o cabeçalho e a lista de itens: enquanto o
-          // ponteiro estiver em qualquer um deles a categoria fica aberta, e ela
-          // recolhe quando ele sai da área inteira.
-          <div
-            key={node.id}
-            className="flex flex-col gap-1"
-            onMouseEnter={() => onHoverChange(node.id, true)}
-            onMouseLeave={() => onHoverChange(node.id, false)}
-          >
+          <div key={node.id} className="flex flex-col gap-1">
             <NavGroupHeader
               label={node.label}
               expanded={isExpanded(expanded, node.id)}
               depth={depth}
-              onToggle={() => onToggle(node.id)}
+              onToggle={() => onToggle(node.id, siblingIds)}
             />
             {isExpanded(expanded, node.id) && (
               <NavNodes
@@ -278,7 +269,6 @@ function NavNodes({
                 depth={depth + 1}
                 expanded={expanded}
                 onToggle={onToggle}
-                onHoverChange={onHoverChange}
                 onNavigate={onNavigate}
               />
             )}
@@ -290,18 +280,17 @@ function NavNodes({
 }
 
 // Conteúdo da sidebar reutilizado no painel fixo (desktop) e no drawer
-// (tablet/mobile). `onNavigate` fecha o drawer ao clicar num item.
+// (tablet/mobile). `onNavigate` recolhe as categorias (e fecha o drawer) ao
+// clicar num item.
 function SidebarContent({
   tree,
   expanded,
   onToggle,
-  onHoverChange,
   onNavigate,
 }: {
   tree: NavTreeNode[];
   expanded: ExpandedState;
-  onToggle: (id: string) => void;
-  onHoverChange: (id: string, hovering: boolean) => void;
+  onToggle: (id: string, siblingIds: string[]) => void;
   onNavigate?: () => void;
 }) {
   return (
@@ -324,7 +313,6 @@ function SidebarContent({
           depth={0}
           expanded={expanded}
           onToggle={onToggle}
-          onHoverChange={onHoverChange}
           onNavigate={onNavigate}
         />
       </nav>
@@ -600,12 +588,25 @@ function AppShell() {
 
   const firstAllowed = useMemo(() => flattenTos(tree)[0] ?? null, [tree]);
 
-  // Estado colapsável só em memória: as categorias sempre começam recolhidas e
-  // seguem o ponteiro (abre ao entrar, recolhe ao sair). O clique alterna, para
-  // telas de toque, onde não há hover.
-  const toggleGroup = (id: string) => setExpanded((prev) => toggleExpanded(prev, id));
-  const hoverGroup = (id: string, hovering: boolean) =>
-    setExpanded((prev) => setGroupExpanded(prev, id, hovering));
+  // Estado colapsável só em memória: as categorias sempre começam recolhidas,
+  // abrem no clique (recolhendo as irmãs) e permanecem abertas até um clique
+  // fora do menu ou a navegação para um item.
+  const toggleGroup = (id: string, siblingIds: string[]) =>
+    setExpanded((prev) => toggleExclusive(prev, id, siblingIds));
+  const collapseGroups = () => setExpanded((prev) => collapseAll(prev));
+
+  // Clique fora do menu (desktop ou drawer) recolhe as categorias abertas.
+  // `pointerdown` para recolher no início do clique, antes de qualquer ação do
+  // conteúdo; `[data-sidebar-nav]` marca as duas áreas de menu.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-sidebar-nav]")) return;
+      setExpanded((prev) => collapseAll(prev));
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   // Preserva a rota exata em recarregamentos (F5) e deep links. Só redireciona
   // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
@@ -623,18 +624,22 @@ function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar p-4">
+      <aside
+        data-sidebar-nav=""
+        className="hidden lg:flex w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar p-4"
+      >
         <SidebarContent
           tree={tree}
           expanded={expanded}
           onToggle={toggleGroup}
-          onHoverChange={hoverGroup}
+          onNavigate={collapseGroups}
         />
       </aside>
 
       {/* Drawer de navegação para tablet/mobile. */}
       <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
         <SheetContent
+          data-sidebar-nav=""
           side="left"
           className="flex max-h-[100dvh] w-64 flex-col overflow-y-auto border-sidebar-border bg-sidebar p-4"
         >
@@ -643,8 +648,10 @@ function AppShell() {
             tree={tree}
             expanded={expanded}
             onToggle={toggleGroup}
-            onHoverChange={hoverGroup}
-            onNavigate={() => setMenuOpen(false)}
+            onNavigate={() => {
+              collapseGroups();
+              setMenuOpen(false);
+            }}
           />
         </SheetContent>
       </Sheet>
