@@ -56,15 +56,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
-  parseExpandedState,
-  serializeExpandedState,
   isExpanded,
   toggleExpanded,
-  expandGroups,
-  groupIdsForPath,
+  setExpanded as setGroupExpanded,
   flattenTos,
   type ExpandedState,
-  type NavNode as NavNodeShape,
 } from "@/lib/sidebar-nav";
 
 import appCss from "../styles.css?url";
@@ -173,7 +169,7 @@ function RootShell({ children }: { children: React.ReactNode }) {
 type IconComp = React.ComponentType<{ className?: string }>;
 
 // Modelo de navegação em árvore: itens (uma rota) e grupos (categorias e
-// subcategorias). Compatível estruturalmente com NavNodeShape (lib pura).
+// subcategorias). Compatível estruturalmente com NavNode (lib pura).
 type NavItemNode = { kind: "item"; to: string; icon: IconComp; label: string };
 type NavGroupNode = { kind: "group"; id: string; label: string; children: NavTreeNode[] };
 type NavTreeNode = NavItemNode | NavGroupNode;
@@ -204,7 +200,8 @@ function NavItem({
   );
 }
 
-// Cabeçalho clicável de uma categoria/subcategoria, com chevron de estado.
+// Cabeçalho de uma categoria/subcategoria, com chevron de estado. O clique
+// alterna (necessário em telas de toque, onde não existe hover).
 function NavGroupHeader({
   label,
   expanded,
@@ -237,12 +234,14 @@ function NavNodes({
   depth,
   expanded,
   onToggle,
+  onHoverChange,
   onNavigate,
 }: {
   nodes: NavTreeNode[];
   depth: number;
   expanded: ExpandedState;
   onToggle: (id: string) => void;
+  onHoverChange: (id: string, hovering: boolean) => void;
   onNavigate?: () => void;
 }) {
   return (
@@ -258,7 +257,15 @@ function NavNodes({
             onNavigate={onNavigate}
           />
         ) : (
-          <div key={node.id} className="flex flex-col gap-1">
+          // A área de hover engloba o cabeçalho e a lista de itens: enquanto o
+          // ponteiro estiver em qualquer um deles a categoria fica aberta, e ela
+          // recolhe quando ele sai da área inteira.
+          <div
+            key={node.id}
+            className="flex flex-col gap-1"
+            onMouseEnter={() => onHoverChange(node.id, true)}
+            onMouseLeave={() => onHoverChange(node.id, false)}
+          >
             <NavGroupHeader
               label={node.label}
               expanded={isExpanded(expanded, node.id)}
@@ -271,6 +278,7 @@ function NavNodes({
                 depth={depth + 1}
                 expanded={expanded}
                 onToggle={onToggle}
+                onHoverChange={onHoverChange}
                 onNavigate={onNavigate}
               />
             )}
@@ -287,11 +295,13 @@ function SidebarContent({
   tree,
   expanded,
   onToggle,
+  onHoverChange,
   onNavigate,
 }: {
   tree: NavTreeNode[];
   expanded: ExpandedState;
   onToggle: (id: string) => void;
+  onHoverChange: (id: string, hovering: boolean) => void;
   onNavigate?: () => void;
 }) {
   return (
@@ -314,6 +324,7 @@ function SidebarContent({
           depth={0}
           expanded={expanded}
           onToggle={onToggle}
+          onHoverChange={onHoverChange}
           onNavigate={onNavigate}
         />
       </nav>
@@ -360,7 +371,6 @@ function AuthGate() {
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
   const { noSchoolAccess } = useSchool();
-  const { session } = useAuth();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -590,36 +600,12 @@ function AppShell() {
 
   const firstAllowed = useMemo(() => flattenTos(tree)[0] ?? null, [tree]);
 
-  // Estado colapsável persistido por usuário (localStorage). Carregado no
-  // cliente para evitar mismatch de hidratação; até lá, tudo aparece expandido.
-  const storageKey = session?.user?.id ? `sidebar-nav:${session.user.id}` : null;
-  useEffect(() => {
-    if (!storageKey || typeof window === "undefined") return;
-    setExpanded(parseExpandedState(window.localStorage.getItem(storageKey)));
-  }, [storageKey]);
-
-  const toggleGroup = (id: string) =>
-    setExpanded((prev) => {
-      const next = toggleExpanded(prev, id);
-      if (storageKey && typeof window !== "undefined") {
-        window.localStorage.setItem(storageKey, serializeExpandedState(next));
-      }
-      return next;
-    });
-
-  // Auto-expande a categoria/subcategoria da rota atual (mesmo se recolhida),
-  // para o usuário sempre ver onde está na hierarquia. Persiste o resultado.
-  useEffect(() => {
-    const ids = groupIdsForPath(tree as unknown as NavNodeShape[], pathname);
-    if (ids.length === 0) return;
-    setExpanded((prev) => {
-      const next = expandGroups(prev, ids);
-      if (next !== prev && storageKey && typeof window !== "undefined") {
-        window.localStorage.setItem(storageKey, serializeExpandedState(next));
-      }
-      return next;
-    });
-  }, [pathname, tree, storageKey]);
+  // Estado colapsável só em memória: as categorias sempre começam recolhidas e
+  // seguem o ponteiro (abre ao entrar, recolhe ao sair). O clique alterna, para
+  // telas de toque, onde não há hover.
+  const toggleGroup = (id: string) => setExpanded((prev) => toggleExpanded(prev, id));
+  const hoverGroup = (id: string, hovering: boolean) =>
+    setExpanded((prev) => setGroupExpanded(prev, id, hovering));
 
   // Preserva a rota exata em recarregamentos (F5) e deep links. Só redireciona
   // quando o usuário cai na raiz ("/") SEM acesso ao Dashboard, encaminhando
@@ -638,7 +624,12 @@ function AppShell() {
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden lg:flex w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar p-4">
-        <SidebarContent tree={tree} expanded={expanded} onToggle={toggleGroup} />
+        <SidebarContent
+          tree={tree}
+          expanded={expanded}
+          onToggle={toggleGroup}
+          onHoverChange={hoverGroup}
+        />
       </aside>
 
       {/* Drawer de navegação para tablet/mobile. */}
@@ -652,6 +643,7 @@ function AppShell() {
             tree={tree}
             expanded={expanded}
             onToggle={toggleGroup}
+            onHoverChange={hoverGroup}
             onNavigate={() => setMenuOpen(false)}
           />
         </SheetContent>
