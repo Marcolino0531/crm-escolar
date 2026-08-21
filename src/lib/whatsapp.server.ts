@@ -270,7 +270,9 @@ export interface BillingMultiplaVars {
   aluno: string;
   mesesAnteriores: string; // ex.: "Agosto e Setembro"
   valorTotalAtualizado: string; // já formatado (ex.: "R$ 720,00")
-  linhaDigitavel: string; // linha digitável APENAS do boleto do mês vigente
+  // Linha digitável do boleto do mês vigente; com irmãos agrupados, a linha de
+  // cada boleto identificada por aluno e valor (ver comporLinhasDigitaveis).
+  linhaDigitavel: string;
 }
 
 // Texto fiel do template de cobrança MÚLTIPLA (mês vigente + meses anteriores).

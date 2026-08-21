@@ -16,6 +16,7 @@
 import { addDaysYMD } from "./billing-schedule";
 import {
   chaveTelefone,
+  comporLinhasDigitaveis,
   juntarNomes,
   parcelaQuitada,
   type ParcelaCobranca,
@@ -82,6 +83,8 @@ export interface GrupoLembrete {
   // parcela ainda não venceu (nem no D-0, em que o pagador tem o dia inteiro).
   valorTotal: number;
   parcelas: ParcelaLembrete[];
+  // Variável {{5}} do template: a linha digitável do boleto quando é um só, ou a
+  // linha de CADA boleto (aluno + valor) quando o lembrete agrupa irmãos.
   linhaDigitavel: string;
 }
 
@@ -119,7 +122,13 @@ export function agruparLembretesPorResponsavel(
       vencimento: doPrazo[0].vencimento,
       valorTotal: Math.round(doPrazo.reduce((s, p) => s + p.saldo, 0) * 100) / 100,
       parcelas: doPrazo,
-      linhaDigitavel: doPrazo.map((p) => p.linhaDigitavel).find((l) => l && l.trim()) ?? "",
+      linhaDigitavel: comporLinhasDigitaveis(
+        doPrazo.map((p) => ({
+          alunoNome: p.alunoNome,
+          valor: p.saldo,
+          linhaDigitavel: p.linhaDigitavel ?? "",
+        })),
+      ),
     });
   }
   return grupos.sort((a, b) => a.chave.localeCompare(b.chave));

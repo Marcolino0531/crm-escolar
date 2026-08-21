@@ -146,6 +146,66 @@ describe("um lembrete por responsável por dia", () => {
     expect(grupos[0].linhaDigitavel).not.toBe("");
   });
 
+  it("com um único boleto, envia só a linha digitável dele (formato atual)", () => {
+    const grupos = agruparLembretesPorResponsavel([parcela({ saldo: 180 })], "2026-08-17");
+    expect(grupos[0].linhaDigitavel).toBe(parcela().linhaDigitavel);
+  });
+
+  // Caso real da Taciana: dois filhos, R$ 180,00 + R$ 100,00 = R$ 280,00. Antes a
+  // mensagem levava o total certo mas só a linha digitável do boleto de 180.
+  it("com irmãos agrupados, envia a linha digitável de CADA boleto com aluno e valor", () => {
+    const heitor = parcela({
+      alunoId: "486",
+      alunoNome: "Heitor Cordeiro Borges",
+      saldo: 180,
+      linhaDigitavel: "11111.11111 11111.111111 11111.111111 1 11110000018000",
+    });
+    const vicente = parcela({
+      alunoId: "487",
+      alunoNome: "Vicente Cordeiro Borges",
+      saldo: 100,
+      linhaDigitavel: "22222.22222 22222.222222 22222.222222 2 22220000010000",
+    });
+
+    const grupos = agruparLembretesPorResponsavel([heitor, vicente], "2026-08-17");
+    expect(grupos).toHaveLength(1);
+    const { linhaDigitavel, valorTotal } = grupos[0];
+
+    expect(linhaDigitavel).toContain(heitor.linhaDigitavel);
+    expect(linhaDigitavel).toContain(vicente.linhaDigitavel);
+    expect(linhaDigitavel).toBe(
+      `Heitor Cordeiro Borges: R$ 180,00, linha digitável ${heitor.linhaDigitavel}; ` +
+        `Vicente Cordeiro Borges: R$ 100,00, linha digitável ${vicente.linhaDigitavel}`,
+    );
+
+    // A soma dos valores apresentados ao lado das linhas bate com o total.
+    const valores = [...linhaDigitavel.matchAll(/R\$ ([\d.]+),(\d{2})/g)].map(
+      (m) => Number(m[1].replace(/\./g, "")) + Number(m[2]) / 100,
+    );
+    expect(valores).toEqual([180, 100]);
+    expect(valores.reduce((s, v) => s + v, 0)).toBe(valorTotal);
+  });
+
+  it("mantém a ordem determinística e não deixa nenhuma linha ser sobrescrita", () => {
+    const parcelas = ["A", "B", "C"].map((nome, i) =>
+      parcela({
+        alunoId: `60${i}`,
+        alunoNome: nome,
+        saldo: 100 + i,
+        linhaDigitavel: `linha-${nome}`,
+      }),
+    );
+    const [grupo] = agruparLembretesPorResponsavel(parcelas, "2026-08-17");
+    expect(grupo.linhaDigitavel.indexOf("linha-A")).toBeLessThan(
+      grupo.linhaDigitavel.indexOf("linha-B"),
+    );
+    expect(grupo.linhaDigitavel.indexOf("linha-B")).toBeLessThan(
+      grupo.linhaDigitavel.indexOf("linha-C"),
+    );
+    // Parâmetro de template da Meta não aceita quebra de linha nem espaço duplo.
+    expect(grupo.linhaDigitavel).not.toMatch(/[\n\t]|\s{2}/);
+  });
+
   it("é idempotente: telefone já lembrado hoje não entra de novo", () => {
     const grupos = agruparLembretesPorResponsavel([parcela()], "2026-08-17");
     const enviadosHoje = ["+55 31 98823-0304"];
