@@ -4,6 +4,7 @@ import {
   addDiasUteis,
   agruparPorResponsavel,
   chaveTelefone,
+  comporLinhasDigitaveis,
   jaCobradoHoje,
   juntarNomes,
   parcelaQuitada,
@@ -29,6 +30,49 @@ function parcela(over: Partial<ParcelaCobranca> = {}): ParcelaCobranca {
     ...over,
   };
 }
+
+describe("linha digitável de cada boleto da mensagem", () => {
+  const heitor = {
+    alunoNome: "Heitor Cordeiro Borges",
+    valor: 180,
+    linhaDigitavel: "11111.11111 11111.111111 11111.111111 1 11110000018000",
+  };
+  const vicente = {
+    alunoNome: "Vicente Cordeiro Borges",
+    valor: 100,
+    linhaDigitavel: "22222.22222 22222.222222 22222.222222 2 22220000010000",
+  };
+
+  it("um boleto: devolve só a linha digitável, sem rótulo (formato atual)", () => {
+    expect(comporLinhasDigitaveis([heitor])).toBe(heitor.linhaDigitavel);
+  });
+
+  it("vários boletos: cada linha vem com o aluno e o valor do boleto certo", () => {
+    expect(comporLinhasDigitaveis([heitor, vicente])).toBe(
+      `Heitor Cordeiro Borges: R$ 180,00, linha digitável ${heitor.linhaDigitavel}; ` +
+        `Vicente Cordeiro Borges: R$ 100,00, linha digitável ${vicente.linhaDigitavel}`,
+    );
+  });
+
+  it("ignora boletos sem linha digitável, mantendo as demais", () => {
+    const semLinha = { alunoNome: "Sem Boleto", valor: 50, linhaDigitavel: "" };
+    expect(comporLinhasDigitaveis([semLinha, heitor])).toBe(heitor.linhaDigitavel);
+    expect(comporLinhasDigitaveis([semLinha])).toBe("");
+    expect(comporLinhasDigitaveis([])).toBe("");
+  });
+
+  it("formata valores com milhar e mantém tudo em uma única linha", () => {
+    const composto = comporLinhasDigitaveis([
+      { alunoNome: "Lara", valor: 1936.7, linhaDigitavel: "linha-lara" },
+      { alunoNome: " Pedro \n", valor: 408.98, linhaDigitavel: "linha-pedro" },
+    ]);
+    expect(composto).toBe(
+      "Lara: R$ 1.936,70, linha digitável linha-lara; " +
+        "Pedro: R$ 408,98, linha digitável linha-pedro",
+    );
+    expect(composto).not.toMatch(/[\n\t]/);
+  });
+});
 
 describe("tolerância de 2 dias úteis", () => {
   it("conta apenas dias úteis a partir do vencimento", () => {

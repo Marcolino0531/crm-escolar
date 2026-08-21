@@ -50,14 +50,16 @@ import {
 } from "@/lib/whatsapp.server";
 import { findConversaBySuffix, registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 import { addDaysYMD, isDiaUtil } from "@/lib/billing-schedule";
-import { parcelasVencidas } from "@/lib/billing-debt";
+import { parcelasVencidas, valorAtualizadoParcela } from "@/lib/billing-debt";
 import {
   agruparPorResponsavel,
+  comporLinhasDigitaveis,
   jaCobradoHoje,
   parcelasCobraveis,
   resolverContatoResponsavel,
   vencimentosEntrandoEmCobranca,
   type GrupoCobranca,
+  type ItemBoletoLinha,
   type ParcelaCobranca,
 } from "@/lib/billing-recurrence";
 import {
@@ -317,7 +319,7 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   // Em lotes concorrentes para caber no tempo de execução do cron.
   const cobraveis: ParcelaCobranca[] = [];
   const vencidasPorAluno = new Map<string, BoletoAberto[]>();
-  const linhaPorAluno = new Map<string, string>();
+  const linhaPorAluno = new Map<string, ItemBoletoLinha>();
   for (let i = 0; i < candidatos.length; i += CONCORRENCIA_SPONTE) {
     const lote = candidatos.slice(i, i + CONCORRENCIA_SPONTE);
     // Dívida E responsável financeiro reconsultados juntos: o candidato vindo do
@@ -378,7 +380,13 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
       }),
     );
     lote.forEach((c, idx) => {
-      if (linhas[idx]) linhaPorAluno.set(c.alunoId, linhas[idx]);
+      const boleto = vencidasPorAluno.get(c.alunoId)?.at(-1);
+      if (!linhas[idx] || !boleto) return;
+      linhaPorAluno.set(c.alunoId, {
+        alunoNome: c.alunoNome,
+        valor: valorAtualizadoParcela(boleto.saldo, boleto.vencimento, hoje),
+        linhaDigitavel: linhas[idx],
+      });
     });
   }
 
@@ -616,13 +624,17 @@ async function dispararGrupo(
   cfg: NonNullable<ReturnType<typeof getWhatsAppConfig>>,
   grupo: GrupoCobranca,
   hoje: string,
-  linhaPorAluno: Map<string, string>,
+  linhaPorAluno: Map<string, ItemBoletoLinha>,
 ): Promise<{ enviado: boolean }> {
+  // Um boleto por aluno do grupo: com irmãos, a mensagem leva a linha digitável
+  // de CADA um (identificada por aluno e valor), não só a do primeiro.
   // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
   // mensagem direciona o responsável à secretaria.
+  const itens = grupo.alunoIds
+    .map((id) => linhaPorAluno.get(id))
+    .filter((i): i is ItemBoletoLinha => Boolean(i));
   const linhaDigitavel =
-    grupo.alunoIds.map((id) => linhaPorAluno.get(id)).find((l) => l && l.trim()) ??
-    "Entre em contato com a secretaria da escola";
+    comporLinhasDigitaveis(itens) || "Entre em contato com a secretaria da escola";
 
   let templateName: string;
   let messageBody: string;

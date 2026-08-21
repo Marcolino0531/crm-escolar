@@ -14,6 +14,7 @@
 
 import { addDaysYMD, isDiaUtil } from "./billing-schedule";
 import { calcularTotalVencido, type ParcelaAberta } from "./billing-debt";
+import { formatBRLInput } from "./currency";
 
 // Dias úteis de tolerância entre o vencimento e a primeira cobrança.
 export const TOLERANCIA_DIAS_UTEIS = 2;
@@ -137,6 +138,40 @@ export function resolverContatoResponsavel(
     origem: "sponte",
     trocou,
   };
+}
+
+// Um boleto concreto da mensagem: o aluno, o valor daquele boleto e a linha
+// digitável dele. É a unidade da variável {{5}} dos templates.
+export interface ItemBoletoLinha {
+  alunoNome: string;
+  valor: number;
+  linhaDigitavel: string;
+}
+
+// Variável {{5}} dos templates de cobrança/lembrete.
+//
+// Com UM boleto, devolve só a linha digitável (formato atual, inalterado). Com
+// vários boletos na mesma mensagem (irmãos, ou meses diferentes do mesmo
+// aluno), devolve a linha de CADA boleto identificada por aluno e valor, para o
+// responsável saber qual código paga o quê — antes só a primeira linha ia, e as
+// demais eram silenciosamente descartadas mesmo entrando na soma do valor.
+//
+// A lista fica em uma única linha: a Cloud API rejeita parâmetro de template com
+// quebra de linha, tabulação ou espaços consecutivos.
+export function comporLinhasDigitaveis(itens: ItemBoletoLinha[]): string {
+  const validos = itens.filter((i) => i.linhaDigitavel && i.linhaDigitavel.trim());
+  if (validos.length === 0) return "";
+  if (validos.length === 1) return umaLinha(validos[0].linhaDigitavel);
+  return validos
+    .map(
+      (i) =>
+        `${umaLinha(i.alunoNome)}: R$ ${formatBRLInput(i.valor)}, linha digitável ${umaLinha(i.linhaDigitavel)}`,
+    )
+    .join("; ");
+}
+
+function umaLinha(texto: string): string {
+  return (texto ?? "").replace(/\s+/g, " ").trim();
 }
 
 // Chave de agrupamento do responsável: últimos 8 dígitos do telefone (imune a
