@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -139,16 +140,23 @@ function MainDashboard() {
     queryKey: ["dash-saldo", selected, schoolFilterIds],
     staleTime: 60_000,
     queryFn: async () => {
-      let txQuery = supabase.from("transactions").select("id, type, amount, parent_transaction_id");
-      if (schoolFilterIds) txQuery = txQuery.in("school_id", schoolFilterIds);
-      const { data: txs, error } = await txQuery;
-      if (error) throw error;
-      const rows = (txs ?? []) as {
+      type SaldoRow = {
         id: string;
         type: string;
         amount: number;
         parent_transaction_id: string | null;
-      }[];
+      };
+      // Saldo consolidado usa todas as transações da unidade; sem paginação o
+      // PostgREST devolveria apenas as primeiras 1000 linhas e o saldo sairia menor.
+      const rows = await fetchAllRows<SaldoRow>((from, to) => {
+        let q = supabase
+          .from("transactions")
+          .select("id, type, amount, parent_transaction_id")
+          .order("id", { ascending: true })
+          .range(from, to);
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q as unknown as PromiseLike<PagedRows<SaldoRow>>;
+      });
       const splitParents = new Set(
         rows.map((t) => t.parent_transaction_id).filter((v): v is string => !!v),
       );
@@ -208,17 +216,24 @@ function MainDashboard() {
     enabled: integracaoDisponivel && retroativoConfigurado,
     staleTime: 60_000,
     queryFn: async () => {
-      let q = supabase
-        .from("transactions")
-        .select("amount, description")
-        .eq("type", "entrada")
-        .is("parent_transaction_id", null)
-        .gte("date", anoJunhoYMD)
-        .lte("date", hojeYMD);
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data: rows, error } = await q;
-      if (error) throw error;
-      return (rows ?? []).reduce((sum, t) => {
+      const rows = await fetchAllRows<{ amount: number; description: string | null }>(
+        (from, to) => {
+          let q = supabase
+            .from("transactions")
+            .select("amount, description")
+            .eq("type", "entrada")
+            .is("parent_transaction_id", null)
+            .gte("date", anoJunhoYMD)
+            .lte("date", hojeYMD)
+            .order("id", { ascending: true })
+            .range(from, to);
+          if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+          return q as unknown as PromiseLike<
+            PagedRows<{ amount: number; description: string | null }>
+          >;
+        },
+      );
+      return rows.reduce((sum, t) => {
         const desc = String(t.description ?? "")
           .trim()
           .toUpperCase();

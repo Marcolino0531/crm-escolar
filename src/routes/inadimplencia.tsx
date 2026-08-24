@@ -27,6 +27,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { displayPhoneBR, toWhatsAppNumber } from "@/lib/phone";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
 import {
   fetchSponteInadimplencia,
   fetchSponteInadimplenciaAnual,
@@ -50,6 +51,8 @@ function InadimplenciaGate() {
 // (segmentado por turma); Núcleo Belvedere e Núcleo Vale do Sereno usam
 // credenciais próprias (sem turmas).
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
+
+type ReceitaRow = { amount: number; description: string | null };
 
 function formatarMoeda(valor: number): string {
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -306,19 +309,22 @@ function InadimplenciaPage() {
     enabled: indiceHabilitado && integracaoDisponivel,
     staleTime: 60_000,
     queryFn: async () => {
-      let q = supabase
-        .from("transactions")
-        .select("amount, description")
-        .eq("type", "entrada")
-        .is("parent_transaction_id", null)
-        .gte("date", dataInicio)
-        .lte("date", dataFim);
-      // Obedece ao filtro global de colégio. No consolidado de um usuário
-      // restrito, limita às unidades permitidas (schoolFilterIds).
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data: rows, error: qErr } = await q;
-      if (qErr) throw qErr;
-      return (rows ?? []).reduce((sum, t) => {
+      const rows = await fetchAllRows<ReceitaRow>((from, to) => {
+        let q = supabase
+          .from("transactions")
+          .select("amount, description")
+          .eq("type", "entrada")
+          .is("parent_transaction_id", null)
+          .gte("date", dataInicio)
+          .lte("date", dataFim)
+          .order("id", { ascending: true })
+          .range(from, to);
+        // Obedece ao filtro global de colégio. No consolidado de um usuário
+        // restrito, limita às unidades permitidas (schoolFilterIds).
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q as unknown as PromiseLike<PagedRows<ReceitaRow>>;
+      });
+      return rows.reduce((sum, t) => {
         const desc = String(t.description ?? "").trim().toUpperCase();
         const amt = Number(t.amount ?? 0);
         if (desc.includes("SALDO DIA")) return sum; // ignora marcadores de saldo
@@ -386,17 +392,20 @@ function InadimplenciaPage() {
     enabled: integracaoDisponivel && retroativoConfigurado,
     staleTime: 60_000,
     queryFn: async () => {
-      let q = supabase
-        .from("transactions")
-        .select("amount, description")
-        .eq("type", "entrada")
-        .is("parent_transaction_id", null)
-        .gte("date", anoJunhoYMD)
-        .lte("date", anoHojeYMD);
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data: rows, error: qErr } = await q;
-      if (qErr) throw qErr;
-      return (rows ?? []).reduce((sum, t) => {
+      const rows = await fetchAllRows<ReceitaRow>((from, to) => {
+        let q = supabase
+          .from("transactions")
+          .select("amount, description")
+          .eq("type", "entrada")
+          .is("parent_transaction_id", null)
+          .gte("date", anoJunhoYMD)
+          .lte("date", anoHojeYMD)
+          .order("id", { ascending: true })
+          .range(from, to);
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q as unknown as PromiseLike<PagedRows<ReceitaRow>>;
+      });
+      return rows.reduce((sum, t) => {
         const desc = String(t.description ?? "").trim().toUpperCase();
         const amt = Number(t.amount ?? 0);
         if (desc.includes("SALDO DIA")) return sum;
