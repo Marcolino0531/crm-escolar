@@ -2,6 +2,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
+import {
+  idsDePaisDesmembrados,
+  transacoesAnteriores,
+  transacoesDoPeriodo,
+} from "@/lib/extrato-lista";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +52,16 @@ function formatBRL(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+type ReconciliationRow = {
+  transaction_id: string;
+  boleto_reconciliation_items: Array<{
+    amount: number;
+    revenue_category_id: string | null;
+    revenue_subcategory_id: string | null;
+    subcategory_label: string;
+  }> | null;
+};
+
 function toLocalISO(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -70,29 +87,45 @@ function Dashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", selected, schoolFilterIds],
     queryFn: async () => {
-      let txQuery = supabase.from("transactions").select("*");
-      if (schoolFilterIds) txQuery = txQuery.in("school_id", schoolFilterIds);
-      const [txRes, ccRes, subCcRes, rcRes, rsRes, recRes] = await Promise.all([
-        txQuery,
+      // O extrato precisa de TODAS as transações da unidade (o saldo do período
+      // vem dos lançamentos anteriores), e o PostgREST corta a resposta em 1000
+      // linhas — daí a paginação por `range`, com ordem estável.
+      const [txs, ccRes, subCcRes, rcRes, rsRes, recs] = await Promise.all([
+        fetchAllRows<Tables<"transactions">>((from, to) => {
+          let q = supabase
+            .from("transactions")
+            .select("*")
+            .order("id", { ascending: true })
+            .range(from, to);
+          if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+          return q as unknown as PromiseLike<PagedRows<Tables<"transactions">>>;
+        }),
         supabase.from("cost_centers").select("*").order("name"),
         supabase.from("sub_cost_centers").select("*").order("name"),
         supabase.from("revenue_categories").select("*").order("name"),
         supabase.from("revenue_subcategories").select("*").order("name"),
-        supabase.from("boleto_reconciliations").select("transaction_id, boleto_reconciliation_items(amount, revenue_category_id, revenue_subcategory_id, subcategory_label)"),
+        fetchAllRows<ReconciliationRow>(
+          (from, to) =>
+            supabase
+              .from("boleto_reconciliations")
+              .select(
+                "transaction_id, boleto_reconciliation_items(amount, revenue_category_id, revenue_subcategory_id, subcategory_label)",
+              )
+              .order("transaction_id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<PagedRows<ReconciliationRow>>,
+        ),
       ]);
-      if (txRes.error) throw txRes.error;
       if (ccRes.error) throw ccRes.error;
       if (subCcRes.error) throw subCcRes.error;
       if (rcRes.error) throw rcRes.error;
       if (rsRes.error) throw rsRes.error;
-      if (recRes.error) throw recRes.error;
       return {
-        transactions: txRes.data ?? [],
+        transactions: txs,
         costCenters: ccRes.data ?? [],
         subCostCenters: subCcRes.data ?? [],
         revenueCats: rcRes.data ?? [],
         revenueSubs: rsRes.data ?? [],
-        reconciliations: recRes.data ?? [],
+        reconciliations: recs,
       };
     },
   });
@@ -143,27 +176,12 @@ function Dashboard() {
   }, [recs]);
 
   // IDs de transações que foram desmembradas em filhas (split) — não devem ser somadas (evita duplicidade).
-  const splitParentIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const t of txs) {
-      const pid = (t as any).parent_transaction_id as string | null | undefined;
-      if (pid) set.add(pid);
-    }
-    return set;
-  }, [txs]);
+  const splitParentIds = useMemo(() => idsDePaisDesmembrados(txs), [txs]);
 
-  // Ordenação do extrato: por Data (cronológica); dentro do dia, Entradas antes
-  // de Saídas; e, dentro de cada grupo, em ordem alfabética pela descrição.
-  const filteredTxs = useMemo(() =>
-    [...txs]
-      .filter(t => t.date >= startDate && t.date <= endDate)
-      .filter(t => !splitParentIds.has(t.id))
-      .sort((a, b) =>
-        a.date.localeCompare(b.date)
-        || (a.type === "entrada" ? 0 : 1) - (b.type === "entrada" ? 0 : 1)
-        || String(a.description ?? "").localeCompare(String(b.description ?? ""), "pt-BR", { sensitivity: "base" })
-        || a.id.localeCompare(b.id)),
-    [txs, startDate, endDate, splitParentIds]);
+  const filteredTxs = useMemo(
+    () => transacoesDoPeriodo(txs, startDate, endDate, splitParentIds),
+    [txs, startDate, endDate, splitParentIds],
+  );
 
   const totalIn = filteredTxs.filter(t => t.type === "entrada").reduce((s, t) => s + Number(t.amount), 0);
   const totalOut = filteredTxs.filter(t => t.type === "saida").reduce((s, t) => s + Number(t.amount), 0);
@@ -174,12 +192,10 @@ function Dashboard() {
   // anteriores ao período filtrado (sem cortar por baselineDate). Apenas quando NÃO
   // existe nenhuma transação anterior é que usamos o Saldo Inicial manual como ponto
   // de partida (cenário do primeiro mês de uso).
-  const priorTxs = useMemo(() =>
-    txs
-      .filter(t => !splitParentIds.has(t.id))
-      .filter(t => t.date < startDate)
-      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
-    [txs, splitParentIds, startDate]);
+  const priorTxs = useMemo(
+    () => transacoesAnteriores(txs, startDate, splitParentIds),
+    [txs, splitParentIds, startDate],
+  );
   const carryFromPriorTxs = useMemo(() =>
     priorTxs.reduce((s, t) => s + (t.type === "entrada" ? Number(t.amount) : -Number(t.amount)), 0),
     [priorTxs]);

@@ -7,10 +7,10 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 const PAGE_SIZE = 1000;
 
-type PagedResult<T> = { data: T[] | null; error: PostgrestError | null };
+export type PagedRows<T> = { data: T[] | null; error: PostgrestError | null };
 
 export async function fetchAllRows<T>(
-  page: (from: number, to: number) => PromiseLike<PagedResult<T>>,
+  page: (from: number, to: number) => PromiseLike<PagedRows<T>>,
 ): Promise<T[]> {
   const rows: T[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
