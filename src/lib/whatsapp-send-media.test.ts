@@ -173,6 +173,24 @@ describe("caminhoMidiaSaida", () => {
     expect(extDoMime("application/zip")).toBe("bin");
     expect(nomePadrao("document", "application/zip")).toBe("documento.bin");
   });
+
+  // A policy de INSERT do bucket `whatsapp-media` só aceita objetos sob
+  // "saida/" (ver supabase/tests/whatsapp_media_insert_rls.sql), então todo
+  // caminho gerado no navegador precisa nascer nesse prefixo.
+  it("mantém todos os mimes sob o prefixo aceito pela policy de storage", () => {
+    const mimes = [
+      "image/jpeg",
+      "image/png",
+      "application/pdf",
+      "audio/ogg",
+      "audio/mpeg",
+      "application/zip",
+      null,
+    ];
+    for (const mime of mimes) {
+      expect(caminhoMidiaSaida("id-1", mime)).toMatch(/^saida\//);
+    }
+  });
 });
 
 describe("estadoJanela24h", () => {
