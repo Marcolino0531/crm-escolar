@@ -4,6 +4,10 @@
 //
 // Regra combinada com o usuário: conta a venda pela DATA DE PAGAMENTO, só de
 // pedido pago, excluindo cancelado.
+//
+// Boa parte dos pedidos pagos por gateway (PagBank, por exemplo) volta da API
+// com `paid_at` nulo; nesses casos a data do pagamento é a de conclusão
+// (`completed_at`), com a criação do pedido como último recurso.
 
 import type { StoreKey } from "./nuvemshop.stores";
 
@@ -14,6 +18,9 @@ export type PedidoVenda = {
   status?: string | null;
   payment_status?: string | null;
   paid_at?: string | null;
+  // A API devolve `completed_at` como objeto ({ date, timezone }) ou string.
+  completed_at?: string | { date?: string | null } | null;
+  created_at?: string | null;
   cancelled_at?: string | null;
   products?: ItemPedido[] | null;
 };
@@ -39,7 +46,7 @@ export type VendaAgregada = {
 // BRT é de 2026, não de 2027 como o UTC diria.
 export function anoBRT(iso: string | null | undefined): number | null {
   if (!iso) return null;
-  const d = new Date(iso);
+  const d = new Date(normalizaData(iso));
   if (Number.isNaN(d.getTime())) return null;
   const ymd = d.toLocaleDateString("en-CA", { timeZone: TZ });
   const ano = Number(ymd.slice(0, 4));
@@ -47,13 +54,27 @@ export function anoBRT(iso: string | null | undefined): number | null {
 }
 
 // Pedido que representa peça efetivamente vendida no ano: pago, não cancelado e
-// com o pagamento dentro do ano pedido. Sem `paid_at` não há como datar a venda,
-// então o pedido fica de fora (é o caso de pendente/abandonado).
+// com o pagamento dentro do ano pedido.
 export function vendaDoAno(pedido: PedidoVenda, ano: number): boolean {
   if ((pedido.payment_status ?? "").toLowerCase() !== "paid") return false;
   if ((pedido.status ?? "").toLowerCase() === "cancelled") return false;
   if (pedido.cancelled_at) return false;
-  return anoBRT(pedido.paid_at) === ano;
+  return anoBRT(dataDaVenda(pedido)) === ano;
+}
+
+// "2026-08-04 19:06:11.000000" (UTC, formato do `completed_at`) não é aceito
+// pelo construtor de Date em todo runtime — vira ISO com sufixo Z.
+function normalizaData(valor: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/.exec(valor.trim());
+  return m ? `${m[1]}T${m[2]}Z` : valor;
+}
+
+// Instante em que a venda foi paga. `paid_at` é a fonte preferida; quando o
+// gateway não preenche, a conclusão do pedido é o momento do pagamento.
+export function dataDaVenda(pedido: PedidoVenda): string | null {
+  const completado =
+    typeof pedido.completed_at === "string" ? pedido.completed_at : pedido.completed_at?.date;
+  return pedido.paid_at || completado || pedido.created_at || null;
 }
 
 function quantidade(item: ItemPedido): number {
