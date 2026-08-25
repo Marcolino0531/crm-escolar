@@ -122,6 +122,8 @@ type Matricula = {
   frequencia_id: string | null;
   turma_id: string | null;
   dias_semana: number[] | null;
+  // Data da matrícula NA MODALIDADE (YYYY-MM-DD), editável na tela.
+  data_matricula: string | null;
 };
 
 // Turma da modalidade = HORÁRIO da aula ("Fundamental 1 e 2", 18h30–19h10).
@@ -1952,7 +1954,9 @@ function AlunosDaModalidade({
     queryFn: async (): Promise<Matricula[]> => {
       const { data, error } = await supabase
         .from("esportes_matriculas" as never)
-        .select("id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana")
+        .select(
+          "id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana, data_matricula",
+        )
         .eq("modalidade_id", modalidade.id)
         .order("aluno_nome", { ascending: true });
       if (error) throw new Error(error.message);
@@ -1989,6 +1993,9 @@ function AlunosDaModalidade({
           turma: aluno.turma ?? "",
           turma_id: turmaNova || null,
           dias_semana: normalizarDias(diasNovos),
+          // Dia de hoje em BRT: o default do banco (`current_date`) roda em UTC
+          // e viraria o dia seguinte num cadastro feito à noite.
+          data_matricula: hojeYMD(),
           created_by: session?.user?.id ?? null,
           created_by_nome: meta?.full_name || session?.user?.email || "",
         } as never,
@@ -2027,14 +2034,21 @@ function AlunosDaModalidade({
       id,
       turmaId,
       dias,
+      dataMatricula,
     }: {
       id: string;
       turmaId?: string | null;
       dias?: number[];
+      dataMatricula?: string;
     }) => {
-      const patch: { turma_id?: string | null; dias_semana?: number[] } = {};
+      const patch: {
+        turma_id?: string | null;
+        dias_semana?: number[];
+        data_matricula?: string;
+      } = {};
       if (turmaId !== undefined) patch.turma_id = turmaId || null;
       if (dias !== undefined) patch.dias_semana = normalizarDias(dias);
+      if (dataMatricula !== undefined) patch.data_matricula = dataMatricula;
       const { error } = await supabase
         .from("esportes_matriculas" as never)
         .update(patch as never)
@@ -2265,7 +2279,7 @@ function AlunosDaModalidade({
               <TableHeader>
                 <TableRow>
                   <TableHead>Aluno</TableHead>
-                  <TableHead>AlunoID</TableHead>
+                  <TableHead className="w-44">Data de Matrícula</TableHead>
                   <TableHead className="w-64">Turma (horário)</TableHead>
                   <TableHead className="w-72">Dias</TableHead>
                   {podeEditar && <TableHead className="w-10" />}
@@ -2276,7 +2290,24 @@ function AlunosDaModalidade({
                   return (
                     <TableRow key={m.id}>
                       <TableCell className="text-sm font-medium">{m.aluno_nome || "—"}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{m.aluno_id}</TableCell>
+                      <TableCell>
+                        {podeEditar ? (
+                          <Input
+                            type="date"
+                            className="h-9 w-36"
+                            value={m.data_matricula ?? ""}
+                            disabled={atualizarMatricula.isPending}
+                            onChange={(e) =>
+                              e.target.value &&
+                              atualizarMatricula.mutate({ id: m.id, dataMatricula: e.target.value })
+                            }
+                          />
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            {formatData(m.data_matricula)}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {podeEditar && turmas.length > 0 ? (
                           <Select
