@@ -23,7 +23,8 @@ import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
-import { STORES, notificaEstoqueBaixo, type StoreKey } from "@/lib/nuvemshop.stores";
+import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
+import { pendenteDePedido } from "@/lib/uniformes-pedido";
 import {
   mondayOf,
   addDays,
@@ -89,6 +90,7 @@ type LowStockVariant = {
   ns_product_id: string;
   stock: number;
   min_stock: number;
+  order_placed_at: string | null;
 };
 
 type AvailableReceivable = {
@@ -314,7 +316,7 @@ export function NotificationsBell() {
       const [vRes, pRes] = await Promise.all([
         supabase
           .from("uniform_variants" as any)
-          .select("id, store_key, ns_product_id, stock, min_stock")
+          .select("id, store_key, ns_product_id, stock, min_stock, order_placed_at")
           .order("stock", { ascending: true })
           .limit(1000),
         supabase.from("uniform_products" as any).select("store_key, ns_product_id, name"),
@@ -328,15 +330,17 @@ export function NotificationsBell() {
       }[]) {
         nameByKey.set(`${p.store_key}:${p.ns_product_id}`, p.name ?? "");
       }
-      // Só as peças que ainda são repostas: fora ficam as de algodão (sob
-      // encomenda), o uniforme antigo do CEC/CEC Baby (sem "/ Azul") e o Vale
-      // do Sereno, em descontinuação.
+      // Só as peças que ainda são repostas e cujo pedido à fábrica ainda não
+      // foi marcado: fora ficam as de algodão (sob encomenda), o uniforme
+      // antigo do CEC/CEC Baby (sem "/ Azul") e o Vale do Sereno, em
+      // descontinuação.
       return ((vRes.data ?? []) as unknown as LowStockVariant[]).filter((v) =>
-        notificaEstoqueBaixo({
+        pendenteDePedido({
           storeKey: v.store_key,
           produto: nameByKey.get(`${v.store_key}:${v.ns_product_id}`),
           stock: v.stock,
           minStock: v.min_stock,
+          orderPlacedAt: v.order_placed_at,
         }),
       );
     },

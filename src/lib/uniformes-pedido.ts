@@ -5,7 +5,7 @@
 // Enquanto o saldo continuar abaixo do mínimo a marcação permanece, e depois de
 // DIAS_PEDIDO_EM_ATRASO dias ela passa a contar como pedido não atendido.
 
-import { abaixoDoEstoqueMinimo } from "./nuvemshop.stores";
+import { abaixoDoEstoqueMinimo, notificaEstoqueBaixo, type StoreKey } from "./nuvemshop.stores";
 
 export const DIAS_PEDIDO_EM_ATRASO = 30;
 
@@ -26,6 +26,20 @@ export function diasDesdePedido(orderPlacedAt: string | null, agora: Date): numb
   const inicio = new Date(orderPlacedAt).getTime();
   if (Number.isNaN(inicio)) return null;
   return Math.floor((agora.getTime() - inicio) / 86_400_000);
+}
+
+// Peça que ainda cobra providência no alerta do sininho: está em estoque baixo
+// e o pedido à fábrica ainda não foi marcado. O alerta da loja só desaparece
+// quando nenhuma peça reposta continua pendente.
+export function pendenteDePedido(variacao: {
+  storeKey: StoreKey;
+  produto: string | null | undefined;
+  stock: number;
+  minStock: number;
+  orderPlacedAt: string | null;
+}): boolean {
+  if (variacao.orderPlacedAt) return false;
+  return notificaEstoqueBaixo(variacao);
 }
 
 // Pedido marcado há muito tempo e peça ainda em falta: a fábrica não atendeu.
