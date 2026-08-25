@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -12,6 +12,8 @@ import {
   ArrowDown,
   ChevronsUpDown,
   FileSpreadsheet,
+  CheckCircle2,
+  Clock,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import {
@@ -27,6 +29,12 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { compareSize } from "@/lib/uniformes.sizes";
+import {
+  DIAS_PEDIDO_EM_ATRASO,
+  diasDesdePedido,
+  pedidoEmAtraso,
+  pedidoFoiAtendido,
+} from "@/lib/uniformes-pedido";
 import { VendasDoAno } from "@/components/uniformes/VendasDoAno";
 
 export const Route = createFileRoute("/uniformes")({
@@ -60,6 +68,8 @@ type UniformVariant = {
   stock: number;
   min_stock: number;
   price: number | null;
+  // Momento em que a peça foi marcada como "Pedido realizado" (null = sem pedido).
+  order_placed_at: string | null;
 };
 
 type SyncLog = {
@@ -117,7 +127,9 @@ function UniformesPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("uniform_variants" as any)
-        .select("id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock, price")
+        .select(
+          "id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock, price, order_placed_at",
+        )
         .order("size", { ascending: true });
       if (error) return [] as UniformVariant[];
       return (data ?? []) as unknown as UniformVariant[];
@@ -178,8 +190,7 @@ function UniformesPage() {
     return enriched.filter(
       (v) =>
         v.produto.toLowerCase().includes(termo) ||
-        v.size.toLowerCase().includes(termo) ||
-        (v.sku ?? "").toLowerCase().includes(termo),
+        v.size.toLowerCase().includes(termo),
     );
   }, [unitFiltered, busca, productName]);
 
@@ -307,6 +318,92 @@ function UniformesPage() {
     }
   }
 
+  // ─── "Pedido realizado" ────────────────────────────────────────────────────
+  // A marcação vive em uniform_variants.order_placed_at e o histórico (com a
+  // data de cada pedido) em uniform_order_marks.
+  const [salvandoPedido, setSalvandoPedido] = useState<string | null>(null);
+
+  async function encerrarPedidoDB(v: UniformVariant, reason: "reabastecido" | "manual") {
+    const { error } = await supabase
+      .from("uniform_variants" as any)
+      .update({ order_placed_at: null, order_placed_by: null } as any)
+      .eq("id", v.id);
+    if (error) throw error;
+    await supabase
+      .from("uniform_order_marks" as any)
+      .update({ cleared_at: new Date().toISOString(), cleared_reason: reason } as any)
+      .eq("store_key", v.store_key)
+      .eq("ns_variant_id", v.ns_variant_id)
+      .is("cleared_at", null);
+  }
+
+  async function marcarPedidoDB(v: UniformVariant) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const agora = new Date().toISOString();
+    const { error } = await supabase
+      .from("uniform_variants" as any)
+      .update({ order_placed_at: agora, order_placed_by: user?.id ?? null } as any)
+      .eq("id", v.id);
+    if (error) throw error;
+    await supabase.from("uniform_order_marks" as any).insert({
+      store_key: v.store_key,
+      ns_variant_id: v.ns_variant_id,
+      marked_at: agora,
+      marked_by: user?.id ?? null,
+      stock_at_mark: v.stock,
+    } as any);
+  }
+
+  async function togglePedido(v: UniformVariant) {
+    if (!podeEditar) return;
+    setSalvandoPedido(v.id);
+    try {
+      if (v.order_placed_at) await encerrarPedidoDB(v, "manual");
+      else await marcarPedidoDB(v);
+      await refetchVariants();
+    } catch {
+      toast.error("Não foi possível salvar o pedido realizado.");
+    } finally {
+      setSalvandoPedido(null);
+    }
+  }
+
+  // Pedido atendido (saldo voltou ao mínimo) encerra o ciclo sozinho. A
+  // sincronização com a Nuvemshop já faz isso no servidor; aqui cobre o caso de
+  // o saldo ter subido por outro caminho antes da próxima sincronização.
+  const pedidosAtendidos = useMemo(
+    () =>
+      variants.filter((v) =>
+        pedidoFoiAtendido({
+          orderPlacedAt: v.order_placed_at,
+          stock: v.stock,
+          minStock: v.min_stock,
+        }),
+      ),
+    [variants],
+  );
+
+  useEffect(() => {
+    if (!podeEditar || pedidosAtendidos.length === 0) return;
+    let cancelado = false;
+    void (async () => {
+      for (const v of pedidosAtendidos) {
+        try {
+          await encerrarPedidoDB(v, "reabastecido");
+        } catch {
+          return;
+        }
+      }
+      if (!cancelado) await refetchVariants();
+    })();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidosAtendidos, podeEditar]);
+
   const isLoading = loadingProducts || loadingVariants;
 
   return (
@@ -409,7 +506,7 @@ function UniformesPage() {
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar por peça, tamanho ou SKU..."
+              placeholder="Buscar por peça ou tamanho..."
               className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -453,9 +550,9 @@ function UniformesPage() {
                         onClick={() => toggleSort("size")}
                       />
                     </th>
-                    <th className="px-4 py-3 font-medium">SKU</th>
                     <th className="px-4 py-3 text-right font-medium">Saldo</th>
                     <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Pedido realizado</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -463,16 +560,25 @@ function UniformesPage() {
                     const abaixoDoMinimo = abaixoDoEstoqueMinimo(v.stock, v.min_stock);
                     const motivo = motivoForaDaReposicao(v.store_key, v.produto);
                     const critico = abaixoDoMinimo && motivo === null;
+                    const pedido = v.order_placed_at;
+                    const emAtraso = pedidoEmAtraso(
+                      {
+                        orderPlacedAt: v.order_placed_at,
+                        stock: v.stock,
+                        minStock: v.min_stock,
+                      },
+                      new Date(),
+                    );
+                    const dias = diasDesdePedido(v.order_placed_at, new Date());
                     return (
                       <tr
                         key={v.id}
-                        className="border-b border-border last:border-b-0 hover:bg-muted/30"
+                        className={`border-b border-border last:border-b-0 ${
+                          pedido ? "bg-amber-50/70 hover:bg-amber-100/70" : "hover:bg-muted/30"
+                        }`}
                       >
                         <td className="px-4 py-3 font-medium text-foreground">{v.produto}</td>
                         <td className="px-4 py-3 text-foreground">{v.size || "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                          {v.sku || "—"}
-                        </td>
                         <td className="px-4 py-3 text-right font-semibold tabular-nums text-foreground">
                           {v.stock}
                         </td>
@@ -491,6 +597,38 @@ function UniformesPage() {
                               OK
                             </span>
                           )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={!podeEditar || salvandoPedido === v.id}
+                              onClick={() => togglePedido(v)}
+                              aria-pressed={Boolean(pedido)}
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                                pedido
+                                  ? "border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200"
+                                  : "border-border bg-background text-muted-foreground hover:bg-muted"
+                              }`}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {pedido ? "Pedido realizado" : "Marcar pedido"}
+                            </button>
+                            {pedido && (
+                              <span className="text-xs text-muted-foreground">
+                                {formatDateBR(pedido)}
+                              </span>
+                            )}
+                            {emAtraso && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full border border-orange-300 bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700"
+                                title={`Pedido feito há ${dias} dias e a peça continua em falta (limite de ${DIAS_PEDIDO_EM_ATRASO} dias).`}
+                              >
+                                <Clock className="h-3 w-3" />
+                                Não atendido
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

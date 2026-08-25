@@ -16,6 +16,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
+import { pedidoFoiAtendido } from "@/lib/uniformes-pedido";
 import type { PedidoVenda } from "@/lib/uniformes.vendas";
 
 const API_BASE = "https://api.nuvemshop.com.br/v1";
@@ -56,8 +57,14 @@ export class NuvemshopAuthError extends Error {
   readonly storeKey: StoreKey;
   readonly status: number;
   constructor(storeKey: StoreKey, status: number, detail: string) {
+    // 403 "Missing required scope" não é token inválido: a instalação do app
+    // nessa loja é anterior à permissão exigida (ex.: read_orders, das vendas).
+    // Só reinstalar o app na loja e trocar o token na Vercel resolve.
+    const faltaEscopo = /missing required scope/i.test(detail);
     super(
-      `Nuvemshop [${storeKey}] recusou o token (HTTP ${status}): ${detail || "token inválido ou revogado"}.`,
+      faltaEscopo
+        ? `Nuvemshop [${storeKey}]: a autorização desta loja não inclui a permissão de leitura de pedidos. Reinstale o app School Hub na loja e atualize o token da loja. Detalhe: ${detail}`
+        : `Nuvemshop [${storeKey}] recusou o token (HTTP ${status}): ${detail || "token inválido ou revogado"}.`,
     );
     this.name = "NuvemshopAuthError";
     this.storeKey = storeKey;
@@ -238,11 +245,21 @@ async function upsertCatalog(
 
   const { data: existing } = await supabaseAdmin
     .from("uniform_variants" as never)
-    .select("ns_variant_id, stock")
+    .select("ns_variant_id, stock, min_stock, order_placed_at")
     .eq("store_key", storeKey);
   const localStock = new Map<string, number>();
-  for (const row of (existing ?? []) as { ns_variant_id: string; stock: number }[]) {
+  const local = new Map<string, { minStock: number; orderPlacedAt: string | null }>();
+  for (const row of (existing ?? []) as {
+    ns_variant_id: string;
+    stock: number;
+    min_stock: number;
+    order_placed_at: string | null;
+  }[]) {
     localStock.set(String(row.ns_variant_id), Number(row.stock));
+    local.set(String(row.ns_variant_id), {
+      minStock: Number(row.min_stock ?? 0),
+      orderPlacedAt: row.order_placed_at ?? null,
+    });
   }
 
   for (const p of products) {
@@ -277,10 +294,43 @@ async function upsertCatalog(
         .upsert(variantRow as never, { onConflict: "store_key,ns_variant_id" });
       if (vErr) throw new Error(`upsert variação ${v.id}: ${vErr.message}`);
       variantCount += 1;
+
+      // Peça reabastecida encerra o ciclo do "Pedido realizado".
+      const anterior = local.get(String(v.id));
+      if (
+        anterior &&
+        pedidoFoiAtendido({
+          orderPlacedAt: anterior.orderPlacedAt,
+          stock,
+          minStock: anterior.minStock,
+        })
+      ) {
+        await encerrarPedido(storeKey, String(v.id), "reabastecido");
+      }
     }
   }
 
   return { products: products.length, variants: variantCount, discrepancies };
+}
+
+// Limpa a marcação "Pedido realizado" da variação e fecha a linha aberta do
+// histórico, preservando a data em que o pedido foi feito.
+async function encerrarPedido(
+  storeKey: StoreKey,
+  nsVariantId: string,
+  reason: "reabastecido" | "manual",
+): Promise<void> {
+  await supabaseAdmin
+    .from("uniform_variants" as never)
+    .update({ order_placed_at: null, order_placed_by: null } as never)
+    .eq("store_key", storeKey)
+    .eq("ns_variant_id", nsVariantId);
+  await supabaseAdmin
+    .from("uniform_order_marks" as never)
+    .update({ cleared_at: new Date().toISOString(), cleared_reason: reason } as never)
+    .eq("store_key", storeKey)
+    .eq("ns_variant_id", nsVariantId)
+    .is("cleared_at", null);
 }
 
 async function logSync(
