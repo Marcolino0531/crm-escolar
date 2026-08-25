@@ -145,7 +145,8 @@ export function VendasDoAno({ allowedStoreKeys }: Props) {
             ))}
           </select>
           <p className="text-xs text-muted-foreground">
-            Pedidos pagos, pela data de pagamento, sem cancelados.
+            Pedidos pagos, pela data de pagamento, sem cancelados. A receita soma só as peças
+            (sem frete nem descontos).
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -175,7 +176,7 @@ export function VendasDoAno({ allowedStoreKeys }: Props) {
         </div>
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Receita
+            Receita das peças
           </div>
           <div className="mt-1 text-2xl font-bold text-foreground">
             {totalReceita.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}

@@ -201,7 +201,8 @@ export async function fetchPaidOrders(
 ): Promise<PedidoVenda[]> {
   const orders: PedidoVenda[] = [];
   const perPage = 200;
-  const fields = "id,status,payment_status,paid_at,cancelled_at,products";
+  const fields =
+    "id,status,payment_status,paid_at,completed_at,created_at,cancelled_at,products";
   for (let page = 1; ; page++) {
     const query = new URLSearchParams({
       page: String(page),

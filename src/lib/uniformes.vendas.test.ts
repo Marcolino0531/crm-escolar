@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agregaVendas,
   anoBRT,
+  dataDaVenda,
   vendaDoAno,
   type CatalogoVariacoes,
   type PedidoVenda,
@@ -52,8 +53,30 @@ describe("venda contabilizada", () => {
     expect(vendaDoAno(pedido({ cancelled_at: "2026-04-01T10:00:00-03:00" }), 2026)).toBe(false);
   });
 
-  it("não conta pedido sem data de pagamento (não há como datar a venda)", () => {
-    expect(vendaDoAno(pedido({ paid_at: null }), 2026)).toBe(false);
+  it("usa a conclusão do pedido quando o gateway não preenche paid_at", () => {
+    const pagBank = pedido({
+      paid_at: null,
+      completed_at: { date: "2026-08-04 19:06:11.000000" },
+      created_at: "2026-08-04T19:06:11+0000",
+    });
+    expect(vendaDoAno(pagBank, 2026)).toBe(true);
+    expect(vendaDoAno(pagBank, 2025)).toBe(false);
+    expect(dataDaVenda(pagBank)).toBe("2026-08-04 19:06:11.000000");
+  });
+
+  it("cai para a criação do pedido quando não há pagamento nem conclusão", () => {
+    const sem = pedido({ paid_at: null, created_at: "2026-02-01T10:00:00-03:00" });
+    expect(vendaDoAno(sem, 2026)).toBe(true);
+    expect(vendaDoAno(pedido({ paid_at: null, created_at: null }), 2026)).toBe(false);
+  });
+
+  it("prefere paid_at à conclusão quando os dois existem", () => {
+    const pedidoPago = pedido({
+      paid_at: "2026-01-05T10:00:00-03:00",
+      completed_at: { date: "2025-12-20 10:00:00.000000" },
+    });
+    expect(vendaDoAno(pedidoPago, 2026)).toBe(true);
+    expect(vendaDoAno(pedidoPago, 2025)).toBe(false);
   });
 
   it("usa o fuso de São Paulo para decidir o ano", () => {
@@ -106,6 +129,7 @@ describe("agregação por peça e tamanho", () => {
         pedido({ payment_status: "pending" }),
         pedido({ status: "cancelled" }),
         pedido({ paid_at: "2025-11-20T10:00:00-03:00" }),
+        pedido({ paid_at: null, completed_at: { date: "2025-11-20 10:00:00.000000" } }),
         pedido({ products: [{ product_id: 10, variant_id: 100, quantity: 0, price: 80 }] }),
       ],
       2026,
