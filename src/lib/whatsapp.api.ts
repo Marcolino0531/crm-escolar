@@ -69,6 +69,11 @@ import {
   type ExcecaoCobranca,
 } from "@/lib/billing-exceptions";
 import {
+  filtrarPorPausa,
+  pausasVigentes,
+  type PausaComprovante,
+} from "@/lib/billing-pauses";
+import {
   agruparLembretesPorResponsavel,
   etiquetaPrazo,
   filtrarPorPrioridadeCobranca,
@@ -315,6 +320,9 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   // referência saem da régua (do disparo e do total anunciado).
   const excecoes = await carregarExcecoesAcordo();
 
+  // Pausas de 24h por comprovante recebido no Atendimento.
+  const pausas = await carregarPausasComprovante();
+
   // Reconsulta a dívida de cada candidato no Sponte: quem pagou desaparece daqui.
   // Em lotes concorrentes para caber no tempo de execução do cron.
   const cobraveis: ParcelaCobranca[] = [];
@@ -391,7 +399,11 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
   }
 
   const grupos = agruparPorResponsavel(
-    parcelasCobraveis(filtrarPorAcordo(cobraveis, excecoes), hoje, DATA_BASE_COBRANCA),
+    filtrarPorPausa(
+      parcelasCobraveis(filtrarPorAcordo(cobraveis, excecoes), hoje, DATA_BASE_COBRANCA),
+      pausas,
+      new Date(),
+    ),
     hoje,
     vencidasPorAluno,
   );
@@ -519,6 +531,31 @@ async function carregarExcecoesAcordo(): Promise<Map<string, string>> {
     mesReferencia: r.mes_referencia,
   }));
   return mapaExcecoes(excecoes);
+}
+
+// Pausas de 24h vigentes ("comprovante recebido"). Nada precisa desligá-las: o
+// filtro é por `expira_em`, então passado o prazo o disparo volta sozinho — e se
+// a baixa entrou no Sponte nesse meio tempo, a parcela nem aparece mais aqui.
+async function carregarPausasComprovante(): Promise<PausaComprovante[]> {
+  const { data, error } = await supabaseAdmin
+    .from("whatsapp_billing_pauses" as never)
+    .select("telefone, aluno_id, expira_em")
+    .gt("expira_em", new Date().toISOString());
+  if (error) {
+    // Fail-open explícito, como nas exceções de acordo: uma falha de leitura não
+    // derruba o disparo do dia, mas fica registrada.
+    console.error("[whatsapp] falha ao ler pausas por comprovante:", error.message);
+    return [];
+  }
+  const rows = (data ?? []) as unknown as {
+    telefone: string;
+    aluno_id: string | null;
+    expira_em: string;
+  }[];
+  return pausasVigentes(
+    rows.map((r) => ({ telefone: r.telefone, alunoId: r.aluno_id, expiraEm: r.expira_em })),
+    new Date(),
+  );
 }
 
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que
@@ -767,8 +804,9 @@ async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
 
   const alunos = new Set(parcelas.map((p) => p.alunoId)).size;
   const comCobrancaHoje = await telefonesComDisparoHoje(hoje, "cobranca");
+  const pausas = await carregarPausasComprovante();
   const grupos = filtrarPorPrioridadeCobranca(
-    agruparLembretesPorResponsavel(parcelas, hoje),
+    agruparLembretesPorResponsavel(filtrarPorPausa(parcelas, pausas, new Date()), hoje),
     comCobrancaHoje,
   );
   if (grupos.length === 0) {

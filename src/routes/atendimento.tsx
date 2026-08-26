@@ -49,6 +49,7 @@ import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimen
 import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.functions";
 import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
+import { AcaoPausarCobranca } from "@/components/cobranca/PausaComprovante";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
 import { agruparPorDia } from "@/lib/atendimento-dias";
 import {
@@ -736,6 +737,7 @@ function ThreadConversa({
               onFechar={() => setExemploCandidato(null)}
             />
           )}
+          <AcaoPausarCobranca conversa={conversa} podeEditar={podeResponder} />
           <AvisoJanela24h janela={janela} />
           <div className="flex items-end gap-2">
             <input
