@@ -29,12 +29,13 @@ import {
 } from "@/components/ui/dialog";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import {
-  resolveOccurrenceDate,
   resolveOccurrenceDay,
+  occurrenceDateInMonth,
   monthKey as monthKeyOf,
+  monthKeyOfISO,
   completedKey,
   occurrenceStatus,
-  occursInMonth,
+  isPontual,
   dueOccurrences,
   firstOccurrenceMonthKey,
   type RecurringTaskDef,
@@ -62,6 +63,8 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const DEF_SELECT = "id, title, description, day_of_month, start_month, kind, due_date";
+
 const STATUS_CHIP: Record<OccurrenceStatus, string> = {
   cumprida: "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
   vencida: "border-red-300 bg-red-50 text-red-800 hover:bg-red-100",
@@ -81,6 +84,7 @@ export function PlannerView() {
   const qc = useQueryClient();
   const [cursor, setCursor] = useState(() => new Date());
   const [novaOpen, setNovaOpen] = useState(false);
+  const [novaPontualOpen, setNovaPontualOpen] = useState(false);
   const today = todayISOLocal();
 
   const { data: defs = [], isLoading: loadingDefs } = useQuery({
@@ -89,7 +93,7 @@ export function PlannerView() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("recurring_task_defs" as never)
-        .select("id, title, description, day_of_month, start_month")
+        .select(DEF_SELECT)
         .eq("active", true)
         .order("day_of_month", { ascending: true });
       if (error) throw error;
@@ -139,6 +143,28 @@ export function PlannerView() {
     onError: (e: Error) => toast.error(e.message ?? "Erro ao criar rotina."),
   });
 
+  const createPontual = useMutation({
+    mutationFn: async (p: { title: string; due_date: string; description: string }) => {
+      const { error } = await supabase.from("recurring_task_defs" as never).insert({
+        user_id: me,
+        title: p.title,
+        kind: "pontual",
+        due_date: p.due_date,
+        // Derivados da data: mantêm a definição coerente com as rotinas.
+        day_of_month: Number(p.due_date.slice(8, 10)),
+        start_month: monthKeyOfISO(p.due_date),
+        description: p.description || null,
+      } as never);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidate();
+      toast.success("Tarefa pontual criada.");
+      setNovaPontualOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message ?? "Erro ao criar tarefa pontual."),
+  });
+
   const deleteDef = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
@@ -149,9 +175,9 @@ export function PlannerView() {
     },
     onSuccess: () => {
       invalidate();
-      toast.success("Rotina excluída.");
+      toast.success("Tarefa excluída.");
     },
-    onError: (e: Error) => toast.error(e.message ?? "Erro ao excluir rotina."),
+    onError: (e: Error) => toast.error(e.message ?? "Erro ao excluir tarefa."),
   });
 
   const toggleComplete = useMutation({
@@ -190,8 +216,8 @@ export function PlannerView() {
     const mk = monthKeyOf(y, m0);
     const map = new Map<string, { def: RecurringTaskDef; status: OccurrenceStatus }[]>();
     for (const def of defs) {
-      if (!occursInMonth(def, mk)) continue;
-      const date = resolveOccurrenceDate(y, m0, def.day_of_month);
+      const date = occurrenceDateInMonth(def, y, m0);
+      if (!date) continue;
       const status = occurrenceStatus(date, completedSet.has(completedKey(def.id, mk)), today);
       const arr = map.get(date) ?? [];
       arr.push({ def, status });
@@ -221,12 +247,23 @@ export function PlannerView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Tarefas de rotina que se repetem todo mês num dia fixo. Marque como cumprida a cada mês.
+          Rotinas se repetem todo mês num dia fixo; tarefas pontuais acontecem uma única vez, na
+          data marcada. Marque cada ocorrência como cumprida.
         </p>
         {podeEditar && (
-          <Button size="sm" className="gap-1" onClick={() => setNovaOpen(true)}>
-            <Plus className="h-4 w-4" /> Nova Rotina
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" className="gap-1" onClick={() => setNovaOpen(true)}>
+              <Plus className="h-4 w-4" /> Nova Rotina
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1"
+              onClick={() => setNovaPontualOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> Nova Tarefa Pontual
+            </Button>
+          </div>
         )}
       </div>
 
@@ -235,7 +272,7 @@ export function PlannerView() {
         <div className="rounded-lg border border-red-200 bg-red-50 p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-700">
             <AlertTriangle className="h-4 w-4" />
-            {vencidas.length} rotina{vencidas.length === 1 ? "" : "s"} vencida
+            {vencidas.length} tarefa{vencidas.length === 1 ? "" : "s"} vencida
             {vencidas.length === 1 ? "" : "s"} e pendente{vencidas.length === 1 ? "" : "s"}
           </div>
           <div className="flex flex-col gap-1.5">
@@ -351,7 +388,9 @@ export function PlannerView() {
                         busy={toggleComplete.isPending}
                         onToggle={(done, mk) => toggleComplete.mutate({ defId: def.id, mk, done })}
                         onDelete={() => {
-                          if (confirm(`Excluir a rotina "${def.title}"?`)) deleteDef.mutate(def.id);
+                          const rotulo = isPontual(def) ? "a tarefa" : "a rotina";
+                          if (confirm(`Excluir ${rotulo} "${def.title}"?`))
+                            deleteDef.mutate(def.id);
                         }}
                       />
                     ))}
@@ -365,17 +404,26 @@ export function PlannerView() {
 
       {defs.length === 0 && !loading && (
         <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-          Nenhuma rotina cadastrada. Clique em "Nova Rotina" para começar.
+          Nenhuma tarefa cadastrada. Clique em "Nova Rotina" ou "Nova Tarefa Pontual" para começar.
         </p>
       )}
 
       {podeEditar && (
-        <NovaRotinaDialog
-          open={novaOpen}
-          onClose={() => setNovaOpen(false)}
-          onSave={(p) => createDef.mutate(p)}
-          saving={createDef.isPending}
-        />
+        <>
+          <NovaRotinaDialog
+            open={novaOpen}
+            onClose={() => setNovaOpen(false)}
+            onSave={(p) => createDef.mutate(p)}
+            saving={createDef.isPending}
+          />
+          <NovaTarefaPontualDialog
+            open={novaPontualOpen}
+            onClose={() => setNovaPontualOpen(false)}
+            onSave={(p) => createPontual.mutate(p)}
+            saving={createPontual.isPending}
+            hoje={today}
+          />
+        </>
       )}
     </div>
   );
@@ -400,6 +448,7 @@ function OccurrenceChip({
   onToggle: (done: boolean, mk: string) => void;
   onDelete: () => void;
 }) {
+  const pontual = isPontual(def);
   const dia = resolveOccurrenceDay(
     Number(date.slice(0, 4)),
     Number(date.slice(5, 7)) - 1,
@@ -410,10 +459,19 @@ function OccurrenceChip({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors ${STATUS_CHIP[status]}`}
+          className={`flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight transition-colors ${
+            pontual ? "border-dashed" : ""
+          } ${STATUS_CHIP[status]}`}
         >
-          {status === "cumprida" && <Check className="h-3 w-3 shrink-0" />}
-          {status === "vencida" && <AlertTriangle className="h-3 w-3 shrink-0" />}
+          {status === "cumprida" ? (
+            <Check className="h-3 w-3 shrink-0" />
+          ) : status === "vencida" ? (
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+          ) : pontual ? (
+            <CalendarClock className="h-3 w-3 shrink-0" />
+          ) : (
+            <RotateCcw className="h-3 w-3 shrink-0" />
+          )}
           <span className="truncate">{def.title}</span>
         </button>
       </PopoverTrigger>
@@ -426,8 +484,14 @@ function OccurrenceChip({
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground">
-            Todo dia {def.day_of_month} · esta ocorrência: {formatDateBR(date)}
-            {dia !== def.day_of_month ? " (ajustado ao fim do mês)" : ""}
+            {pontual ? (
+              <>Tarefa pontual · apenas em {formatDateBR(date)}</>
+            ) : (
+              <>
+                Todo dia {def.day_of_month} · esta ocorrência: {formatDateBR(date)}
+                {dia !== def.day_of_month ? " (ajustado ao fim do mês)" : ""}
+              </>
+            )}
           </p>
           {def.description && (
             <p className="whitespace-pre-wrap text-xs text-foreground">{def.description}</p>
@@ -461,7 +525,7 @@ function OccurrenceChip({
                 className="h-7 justify-start gap-1 text-xs text-destructive hover:text-destructive"
                 onClick={onDelete}
               >
-                <Trash2 className="h-3.5 w-3.5" /> Excluir rotina
+                <Trash2 className="h-3.5 w-3.5" /> {pontual ? "Excluir tarefa" : "Excluir rotina"}
               </Button>
             </div>
           )}
@@ -560,6 +624,96 @@ function NovaRotinaDialog({
                 day_of_month: diaNum,
                 description: description.trim(),
               });
+              reset();
+            }}
+          >
+            {saving ? "Salvando…" : "Salvar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NovaTarefaPontualDialog({
+  open,
+  onClose,
+  onSave,
+  saving,
+  hoje,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: (p: { title: string; due_date: string; description: string }) => void;
+  saving: boolean;
+  hoje: string;
+}) {
+  const [title, setTitle] = useState("");
+  const [data, setData] = useState(hoje);
+  const [description, setDescription] = useState("");
+
+  const reset = () => {
+    setTitle("");
+    setData(hoje);
+    setDescription("");
+  };
+
+  const dataValida = /^\d{4}-\d{2}-\d{2}$/.test(data);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          onClose();
+          reset();
+        }
+      }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Nova Tarefa Pontual</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label>Título da tarefa</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Ex.: Encomendar pães e salgados para a entrega das medalhas"
+            />
+          </div>
+          <div>
+            <Label>Data</Label>
+            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              A tarefa aparece somente nesta data e não se repete em outros meses.
+            </p>
+          </div>
+          <div>
+            <Label>Descrição (opcional)</Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Detalhes da tarefa…"
+              rows={3}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              onClose();
+              reset();
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            disabled={saving || !title.trim() || !dataValida}
+            onClick={() => {
+              onSave({ title: title.trim(), due_date: data, description: description.trim() });
               reset();
             }}
           >

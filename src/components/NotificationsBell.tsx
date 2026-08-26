@@ -223,7 +223,7 @@ export function NotificationsBell() {
       const [defsRes, compRes] = await Promise.all([
         supabase
           .from("recurring_task_defs" as never)
-          .select("id, title, description, day_of_month, start_month")
+          .select("id, title, description, day_of_month, start_month, kind, due_date")
           .eq("active", true),
         supabase.from("recurring_task_completions" as never).select("def_id, month_key"),
       ]);
@@ -1078,7 +1078,7 @@ export function NotificationsBell() {
           {canTasks && plannerDue.length > 0 && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Rotinas vencidas (Planner)
+                Tarefas vencidas (Planner)
               </div>
               {plannerDue.map(({ def, date }) => (
                 <Link
