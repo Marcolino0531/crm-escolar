@@ -244,6 +244,10 @@ export interface ResumoParcelas {
   vencido: number;
   aVencer: number;
   total: number;
+  // Quantidade de parcelas (boletos) do mês e quantos alunos elas cobrem: a
+  // comparação com o total de matriculados mostra quem ficou sem lançamento.
+  quantidade: number;
+  alunos: number;
 }
 
 export function resumoParcelas(parcelas: readonly ParcelaAlunoModalidade[]): ResumoParcelas {
@@ -254,7 +258,14 @@ export function resumoParcelas(parcelas: readonly ParcelaAlunoModalidade[]): Res
   const quitado = soma("quitado");
   const vencido = soma("vencido");
   const aVencer = soma("a_vencer");
-  return { quitado, vencido, aVencer, total: arredondarCentavos(quitado + vencido + aVencer) };
+  return {
+    quitado,
+    vencido,
+    aVencer,
+    total: arredondarCentavos(quitado + vencido + aVencer),
+    quantidade: parcelas.length,
+    alunos: new Set(parcelas.map((p) => p.alunoId)).size,
+  };
 }
 
 // Repasse do parceiro e parte retida pelo colégio. O retido é a diferença (e não
