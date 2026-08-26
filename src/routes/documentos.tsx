@@ -725,6 +725,14 @@ function GerarRecibo() {
   );
 }
 
+const SEM_PENDENCIA: PendenciasAluno = {
+  total: 0,
+  vencidas: 0,
+  aVencer: 0,
+  valor: 0,
+  valorVencido: 0,
+};
+
 // ─── Declaração de Inexistência de Débitos ──────────────────────────────────
 function GerarDeclaracaoDebitos() {
   const { canEdit } = usePermissions();
@@ -821,7 +829,7 @@ function GerarDeclaracaoDebitos() {
       colegio: colegioDeclaracao,
       aluno,
       responsaveis,
-      pendencias: pendencias ?? { total: 0, vencidas: 0, aVencer: 0, valor: 0 },
+      pendencias: pendencias ?? SEM_PENDENCIA,
     });
   }, [colegioDeclaracao, aluno, responsaveis, dataDocumento, pendencias]);
 
@@ -831,7 +839,7 @@ function GerarDeclaracaoDebitos() {
         throw new Error("Declaração incompleta.");
       }
       if (exigeConfirmacao(pendencias) && !confirmado) {
-        throw new Error("Confirme o aviso de parcelas em aberto antes de emitir.");
+        throw new Error("Confirme o aviso de parcelas vencidas antes de emitir.");
       }
       const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
       const snapshot: DeclaracaoSnapshot = {
@@ -1039,9 +1047,13 @@ function GerarDeclaracaoDebitos() {
               {previa.texto}
             </div>
 
-            {pendencias && pendencias.total === 0 && (
+            {pendencias && !exigeConfirmacao(pendencias) && (
               <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                Conferido no Sponte: nenhuma parcela em aberto para este aluno.
+                Conferido no Sponte: nenhuma parcela vencida para este aluno
+                {pendencias.aVencer > 0
+                  ? ` (${pendencias.aVencer} parcela[s] a vencer, ainda dentro do prazo)`
+                  : ""}
+                .
               </div>
             )}
 
@@ -1050,10 +1062,13 @@ function GerarDeclaracaoDebitos() {
                 <div className="flex items-start gap-2 font-medium">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
                   <span>
-                    Atenção: este aluno possui {pendencias.total} parcela(s) em aberto no Sponte
-                    {pendencias.vencidas > 0 ? ` (${pendencias.vencidas} já vencida[s])` : ""},
-                    somando {formatarBRL(pendencias.valor)}. Confirma mesmo assim a emissão da
-                    declaração de inexistência de débitos?
+                    Atenção: este aluno possui {pendencias.vencidas} parcela(s) vencida(s) em
+                    aberto no Sponte, somando {formatarBRL(pendencias.valorVencido)}
+                    {pendencias.aVencer > 0
+                      ? ` (há também ${pendencias.aVencer} parcela[s] a vencer, que não contam como débito hoje)`
+                      : ""}
+                    .
+                    Confirma mesmo assim a emissão da declaração de inexistência de débitos?
                   </span>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2">
@@ -1062,7 +1077,7 @@ function GerarDeclaracaoDebitos() {
                     checked={confirmado}
                     onChange={(e) => setConfirmado(e.target.checked)}
                   />
-                  Sim, confirmo a emissão mesmo com parcela(s) em aberto.
+                  Sim, confirmo a emissão mesmo com parcela(s) vencida(s).
                 </label>
               </div>
             )}
@@ -1150,7 +1165,7 @@ function HistoricoDocumentos() {
             colegio: snap.colegio,
             aluno: snap.aluno,
             responsaveis: snap.responsaveis ?? [],
-            pendencias: snap.pendencias ?? { total: 0, vencidas: 0, aVencer: 0, valor: 0 },
+            pendencias: snap.pendencias ?? SEM_PENDENCIA,
           }),
           logo,
         );

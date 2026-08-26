@@ -152,7 +152,7 @@ describe("parcelas em aberto", () => {
       [titulo({}), titulo({ vencimento: "2026-07-10" })],
       hoje,
     );
-    expect(pend).toEqual({ total: 0, vencidas: 0, aVencer: 0, valor: 0 });
+    expect(pend).toEqual({ total: 0, vencidas: 0, aVencer: 0, valor: 0, valorVencido: 0 });
     expect(exigeConfirmacao(pend)).toBe(false);
   });
 
@@ -165,7 +165,13 @@ describe("parcelas em aberto", () => {
       ],
       hoje,
     );
-    expect(pend).toEqual({ total: 2, vencidas: 1, aVencer: 1, valor: 2000.5 });
+    expect(pend).toEqual({
+      total: 2,
+      vencidas: 1,
+      aVencer: 1,
+      valor: 2000.5,
+      valorVencido: 1200.5,
+    });
     expect(exigeConfirmacao(pend)).toBe(true);
   });
 
@@ -177,7 +183,41 @@ describe("parcelas em aberto", () => {
 
   it("trata parcela vencida hoje como a vencer (o dia ainda não passou)", () => {
     const pend = pendenciasEmAberto([titulo({ quitada: false, saldo: 100, vencimento: hoje })], hoje);
-    expect(pend).toEqual({ total: 1, vencidas: 0, aVencer: 1, valor: 100 });
+    expect(pend).toEqual({
+      total: 1,
+      vencidas: 0,
+      aVencer: 1,
+      valor: 100,
+      valorVencido: 0,
+    });
+    expect(exigeConfirmacao(pend)).toBe(false);
+  });
+
+  it("não exige confirmação quando todas as parcelas em aberto ainda estão a vencer", () => {
+    const pend = pendenciasEmAberto(
+      [
+        titulo({ quitada: false, saldo: 900, vencimento: "2026-09-10" }),
+        titulo({ quitada: false, saldo: 900, vencimento: "2026-10-10" }),
+      ],
+      hoje,
+    );
+    expect(pend.total).toBe(2);
+    expect(pend.vencidas).toBe(0);
+    expect(pend.valorVencido).toBe(0);
+    expect(exigeConfirmacao(pend)).toBe(false);
+  });
+
+  it("exige confirmação havendo pelo menos uma vencida, mesmo com outras a vencer", () => {
+    const pend = pendenciasEmAberto(
+      [
+        titulo({ quitada: false, saldo: 500, vencimento: "2026-08-10" }),
+        titulo({ quitada: false, saldo: 900, vencimento: "2026-09-10" }),
+      ],
+      hoje,
+    );
+    expect(pend.vencidas).toBe(1);
+    expect(pend.valorVencido).toBe(500);
+    expect(exigeConfirmacao(pend)).toBe(true);
   });
 });
 
@@ -189,7 +229,7 @@ describe("documento montado e validação", () => {
       colegio: COLEGIO,
       aluno: ALUNO,
       responsaveis: [resp("Ana Souza", "Mãe")],
-      pendencias: { total: 0, vencidas: 0, aVencer: 0, valor: 0 },
+      pendencias: { total: 0, vencidas: 0, aVencer: 0, valor: 0, valorVencido: 0 },
     });
     expect(doc.numero).toBe("00007/2026");
     expect(doc.dataExtenso).toBe("Belo Horizonte, 14 de agosto de 2026");
