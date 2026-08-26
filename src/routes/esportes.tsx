@@ -609,6 +609,9 @@ function CadastroModalidade({
 }) {
   const qc = useQueryClient();
   const { session } = useAuth();
+  // Cadastrar modalidade é eventual: o formulário nasce recolhido para a tela
+  // abrir na lista de modalidades já existentes.
+  const [aberto, setAberto] = useState(false);
   const [nome, setNome] = useState("");
   const [categoria, setCategoria] = useState("");
   const [tipo, setTipo] = useState<TipoRepasse>("percentual");
@@ -617,6 +620,12 @@ function CadastroModalidade({
   const [linhas, setLinhas] = useState<ParceiroForm[]>([
     { nome: "", percentual: "", valorFixo: "" },
   ]);
+
+  // Trocar de unidade no topo muda a unidade de destino do cadastro: recolhe
+  // para ninguém continuar preenchendo um formulário de outra unidade.
+  useEffect(() => {
+    setAberto(false);
+  }, [unidade]);
 
   const criar = useMutation({
     mutationFn: async (): Promise<Modalidade> => {
@@ -682,6 +691,7 @@ function CadastroModalidade({
       setDiaPagamento("");
       setMesInicio("");
       setLinhas([{ nome: "", percentual: "", valorFixo: "" }]);
+      setAberto(false);
       qc.invalidateQueries({ queryKey: ["esportes_modalidades"] });
       onCriada(m.id);
     },
@@ -690,89 +700,105 @@ function CadastroModalidade({
 
   return (
     <div className="rounded-xl border border-border bg-card">
-      <div className="border-b border-border px-4 py-3">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+        className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left ${
+          aberto ? "border-b border-border" : ""
+        }`}
+      >
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Plus className="h-4 w-4 text-primary" /> Nova modalidade em {unidade}
         </h2>
-      </div>
-      <div className="space-y-3 px-4 py-3">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <Label className="text-[11px] text-muted-foreground">Modalidade</Label>
-            <Input
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              placeholder="ex.: Jiu-Jitsu"
-              className="h-9 w-44"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-[11px] text-muted-foreground">
-              Categoria no boleto (Sponte)
-            </Label>
-            <Input
-              value={categoria}
-              onChange={(e) => setCategoria(e.target.value)}
-              placeholder="igual ao nome, se vazio"
-              className="h-9 w-52"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-[11px] text-muted-foreground">Unidade</Label>
-            <div className="flex h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-muted-foreground">
-              {unidade}
+        {aberto ? (
+          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        )}
+      </button>
+      {aberto && (
+        <>
+          <div className="space-y-3 px-4 py-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Modalidade</Label>
+                <Input
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  placeholder="ex.: Jiu-Jitsu"
+                  className="h-9 w-44"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">
+                  Categoria no boleto (Sponte)
+                </Label>
+                <Input
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value)}
+                  placeholder="igual ao nome, se vazio"
+                  className="h-9 w-52"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Unidade</Label>
+                <div className="flex h-9 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-muted-foreground">
+                  {unidade}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Tipo de repasse</Label>
+                <Select value={tipo} onValueChange={(v) => setTipo(v as TipoRepasse)}>
+                  <SelectTrigger className="h-9 w-52">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="percentual">Percentual do arrecadado</SelectItem>
+                    <SelectItem value="fixo">Valor fixo mensal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {tipo === "fixo" && (
+                <div className="flex flex-col gap-1">
+                  <Label className="text-[11px] text-muted-foreground">Dia de pagamento</Label>
+                  <Input
+                    value={diaPagamento}
+                    onChange={(e) => setDiaPagamento(e.target.value)}
+                    placeholder="ex.: 10"
+                    className="h-9 w-24"
+                  />
+                </div>
+              )}
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Início (mês/ano)</Label>
+                <Input
+                  type="month"
+                  value={mesInicio}
+                  onChange={(e) => setMesInicio(e.target.value)}
+                  className="h-9 w-40"
+                />
+              </div>
             </div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label className="text-[11px] text-muted-foreground">Tipo de repasse</Label>
-            <Select value={tipo} onValueChange={(v) => setTipo(v as TipoRepasse)}>
-              <SelectTrigger className="h-9 w-52">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="percentual">Percentual do arrecadado</SelectItem>
-                <SelectItem value="fixo">Valor fixo mensal</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {tipo === "fixo" && (
-            <div className="flex flex-col gap-1">
-              <Label className="text-[11px] text-muted-foreground">Dia de pagamento</Label>
-              <Input
-                value={diaPagamento}
-                onChange={(e) => setDiaPagamento(e.target.value)}
-                placeholder="ex.: 10"
-                className="h-9 w-24"
-              />
-            </div>
-          )}
-          <div className="flex flex-col gap-1">
-            <Label className="text-[11px] text-muted-foreground">Início (mês/ano)</Label>
-            <Input
-              type="month"
-              value={mesInicio}
-              onChange={(e) => setMesInicio(e.target.value)}
-              className="h-9 w-40"
-            />
-          </div>
-        </div>
 
-        <LinhasParceiros tipo={tipo} linhas={linhas} onChange={setLinhas} />
+            <LinhasParceiros tipo={tipo} linhas={linhas} onChange={setLinhas} />
 
-        <Button className="h-9 gap-1" disabled={criar.isPending} onClick={() => criar.mutate()}>
-          <Plus className="h-4 w-4" />
-          {criar.isPending ? "Salvando…" : "Cadastrar"}
-        </Button>
-      </div>
-      <p className="border-t border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-        A modalidade pertence à unidade selecionada no topo da tela (<strong>{unidade}</strong>) e
-        só aparece nela. A categoria é o que identifica a mensalidade da modalidade dentro do boleto
-        do aluno no Sponte (como “Material Pedagógico”). O valor arrecadado nunca é digitado aqui:
-        ele é lido do Sponte, considerando somente o que foi <strong>efetivamente pago</strong>. No
-        repasse <strong>fixo</strong>, o parceiro recebe o valor combinado todo mês
-        independentemente do que foi arrecadado — a diferença fica com o colégio, para mais ou para
-        menos.
-      </p>
+            <Button className="h-9 gap-1" disabled={criar.isPending} onClick={() => criar.mutate()}>
+              <Plus className="h-4 w-4" />
+              {criar.isPending ? "Salvando…" : "Cadastrar"}
+            </Button>
+          </div>
+          <p className="border-t border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+            A modalidade pertence à unidade selecionada no topo da tela (<strong>{unidade}</strong>)
+            e só aparece nela. A categoria é o que identifica a mensalidade da modalidade dentro do
+            boleto do aluno no Sponte (como “Material Pedagógico”). O valor arrecadado nunca é
+            digitado aqui: ele é lido do Sponte, considerando somente o que foi{" "}
+            <strong>efetivamente pago</strong>. No repasse <strong>fixo</strong>, o parceiro recebe
+            o valor combinado todo mês independentemente do que foi arrecadado — a diferença fica
+            com o colégio, para mais ou para menos.
+          </p>
+        </>
+      )}
     </div>
   );
 }
