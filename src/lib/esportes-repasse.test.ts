@@ -599,6 +599,8 @@ describe("relação de valores (parcelas reais do Sponte)", () => {
       vencido: 210,
       aVencer: 345,
       total: 785,
+      quantidade: lista.length,
+      alunos: 1,
     });
   });
 });
@@ -674,6 +676,8 @@ describe("filtro de mês da relação de valores", () => {
       vencido: 0,
       aVencer: 0,
       total: 0,
+      quantidade: 0,
+      alunos: 0,
     });
   });
 
@@ -683,18 +687,58 @@ describe("filtro de mês da relação de valores", () => {
       vencido: 230,
       aVencer: 0,
       total: 440,
+      quantidade: 2,
+      alunos: 2,
     });
     expect(resumoParcelas(parcelasDoMes(todas, "2026-08"))).toEqual({
       quitado: 115,
       vencido: 0,
       aVencer: 0,
       total: 115,
+      quantidade: 1,
+      alunos: 1,
     });
     expect(resumoParcelas(parcelasDoMes(todas, "2026-10"))).toEqual({
       quitado: 0,
       vencido: 0,
       aVencer: 440,
       total: 440,
+      quantidade: 2,
+      alunos: 2,
+    });
+  });
+
+  // O card "Quantidade de boletos" existe para acusar aluno matriculado sem
+  // parcela lançada: a contagem tem de ser a das parcelas do mês, não a das
+  // parcelas do ano todo que a consulta ao Sponte devolve.
+  it("conta os boletos do mês filtrado, com um aluno por parcela", () => {
+    for (const mes of ["2026-08", "2026-09", "2026-10", "2026-07"]) {
+      const doMes = parcelasDoMes(todas, mes);
+      const resumo = resumoParcelas(doMes);
+      expect(resumo.quantidade).toBe(doMes.length);
+      expect(resumo.alunos).toBe(new Set(doMes.map((p) => p.alunoId)).size);
+    }
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-09")).quantidade).toBe(2);
+    // Só a Ana tem parcela em agosto: 1 boleto para 2 matriculados na modalidade.
+    expect(resumoParcelas(parcelasDoMes(todas, "2026-08"))).toMatchObject({
+      quantidade: 1,
+      alunos: 1,
+    });
+  });
+
+  it("conta duas parcelas do mesmo aluno no mês como dois boletos", () => {
+    const duasNoMes = parcelasAlunoNaModalidade(
+      ana,
+      [
+        parcela({ numeroParcela: "1", vencimento: "2026-11-05", valor: 115 }),
+        parcela({ numeroParcela: "2", vencimento: "2026-11-20", valor: 115 }),
+      ],
+      "Jazz",
+      HOJE,
+    );
+    expect(resumoParcelas(parcelasDoMes(duasNoMes, "2026-11"))).toMatchObject({
+      quantidade: 2,
+      alunos: 1,
     });
   });
 });

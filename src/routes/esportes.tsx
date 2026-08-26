@@ -1427,12 +1427,14 @@ function Indicador({
   destaque,
   negativo,
   icone,
+  detalhe,
 }: {
   label: string;
   valor: string;
   destaque?: boolean;
   negativo?: boolean;
   icone?: React.ReactNode;
+  detalhe?: string;
 }) {
   return (
     <div className="rounded-lg border border-border px-3 py-2">
@@ -1447,6 +1449,7 @@ function Indicador({
       >
         {valor}
       </div>
+      {detalhe && <div className="text-[11px] text-muted-foreground">{detalhe}</div>}
     </div>
   );
 }
@@ -1472,6 +1475,14 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
     [data, mesReferencia],
   );
   const resumo = useMemo(() => resumoParcelas(doMes), [doMes]);
+
+  // Total de matriculados na modalidade, só para acusar divergência: aluno
+  // matriculado sem parcela no mês é lançamento que ficou faltando no Sponte.
+  const { data: matriculas = [] } = useQuery({
+    queryKey: ["esportes_matriculas", modalidade.id],
+    queryFn: () => carregarMatriculas(modalidade.id),
+  });
+  const matriculados = matriculas.length;
 
   // Uma linha por parcela do mês, agrupada por aluno.
   const porAluno = useMemo(() => {
@@ -1518,7 +1529,7 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
             </div>
           )}
 
-          <div className="grid gap-3 px-4 py-3 sm:grid-cols-3">
+          <div className="grid gap-3 px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
             <Indicador label="Quitado" valor={formatBRL(resumo.quitado)} />
             <Indicador
               label="Vencido"
@@ -1526,6 +1537,12 @@ function RelacaoDeValores({ modalidade }: { modalidade: Modalidade }) {
               negativo={resumo.vencido > 0}
             />
             <Indicador label="A vencer" valor={formatBRL(resumo.aVencer)} />
+            <Indicador
+              label="Quantidade de boletos"
+              valor={String(resumo.quantidade)}
+              negativo={matriculados > 0 && resumo.alunos < matriculados}
+              detalhe={`${resumo.alunos} de ${matriculados} aluno(s) matriculado(s) com parcela`}
+            />
           </div>
 
           {porAluno.length === 0 ? (
@@ -1602,6 +1619,16 @@ async function carregarTurmas(modalidadeId: string): Promise<Turma[]> {
     .order("hora_inicio", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as Turma[];
+}
+
+async function carregarMatriculas(modalidadeId: string): Promise<Matricula[]> {
+  const { data, error } = await supabase
+    .from("esportes_matriculas" as never)
+    .select("id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana, data_matricula")
+    .eq("modalidade_id", modalidadeId)
+    .order("aluno_nome", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as Matricula[];
 }
 
 // Turmas (horários) da modalidade. Diferente da frequência: a turma diz QUANDO a
@@ -1951,17 +1978,7 @@ function AlunosDaModalidade({
 
   const { data: matriculas = [] } = useQuery({
     queryKey: ["esportes_matriculas", modalidade.id],
-    queryFn: async (): Promise<Matricula[]> => {
-      const { data, error } = await supabase
-        .from("esportes_matriculas" as never)
-        .select(
-          "id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana, data_matricula",
-        )
-        .eq("modalidade_id", modalidade.id)
-        .order("aluno_nome", { ascending: true });
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as Matricula[];
-    },
+    queryFn: () => carregarMatriculas(modalidade.id),
   });
 
   const buscarAlunos = useMutation({
