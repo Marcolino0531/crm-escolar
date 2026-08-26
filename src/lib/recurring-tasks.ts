@@ -12,6 +12,10 @@
 // meses anteriores à sua criação. Se o dia configurado já passou no mês da
 // criação, start_month é o mês seguinte (a 1ª ocorrência não nasce "vencida").
 
+// Tarefa pontual: acontece UMA vez, na data de due_date, e nunca gera
+// ocorrência em outro mês (nem antes nem depois — cumprida ou não).
+export type TaskKind = "rotina" | "pontual";
+
 export type RecurringTaskDef = {
   id: string;
   title: string;
@@ -19,7 +23,15 @@ export type RecurringTaskDef = {
   day_of_month: number;
   // Primeiro mês (YYYY-MM) em que a rotina passa a ocorrer.
   start_month: string;
+  // Ausente (linhas antigas) equivale a "rotina".
+  kind?: TaskKind | null;
+  // Data (YYYY-MM-DD) da única ocorrência, só nas pontuais.
+  due_date?: string | null;
 };
+
+export function isPontual(def: RecurringTaskDef): boolean {
+  return def.kind === "pontual";
+}
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -61,9 +73,25 @@ export function firstOccurrenceMonthKey(todayISO: string, dayOfMonth: number): s
   return monthKey(next.getFullYear(), next.getMonth());
 }
 
-// A rotina ocorre no mês `mk` (YYYY-MM)? Só a partir de start_month (inclusive).
+// A tarefa ocorre no mês `mk` (YYYY-MM)? Rotina: a partir de start_month
+// (inclusive). Pontual: apenas no mês da sua data.
 export function occursInMonth(def: RecurringTaskDef, mk: string): boolean {
+  if (isPontual(def)) return !!def.due_date && def.due_date.slice(0, 7) === mk;
   return mk >= def.start_month;
+}
+
+// Data (YYYY-MM-DD) da ocorrência da tarefa no mês informado, ou null quando
+// ela não ocorre nesse mês. É a única fonte de datas do Planner: a rotina
+// deriva do dia do mês, a pontual usa a própria data.
+export function occurrenceDateInMonth(
+  def: RecurringTaskDef,
+  year: number,
+  month0: number,
+): string | null {
+  const mk = monthKey(year, month0);
+  if (!occursInMonth(def, mk)) return null;
+  if (isPontual(def)) return def.due_date ?? null;
+  return resolveOccurrenceDate(year, month0, def.day_of_month);
 }
 
 // Mês (YYYY-MM) de uma data ISO (YYYY-MM-DD).
@@ -108,8 +136,8 @@ export function dueOccurrences(
   const mk = monthKey(year, month0);
   const out: DueOccurrence[] = [];
   for (const def of defs) {
-    if (!occursInMonth(def, mk)) continue;
-    const date = resolveOccurrenceDate(year, month0, def.day_of_month);
+    const date = occurrenceDateInMonth(def, year, month0);
+    if (!date) continue;
     if (todayISO >= date && !completed.has(completedKey(def.id, mk))) {
       out.push({ def, date, monthKey: mk });
     }

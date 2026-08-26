@@ -10,6 +10,8 @@ import {
   firstOccurrenceMonthKey,
   dueOccurrences,
   countDuePending,
+  occurrenceDateInMonth,
+  isPontual,
   type RecurringTaskDef,
 } from "./recurring-tasks";
 
@@ -173,5 +175,74 @@ describe("start_month: sem ocorrências retroativas", () => {
     expect(sm).toBe("2026-08");
     expect(countDuePending([d], new Set(), "2026-08-05")).toBe(0); // dia 10 ainda não chegou
     expect(countDuePending([d], new Set(), "2026-08-10")).toBe(1); // no dia, vence
+  });
+});
+
+// A tarefa pontual é criada a partir da data: day_of_month e start_month são
+// derivados dela, como faz o Planner ao inserir a linha.
+const pontual = (id: string, dueDate: string, title = id): RecurringTaskDef => ({
+  id,
+  title,
+  description: null,
+  day_of_month: Number(dueDate.slice(8, 10)),
+  start_month: dueDate.slice(0, 7),
+  kind: "pontual",
+  due_date: dueDate,
+});
+
+describe("tarefa pontual (data única, sem repetição)", () => {
+  const p = pontual("p", "2026-09-14", "Encomendar salgados");
+
+  it("é distinguível da rotina", () => {
+    expect(isPontual(p)).toBe(true);
+    expect(isPontual(def("a", 14))).toBe(false);
+  });
+
+  it("ocorre só no mês/dia da sua data", () => {
+    expect(occurrenceDateInMonth(p, 2026, 8)).toBe("2026-09-14"); // setembro
+    expect(occursInMonth(p, "2026-09")).toBe(true);
+    for (const [y, m0] of [
+      [2026, 7],
+      [2026, 9],
+      [2026, 11],
+      [2027, 8],
+    ] as const) {
+      expect(occurrenceDateInMonth(p, y, m0)).toBeNull();
+    }
+    expect(occursInMonth(p, "2026-08")).toBe(false);
+    expect(occursInMonth(p, "2026-10")).toBe(false);
+  });
+
+  it("vence no dia e conta como pendente até ser cumprida", () => {
+    expect(countDuePending([p], new Set(), "2026-09-13")).toBe(0);
+    const due = dueOccurrences([p], new Set(), "2026-09-14");
+    expect(due).toEqual([{ def: p, date: "2026-09-14", monthKey: "2026-09" }]);
+    expect(
+      occurrenceStatus("2026-09-14", new Set().has(completedKey(p.id, "2026-09")), "2026-09-14"),
+    ).toBe("vencida");
+  });
+
+  it("marcada como cumprida, sai do pendente e não volta em nenhum mês", () => {
+    const completed = new Set([completedKey(p.id, "2026-09")]);
+    expect(countDuePending([p], completed, "2026-09-14")).toBe(0);
+    expect(occurrenceStatus("2026-09-14", true, "2026-09-20")).toBe("cumprida");
+    // Meses seguintes: nada, cumprida ou não.
+    expect(countDuePending([p], completed, "2026-10-14")).toBe(0);
+    expect(countDuePending([p], new Set(), "2026-10-14")).toBe(0);
+    expect(countDuePending([p], new Set(), "2027-09-14")).toBe(0);
+  });
+
+  it("convive com rotinas no mesmo mês, sem interferir nelas", () => {
+    const r = def("r", 14, "Faturamento", "2026-01");
+    const due = dueOccurrences([r, p], new Set(), "2026-09-14");
+    expect(due.map((d) => d.def.id)).toEqual(["p", "r"]); // mesma data, título alfabético
+    // Em outubro só a rotina reaparece.
+    expect(dueOccurrences([r, p], new Set(), "2026-10-14").map((d) => d.def.id)).toEqual(["r"]);
+  });
+
+  it("pontual sem data não gera ocorrência", () => {
+    const semData: RecurringTaskDef = { ...p, due_date: null };
+    expect(occurrenceDateInMonth(semData, 2026, 8)).toBeNull();
+    expect(countDuePending([semData], new Set(), "2026-09-14")).toBe(0);
   });
 });
