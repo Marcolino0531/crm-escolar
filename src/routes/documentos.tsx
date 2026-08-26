@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
+  AlertTriangle,
   Building2,
   Download,
   FileText,
@@ -42,11 +43,24 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   buscarAlunosSponte,
   buscarDadosCadastraisAluno,
+  fetchTitulosAlunoSponte,
   type AlunoBuscaSponte,
   type ResponsavelCadastroSponte,
 } from "@/lib/sponte.functions";
 import { parseBRLNumber } from "@/lib/currency";
 import { baixarPdfRecibo, carregarLogo, type LogoRecibo } from "@/lib/recibo-pdf";
+import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
+import {
+  exigeConfirmacao,
+  montarDeclaracaoDebitos,
+  pendenciasEmAberto,
+  rotuloTipoDocumento,
+  TIPOS_DOCUMENTO,
+  validarDeclaracao,
+  type PendenciasAluno,
+  type ResponsavelDeclaracao,
+  type TipoDocumento,
+} from "@/lib/declaracoes";
 import {
   formatarBRL,
   formatarDataBR,
@@ -106,9 +120,19 @@ type ReciboSnapshot = {
   valores: Record<string, number>;
 };
 
-type ReciboRow = {
+type DeclaracaoSnapshot = {
+  colegio: ColegioRecibo;
+  aluno: AlunoRecibo;
+  responsaveis: ResponsavelDeclaracao[];
+  pendencias: PendenciasAluno;
+};
+
+// Histórico compartilhado: uma linha por documento emitido, de qualquer tipo.
+// `snapshot` guarda o documento como foi entregue e é lido conforme o `tipo`.
+type DocumentoRow = {
   id: string;
   numero: number;
+  tipo: string;
   unidade: string;
   aluno_id: string;
   aluno_nome: string;
@@ -117,7 +141,7 @@ type ReciboRow = {
   valor_total: number;
   created_at: string;
   created_by_nome: string;
-  snapshot: ReciboSnapshot;
+  snapshot: ReciboSnapshot | DeclaracaoSnapshot;
 };
 
 const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder?: string }[] = [
@@ -224,10 +248,10 @@ function DocumentosPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="recibo">
+      <Tabs defaultValue="documento">
         <TabsList>
-          <TabsTrigger value="recibo" className="gap-1">
-            <Receipt className="h-4 w-4" /> Gerar Recibo
+          <TabsTrigger value="documento" className="gap-1">
+            <FileText className="h-4 w-4" /> Gerar Documento
           </TabsTrigger>
           <TabsTrigger value="historico" className="gap-1">
             <History className="h-4 w-4" /> Histórico
@@ -237,16 +261,48 @@ function DocumentosPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="recibo" className="mt-4">
-          <GerarRecibo />
+        <TabsContent value="documento" className="mt-4">
+          <GerarDocumento />
         </TabsContent>
         <TabsContent value="historico" className="mt-4">
-          <HistoricoRecibos />
+          <HistoricoDocumentos />
         </TabsContent>
         <TabsContent value="colegios" className="mt-4">
           <ConfiguracaoColegios />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ─── Seletor de modelo ──────────────────────────────────────────────────────
+// Cada modelo tem seu próprio fluxo (campos e validações são diferentes); a
+// tela só escolhe qual renderizar. Modelo novo entra em TIPOS_DOCUMENTO e ganha
+// um case aqui, sem mexer no resto.
+function GerarDocumento() {
+  const [tipo, setTipo] = useState<TipoDocumento>("recibo");
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-border bg-card px-4 py-3">
+        <div className="flex flex-col gap-1">
+          <Label className="text-[11px] text-muted-foreground">Tipo de documento</Label>
+          <Select value={tipo} onValueChange={(v) => setTipo(v as TipoDocumento)}>
+            <SelectTrigger className="h-9 w-80">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TIPOS_DOCUMENTO.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </section>
+
+      {tipo === "recibo" ? <GerarRecibo /> : <GerarDeclaracaoDebitos />}
     </div>
   );
 }
@@ -363,6 +419,7 @@ function GerarRecibo() {
       const { data, error } = await supabase
         .from("documentos_recibos" as never)
         .insert({
+          tipo: "recibo",
           unidade,
           aluno_id: aluno.alunoId,
           aluno_nome: aluno.nome,
@@ -668,8 +725,381 @@ function GerarRecibo() {
   );
 }
 
+// ─── Declaração de Inexistência de Débitos ──────────────────────────────────
+function GerarDeclaracaoDebitos() {
+  const { canEdit } = usePermissions();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const podeEditar = canEdit("documentos");
+
+  const { data: colegios = [] } = useColegios();
+  const buscar = useServerFn(buscarAlunosSponte);
+  const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
+  const buscarTitulos = useServerFn(fetchTitulosAlunoSponte);
+
+  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
+  const [responsaveis, setResponsaveis] = useState<ResponsavelDeclaracao[]>([]);
+  const [dataDocumento, setDataDocumento] = useState<string>(hojeYMD());
+  const [pendencias, setPendencias] = useState<PendenciasAluno | null>(null);
+  const [confirmado, setConfirmado] = useState(false);
+
+  const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
+  const colegioDeclaracao = colegio ? paraColegioRecibo(colegio) : null;
+
+  const erros = validarDeclaracao({ colegio: colegioDeclaracao, aluno, dataDocumento });
+
+  const limparAluno = () => {
+    setAluno(null);
+    setResponsaveis([]);
+    setPendencias(null);
+    setConfirmado(false);
+  };
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => setResultados(alunos),
+    onError: (e) => {
+      setResultados(null);
+      toast.error(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  // Ao escolher o aluno já trazemos o cadastro (nome + responsáveis) e as
+  // parcelas: a checagem financeira precisa estar na tela ANTES da emissão.
+  const selecionarAluno = useMutation({
+    mutationFn: async (encontrado: AlunoBuscaSponte) => {
+      const cadastro = await buscarCadastro({ data: { alunoId: encontrado.alunoId, unidade } });
+      if (cadastro.error) throw new Error(cadastro.error);
+      const titulos = await buscarTitulos({ data: { alunoId: encontrado.alunoId, unidade } });
+      if (titulos.error) throw new Error(titulos.error);
+      if (titulos.indisponivel) {
+        throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      }
+      return { cadastro, titulos };
+    },
+    onSuccess: ({ cadastro, titulos }) => {
+      if (!cadastro.aluno) {
+        toast.error("Aluno não encontrado no Sponte.");
+        return;
+      }
+      setAluno({
+        alunoId: cadastro.aluno.alunoId,
+        nome: cadastro.aluno.nome,
+        cpf: cadastro.aluno.cpf,
+        turma: cadastro.aluno.turma,
+        matricula: cadastro.aluno.matricula,
+      });
+      setResponsaveis(
+        cadastro.responsaveis.map((r) => ({
+          responsavelId: r.responsavelId,
+          nome: r.nome,
+          cpf: r.cpf,
+          parentesco: r.parentesco,
+        })),
+      );
+      setPendencias(pendenciasEmAberto(titulos.titulos, hojeYMD()));
+      setConfirmado(false);
+      setResultados(null);
+      setTermo("");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao carregar o aluno."),
+  });
+
+  const previa = useMemo(() => {
+    if (!colegioDeclaracao || !aluno) return null;
+    return montarDeclaracaoDebitos({
+      numero: 0,
+      dataDocumento,
+      colegio: colegioDeclaracao,
+      aluno,
+      responsaveis,
+      pendencias: pendencias ?? { total: 0, vencidas: 0, aVencer: 0, valor: 0 },
+    });
+  }, [colegioDeclaracao, aluno, responsaveis, dataDocumento, pendencias]);
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      if (!colegio || !colegioDeclaracao || !aluno || !pendencias) {
+        throw new Error("Declaração incompleta.");
+      }
+      if (exigeConfirmacao(pendencias) && !confirmado) {
+        throw new Error("Confirme o aviso de parcelas em aberto antes de emitir.");
+      }
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const snapshot: DeclaracaoSnapshot = {
+        colegio: colegioDeclaracao,
+        aluno,
+        responsaveis,
+        pendencias,
+      };
+      const { data, error } = await supabase
+        .from("documentos_recibos" as never)
+        .insert({
+          tipo: "declaracao_debitos",
+          unidade,
+          aluno_id: aluno.alunoId,
+          aluno_nome: aluno.nome,
+          responsavel_id: responsaveis[0]?.responsavelId ?? "",
+          responsavel_nome: responsaveis.map((r) => r.nome).join(" e "),
+          responsavel_cpf: responsaveis[0]?.cpf ?? "",
+          data_recibo: dataDocumento,
+          valor_total: 0,
+          itens: [],
+          snapshot,
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never)
+        .select("numero")
+        .single();
+      if (error) throw new Error(error.message);
+      const numero = Number((data as unknown as { numero: number }).numero);
+      const documento = montarDeclaracaoDebitos({
+        numero,
+        dataDocumento,
+        colegio: snapshot.colegio,
+        aluno: snapshot.aluno,
+        responsaveis: snapshot.responsaveis,
+        pendencias: snapshot.pendencias,
+      });
+      await baixarPdfDeclaracao(documento, await carregarLogoDoColegio(colegio.logo_path));
+      return numero;
+    },
+    onSuccess: (numero) => {
+      toast.success(`Declaração nº ${numero} gerada e baixada.`);
+      qc.invalidateQueries({ queryKey: ["documentos_recibos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar a declaração."),
+  });
+
+  const t = termo.trim();
+  const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
+  const bloqueadoPorPendencia = !!pendencias && exigeConfirmacao(pendencias) && !confirmado;
+
+  if (!podeEditar) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        Você tem acesso somente de leitura em Documentos: consulte os documentos já emitidos na aba
+        Histórico.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Passo 1 — aluno */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Search className="h-4 w-4 text-primary" /> 1. Aluno
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            O nome completo do aluno, os responsáveis e as parcelas em aberto vêm do Sponte.
+          </p>
+        </header>
+        <div className="space-y-3 px-4 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+              <Select
+                value={unidade}
+                onValueChange={(v) => {
+                  setUnidade(v);
+                  setResultados(null);
+                  limparAluno();
+                }}
+              >
+                <SelectTrigger className="h-9 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNIDADES.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="decl-busca" className="text-[11px] text-muted-foreground">
+                Aluno (nome ou AlunoID do Sponte)
+              </Label>
+              <Input
+                id="decl-busca"
+                value={termo}
+                onChange={(e) => setTermo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
+                }}
+                placeholder="ex.: Bento ou 672"
+                className="h-9 w-64"
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 gap-1"
+              disabled={!termoValido || buscarAlunos.isPending}
+              onClick={() => buscarAlunos.mutate()}
+            >
+              {buscarAlunos.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              Buscar no Sponte
+            </Button>
+          </div>
+
+          {resultados && resultados.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              Nenhum aluno encontrado para “{t}” em {unidade}.
+            </div>
+          )}
+
+          {resultados && resultados.length > 0 && (
+            <div className="max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                  disabled={selecionarAluno.isPending}
+                  onClick={() => selecionarAluno.mutate(a)}
+                >
+                  <span>
+                    <span className="font-medium">{a.nome}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      #{a.alunoId} · {a.turma || "sem turma"} · {a.situacao}
+                    </span>
+                  </span>
+                  {selecionarAluno.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <User className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {aluno && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">
+                  {aluno.nome}{" "}
+                  <span className="text-xs text-muted-foreground">#{aluno.alunoId}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {responsaveis.length > 0
+                    ? `Responsáveis: ${responsaveis
+                        .map((r) => `${r.nome}${r.parentesco ? ` (${r.parentesco})` : ""}`)
+                        .join(" · ")}`
+                    : "Nenhum responsável vinculado no Sponte."}
+                </div>
+              </div>
+              <Button variant="ghost" className="h-8 text-xs" onClick={limparAluno}>
+                Trocar aluno
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Passo 2 — data, checagem financeira e emissão */}
+      {aluno && previa && (
+        <section className="rounded-xl border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <FileText className="h-4 w-4 text-primary" /> 2. Data e conferência
+            </h2>
+          </header>
+          <div className="space-y-4 px-4 py-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="data-declaracao" className="text-[11px] text-muted-foreground">
+                Data que consta na declaração
+              </Label>
+              <Input
+                id="data-declaracao"
+                type="date"
+                value={dataDocumento}
+                className="h-9 w-44"
+                onChange={(e) => setDataDocumento(e.target.value)}
+              />
+            </div>
+
+            <div className="rounded-lg border border-border bg-muted/30 px-3 py-3 text-sm leading-relaxed">
+              {previa.texto}
+            </div>
+
+            {pendencias && pendencias.total === 0 && (
+              <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                Conferido no Sponte: nenhuma parcela em aberto para este aluno.
+              </div>
+            )}
+
+            {pendencias && exigeConfirmacao(pendencias) && (
+              <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="flex items-start gap-2 font-medium">
+                  <AlertTriangle className="mt-0.5 h-4 w-4" />
+                  <span>
+                    Atenção: este aluno possui {pendencias.total} parcela(s) em aberto no Sponte
+                    {pendencias.vencidas > 0 ? ` (${pendencias.vencidas} já vencida[s])` : ""},
+                    somando {formatarBRL(pendencias.valor)}. Confirma mesmo assim a emissão da
+                    declaração de inexistência de débitos?
+                  </span>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={confirmado}
+                    onChange={(e) => setConfirmado(e.target.checked)}
+                  />
+                  Sim, confirmo a emissão mesmo com parcela(s) em aberto.
+                </label>
+              </div>
+            )}
+
+            {erros.length > 0 && (
+              <ul className="list-inside list-disc rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {erros.map((erro) => (
+                  <li key={erro}>{erro}</li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                className="gap-1"
+                disabled={
+                  erros.length > 0 || bloqueadoPorPendencia || !pendencias || gerar.isPending
+                }
+                onClick={() => gerar.mutate()}
+              >
+                {gerar.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                Gerar Declaração (PDF)
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 // ─── Histórico ──────────────────────────────────────────────────────────────
-function HistoricoRecibos() {
+function HistoricoDocumentos() {
   const { data: colegios = [] } = useColegios();
   const [unidade, setUnidade] = useState<string>("todas");
   const [busca, setBusca] = useState("");
@@ -677,16 +1107,16 @@ function HistoricoRecibos() {
 
   const { data: recibos = [], isLoading } = useQuery({
     queryKey: ["documentos_recibos"],
-    queryFn: async (): Promise<ReciboRow[]> => {
+    queryFn: async (): Promise<DocumentoRow[]> => {
       const { data, error } = await supabase
         .from("documentos_recibos" as never)
         .select(
-          "id, numero, unidade, aluno_id, aluno_nome, responsavel_nome, data_recibo, valor_total, created_at, created_by_nome, snapshot",
+          "id, numero, tipo, unidade, aluno_id, aluno_nome, responsavel_nome, data_recibo, valor_total, created_at, created_by_nome, snapshot",
         )
         .order("numero", { ascending: false })
         .limit(500);
       if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as ReciboRow[];
+      return (data ?? []) as unknown as DocumentoRow[];
     },
   });
 
@@ -705,22 +1135,41 @@ function HistoricoRecibos() {
 
   // Reimpressão: reusa o snapshot gravado, então o PDF sai idêntico ao original
   // mesmo que o cadastro do colégio ou do responsável tenha mudado depois.
-  const reimprimir = async (row: ReciboRow) => {
+  const reimprimir = async (row: DocumentoRow) => {
     setBaixando(row.id);
     try {
-      const snap = row.snapshot;
-      const documento = montarRecibo({
-        numero: row.numero,
-        dataRecibo: row.data_recibo.slice(0, 10),
-        colegio: snap.colegio,
-        aluno: snap.aluno,
-        responsavel: snap.responsavel,
-        valores: snap.valores,
-      });
+      const data = row.data_recibo.slice(0, 10);
       const logoPath = colegios.find((c) => c.unidade === row.unidade)?.logo_path ?? null;
-      await baixarPdfRecibo(documento, await carregarLogoDoColegio(logoPath));
+      const logo = await carregarLogoDoColegio(logoPath);
+      if (row.tipo === "declaracao_debitos") {
+        const snap = row.snapshot as DeclaracaoSnapshot;
+        await baixarPdfDeclaracao(
+          montarDeclaracaoDebitos({
+            numero: row.numero,
+            dataDocumento: data,
+            colegio: snap.colegio,
+            aluno: snap.aluno,
+            responsaveis: snap.responsaveis ?? [],
+            pendencias: snap.pendencias ?? { total: 0, vencidas: 0, aVencer: 0, valor: 0 },
+          }),
+          logo,
+        );
+        return;
+      }
+      const snap = row.snapshot as ReciboSnapshot;
+      await baixarPdfRecibo(
+        montarRecibo({
+          numero: row.numero,
+          dataRecibo: data,
+          colegio: snap.colegio,
+          aluno: snap.aluno,
+          responsavel: snap.responsavel,
+          valores: snap.valores,
+        }),
+        logo,
+      );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao reimprimir o recibo.");
+      toast.error(e instanceof Error ? e.message : "Falha ao reimprimir o documento.");
     } finally {
       setBaixando(null);
     }
@@ -730,7 +1179,7 @@ function HistoricoRecibos() {
     <div className="rounded-xl border border-border bg-card">
       <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 py-3">
         <h2 className="flex items-center gap-2 text-base font-semibold">
-          <History className="h-4 w-4 text-primary" /> Recibos emitidos
+          <History className="h-4 w-4 text-primary" /> Documentos emitidos
         </h2>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
@@ -770,12 +1219,13 @@ function HistoricoRecibos() {
           <Skeleton className="h-8 w-full" />
         </div>
       ) : filtrados.length === 0 ? (
-        <div className="p-4 text-sm text-muted-foreground">Nenhum recibo emitido ainda.</div>
+        <div className="p-4 text-sm text-muted-foreground">Nenhum documento emitido ainda.</div>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Nº</TableHead>
+              <TableHead>Tipo</TableHead>
               <TableHead>Data</TableHead>
               <TableHead>Colégio</TableHead>
               <TableHead>Aluno</TableHead>
@@ -791,6 +1241,7 @@ function HistoricoRecibos() {
                 <TableCell className="font-mono text-xs">
                   {String(r.numero).padStart(5, "0")}
                 </TableCell>
+                <TableCell className="text-xs">{rotuloTipoDocumento(r.tipo)}</TableCell>
                 <TableCell>{formatarDataBR(r.data_recibo.slice(0, 10))}</TableCell>
                 <TableCell>{r.unidade}</TableCell>
                 <TableCell>
@@ -799,7 +1250,7 @@ function HistoricoRecibos() {
                 </TableCell>
                 <TableCell>{r.responsavel_nome}</TableCell>
                 <TableCell className="text-right font-medium">
-                  {formatarBRL(Number(r.valor_total))}
+                  {r.tipo === "recibo" ? formatarBRL(Number(r.valor_total)) : "—"}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {r.created_by_nome || "—"}
