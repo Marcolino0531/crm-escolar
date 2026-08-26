@@ -57,6 +57,7 @@ import { isDiaUtil } from "@/lib/billing-schedule";
 import { alertaExecucaoCron } from "@/lib/billing-cron-runs";
 import { rotuloMesReferencia } from "@/lib/billing-exceptions";
 import { useAuth } from "@/lib/app-context";
+import { PausasPorComprovante } from "@/components/cobranca/PausaComprovante";
 import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca-automatica")({
@@ -204,6 +205,8 @@ function CobrancasAutomaticasTab() {
       <ExecucoesDoCron />
 
       {podeEditar && <AmbienteDeTeste onEnviado={() => refetch()} />}
+
+      <PausasPorComprovante podeEditar={podeEditar} />
 
       <AlunosComAcordo podeEditar={podeEditar} />
 
