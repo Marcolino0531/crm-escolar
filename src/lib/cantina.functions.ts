@@ -17,19 +17,25 @@ import {
 } from "@/lib/sponte.functions";
 import {
   CATEGORIA_CANTINA_SPONTE,
+  JANELA_PORTAL_PADRAO,
   TENTATIVAS_ZERADAS,
   cpfValido,
   estaBloqueado,
+  janelaPortalSegura,
   linkWhatsAppRecarga,
+  mensagemPortalFechado,
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
+  mmddValido,
   normalizarCpf,
   observacaoRecargaSponte,
+  portalCantinaAberto,
   registrarFalha,
   registrarSucesso,
   transicaoRecarga,
   valorRecargaValido,
   vencimentoRecarga,
+  type JanelaPortal,
   type StatusRecarga,
   type TentativasLogin,
 } from "@/lib/cantina";
@@ -49,6 +55,45 @@ import {
 //  • o CPF nunca é gravado nem registrado em log: só o hash entra no banco.
 
 const ERRO_GENERICO = "Não foi possível entrar. Confira o CPF do aluno e tente novamente.";
+
+// ─── Janela sazonal do portal ───────────────────────────────────────────────
+
+function hojeSaoPaulo(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+export interface StatusPortalResult {
+  aberto: boolean;
+  mensagem: string;
+  janela: JanelaPortal;
+}
+
+async function carregarJanelaPortal(): Promise<JanelaPortal> {
+  const { data, error } = await supabaseAdmin
+    .from("cantina_portal_config" as never)
+    .select("abertura_mmdd, fechamento_mmdd")
+    .maybeSingle();
+  if (error || !data) return JANELA_PORTAL_PADRAO;
+  const row = data as unknown as { abertura_mmdd: string; fechamento_mmdd: string };
+  return janelaPortalSegura({
+    abertura: row.abertura_mmdd,
+    fechamento: row.fechamento_mmdd,
+  });
+}
+
+async function statusPortal(): Promise<StatusPortalResult> {
+  const janela = await carregarJanelaPortal();
+  // Data do SERVIDOR (fuso de São Paulo): o bloqueio não depende do relógio do
+  // dispositivo do responsável.
+  const aberto = portalCantinaAberto(hojeSaoPaulo(), janela);
+  return { aberto, mensagem: aberto ? "" : mensagemPortalFechado(janela), janela };
+}
+
+// Consultada pela página pública para decidir se mostra o formulário — sem
+// autenticação, porque precede o login.
+export const statusPortalCantina = createServerFn({ method: "GET" }).handler(
+  async (): Promise<StatusPortalResult> => statusPortal(),
+);
 
 function hashCpf(cpfDigitos: string): string {
   return createHash("sha256").update(`cantina:${cpfDigitos}`).digest("hex");
@@ -216,6 +261,10 @@ async function autenticarPortal(cpf: string, senha: string): Promise<LoginPortal
 export const loginPortalCantina = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => LoginInputSchema.parse(input))
   .handler(async ({ data }): Promise<LoginPortalResult> => {
+    // Fora da janela do calendário o portal não autentica: quem já estava
+    // logado no navegador também para aqui.
+    const status = await statusPortal();
+    if (!status.aberto) return { aluno: null, erro: status.mensagem };
     return autenticarPortal(data.cpf, data.senha);
   });
 
@@ -246,6 +295,9 @@ const JANELA_IDEMPOTENCIA_MS = 5 * 60 * 1000;
 export const solicitarRecargaCantina = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarInputSchema.parse(input))
   .handler(async ({ data }): Promise<SolicitarRecargaResult> => {
+    const status = await statusPortal();
+    if (!status.aberto) return { ok: false, erro: status.mensagem };
+
     if (!valorRecargaValido(data.valor)) {
       return { ok: false, erro: "Informe um valor de recarga válido." };
     }
@@ -319,6 +371,43 @@ async function assertPodeEditarCantina(userId: string): Promise<string> {
   return nome;
 }
 
+const JanelaInputSchema = z.object({
+  abertura: z.string().min(5).max(5),
+  fechamento: z.string().min(5).max(5),
+});
+
+// Datas da janela editáveis pela equipe (calendário letivo muda de ano para
+// ano). Recusa MM-DD inválido em vez de gravar algo que abriria o portal em
+// dezembro.
+export const salvarJanelaPortalCantina = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => JanelaInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
+    const nome = await assertPodeEditarCantina(context.userId);
+    if (!mmddValido(data.abertura) || !mmddValido(data.fechamento)) {
+      return { ok: false, erro: "Informe as datas no formato MM-DD (ex.: 02-01 e 11-25)." };
+    }
+    const { error } = await supabaseAdmin.from("cantina_portal_config" as never).upsert(
+      {
+        id: true,
+        abertura_mmdd: data.abertura,
+        fechamento_mmdd: data.fechamento,
+        updated_at: new Date().toISOString(),
+        updated_by: context.userId,
+        updated_by_nome: nome,
+      } as never,
+      { onConflict: "id" } as never,
+    );
+    if (error) return { ok: false, erro: "Não foi possível salvar o período." };
+    return { ok: true };
+  });
+
+// A tela interna nunca é bloqueada pela janela: ela só mostra o período vigente
+// e o estado atual do portal público.
+export const obterJanelaPortalCantina = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<StatusPortalResult> => statusPortal());
+
 interface RecargaRow {
   id: string;
   unidade: string;
@@ -361,10 +450,6 @@ export interface EfetivarRecargaResult {
 }
 
 const IdInputSchema = z.object({ id: z.string().uuid() });
-
-function hojeSaoPaulo(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-}
 
 // Guarda o motivo da falha do lançamento para a tela oferecer a retentativa.
 async function registrarErroSponte(id: string, erro: string): Promise<void> {

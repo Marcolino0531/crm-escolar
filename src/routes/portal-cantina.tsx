@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, CreditCard, Loader2, LogIn, MessageCircle } from "lucide-react";
+import { CalendarOff, CheckCircle2, CreditCard, Loader2, LogIn, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,7 @@ import {
 import {
   loginPortalCantina,
   solicitarRecargaCantina,
+  statusPortalCantina,
   type AlunoPortal,
   type SolicitarRecargaResult,
 } from "@/lib/cantina.functions";
@@ -31,6 +32,14 @@ export const Route = createFileRoute("/portal-cantina")({
 function PortalCantinaPage() {
   const login = useServerFn(loginPortalCantina);
   const solicitar = useServerFn(solicitarRecargaCantina);
+  const statusFn = useServerFn(statusPortalCantina);
+
+  // Janela do calendário letivo: fora dela nem o formulário aparece (e o
+  // servidor recusa login e solicitação de qualquer jeito).
+  const status = useQuery({
+    queryKey: ["portal_cantina_status"],
+    queryFn: async () => statusFn(),
+  });
 
   const [cpf, setCpf] = useState("");
   const [senha, setSenha] = useState("");
@@ -56,8 +65,7 @@ function PortalCantinaPage() {
   const valorOk = valorRecargaValido(valorNumero);
 
   const solicitarMutation = useMutation({
-    mutationFn: async () =>
-      solicitar({ data: { cpf, senha, valor: valorNumero } }),
+    mutationFn: async () => solicitar({ data: { cpf, senha, valor: valorNumero } }),
     onSuccess: (res) => {
       if (!res.ok) {
         setErro(res.erro ?? "Não foi possível registrar a solicitação.");
@@ -66,8 +74,7 @@ function PortalCantinaPage() {
       setErro("");
       setConfirmacao(res);
     },
-    onError: () =>
-      setErro("Não foi possível registrar a solicitação agora. Tente novamente."),
+    onError: () => setErro("Não foi possível registrar a solicitação agora. Tente novamente."),
   });
 
   return (
@@ -83,20 +90,35 @@ function PortalCantinaPage() {
           </div>
         </div>
 
-        {erro && (
+        {status.isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+          </div>
+        )}
+
+        {status.data && !status.data.aberto && (
+          <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-3 text-sm text-amber-900">
+            <CalendarOff className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <strong>Recarga temporariamente indisponível.</strong> {status.data.mensagem}
+            </span>
+          </div>
+        )}
+
+        {erro && status.data?.aberto && (
           <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {erro}
           </p>
         )}
 
-        {confirmacao?.ok ? (
+        {!status.data?.aberto ? null : confirmacao?.ok ? (
           <div className="space-y-4">
             <div className="flex items-start gap-2 rounded-md bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 Solicitação de {formatarBRLRecarga(confirmacao.valor ?? 0)} registrada para{" "}
-                <strong>{confirmacao.alunoNome}</strong>. A equipe da cantina vai efetuar a
-                recarga do cartão.
+                <strong>{confirmacao.alunoNome}</strong>. A equipe da cantina vai efetuar a recarga
+                do cartão.
               </span>
             </div>
             <Button asChild className="w-full gap-2">
@@ -191,9 +213,7 @@ function PortalCantinaPage() {
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                A senha é o próprio CPF do aluno.
-              </p>
+              <p className="text-xs text-muted-foreground">A senha é o próprio CPF do aluno.</p>
             </div>
 
             <Button type="submit" className="w-full gap-2" disabled={loginMutation.isPending}>

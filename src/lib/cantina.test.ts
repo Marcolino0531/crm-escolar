@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BLOQUEIO_MINUTOS,
+  JANELA_PORTAL_PADRAO,
   MAX_TENTATIVAS_LOGIN,
   TENTATIVAS_ZERADAS,
   estaBloqueado,
@@ -10,7 +11,9 @@ import {
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
   normalizarCpf,
+  mensagemPortalFechado,
   parcelasEmAberto,
+  portalCantinaAberto,
   vencimentoPadraoRecarga,
   vencimentoRecarga,
   registrarFalha,
@@ -203,6 +206,47 @@ describe("vencimento da cobrança da recarga no Sponte", () => {
   it("viradas de ano no fallback", () => {
     expect(vencimentoPadraoRecarga("2026-12-20")).toBe("2027-01-05");
     expect(vencimentoPadraoRecarga("2026-01-31")).toBe("2026-02-05");
+  });
+});
+
+describe("janela sazonal do portal público", () => {
+  it("fica aberto durante o ano letivo (01/02 a 25/11)", () => {
+    for (const dia of ["2026-02-01", "2026-03-15", "2026-08-18", "2026-11-24", "2026-11-25"]) {
+      expect(portalCantinaAberto(dia)).toBe(true);
+    }
+  });
+
+  it("fecha de 26/11 a 31/01 (dezembro e janeiro inteiros)", () => {
+    for (const dia of ["2026-11-26", "2026-12-01", "2026-12-31", "2027-01-01", "2027-01-31"]) {
+      expect(portalCantinaAberto(dia)).toBe(false);
+    }
+  });
+
+  it("respeita a janela configurada, inclusive as fronteiras", () => {
+    const janela = { abertura: "01-15", fechamento: "12-10" };
+    expect(portalCantinaAberto("2026-01-14", janela)).toBe(false);
+    expect(portalCantinaAberto("2026-01-15", janela)).toBe(true);
+    expect(portalCantinaAberto("2026-12-10", janela)).toBe(true);
+    expect(portalCantinaAberto("2026-12-11", janela)).toBe(false);
+  });
+
+  it("suporta janela que atravessa o ano", () => {
+    const janela = { abertura: "08-01", fechamento: "03-31" };
+    expect(portalCantinaAberto("2026-12-20", janela)).toBe(true);
+    expect(portalCantinaAberto("2026-03-31", janela)).toBe(true);
+    expect(portalCantinaAberto("2026-05-10", janela)).toBe(false);
+  });
+
+  it("configuração inválida cai no padrão em vez de abrir em dezembro", () => {
+    const janela = { abertura: "31/02", fechamento: "" };
+    expect(portalCantinaAberto("2026-12-15", janela)).toBe(false);
+    expect(portalCantinaAberto("2026-08-15", janela)).toBe(true);
+  });
+
+  it("informa o período ao responsável em dia/mês", () => {
+    const texto = mensagemPortalFechado(JANELA_PORTAL_PADRAO);
+    expect(texto).toContain("01/02");
+    expect(texto).toContain("25/11");
   });
 });
 

@@ -152,6 +152,59 @@ export function observacaoRecargaSponte(dataSolicitacaoYMD: string): string {
   return `Recarga do cartão da cantina — solicitação de ${br}`;
 }
 
+// ─── Janela de funcionamento do portal público ──────────────────────────────
+//
+// Fora do ano letivo o portal não pode receber pedido: de 26/11 a 31/01 não há
+// mais boleto do ano para receber a cobrança (dezembro) e não há aula
+// (janeiro). A janela é guardada como dia do ano (MM-DD), sem ano, para valer
+// automaticamente todo ano; as datas são editáveis na tela interna, para
+// acompanhar mudança de calendário letivo.
+
+export interface JanelaPortal {
+  abertura: string; // MM-DD (inclusive)
+  fechamento: string; // MM-DD (inclusive)
+}
+
+export const JANELA_PORTAL_PADRAO: JanelaPortal = { abertura: "02-01", fechamento: "11-25" };
+
+const MMDD = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+export function mmddValido(mmdd: string): boolean {
+  return MMDD.test(mmdd);
+}
+
+// Datas inválidas (vindas de configuração corrompida) caem no padrão em vez de
+// abrir o portal por acidente em dezembro.
+export function janelaPortalSegura(janela: JanelaPortal): JanelaPortal {
+  return mmddValido(janela.abertura) && mmddValido(janela.fechamento)
+    ? janela
+    : JANELA_PORTAL_PADRAO;
+}
+
+// Portal aberto no dia? Comparação por MM-DD, com suporte a janela que
+// atravessa o ano (abertura > fechamento), caso o calendário mude.
+export function portalCantinaAberto(
+  hojeYMD: string,
+  janela: JanelaPortal = JANELA_PORTAL_PADRAO,
+): boolean {
+  const { abertura, fechamento } = janelaPortalSegura(janela);
+  const hoje = hojeYMD.slice(5, 10);
+  if (abertura <= fechamento) return hoje >= abertura && hoje <= fechamento;
+  return hoje >= abertura || hoje <= fechamento;
+}
+
+function mmddParaBR(mmdd: string): string {
+  const [mes, dia] = mmdd.split("-");
+  return `${dia}/${mes}`;
+}
+
+export function mensagemPortalFechado(janela: JanelaPortal = JANELA_PORTAL_PADRAO): string {
+  const { abertura, fechamento } = janelaPortalSegura(janela);
+  return `As solicitações de recarga do cartão da cantina ficam disponíveis de ${mmddParaBR(
+    abertura,
+  )} a ${mmddParaBR(fechamento)}. Fora desse período o serviço fica temporariamente indisponível.`;
+}
+
 // ─── Solicitação de recarga ─────────────────────────────────────────────────
 
 export type StatusRecarga = "pendente" | "efetivada" | "lancada_no_boleto";
