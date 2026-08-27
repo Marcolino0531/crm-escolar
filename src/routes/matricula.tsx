@@ -9,7 +9,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, CheckCircle2, GraduationCap, Loader2, Send } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  GraduationCap,
+  Loader2,
+  Send,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,20 +30,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatPhoneBR } from "@/lib/phone";
+import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
   MATRICULA_FORM_VAZIO,
+  ROTINA_FORM_VAZIA,
   cepCompletoValido,
   formatarCep,
   formatarCpf,
   formValido,
   soDigitos,
   validarMatriculaForm,
+  validarRotinaForm,
   type EnderecoForm,
   type ErrosForm,
   type MatriculaForm,
   type ParentescoForm,
   type ResponsavelForm,
+  type RotinaForm,
 } from "@/lib/matricula-form";
 import { configMatriculaPublica, enviarMatriculaPublica } from "@/lib/matricula-publica.functions";
 
@@ -375,6 +387,9 @@ function MatriculaPublicaPage() {
     ...MATRICULA_FORM_VAZIO,
     endereco: ENDERECO_VAZIO,
   });
+  const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
+  // Etapa 1 = aluno/responsáveis; etapa 2 = Rotina Escolar.
+  const [etapa, setEtapa] = useState<1 | 2>(1);
   const [erros, setErros] = useState<ErrosForm>({});
   const [erroGeral, setErroGeral] = useState("");
   const [captchaToken, setCaptchaToken] = useState("");
@@ -390,7 +405,7 @@ function MatriculaPublicaPage() {
   }, [colegio, unidades, form.unidade]);
 
   const enviar = useMutation({
-    mutationFn: async () => enviarFn({ data: { captchaToken, form } }),
+    mutationFn: async () => enviarFn({ data: { captchaToken, form, rotina } }),
     onSuccess: (res) => {
       if (res.ok) {
         setEnviado(true);
@@ -403,8 +418,23 @@ function MatriculaPublicaPage() {
       setErroGeral("Não foi possível enviar o formulário agora. Tente novamente em instantes."),
   });
 
-  const submeter = () => {
+  const avancar = () => {
     const encontrados = validarMatriculaForm(form, hojeLocal(), unidades);
+    setErros(encontrados);
+    if (!formValido(encontrados)) {
+      setErroGeral("Confira os campos destacados antes de continuar.");
+      return;
+    }
+    setErroGeral("");
+    setEtapa(2);
+    window.scrollTo({ top: 0 });
+  };
+
+  const submeter = () => {
+    const encontrados = {
+      ...validarMatriculaForm(form, hojeLocal(), unidades),
+      ...validarRotinaForm(rotina),
+    };
     setErros(encontrados);
     if (!formValido(encontrados)) {
       setErroGeral("Confira os campos destacados antes de enviar.");
@@ -441,7 +471,9 @@ function MatriculaPublicaPage() {
           <div>
             <h1 className="text-lg font-semibold">Formulário de matrícula</h1>
             <p className="text-sm text-muted-foreground">
-              Preencha os dados do aluno e dos responsáveis. Leva poucos minutos.
+              {etapa === 1
+                ? "Etapa 1 de 2 — dados do aluno e dos responsáveis."
+                : "Etapa 2 de 2 — rotina escolar (início, horários e refeições)."}
             </p>
           </div>
         </header>
@@ -467,150 +499,159 @@ function MatriculaPublicaPage() {
             className="space-y-6"
             onSubmit={(e) => {
               e.preventDefault();
-              submeter();
+              if (etapa === 1) avancar();
+              else submeter();
             }}
           >
-            <Campo id="unidade" label="Colégio" erro={erros.unidade}>
-              <Select
-                value={form.unidade}
-                onValueChange={(unidade) => setForm({ ...form, unidade })}
-              >
-                <SelectTrigger id="unidade">
-                  <SelectValue placeholder="Escolha o colégio" />
-                </SelectTrigger>
-                <SelectContent>
-                  {unidades.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Campo>
-
-            <section className="space-y-4 rounded-lg border p-4">
-              <h2 className="font-medium">Dados do aluno</h2>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Campo id="aluno-nome" label="Nome completo" erro={erros["aluno.nome"]}>
-                  <Input
-                    id="aluno-nome"
-                    value={form.aluno.nome}
-                    onChange={(e) =>
-                      setForm({ ...form, aluno: { ...form.aluno, nome: e.target.value } })
-                    }
-                  />
-                </Campo>
-                <Campo
-                  id="aluno-cpf"
-                  label="CPF (opcional)"
-                  erro={erros["aluno.cpf"]}
-                  dica="Se o aluno já tiver CPF, informe."
+            <div className={etapa === 1 ? "space-y-6" : "hidden"}>
+              <Campo id="unidade" label="Colégio" erro={erros.unidade}>
+                <Select
+                  value={form.unidade}
+                  onValueChange={(unidade) => setForm({ ...form, unidade })}
                 >
-                  <Input
+                  <SelectTrigger id="unidade">
+                    <SelectValue placeholder="Escolha o colégio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unidades.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Campo>
+
+              <section className="space-y-4 rounded-lg border p-4">
+                <h2 className="font-medium">Dados do aluno</h2>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo id="aluno-nome" label="Nome completo" erro={erros["aluno.nome"]}>
+                    <Input
+                      id="aluno-nome"
+                      value={form.aluno.nome}
+                      onChange={(e) =>
+                        setForm({ ...form, aluno: { ...form.aluno, nome: e.target.value } })
+                      }
+                    />
+                  </Campo>
+                  <Campo
                     id="aluno-cpf"
-                    inputMode="numeric"
-                    placeholder="000.000.000-00"
-                    value={form.aluno.cpf}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        aluno: { ...form.aluno, cpf: formatarCpf(e.target.value) },
-                      })
-                    }
-                  />
-                </Campo>
-                <Campo
-                  id="aluno-nascimento"
-                  label="Data de nascimento"
-                  erro={erros["aluno.dataNascimento"]}
-                >
-                  <Input
+                    label="CPF (opcional)"
+                    erro={erros["aluno.cpf"]}
+                    dica="Se o aluno já tiver CPF, informe."
+                  >
+                    <Input
+                      id="aluno-cpf"
+                      inputMode="numeric"
+                      placeholder="000.000.000-00"
+                      value={form.aluno.cpf}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          aluno: { ...form.aluno, cpf: formatarCpf(e.target.value) },
+                        })
+                      }
+                    />
+                  </Campo>
+                  <Campo
                     id="aluno-nascimento"
-                    type="date"
-                    value={form.aluno.dataNascimento}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        aluno: { ...form.aluno, dataNascimento: e.target.value },
-                      })
-                    }
-                  />
-                </Campo>
-                <Campo
-                  id="aluno-naturalidade"
-                  label="Naturalidade (cidade de nascimento)"
-                  erro={erros["aluno.naturalidade"]}
-                >
-                  <Input
+                    label="Data de nascimento"
+                    erro={erros["aluno.dataNascimento"]}
+                  >
+                    <Input
+                      id="aluno-nascimento"
+                      type="date"
+                      value={form.aluno.dataNascimento}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          aluno: { ...form.aluno, dataNascimento: e.target.value },
+                        })
+                      }
+                    />
+                  </Campo>
+                  <Campo
                     id="aluno-naturalidade"
-                    value={form.aluno.naturalidade}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        aluno: { ...form.aluno, naturalidade: e.target.value },
-                      })
-                    }
-                  />
-                </Campo>
-              </div>
-            </section>
+                    label="Naturalidade (cidade de nascimento)"
+                    erro={erros["aluno.naturalidade"]}
+                  >
+                    <Input
+                      id="aluno-naturalidade"
+                      value={form.aluno.naturalidade}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          aluno: { ...form.aluno, naturalidade: e.target.value },
+                        })
+                      }
+                    />
+                  </Campo>
+                </div>
+              </section>
 
-            <section className="space-y-4 rounded-lg border p-4">
-              <h2 className="font-medium">Endereço do aluno</h2>
-              <BlocoEndereco
-                prefixo="endereco"
-                endereco={form.endereco}
+              <section className="space-y-4 rounded-lg border p-4">
+                <h2 className="font-medium">Endereço do aluno</h2>
+                <BlocoEndereco
+                  prefixo="endereco"
+                  endereco={form.endereco}
+                  erros={erros}
+                  onChange={(endereco) => setForm({ ...form, endereco })}
+                />
+              </section>
+
+              <BlocoResponsavel
+                qual="mae"
+                titulo="Dados da mãe"
+                responsavel={form.mae}
                 erros={erros}
-                onChange={(endereco) => setForm({ ...form, endereco })}
+                onChange={(mae) => setForm({ ...form, mae })}
               />
-            </section>
 
-            <BlocoResponsavel
-              qual="mae"
-              titulo="Dados da mãe"
-              responsavel={form.mae}
-              erros={erros}
-              onChange={(mae) => setForm({ ...form, mae })}
-            />
+              <BlocoResponsavel
+                qual="pai"
+                titulo="Dados do pai"
+                responsavel={form.pai}
+                erros={erros}
+                onChange={(pai) => setForm({ ...form, pai })}
+              />
 
-            <BlocoResponsavel
-              qual="pai"
-              titulo="Dados do pai"
-              responsavel={form.pai}
-              erros={erros}
-              onChange={(pai) => setForm({ ...form, pai })}
-            />
-
-            <section className="space-y-3 rounded-lg border p-4">
-              <h2 className="font-medium">Responsável financeiro</h2>
-              <p className="text-xs text-muted-foreground">
-                Quem receberá os boletos e as comunicações financeiras do colégio.
-              </p>
-              <Select
-                value={form.responsavelFinanceiro}
-                onValueChange={(v) =>
-                  setForm({ ...form, responsavelFinanceiro: v as ParentescoForm })
-                }
-              >
-                <SelectTrigger id="responsavel-financeiro">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mae">Mãe</SelectItem>
-                  <SelectItem value="pai">Pai</SelectItem>
-                </SelectContent>
-              </Select>
-              {(erros.responsavelFinanceiro || erros.responsaveis) && (
-                <p className="text-xs text-destructive">
-                  {erros.responsavelFinanceiro ?? erros.responsaveis}
+              <section className="space-y-3 rounded-lg border p-4">
+                <h2 className="font-medium">Responsável financeiro</h2>
+                <p className="text-xs text-muted-foreground">
+                  Quem receberá os boletos e as comunicações financeiras do colégio.
                 </p>
-              )}
-            </section>
+                <Select
+                  value={form.responsavelFinanceiro}
+                  onValueChange={(v) =>
+                    setForm({ ...form, responsavelFinanceiro: v as ParentescoForm })
+                  }
+                >
+                  <SelectTrigger id="responsavel-financeiro">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mae">Mãe</SelectItem>
+                    <SelectItem value="pai">Pai</SelectItem>
+                  </SelectContent>
+                </Select>
+                {(erros.responsavelFinanceiro || erros.responsaveis) && (
+                  <p className="text-xs text-destructive">
+                    {erros.responsavelFinanceiro ?? erros.responsaveis}
+                  </p>
+                )}
+              </section>
+            </div>
 
-            <CaptchaTurnstile
-              siteKey={config.data.turnstileSiteKey}
-              onToken={(token) => setCaptchaToken(token)}
-            />
+            {etapa === 2 && (
+              <>
+                <RotinaEscolar rotina={rotina} erros={erros} onChange={setRotina} />
+
+                <CaptchaTurnstile
+                  siteKey={config.data.turnstileSiteKey}
+                  onToken={(token) => setCaptchaToken(token)}
+                />
+              </>
+            )}
 
             {erroGeral && (
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -618,14 +659,40 @@ function MatriculaPublicaPage() {
               </p>
             )}
 
-            <Button type="submit" className="w-full gap-2" disabled={enviar.isPending}>
-              {enviar.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-              Enviar matrícula
-            </Button>
+            {etapa === 1 ? (
+              <Button type="submit" className="w-full gap-2">
+                Continuar
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <div className="flex flex-col gap-2 sm:flex-row-reverse">
+                <Button
+                  type="submit"
+                  className="w-full gap-2 sm:flex-1"
+                  disabled={enviar.isPending}
+                >
+                  {enviar.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  Enviar matrícula
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2 sm:w-auto"
+                  onClick={() => {
+                    setErroGeral("");
+                    setEtapa(1);
+                    window.scrollTo({ top: 0 });
+                  }}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Voltar e corrigir
+                </Button>
+              </div>
+            )}
           </form>
         )}
       </div>
