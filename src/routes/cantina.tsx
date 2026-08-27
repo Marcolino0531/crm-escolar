@@ -3,7 +3,15 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Loader2, Receipt, UtensilsCrossed } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  Loader2,
+  Receipt,
+  RefreshCw,
+  UtensilsCrossed,
+} from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +34,10 @@ import {
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  STATUS_RECARGA_LABEL,
-  formatarBRLRecarga,
-  indicacaoLancamentoManual,
-  type StatusRecarga,
-} from "@/lib/cantina";
+import { STATUS_RECARGA_LABEL, formatarBRLRecarga, type StatusRecarga } from "@/lib/cantina";
 import {
   efetivarRecargaCantina,
+  lancarRecargaNoSponte,
   marcarRecargaLancadaNoBoleto,
 } from "@/lib/cantina.functions";
 
@@ -51,9 +55,10 @@ interface RecargaRow {
   created_at: string;
   efetivada_at: string | null;
   efetivada_por_nome: string;
-  boleto_numero: string;
-  boleto_vencimento: string | null;
-  boleto_indisponivel: boolean;
+  sponte_conta_receber_id: string;
+  sponte_vencimento: string | null;
+  sponte_erro: string;
+  lancada_automatica: boolean;
   lancada_at: string | null;
   lancada_por_nome: string;
 }
@@ -69,15 +74,17 @@ function formatarVencimento(ymd: string | null): string {
   return `${d}/${m}/${y}`;
 }
 
-// Tela interna: a equipe acompanha as solicitações feitas pelos pais no portal,
-// marca a recarga física do cartão como efetivada e vê a INDICAÇÃO MANUAL do
-// valor a incluir no próximo boleto (o lançamento no Sponte é feito à mão — a
-// API não permite acrescentar item a boleto já emitido).
+// Tela interna: a equipe acompanha as solicitações feitas pelos pais no portal
+// e marca a recarga física do cartão como efetivada — momento em que o sistema
+// cria a cobrança no Sponte (categoria "Cantina", 1 parcela) no vencimento da
+// próxima mensalidade em aberto. A cobrança é um TÍTULO PRÓPRIO: a API do Sponte
+// não permite acrescentar item a um boleto de mensalidade já emitido.
 function CantinaPage() {
   const { canView, canEdit } = usePermissions();
   const { selected, schools } = useSchool();
   const queryClient = useQueryClient();
   const efetivar = useServerFn(efetivarRecargaCantina);
+  const lancarSponte = useServerFn(lancarRecargaNoSponte);
   const marcarLancada = useServerFn(marcarRecargaLancadaNoBoleto);
 
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusRecarga>("todos");
@@ -90,13 +97,34 @@ function CantinaPage() {
       const { data, error } = await supabase
         .from("cantina_recargas" as never)
         .select(
-          "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, boleto_numero, boleto_vencimento, boleto_indisponivel, lancada_at, lancada_por_nome",
+          "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancada_automatica, lancada_at, lancada_por_nome",
         )
         .order("created_at", { ascending: false });
       if (error) throw new Error(error.message);
       return (data ?? []) as unknown as RecargaRow[];
     },
   });
+
+  // A recarga do cartão é registrada mesmo quando o Sponte falha — o aviso
+  // separa os dois fatos, para ninguém achar que a cobrança foi criada.
+  const avisarResultado = (res: {
+    lancadaNoSponte?: boolean;
+    sponteVencimento?: string;
+    sponteErro?: string;
+  }) => {
+    if (res.lancadaNoSponte) {
+      toast.success(
+        `Recarga efetivada e cobrança criada no Sponte (venc. ${formatarVencimento(res.sponteVencimento ?? null)}).`,
+      );
+    } else {
+      toast.error(
+        `Recarga efetivada, mas a cobrança NÃO foi criada no Sponte: ${res.sponteErro ?? "falha desconhecida"}`,
+        { duration: 12000 },
+      );
+    }
+    queryClient.invalidateQueries({ queryKey: ["cantina_recargas"] });
+    queryClient.invalidateQueries({ queryKey: ["cantina_recargas_pendentes"] });
+  };
 
   const efetivarMutation = useMutation({
     mutationFn: async (id: string) => efetivar({ data: { id } }),
@@ -105,13 +133,20 @@ function CantinaPage() {
         toast.error(res.erro ?? "Não foi possível efetivar.");
         return;
       }
-      toast.success(
-        res.boletoIndisponivel
-          ? "Recarga efetivada. Nenhum boleto em aberto encontrado — inclua o valor manualmente no próximo."
-          : `Recarga efetivada. Inclua o valor no boleto ${res.boletoNumero || "—"} (venc. ${formatarVencimento(res.boletoVencimento ?? null)}).`,
-      );
-      queryClient.invalidateQueries({ queryKey: ["cantina_recargas"] });
-      queryClient.invalidateQueries({ queryKey: ["cantina_recargas_pendentes"] });
+      avisarResultado(res);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const lancarMutation = useMutation({
+    mutationFn: async (id: string) => lancarSponte({ data: { id } }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.erro ?? "Não foi possível lançar no Sponte.");
+        queryClient.invalidateQueries({ queryKey: ["cantina_recargas"] });
+        return;
+      }
+      avisarResultado(res);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -123,7 +158,7 @@ function CantinaPage() {
         toast.error(res.erro ?? "Não foi possível registrar o lançamento.");
         return;
       }
-      toast.success("Lançamento no boleto registrado.");
+      toast.success("Lançamento manual registrado.");
       queryClient.invalidateQueries({ queryKey: ["cantina_recargas"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -146,9 +181,7 @@ function CantinaPage() {
     return daUnidade.filter((r) => {
       if (filtroStatus !== "todos" && r.status !== filtroStatus) return false;
       if (!termo) return true;
-      return (
-        r.aluno_nome.toLowerCase().includes(termo) || r.unidade.toLowerCase().includes(termo)
-      );
+      return r.aluno_nome.toLowerCase().includes(termo) || r.unidade.toLowerCase().includes(termo);
     });
   }, [daUnidade, filtroStatus, busca]);
 
@@ -165,8 +198,8 @@ function CantinaPage() {
         <div>
           <h1 className="text-xl font-semibold">Cantina — Solicitações de recarga</h1>
           <p className="text-sm text-muted-foreground">
-            Pedidos feitos pelos responsáveis no portal, recarga física do cartão e valor a
-            incluir no boleto.
+            Pedidos feitos pelos responsáveis no portal, recarga física do cartão e cobrança
+            automática no Sponte.
           </p>
         </div>
       </div>
@@ -177,23 +210,25 @@ function CantinaPage() {
           <p className="text-2xl font-semibold">{pendentes.length}</p>
         </div>
         <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">A lançar no boleto</p>
+          <p className="text-xs text-muted-foreground">Sem cobrança no Sponte</p>
           <p className="text-2xl font-semibold">{aLancar.length}</p>
         </div>
         <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">Valor pendente de lançamento</p>
+          <p className="text-xs text-muted-foreground">Valor sem cobrança lançada</p>
           <p className="text-2xl font-semibold">
             {formatarBRLRecarga(aLancar.reduce((s, r) => s + Number(r.valor), 0))}
           </p>
         </div>
       </div>
 
-      <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="flex items-start gap-2 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <span>
-          O lançamento no boleto é <strong>manual</strong>: a API do Sponte não permite
-          acrescentar um item a um boleto de mensalidade já emitido. Ao efetivar a recarga, a
-          tela indica em qual boleto incluir o valor.
+          Ao marcar “Recarga efetivada”, o sistema cria a cobrança no Sponte (categoria{" "}
+          <strong>Cantina</strong>, 1 parcela) com vencimento da próxima mensalidade em aberto do
+          aluno — ou no dia 5 do mês seguinte, se ele não tiver mensalidade em aberto. É um{" "}
+          <strong>boleto próprio</strong> da recarga: a API do Sponte não acrescenta itens a um
+          boleto de mensalidade já emitido.
         </span>
       </div>
 
@@ -234,7 +269,7 @@ function CantinaPage() {
                 <TableHead>Unidade</TableHead>
                 <TableHead>Valor</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Boleto (lançamento manual)</TableHead>
+                <TableHead>Cobrança no Sponte</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -273,24 +308,25 @@ function CantinaPage() {
                       <p className="text-xs text-muted-foreground">
                         Lançado: {formatarDataHora(r.lancada_at)}
                         {r.lancada_por_nome ? ` · ${r.lancada_por_nome}` : ""}
+                        {r.lancada_automatica ? "" : " · manual"}
                       </p>
                     )}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {r.status === "pendente" ? (
-                      <span className="text-muted-foreground">—</span>
-                    ) : (
-                      <span className={r.boleto_indisponivel ? "text-amber-700" : undefined}>
-                        {indicacaoLancamentoManual(
-                          Number(r.valor),
-                          r.boleto_indisponivel || !r.boleto_vencimento
-                            ? null
-                            : {
-                                numeroBoleto: r.boleto_numero,
-                                vencimento: r.boleto_vencimento.slice(0, 10),
-                              },
-                        )}
+                    {r.status === "lancada_no_boleto" && r.lancada_automatica ? (
+                      <span>
+                        Conta a receber {r.sponte_conta_receber_id || "sem número"} · venc.{" "}
+                        {formatarVencimento(r.sponte_vencimento)}
                       </span>
+                    ) : r.status === "lancada_no_boleto" ? (
+                      <span className="text-muted-foreground">Lançada à mão pela equipe.</span>
+                    ) : r.sponte_erro ? (
+                      <span className="flex items-start gap-1 text-amber-700">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        {r.sponte_erro}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -309,16 +345,33 @@ function CantinaPage() {
                         Recarga efetivada
                       </Button>
                     )}
+                    {/* Só aparece quando a criação automática falhou: repetir ou,
+                        se o Sponte estiver recusando, registrar o lançamento manual. */}
                     {podeEditar && r.status === "efetivada" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-2"
-                        disabled={lancadaMutation.isPending}
-                        onClick={() => lancadaMutation.mutate(r.id)}
-                      >
-                        <Receipt className="h-4 w-4" /> Lancei no boleto
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          className="gap-2"
+                          disabled={lancarMutation.isPending}
+                          onClick={() => lancarMutation.mutate(r.id)}
+                        >
+                          {lancarMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          Lançar no Sponte
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-2"
+                          disabled={lancadaMutation.isPending}
+                          onClick={() => lancadaMutation.mutate(r.id)}
+                        >
+                          <Receipt className="h-4 w-4" /> Lancei à mão
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 </TableRow>

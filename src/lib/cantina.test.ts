@@ -4,14 +4,15 @@ import {
   MAX_TENTATIVAS_LOGIN,
   TENTATIVAS_ZERADAS,
   estaBloqueado,
-  indicacaoLancamentoManual,
+  observacaoRecargaSponte,
   WHATSAPP_RECEPCAO,
   linkWhatsAppRecarga,
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
   normalizarCpf,
   parcelasEmAberto,
-  proximaParcelaEmAberto,
+  vencimentoPadraoRecarga,
+  vencimentoRecarga,
   registrarFalha,
   registrarSucesso,
   transicaoRecarga,
@@ -124,7 +125,7 @@ describe("bloqueio temporário do login do portal da cantina", () => {
   });
 });
 
-describe("próximo boleto em aberto para lançar a recarga", () => {
+describe("vencimento da cobrança da recarga no Sponte", () => {
   const hoje = "2026-08-18";
 
   const parcela = (p: Partial<ParcelaAberta>): ParcelaAberta => ({
@@ -147,70 +148,61 @@ describe("próximo boleto em aberto para lançar a recarga", () => {
     expect(abertas.map((p) => p.contaReceberID)).toEqual(["c"]);
   });
 
-  it("escolhe a parcela em aberto de vencimento mais próximo no futuro", () => {
-    const alvo = proximaParcelaEmAberto(
+  it("usa o vencimento da mensalidade em aberto mais próxima", () => {
+    const r = vencimentoRecarga(
       [
-        parcela({ contaReceberID: "out", vencimento: "2026-10-10" }),
-        parcela({ contaReceberID: "set", vencimento: "2026-09-10" }),
-        parcela({ contaReceberID: "nov", vencimento: "2026-11-10" }),
+        parcela({ vencimento: "2026-10-10" }),
+        parcela({ vencimento: "2026-09-10" }),
+        parcela({ vencimento: "2026-11-10" }),
       ],
       hoje,
     );
-    expect(alvo?.contaReceberID).toBe("set");
+    expect(r).toMatchObject({ vencimento: "2026-09-10", origem: "mensalidade" });
   });
 
-  it("preserva a data de vencimento normal do boleto escolhido", () => {
-    const alvo = proximaParcelaEmAberto(
-      [parcela({ contaReceberID: "set", vencimento: "2026-09-10" })],
+  it("aceita mensalidade que vence hoje", () => {
+    expect(vencimentoRecarga([parcela({ vencimento: hoje })], hoje).vencimento).toBe(hoje);
+  });
+
+  it("ignora mensalidade vencida e cai no dia 5 do mês seguinte", () => {
+    const r = vencimentoRecarga(
+      [parcela({ vencimento: "2026-07-10" }), parcela({ vencimento: "2026-08-10" })],
       hoje,
     );
-    expect(alvo?.vencimento).toBe("2026-09-10");
+    expect(r).toMatchObject({ vencimento: "2026-09-05", origem: "padrao" });
   });
 
-  it("aceita boleto que vence hoje", () => {
-    const alvo = proximaParcelaEmAberto([parcela({ vencimento: hoje })], hoje);
-    expect(alvo?.vencimento).toBe(hoje);
-  });
-
-  it("ignora parcelas já vencidas (não lança em boleto atrasado)", () => {
-    const alvo = proximaParcelaEmAberto(
-      [
-        parcela({ contaReceberID: "jul", vencimento: "2026-07-10" }),
-        parcela({ contaReceberID: "ago", vencimento: "2026-08-10" }),
-      ],
-      hoje,
-    );
-    expect(alvo).toBeNull();
-  });
-
-  it("não devolve boleto quando o aluno só tem parcelas quitadas", () => {
-    const alvo = proximaParcelaEmAberto(
+  it("ignora mensalidade quitada e cai no fallback", () => {
+    const r = vencimentoRecarga(
       [parcela({ vencimento: "2026-09-10", quitada: true, saldo: 0 })],
       hoje,
     );
-    expect(alvo).toBeNull();
+    expect(r.origem).toBe("padrao");
   });
 
-  it("prefere a mensalidade quando há mais de uma cobrança no mesmo vencimento", () => {
-    const alvo = proximaParcelaEmAberto(
+  it("ignora cobranças que não são mensalidade (esportes, material)", () => {
+    const r = vencimentoRecarga(
       [
-        parcela({ contaReceberID: "esportes", categoria: "Esportes", vencimento: "2026-09-10" }),
-        parcela({ contaReceberID: "mensal", categoria: "Mensalidade", vencimento: "2026-09-10" }),
+        parcela({ categoria: "Esportes", vencimento: "2026-08-25" }),
+        parcela({ categoria: "Material", vencimento: "2026-08-28" }),
+        parcela({ categoria: "Mensalidade", vencimento: "2026-09-10" }),
       ],
       hoje,
     );
-    expect(alvo?.contaReceberID).toBe("mensal");
+    expect(r.vencimento).toBe("2026-09-10");
   });
 
-  it("usa a parcela não-mensalidade quando ela vence antes", () => {
-    const alvo = proximaParcelaEmAberto(
-      [
-        parcela({ contaReceberID: "material", categoria: "Material", vencimento: "2026-08-25" }),
-        parcela({ contaReceberID: "mensal", categoria: "Mensalidade", vencimento: "2026-09-10" }),
-      ],
-      hoje,
-    );
-    expect(alvo?.contaReceberID).toBe("material");
+  it("sem nenhuma parcela, usa o dia 5 do mês seguinte", () => {
+    expect(vencimentoRecarga([], hoje)).toMatchObject({
+      vencimento: "2026-09-05",
+      origem: "padrao",
+      mensalidade: null,
+    });
+  });
+
+  it("viradas de ano no fallback", () => {
+    expect(vencimentoPadraoRecarga("2026-12-20")).toBe("2027-01-05");
+    expect(vencimentoPadraoRecarga("2026-01-31")).toBe("2026-02-05");
   });
 });
 
@@ -270,17 +262,9 @@ describe("cantina — transições da solicitação", () => {
     expect(transicaoRecarga("lancada_no_boleto", "marcar_lancada").ok).toBe(false);
   });
 
-  it("indica manualmente o boleto alvo do valor da recarga", () => {
-    const texto = indicacaoLancamentoManual(50, {
-      numeroBoleto: "12345",
-      vencimento: "2026-09-10",
-    }).replace(/\u00a0/g, " ");
-    expect(texto).toBe("Incluir R$ 50,00 no boleto 12345 (vencimento 10/09/2026).");
-  });
-
-  it("sem parcela em aberto, orienta o próximo boleto a ser emitido", () => {
-    const texto = indicacaoLancamentoManual(50, null).replace(/\u00a0/g, " ");
-    expect(texto).toContain("R$ 50,00");
-    expect(texto).toContain("próximo boleto");
+  it("identifica a recarga na observação do lançamento", () => {
+    const texto = observacaoRecargaSponte("2026-08-18");
+    expect(texto).toContain("cantina");
+    expect(texto).toContain("18/08/2026");
   });
 });
