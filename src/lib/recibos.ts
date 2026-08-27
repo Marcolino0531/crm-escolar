@@ -52,6 +52,11 @@ export interface ColegioRecibo {
   site: string;
   assinanteNome: string;
   assinanteCargo: string;
+  // Quem representa o colégio como CREDOR nos documentos jurídicos + OAB.
+  // Opcionais porque documentos emitidos antes destes campos guardaram
+  // snapshots sem eles, e reimprimir não pode quebrar.
+  representanteNome?: string;
+  representanteOab?: string;
   observacao: string;
 }
 
