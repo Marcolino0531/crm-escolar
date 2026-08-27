@@ -17,6 +17,7 @@ const APP_MODULES = [
   "colonia_financeiro",
   "esportes",
   "documentos",
+  "cantina",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)

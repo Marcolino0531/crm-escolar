@@ -196,6 +196,7 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
       "financeiro_atendimento",
       "financeiro_atendimento_ia",
       "documentos",
+      "cantina",
       // Mensagens Automáticas: a permissão continua sendo `financeiro_cobranca`
       // (nada a reconfigurar), mas o módulo agora é Operacional.
       "financeiro_cobranca",

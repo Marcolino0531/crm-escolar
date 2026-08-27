@@ -13,6 +13,7 @@ import { Route as UploadRouteImport } from './routes/upload'
 import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
+import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MatriculasRouteImport } from './routes/matriculas'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
@@ -29,6 +30,7 @@ import { Route as ColoniaRouteImport } from './routes/colonia'
 import { Route as CobrancaAutomaticaRouteImport } from './routes/cobranca-automatica'
 import { Route as CobrancaRouteImport } from './routes/cobranca'
 import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
+import { Route as CantinaRouteImport } from './routes/cantina'
 import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
 import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AgendaRouteImport } from './routes/agenda'
@@ -53,6 +55,11 @@ const TasksRoute = TasksRouteImport.update({
 const RhRoute = RhRouteImport.update({
   id: '/rh',
   path: '/rh',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalCantinaRoute = PortalCantinaRouteImport.update({
+  id: '/portal-cantina',
+  path: '/portal-cantina',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnboardingRoute = OnboardingRouteImport.update({
@@ -135,6 +142,11 @@ const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
   path: '/cartao-credito',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CantinaRoute = CantinaRouteImport.update({
+  id: '/cantina',
+  path: '/cantina',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AtendimentoIaRoute = AtendimentoIaRouteImport.update({
   id: '/atendimento-ia',
   path: '/atendimento-ia',
@@ -167,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -183,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/inadimplencia': typeof InadimplenciaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/portal-cantina': typeof PortalCantinaRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -194,6 +208,7 @@ export interface FileRoutesByTo {
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -210,6 +225,7 @@ export interface FileRoutesByTo {
   '/inadimplencia': typeof InadimplenciaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/portal-cantina': typeof PortalCantinaRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -222,6 +238,7 @@ export interface FileRoutesById {
   '/agenda': typeof AgendaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
   '/cobranca-automatica': typeof CobrancaAutomaticaRoute
@@ -238,6 +255,7 @@ export interface FileRoutesById {
   '/inadimplencia': typeof InadimplenciaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/portal-cantina': typeof PortalCantinaRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -251,6 +269,7 @@ export interface FileRouteTypes {
     | '/agenda'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -267,6 +286,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/matriculas'
     | '/onboarding'
+    | '/portal-cantina'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -278,6 +298,7 @@ export interface FileRouteTypes {
     | '/agenda'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -294,6 +315,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/matriculas'
     | '/onboarding'
+    | '/portal-cantina'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -305,6 +327,7 @@ export interface FileRouteTypes {
     | '/agenda'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
     | '/cobranca-automatica'
@@ -321,6 +344,7 @@ export interface FileRouteTypes {
     | '/inadimplencia'
     | '/matriculas'
     | '/onboarding'
+    | '/portal-cantina'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -333,6 +357,7 @@ export interface RootRouteChildren {
   AgendaRoute: typeof AgendaRoute
   AtendimentoRoute: typeof AtendimentoRoute
   AtendimentoIaRoute: typeof AtendimentoIaRoute
+  CantinaRoute: typeof CantinaRoute
   CartaoCreditoRoute: typeof CartaoCreditoRoute
   CobrancaRoute: typeof CobrancaRoute
   CobrancaAutomaticaRoute: typeof CobrancaAutomaticaRoute
@@ -349,6 +374,7 @@ export interface RootRouteChildren {
   InadimplenciaRoute: typeof InadimplenciaRoute
   MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
+  PortalCantinaRoute: typeof PortalCantinaRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
   UniformesRoute: typeof UniformesRoute
@@ -383,6 +409,13 @@ declare module '@tanstack/react-router' {
       path: '/rh'
       fullPath: '/rh'
       preLoaderRoute: typeof RhRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal-cantina': {
+      id: '/portal-cantina'
+      path: '/portal-cantina'
+      fullPath: '/portal-cantina'
+      preLoaderRoute: typeof PortalCantinaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/onboarding': {
@@ -490,6 +523,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CobrancaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cantina': {
+      id: '/cantina'
+      path: '/cantina'
+      fullPath: '/cantina'
+      preLoaderRoute: typeof CantinaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cartao-credito': {
       id: '/cartao-credito'
       path: '/cartao-credito'
@@ -541,6 +581,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgendaRoute: AgendaRoute,
   AtendimentoRoute: AtendimentoRoute,
   AtendimentoIaRoute: AtendimentoIaRoute,
+  CantinaRoute: CantinaRoute,
   CartaoCreditoRoute: CartaoCreditoRoute,
   CobrancaRoute: CobrancaRoute,
   CobrancaAutomaticaRoute: CobrancaAutomaticaRoute,
@@ -557,6 +598,7 @@ const rootRouteChildren: RootRouteChildren = {
   InadimplenciaRoute: InadimplenciaRoute,
   MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
+  PortalCantinaRoute: PortalCantinaRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
   UniformesRoute: UniformesRoute,
