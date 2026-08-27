@@ -21,7 +21,31 @@ import {
   type SolicitarRecargaResult,
 } from "@/lib/cantina.functions";
 
+// Preview do link compartilhado (WhatsApp, etc.): sobrescreve o Open Graph
+// global do sistema, que fala de extrato bancário e não tem relação com a
+// página que o responsável recebe. A imagem precisa de URL absoluta — os
+// crawlers não resolvem caminho relativo.
+const OG_TITULO = "Recarga da Cantina — Colégio CEC";
+const OG_DESCRICAO =
+  "Solicite a recarga do cartão da cantina do seu filho de forma rápida, pelo celular.";
+const OG_IMAGEM = "https://schoolhubbr.vercel.app/portal-cantina-og.png";
+
 export const Route = createFileRoute("/portal-cantina")({
+  head: () => ({
+    meta: [
+      { title: OG_TITULO },
+      { name: "description", content: OG_DESCRICAO },
+      { property: "og:title", content: OG_TITULO },
+      { property: "og:description", content: OG_DESCRICAO },
+      { property: "og:image", content: OG_IMAGEM },
+      { property: "og:url", content: "https://schoolhubbr.vercel.app/portal-cantina" },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: OG_TITULO },
+      { name: "twitter:description", content: OG_DESCRICAO },
+      { name: "twitter:image", content: OG_IMAGEM },
+    ],
+  }),
   component: PortalCantinaPage,
 });
 
