@@ -189,12 +189,11 @@ export function mensagemWhatsAppRecarga(alunoNome: string, valor: number): strin
   return `Olá, fiz uma solicitação de recarga de ${formatarBRLRecarga(valor)} para o aluno ${alunoNome}. Por favor, confirmem a recarga.`;
 }
 
-// Link wa.me com o número do colégio (DDI 55 quando o cadastro tem só DDD +
-// número). Retorna null sem telefone cadastrado, para a tela não oferecer um
-// botão quebrado.
-export function linkWhatsAppColegio(telefone: string, texto: string): string | null {
-  const digitos = telefone.replace(/\D/g, "");
-  if (digitos.length < 10) return null;
-  const numero = digitos.startsWith("55") ? digitos : `55${digitos}`;
-  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
+// Recepção do colégio: +55 31 9334-5197. Só dígitos, com DDI, como o wa.me exige.
+export const WHATSAPP_RECEPCAO = "553193345197";
+
+// Link wa.me da recepção com a mensagem pronta (o portal só ABRE o WhatsApp;
+// nada é disparado pelo sistema).
+export function linkWhatsAppRecarga(texto: string): string {
+  return `https://wa.me/${WHATSAPP_RECEPCAO}?text=${encodeURIComponent(texto)}`;
 }

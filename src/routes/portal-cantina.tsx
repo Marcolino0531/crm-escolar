@@ -99,17 +99,11 @@ function PortalCantinaPage() {
                 recarga do cartão.
               </span>
             </div>
-            {confirmacao.linkWhatsapp ? (
-              <Button asChild className="w-full gap-2">
-                <a href={confirmacao.linkWhatsapp} target="_blank" rel="noreferrer">
-                  <MessageCircle className="h-4 w-4" /> Avisar o colégio no WhatsApp
-                </a>
-              </Button>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Mensagem para enviar ao colégio: “{confirmacao.mensagemWhatsapp}”
-              </p>
-            )}
+            <Button asChild className="w-full gap-2">
+              <a href={confirmacao.linkWhatsapp} target="_blank" rel="noreferrer">
+                <MessageCircle className="h-4 w-4" /> Avisar a recepção no WhatsApp
+              </a>
+            </Button>
             <Button
               variant="outline"
               className="w-full"
