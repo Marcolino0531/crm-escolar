@@ -5,7 +5,8 @@ import {
   TENTATIVAS_ZERADAS,
   estaBloqueado,
   indicacaoLancamentoManual,
-  linkWhatsAppColegio,
+  WHATSAPP_RECEPCAO,
+  linkWhatsAppRecarga,
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
   normalizarCpf,
@@ -232,16 +233,16 @@ describe("valor e mensagem da solicitação", () => {
     expect(texto).toContain("150,00");
   });
 
-  it("monta o link do WhatsApp do colégio com DDI 55", () => {
-    expect(linkWhatsAppColegio("(31) 99999-8888", "oi")).toBe(
-      "https://wa.me/5531999998888?text=oi",
-    );
-    expect(linkWhatsAppColegio("5531999998888", "oi")).toBe("https://wa.me/5531999998888?text=oi");
+  it("aponta o link para a recepção, com DDI e só dígitos", () => {
+    expect(WHATSAPP_RECEPCAO).toBe("553193345197");
+    expect(linkWhatsAppRecarga("oi")).toBe("https://wa.me/553193345197?text=oi");
   });
 
-  it("não gera link sem telefone cadastrado", () => {
-    expect(linkWhatsAppColegio("", "oi")).toBeNull();
-    expect(linkWhatsAppColegio("3199", "oi")).toBeNull();
+  it("codifica a mensagem na query do link", () => {
+    const link = linkWhatsAppRecarga(mensagemWhatsAppRecarga("Maria Silva", 150));
+    expect(link.startsWith("https://wa.me/553193345197?text=")).toBe(true);
+    expect(link).not.toMatch(/[ ]/);
+    expect(decodeURIComponent(link.split("?text=")[1])).toContain("Maria Silva");
   });
 });
 

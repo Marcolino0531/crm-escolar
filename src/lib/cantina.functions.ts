@@ -18,7 +18,7 @@ import {
   TENTATIVAS_ZERADAS,
   cpfValido,
   estaBloqueado,
-  linkWhatsAppColegio,
+  linkWhatsAppRecarga,
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
   normalizarCpf,
@@ -228,7 +228,7 @@ export interface SolicitarRecargaResult {
   alunoNome?: string;
   valor?: number;
   mensagemWhatsapp?: string;
-  linkWhatsapp?: string | null;
+  linkWhatsapp?: string;
 }
 
 const SolicitarInputSchema = z.object({
@@ -241,16 +241,6 @@ const SolicitarInputSchema = z.object({
 // tratada como reenvio do mesmo pedido — evita duplicar por duplo clique ou
 // reenvio do formulário.
 const JANELA_IDEMPOTENCIA_MS = 5 * 60 * 1000;
-
-async function telefoneColegio(unidade: string): Promise<string> {
-  const { data, error } = await supabaseAdmin
-    .from("documentos_colegios" as never)
-    .select("telefone")
-    .eq("unidade", unidade)
-    .maybeSingle();
-  if (error || !data) return "";
-  return (data as unknown as { telefone: string | null }).telefone ?? "";
-}
 
 export const solicitarRecargaCantina = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarInputSchema.parse(input))
@@ -304,7 +294,7 @@ export const solicitarRecargaCantina = createServerFn({ method: "POST" })
       alunoNome: aluno.nome,
       valor,
       mensagemWhatsapp: mensagem,
-      linkWhatsapp: linkWhatsAppColegio(await telefoneColegio(aluno.unidade), mensagem),
+      linkWhatsapp: linkWhatsAppRecarga(mensagem),
     };
   });
 
