@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  CalendarOff,
   CheckCircle2,
   Info,
   Loader2,
@@ -39,6 +40,8 @@ import {
   efetivarRecargaCantina,
   lancarRecargaNoSponte,
   marcarRecargaLancadaNoBoleto,
+  obterJanelaPortalCantina,
+  salvarJanelaPortalCantina,
 } from "@/lib/cantina.functions";
 
 export const Route = createFileRoute("/cantina")({
@@ -72,6 +75,100 @@ function formatarVencimento(ymd: string | null): string {
   if (!ymd) return "—";
   const [y, m, d] = ymd.slice(0, 10).split("-");
   return `${d}/${m}/${y}`;
+}
+
+function mmddParaBR(mmdd: string): string {
+  const [mes, dia] = mmdd.split("-");
+  return `${dia}/${mes}`;
+}
+
+function brParaMmdd(br: string): string {
+  const [dia, mes] = br.split("/");
+  if (!dia || !mes) return "";
+  return `${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
+}
+
+// Período do ano em que o portal dos pais aceita pedidos (dia/mês, sem ano:
+// vale automaticamente todo ano). A tela da equipe NUNCA é bloqueada por ele.
+function JanelaPortalCard({ podeEditar }: { podeEditar: boolean }) {
+  const obterJanela = useServerFn(obterJanelaPortalCantina);
+  const salvarJanela = useServerFn(salvarJanelaPortalCantina);
+  const queryClient = useQueryClient();
+  const [abertura, setAbertura] = useState("");
+  const [fechamento, setFechamento] = useState("");
+
+  const { data } = useQuery({
+    queryKey: ["cantina_portal_janela"],
+    queryFn: async () => obterJanela(),
+  });
+
+  const salvarMutation = useMutation({
+    mutationFn: async () =>
+      salvarJanela({
+        data: { abertura: brParaMmdd(abertura), fechamento: brParaMmdd(fechamento) },
+      }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.erro ?? "Não foi possível salvar o período.");
+        return;
+      }
+      toast.success("Período do portal atualizado.");
+      setAbertura("");
+      setFechamento("");
+      queryClient.invalidateQueries({ queryKey: ["cantina_portal_janela"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (!data) return null;
+  const aberturaBR = mmddParaBR(data.janela.abertura);
+  const fechamentoBR = mmddParaBR(data.janela.fechamento);
+
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <CalendarOff className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="text-sm">
+            <p className="font-medium">
+              Portal dos pais: {aberturaBR} a {fechamentoBR}
+            </p>
+            <p className="text-muted-foreground">
+              {data.aberto
+                ? "Aberto hoje. Fora desse período o portal mostra aviso de indisponibilidade — esta tela continua liberada."
+                : "Fechado hoje (fora do período). Esta tela e o histórico seguem liberados."}
+            </p>
+          </div>
+        </div>
+        {podeEditar && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              className="w-28"
+              placeholder={aberturaBR}
+              value={abertura}
+              onChange={(e) => setAbertura(e.target.value)}
+            />
+            <span className="text-sm text-muted-foreground">a</span>
+            <Input
+              className="w-28"
+              placeholder={fechamentoBR}
+              value={fechamento}
+              onChange={(e) => setFechamento(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!abertura || !fechamento || salvarMutation.isPending}
+              onClick={() => salvarMutation.mutate()}
+            >
+              {salvarMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Salvar período
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Tela interna: a equipe acompanha as solicitações feitas pelos pais no portal
@@ -231,6 +328,8 @@ function CantinaPage() {
           boleto de mensalidade já emitido.
         </span>
       </div>
+
+      <JanelaPortalCard podeEditar={podeEditar} />
 
       <div className="flex flex-wrap items-center gap-3">
         <Input
