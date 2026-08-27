@@ -174,7 +174,7 @@ function JanelaPortalCard({ podeEditar }: { podeEditar: boolean }) {
 // Tela interna: a equipe acompanha as solicitações feitas pelos pais no portal
 // e marca a recarga física do cartão como efetivada — momento em que o sistema
 // cria a cobrança no Sponte (categoria "Cantina", 1 parcela) no vencimento da
-// próxima mensalidade em aberto. A cobrança é um TÍTULO PRÓPRIO: a API do Sponte
+// cobrança mensal do aluno no mês seguinte. A cobrança é um TÍTULO PRÓPRIO: a API do Sponte
 // não permite acrescentar item a um boleto de mensalidade já emitido.
 function CantinaPage() {
   const { canView, canEdit } = usePermissions();
@@ -322,8 +322,8 @@ function CantinaPage() {
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <span>
           Ao marcar “Recarga efetivada”, o sistema cria a cobrança no Sponte (categoria{" "}
-          <strong>Cantina</strong>, 1 parcela) com vencimento da próxima mensalidade em aberto do
-          aluno — ou no dia 5 do mês seguinte, se ele não tiver mensalidade em aberto. É um{" "}
+          <strong>Cantina</strong>, 1 parcela) no mesmo vencimento da cobrança mensal do aluno no
+          mês seguinte — o dia dele no Sponte (5, 10, 12…), não um dia fixo. É um{" "}
           <strong>boleto próprio</strong> da recarga: a API do Sponte não acrescenta itens a um
           boleto de mensalidade já emitido.
         </span>
