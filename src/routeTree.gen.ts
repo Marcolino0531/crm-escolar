@@ -16,6 +16,7 @@ import { Route as RhRouteImport } from './routes/rh'
 import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MatriculasRouteImport } from './routes/matriculas'
+import { Route as MatriculaRouteImport } from './routes/matricula'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
 import { Route as FundosRouteImport } from './routes/fundos'
 import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
@@ -70,6 +71,11 @@ const OnboardingRoute = OnboardingRouteImport.update({
 const MatriculasRoute = MatriculasRouteImport.update({
   id: '/matriculas',
   path: '/matriculas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatriculaRoute = MatriculaRouteImport.update({
+  id: '/matricula',
+  path: '/matricula',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InadimplenciaRoute = InadimplenciaRouteImport.update({
@@ -194,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
@@ -223,6 +230,7 @@ export interface FileRoutesByTo {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
@@ -253,6 +261,7 @@ export interface FileRoutesById {
   '/fluxo-futuro': typeof FluxoFuturoRoute
   '/fundos': typeof FundosRoute
   '/inadimplencia': typeof InadimplenciaRoute
+  '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
@@ -284,6 +293,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matricula'
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
@@ -313,6 +323,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matricula'
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
@@ -342,6 +353,7 @@ export interface FileRouteTypes {
     | '/fluxo-futuro'
     | '/fundos'
     | '/inadimplencia'
+    | '/matricula'
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
@@ -372,6 +384,7 @@ export interface RootRouteChildren {
   FluxoFuturoRoute: typeof FluxoFuturoRoute
   FundosRoute: typeof FundosRoute
   InadimplenciaRoute: typeof InadimplenciaRoute
+  MatriculaRoute: typeof MatriculaRoute
   MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
   PortalCantinaRoute: typeof PortalCantinaRoute
@@ -430,6 +443,13 @@ declare module '@tanstack/react-router' {
       path: '/matriculas'
       fullPath: '/matriculas'
       preLoaderRoute: typeof MatriculasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/matricula': {
+      id: '/matricula'
+      path: '/matricula'
+      fullPath: '/matricula'
+      preLoaderRoute: typeof MatriculaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inadimplencia': {
@@ -523,18 +543,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CobrancaRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/cantina': {
-      id: '/cantina'
-      path: '/cantina'
-      fullPath: '/cantina'
-      preLoaderRoute: typeof CantinaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/cartao-credito': {
       id: '/cartao-credito'
       path: '/cartao-credito'
       fullPath: '/cartao-credito'
       preLoaderRoute: typeof CartaoCreditoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cantina': {
+      id: '/cantina'
+      path: '/cantina'
+      fullPath: '/cantina'
+      preLoaderRoute: typeof CantinaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/atendimento-ia': {
@@ -596,6 +616,7 @@ const rootRouteChildren: RootRouteChildren = {
   FluxoFuturoRoute: FluxoFuturoRoute,
   FundosRoute: FundosRoute,
   InadimplenciaRoute: InadimplenciaRoute,
+  MatriculaRoute: MatriculaRoute,
   MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
   PortalCantinaRoute: PortalCantinaRoute,

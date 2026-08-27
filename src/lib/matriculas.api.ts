@@ -9,18 +9,11 @@
 // header `Authorization: Bearer <token>` ou na query `?token=`. Sem a variável
 // configurada o endpoint responde 503 (fail-closed) — nunca fica aberto.
 //
-// Toda submissão é registrada em `enrollment_submissions` (payload + retorno do
-// Sponte), inclusive as que falham, para auditoria e reprocessamento.
+// A validação, a idempotência e a auditoria vivem em `receberMatricula`, o mesmo
+// núcleo usado pela página pública /matricula.
 
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
-import { extrairDadosBasicos } from "@/lib/matriculas.audit";
-import {
-  MatriculaError,
-  processarMatricula,
-  type MatriculaPayload,
-  type MatriculaResultado,
-} from "@/lib/matriculas.sponte";
+import { ORIGEM_GOOGLE_FORMS } from "@/lib/matricula-form";
+import { receberMatricula, registrarFalhaValidacao } from "@/lib/matriculas.receber";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -38,46 +31,6 @@ function autorizado(request: Request, url: URL): boolean | null {
   return informado.length === esperado.length && informado === esperado;
 }
 
-async function registrarLog(
-  payload: MatriculaPayload | null,
-  bruto: unknown,
-  resultado: MatriculaResultado | null,
-  status: string,
-  erro: string | null,
-): Promise<void> {
-  const { error } = await supabaseAdmin.from("enrollment_submissions" as never).insert({
-    submission_id: payload?.submissionId ?? null,
-    unidade: payload?.unidade ?? null,
-    aluno_nome: payload?.aluno.nome ?? null,
-    aluno_cpf: payload?.aluno.cpf ?? null,
-    sponte_aluno_id: resultado?.alunoId ?? null,
-    status,
-    erro,
-    payload: bruto,
-    resultado,
-  } as never);
-  if (error) console.error("[matrículas] falha ao gravar o log da submissão:", error.message);
-}
-
-// Grava a tentativa rejeitada na validação (payload inválido) para dar
-// visibilidade no painel /matriculas. Nada é enviado ao Sponte.
-async function registrarFalhaValidacao(bruto: unknown, problemas: string[]): Promise<void> {
-  const dados = extrairDadosBasicos(bruto);
-  const { error } = await supabaseAdmin.from("enrollment_submissions" as never).insert({
-    submission_id: dados.submissionId,
-    unidade: dados.unidade,
-    aluno_nome: dados.alunoNome,
-    aluno_cpf: dados.alunoCpf,
-    sponte_aluno_id: null,
-    status: "erro_validacao",
-    erro: problemas.join("; "),
-    payload: bruto ?? {},
-    resultado: null,
-  } as never);
-  if (error)
-    console.error("[matrículas] falha ao gravar o log de erro de validação:", error.message);
-}
-
 export async function handleMatriculasApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/api/matriculas/webhook") return null;
@@ -90,7 +43,6 @@ export async function handleMatriculasApi(request: Request): Promise<Response | 
   }
   if (!auth) return json({ ok: false, error: "não autorizado" }, 401);
 
-  // dryRun é um ensaio (Apps Script valida antes do envio real): não grava log.
   const dryRun = url.searchParams.get("dryRun") === "1";
 
   let bruto: unknown;
@@ -98,51 +50,13 @@ export async function handleMatriculasApi(request: Request): Promise<Response | 
     bruto = await request.json();
   } catch {
     const mensagem = "corpo da requisição não é um JSON válido";
-    if (!dryRun) await registrarFalhaValidacao({ erro_parse: mensagem }, [mensagem]);
+    if (!dryRun)
+      await registrarFalhaValidacao({ erro_parse: mensagem }, [mensagem], {
+        origem: ORIGEM_GOOGLE_FORMS,
+      });
     return json({ ok: false, error: mensagem }, 400);
   }
 
-  const parsed = MatriculaSchema.safeParse(bruto);
-  if (!parsed.success) {
-    const problemas = problemasDoPayload(parsed.error);
-    if (!dryRun) await registrarFalhaValidacao(bruto, problemas);
-    return json({ ok: false, error: "payload inválido", problemas }, 422);
-  }
-
-  const payload = parsed.data as MatriculaPayload;
-
-  // Idempotência: o Apps Script pode reenviar a mesma resposta do formulário.
-  if (!dryRun && payload.submissionId) {
-    const { data } = await supabaseAdmin
-      .from("enrollment_submissions" as never)
-      .select("sponte_aluno_id")
-      .eq("submission_id", payload.submissionId)
-      .eq("status", "sucesso")
-      .maybeSingle();
-    const anterior = data as { sponte_aluno_id: number | null } | null;
-    if (anterior) {
-      return json({
-        ok: true,
-        status: "ja_processado",
-        alunoId: anterior.sponte_aluno_id,
-        mensagem: "Esta submissão já havia sido processada com sucesso.",
-      });
-    }
-  }
-
-  try {
-    const resultado = await processarMatricula(payload, { dryRun });
-    if (!dryRun) {
-      await registrarLog(payload, bruto, resultado, resultado.status, resultado.error ?? null);
-    }
-    return json(resultado, resultado.ok ? 200 : resultado.status === "duplicado" ? 409 : 502);
-  } catch (e) {
-    const status = e instanceof MatriculaError ? e.status : "erro_aluno";
-    const httpStatus = e instanceof MatriculaError ? e.httpStatus : 502;
-    const mensagem = e instanceof Error ? e.message : String(e);
-    console.error("[matrículas] falha ao processar a submissão:", mensagem);
-    // 422 é payload malformado: não vira log de auditoria (nada chegou ao Sponte).
-    if (!dryRun && httpStatus !== 422) await registrarLog(payload, bruto, null, status, mensagem);
-    return json({ ok: false, status, error: mensagem }, httpStatus);
-  }
+  const saida = await receberMatricula(bruto, { dryRun, origem: ORIGEM_GOOGLE_FORMS });
+  return json(saida.corpo, saida.httpStatus);
 }

@@ -343,10 +343,12 @@ function RootComponent() {
   );
 }
 
-// Rotas públicas: o portal de recarga da cantina é usado pelos PAIS, que não
-// têm usuário no Supabase Auth — ele autentica pelo CPF do aluno na própria
-// tela e por isso não passa pelo login interno nem pelo shell do app.
-const ROTAS_PUBLICAS = ["/portal-cantina"];
+// Rotas públicas: usadas pelos PAIS, que não têm usuário no Supabase Auth — o
+// portal de recarga autentica pelo CPF do aluno na própria tela e o formulário
+// de matrícula é protegido por captcha, então nenhuma das duas passa pelo login
+// interno nem pelo shell do app. (O painel interno /matriculas, no plural,
+// continua exigindo login.)
+const ROTAS_PUBLICAS = ["/portal-cantina", "/matricula"];
 
 function AuthGate() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
