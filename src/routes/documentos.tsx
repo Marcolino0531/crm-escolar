@@ -14,6 +14,7 @@ import {
   User,
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
+import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -207,7 +208,7 @@ function GerarDocumento() {
 
       {tipo === "recibo" && <GerarRecibo />}
       {tipo === "declaracao_debitos" && <GerarDeclaracaoDebitos />}
-      {tipo === "declaracao_ir" && <GerarDeclaracaoIR />}
+      {tipo === "declaracao_ir" && <DeclaracaoIRComLote />}
       {tipo === "termo_confissao_divida" && <GerarTermoConfissao />}
     </div>
   );
@@ -1021,6 +1022,23 @@ function GerarDeclaracaoDebitos() {
 // ─── Declaração de Imposto de Renda ─────────────────────────────────────────
 // Mesmo fluxo de aluno da declaração de débitos; o que muda é o seletor de
 // exercício (IR ano X = pagamentos do ano X-1) e a tabela de pagamentos.
+// A Declaração de IR tem dois caminhos: um aluno por vez (download do PDF) ou o
+// envio em lote por unidade (PDF por email ao responsável financeiro).
+function DeclaracaoIRComLote() {
+  const [modo, setModo] = useState<"individual" | "lote">("individual");
+  return (
+    <div className="space-y-4">
+      <Tabs value={modo} onValueChange={(v) => setModo(v as "individual" | "lote")}>
+        <TabsList>
+          <TabsTrigger value="individual">Aluno individual</TabsTrigger>
+          <TabsTrigger value="lote">Envio em lote</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {modo === "individual" ? <GerarDeclaracaoIR /> : <EnvioLoteDeclaracaoIR />}
+    </div>
+  );
+}
+
 function GerarDeclaracaoIR() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();

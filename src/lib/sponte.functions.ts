@@ -16,6 +16,7 @@ import {
   valorBoletoDaParcela,
 } from "@/lib/sponte-baixa";
 import { contaReceberCriada, escapeXml, montarParametrosInsertPlano } from "@/lib/sponte-plano";
+import { filtrarAlunosDaUnidade } from "@/lib/imposto-renda-lote";
 
 export { escapeXml };
 
@@ -3284,3 +3285,190 @@ export const syncDiarioSponte = createServerFn({ method: "POST" })
     }
     return runDiarioSponteSync();
   });
+
+// ─── Envio em lote da Declaração de IR (leitura) ─────────────────────────────
+// O lote precisa de duas informações que o Sponte entrega em chamadas
+// diferentes: a lista de alunos ativos da unidade (GetAlunos) e o email do
+// responsável financeiro de cada um (GetResponsaveis por aluno). Por isso são
+// dois server functions: o primeiro é uma requisição só e monta a lista; o
+// segundo resolve os responsáveis em fatias, para a tela mostrar progresso e
+// nenhuma requisição estourar o tempo da função serverless. Somente leitura.
+
+export interface AlunoAtivoLoteIR {
+  alunoId: string;
+  nome: string;
+  turma: string;
+}
+
+export interface AlunosAtivosLoteIRResult {
+  alunos: AlunoAtivoLoteIR[];
+  error?: string;
+}
+
+const AlunosAtivosLoteInputSchema = z.object({ unidade: z.string().min(1) });
+
+export const listarAlunosAtivosLoteIR = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => AlunosAtivosLoteInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<AlunosAtivosLoteIRResult> => {
+    const { unidade } = data;
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { alunos: [], error: "Sem permissão para esta unidade." };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { alunos: [], error: "Unidade sem integração Sponte." };
+
+    let xml: string;
+    try {
+      xml = await callSponte(
+        "GetAlunos",
+        `Situacao=${SITUACAO_ATIVO}`,
+        creds.codigoCliente,
+        creds.token,
+      );
+    } catch (e) {
+      return { alunos: [], error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+    }
+    const fault = checkFault(xml);
+    if (fault) return { alunos: [], error: fault };
+
+    const brutos: AlunoAtivoLoteIR[] = [];
+    for (const node of parseXmlList(xml, "wsAluno")) {
+      const alunoId = parseXmlValue(node, "AlunoID");
+      if (!alunoId || alunoId === "0") continue;
+      brutos.push({
+        alunoId,
+        nome: parseXmlValue(node, "Nome").trim(),
+        turma: parseXmlValue(node, "TurmaAtual").trim(),
+      });
+    }
+
+    const alunos = filtrarAlunosDaUnidade(brutos, unidade, creds.segmentaPorTurma).sort((a, b) =>
+      a.nome.localeCompare(b.nome),
+    );
+    return { alunos };
+  });
+
+export interface ResponsavelFinanceiroLoteIR {
+  alunoId: string;
+  responsavelId: string;
+  responsavelNome: string;
+  responsavelCpf: string;
+  responsavelEmail: string;
+  error?: string;
+}
+
+// Responsável financeiro de UM aluno, com o cadastro completo. Preferimos o
+// marcado como financeiro no GetAlunos; se o Sponte não indicar, cai no primeiro
+// responsável vinculado (é dele que o email seria cobrado hoje).
+async function responsavelFinanceiroDoAluno(
+  creds: { codigoCliente: string; token: string },
+  alunoId: string,
+): Promise<ResponsavelFinanceiroLoteIR> {
+  const vazio: ResponsavelFinanceiroLoteIR = {
+    alunoId,
+    responsavelId: "",
+    responsavelNome: "",
+    responsavelCpf: "",
+    responsavelEmail: "",
+  };
+
+  let xmlAluno: string;
+  let xmlResp: string;
+  try {
+    [xmlAluno, xmlResp] = await Promise.all([
+      callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+      callSponte("GetResponsaveis", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+    ]);
+  } catch (e) {
+    return { ...vazio, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+  }
+  const fault = checkFault(xmlAluno) || checkFault(xmlResp);
+  if (fault) return { ...vazio, error: fault };
+
+  const nodeAluno = parseXmlList(xmlAluno, "wsAluno").find((n) =>
+    parseXmlValue(n, "RetornoOperacao").startsWith("01"),
+  );
+  const financeiroId = nodeAluno ? parseXmlValue(nodeAluno, "ResponsavelFinanceiroID") : "";
+
+  const responsaveis = parseXmlList(xmlResp, "wsResponsavel")
+    .filter((n) => parseXmlValue(n, "RetornoOperacao").startsWith("01"))
+    .map((n) => ({
+      responsavelId: parseXmlValue(n, "ResponsavelID"),
+      nome: parseXmlValue(n, "Nome"),
+      cpf: parseXmlValue(n, "CPFCNPJ") || parseXmlValue(n, "CPF"),
+      email: parseXmlValue(n, "Email").trim(),
+    }))
+    .filter((r) => r.responsavelId && r.nome);
+
+  const escolhido = responsaveis.find((r) => r.responsavelId === financeiroId) ?? responsaveis[0];
+  if (!escolhido) return vazio;
+  return {
+    alunoId,
+    responsavelId: escolhido.responsavelId,
+    responsavelNome: escolhido.nome,
+    responsavelCpf: escolhido.cpf,
+    responsavelEmail: escolhido.email,
+  };
+}
+
+const ResponsaveisLoteInputSchema = z.object({
+  unidade: z.string().min(1),
+  alunoIds: z.array(z.string().regex(/^\d+$/, "AlunoID inválido.")).min(1).max(25),
+});
+
+export interface ResponsaveisLoteIRResult {
+  responsaveis: ResponsavelFinanceiroLoteIR[];
+  error?: string;
+}
+
+export const buscarResponsaveisFinanceirosLoteIR = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ResponsaveisLoteInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ResponsaveisLoteIRResult> => {
+    const { unidade, alunoIds } = data;
+
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null && !allowed.includes(unidade)) {
+      return { responsaveis: [], error: "Sem permissão para esta unidade." };
+    }
+    const creds = resolverCredenciais(unidade);
+    if (!creds) return { responsaveis: [], error: "Unidade sem integração Sponte." };
+
+    const responsaveis: ResponsavelFinanceiroLoteIR[] = [];
+    // Fatia pequena e concorrência limitada: o Sponte é lento por chamada, mas
+    // não queremos abrir dezenas de conexões simultâneas contra a API dele.
+    const CONCORRENCIA = 5;
+    for (let i = 0; i < alunoIds.length; i += CONCORRENCIA) {
+      const bloco = alunoIds.slice(i, i + CONCORRENCIA);
+      const parciais = await Promise.all(
+        bloco.map((alunoId) => responsavelFinanceiroDoAluno(creds, alunoId)),
+      );
+      responsaveis.push(...parciais);
+    }
+    return { responsaveis };
+  });
+
+/**
+ * Email do responsável financeiro resolvido NO SERVIDOR, para o envio em lote
+ * não aceitar destinatário vindo do cliente. Devolve `null` quando a unidade
+ * não é permitida, não tem integração ou o aluno não tem responsável com email.
+ */
+export async function emailResponsavelFinanceiroLoteIR(
+  userId: string,
+  unidade: string,
+  alunoId: string,
+): Promise<{ responsavel: ResponsavelFinanceiroLoteIR | null; error?: string }> {
+  const allowed = await allowedSponteUnidades(userId);
+  if (allowed !== null && !allowed.includes(unidade)) {
+    return { responsavel: null, error: "Sem permissão para esta unidade." };
+  }
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return { responsavel: null, error: "Unidade sem integração Sponte." };
+
+  const responsavel = await responsavelFinanceiroDoAluno(creds, alunoId);
+  if (responsavel.error) return { responsavel: null, error: responsavel.error };
+  return { responsavel };
+}

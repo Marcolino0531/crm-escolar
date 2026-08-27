@@ -66,7 +66,12 @@ export function cabecalhoTimbrado(doc: Doc, timbre: Timbre, logo: LogoRecibo | n
 }
 
 /** Data por extenso à direita + linha de assinatura do colégio. */
-export function assinatura(doc: Doc, colegio: ColegioRecibo, dataExtenso: string, y: number): number {
+export function assinatura(
+  doc: Doc,
+  colegio: ColegioRecibo,
+  dataExtenso: string,
+  y: number,
+): number {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   if (dataExtenso) doc.text(dataExtenso, LARGURA - MARGEM, y, { align: "right" });
@@ -123,4 +128,18 @@ export async function carregarLogo(url: string): Promise<LogoRecibo | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * PDF já desenhado em base64, para virar anexo de email. O jsPDF devolve os
+ * bytes crus; o encode em blocos evita estourar a pilha em documentos grandes.
+ */
+export function pdfParaBase64(doc: Doc): string {
+  const bytes = new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+  let binario = "";
+  const bloco = 0x8000;
+  for (let i = 0; i < bytes.length; i += bloco) {
+    binario += String.fromCharCode(...bytes.subarray(i, i + bloco));
+  }
+  return btoa(binario);
 }
