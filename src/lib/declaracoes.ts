@@ -123,32 +123,39 @@ export interface PendenciasAluno {
   total: number;
   vencidas: number;
   aVencer: number;
-  valor: number;
+  valor: number; // saldo de tudo que está em aberto
+  valorVencido: number; // saldo só do que já venceu — é o que o aviso mostra
 }
 
 /**
- * Parcelas ainda em aberto no Sponte: não baixadas e com saldo positivo. É a
- * checagem feita antes de emitir a declaração — havendo qualquer pendência, a
- * tela exige confirmação explícita do usuário.
+ * Parcelas ainda em aberto no Sponte: não baixadas e com saldo positivo,
+ * separando o que já venceu (vencimento anterior a hoje) do que está dentro do
+ * prazo. É a checagem feita antes de emitir a declaração.
  */
 export function pendenciasEmAberto(
   titulos: readonly TituloAberto[],
   hojeYMD: string,
 ): PendenciasAluno {
   const abertas = titulos.filter((t) => !t.quitada && Math.round(t.saldo * 100) > 0);
-  const vencidas = abertas.filter((t) => t.vencimento !== "" && t.vencimento < hojeYMD).length;
-  const centavos = abertas.reduce((acc, t) => acc + Math.round(t.saldo * 100), 0);
+  const vencidas = abertas.filter((t) => t.vencimento !== "" && t.vencimento < hojeYMD);
+  const centavos = (lista: readonly TituloAberto[]): number =>
+    lista.reduce((acc, t) => acc + Math.round(t.saldo * 100), 0);
   return {
     total: abertas.length,
-    vencidas,
-    aVencer: abertas.length - vencidas,
-    valor: centavos / 100,
+    vencidas: vencidas.length,
+    aVencer: abertas.length - vencidas.length,
+    valor: centavos(abertas) / 100,
+    valorVencido: centavos(vencidas) / 100,
   };
 }
 
-/** A emissão só pode seguir sem confirmação quando não há nada em aberto. */
+/**
+ * Só parcela VENCIDA contraria a declaração: o texto afirma que não há débito
+ * "até a presente data", e parcela dentro do prazo não é débito hoje. Logo,
+ * aluno com parcelas apenas a vencer emite sem confirmação extra.
+ */
 export function exigeConfirmacao(pendencias: PendenciasAluno): boolean {
-  return pendencias.total > 0;
+  return pendencias.vencidas > 0;
 }
 
 export interface DeclaracaoDocumento {
