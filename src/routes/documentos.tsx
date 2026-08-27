@@ -50,6 +50,17 @@ import {
 import { parseBRLNumber } from "@/lib/currency";
 import { baixarPdfRecibo, carregarLogo, type LogoRecibo } from "@/lib/recibo-pdf";
 import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
+import { baixarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
+import {
+  anoIRPadrao,
+  anoReferenciaIR,
+  anosIRDisponiveis,
+  montarDeclaracaoIR,
+  pagamentosIR,
+  totalPagamentosIR,
+  validarDeclaracaoIR,
+  type ParcelaIR,
+} from "@/lib/imposto-renda";
 import {
   exigeConfirmacao,
   montarDeclaracaoDebitos,
@@ -127,6 +138,18 @@ type DeclaracaoSnapshot = {
   pendencias: PendenciasAluno;
 };
 
+// Guardamos as parcelas já selecionadas (e não todas as do aluno): reimprimir
+// aplica o mesmo filtro sobre o mesmo conjunto e devolve o documento idêntico,
+// mesmo que o Sponte mude depois.
+type DeclaracaoIRSnapshot = {
+  colegio: ColegioRecibo;
+  aluno: AlunoRecibo;
+  responsavelNome: string;
+  responsavelCpf: string;
+  anoIR: number;
+  parcelas: ParcelaIR[];
+};
+
 // Histórico compartilhado: uma linha por documento emitido, de qualquer tipo.
 // `snapshot` guarda o documento como foi entregue e é lido conforme o `tipo`.
 type DocumentoRow = {
@@ -141,7 +164,7 @@ type DocumentoRow = {
   valor_total: number;
   created_at: string;
   created_by_nome: string;
-  snapshot: ReciboSnapshot | DeclaracaoSnapshot;
+  snapshot: ReciboSnapshot | DeclaracaoSnapshot | DeclaracaoIRSnapshot;
 };
 
 const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder?: string }[] = [
@@ -302,7 +325,9 @@ function GerarDocumento() {
         </div>
       </section>
 
-      {tipo === "recibo" ? <GerarRecibo /> : <GerarDeclaracaoDebitos />}
+      {tipo === "recibo" && <GerarRecibo />}
+      {tipo === "declaracao_debitos" && <GerarDeclaracaoDebitos />}
+      {tipo === "declaracao_ir" && <GerarDeclaracaoIR />}
     </div>
   );
 }
@@ -1062,13 +1087,12 @@ function GerarDeclaracaoDebitos() {
                 <div className="flex items-start gap-2 font-medium">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
                   <span>
-                    Atenção: este aluno possui {pendencias.vencidas} parcela(s) vencida(s) em
-                    aberto no Sponte, somando {formatarBRL(pendencias.valorVencido)}
+                    Atenção: este aluno possui {pendencias.vencidas} parcela(s) vencida(s) em aberto
+                    no Sponte, somando {formatarBRL(pendencias.valorVencido)}
                     {pendencias.aVencer > 0
                       ? ` (há também ${pendencias.aVencer} parcela[s] a vencer, que não contam como débito hoje)`
                       : ""}
-                    .
-                    Confirma mesmo assim a emissão da declaração de inexistência de débitos?
+                    . Confirma mesmo assim a emissão da declaração de inexistência de débitos?
                   </span>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2">
@@ -1104,6 +1128,401 @@ function GerarDeclaracaoDebitos() {
                   <Download className="h-4 w-4" />
                 )}
                 Gerar Declaração (PDF)
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── Declaração de Imposto de Renda ─────────────────────────────────────────
+// Mesmo fluxo de aluno da declaração de débitos; o que muda é o seletor de
+// exercício (IR ano X = pagamentos do ano X-1) e a tabela de pagamentos.
+function GerarDeclaracaoIR() {
+  const { canEdit } = usePermissions();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const podeEditar = canEdit("documentos");
+
+  const { data: colegios = [] } = useColegios();
+  const buscar = useServerFn(buscarAlunosSponte);
+  const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
+  const buscarTitulos = useServerFn(fetchTitulosAlunoSponte);
+
+  const hoje = hojeYMD();
+  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
+  const [responsavel, setResponsavel] = useState<ResponsavelCadastroSponte | null>(null);
+  const [parcelas, setParcelas] = useState<ParcelaIR[]>([]);
+  const [anoIR, setAnoIR] = useState<number>(anoIRPadrao(hoje));
+  const [dataDocumento, setDataDocumento] = useState<string>(hoje);
+
+  const anos = useMemo(() => anosIRDisponiveis(hoje), [hoje]);
+  const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
+  const colegioIR = colegio ? paraColegioRecibo(colegio) : null;
+
+  const pagamentos = useMemo(() => pagamentosIR(parcelas, anoIR), [parcelas, anoIR]);
+  const total = useMemo(() => totalPagamentosIR(pagamentos), [pagamentos]);
+  const erros = validarDeclaracaoIR({ colegio: colegioIR, aluno, dataDocumento, pagamentos });
+
+  const limparAluno = () => {
+    setAluno(null);
+    setResponsavel(null);
+    setParcelas([]);
+  };
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => setResultados(alunos),
+    onError: (e) => {
+      setResultados(null);
+      toast.error(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  const selecionarAluno = useMutation({
+    mutationFn: async (encontrado: AlunoBuscaSponte) => {
+      const cadastro = await buscarCadastro({ data: { alunoId: encontrado.alunoId, unidade } });
+      if (cadastro.error) throw new Error(cadastro.error);
+      const titulos = await buscarTitulos({ data: { alunoId: encontrado.alunoId, unidade } });
+      if (titulos.error) throw new Error(titulos.error);
+      if (titulos.indisponivel) {
+        throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      }
+      return { cadastro, titulos };
+    },
+    onSuccess: ({ cadastro, titulos }) => {
+      if (!cadastro.aluno) {
+        toast.error("Aluno não encontrado no Sponte.");
+        return;
+      }
+      setAluno({
+        alunoId: cadastro.aluno.alunoId,
+        nome: cadastro.aluno.nome,
+        cpf: cadastro.aluno.cpf,
+        turma: cadastro.aluno.turma,
+        matricula: cadastro.aluno.matricula,
+      });
+      // `buscarDadosCadastraisAluno` já ordena o responsável financeiro primeiro.
+      const financeiro =
+        cadastro.responsaveis.find((r) => r.financeiro) ?? cadastro.responsaveis[0] ?? null;
+      setResponsavel(financeiro);
+      setParcelas(
+        titulos.titulos.map((t) => ({
+          categoria: t.categoria,
+          numeroParcela: t.numeroParcela,
+          valorPago: t.valorPago,
+          dataPagamento: t.dataPagamento,
+        })),
+      );
+      setResultados(null);
+      setTermo("");
+      if (!financeiro) toast.error("O aluno não tem responsável cadastrado no Sponte.");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao carregar o aluno."),
+  });
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      if (!colegio || !colegioIR || !aluno) throw new Error("Declaração incompleta.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const snapshot: DeclaracaoIRSnapshot = {
+        colegio: colegioIR,
+        aluno,
+        responsavelNome: responsavel?.nome ?? "",
+        responsavelCpf: responsavel?.cpf ?? "",
+        anoIR,
+        parcelas: pagamentos.map((p) => ({
+          categoria: p.categoria,
+          numeroParcela: p.parcela,
+          valorPago: p.valor,
+          dataPagamento: p.dataPagamento,
+        })),
+      };
+      const { data, error } = await supabase
+        .from("documentos_recibos" as never)
+        .insert({
+          tipo: "declaracao_ir",
+          unidade,
+          aluno_id: aluno.alunoId,
+          aluno_nome: aluno.nome,
+          responsavel_id: responsavel?.responsavelId ?? "",
+          responsavel_nome: responsavel?.nome ?? "",
+          responsavel_cpf: responsavel?.cpf ?? "",
+          data_recibo: dataDocumento,
+          valor_total: total,
+          itens: [],
+          snapshot,
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never)
+        .select("numero")
+        .single();
+      if (error) throw new Error(error.message);
+      const numero = Number((data as unknown as { numero: number }).numero);
+      const documento = montarDeclaracaoIR({
+        numero,
+        anoIR,
+        dataDocumento,
+        colegio: snapshot.colegio,
+        aluno: snapshot.aluno,
+        responsavelNome: snapshot.responsavelNome,
+        responsavelCpf: snapshot.responsavelCpf,
+        parcelas: snapshot.parcelas,
+      });
+      await baixarPdfDeclaracaoIR(documento, await carregarLogoDoColegio(colegio.logo_path));
+      return numero;
+    },
+    onSuccess: (numero) => {
+      toast.success(`Declaração de IR nº ${numero} gerada e baixada.`);
+      qc.invalidateQueries({ queryKey: ["documentos_recibos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar a declaração."),
+  });
+
+  const t = termo.trim();
+  const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
+
+  if (!podeEditar) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        Você tem acesso somente de leitura em Documentos: consulte os documentos já emitidos na aba
+        Histórico.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Passo 1 — aluno */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Search className="h-4 w-4 text-primary" /> 1. Aluno
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            O nome do aluno, o responsável financeiro e os pagamentos vêm do Sponte.
+          </p>
+        </header>
+        <div className="space-y-3 px-4 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+              <Select
+                value={unidade}
+                onValueChange={(v) => {
+                  setUnidade(v);
+                  setResultados(null);
+                  limparAluno();
+                }}
+              >
+                <SelectTrigger className="h-9 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNIDADES.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ir-busca" className="text-[11px] text-muted-foreground">
+                Aluno (nome ou AlunoID do Sponte)
+              </Label>
+              <Input
+                id="ir-busca"
+                value={termo}
+                onChange={(e) => setTermo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
+                }}
+                placeholder="ex.: Bento ou 672"
+                className="h-9 w-64"
+              />
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 gap-1"
+              disabled={!termoValido || buscarAlunos.isPending}
+              onClick={() => buscarAlunos.mutate()}
+            >
+              {buscarAlunos.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Search className="h-4 w-4" />
+              )}
+              Buscar no Sponte
+            </Button>
+          </div>
+
+          {resultados && resultados.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              Nenhum aluno encontrado para “{t}” em {unidade}.
+            </div>
+          )}
+
+          {resultados && resultados.length > 0 && (
+            <div className="max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                  disabled={selecionarAluno.isPending}
+                  onClick={() => selecionarAluno.mutate(a)}
+                >
+                  <span>
+                    <span className="font-medium">{a.nome}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      #{a.alunoId} · {a.turma || "sem turma"} · {a.situacao}
+                    </span>
+                  </span>
+                  {selecionarAluno.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <User className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {aluno && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">
+                  {aluno.nome}{" "}
+                  <span className="text-xs text-muted-foreground">#{aluno.alunoId}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {responsavel
+                    ? `Responsável financeiro: ${responsavel.nome}${
+                        responsavel.cpf ? ` · CPF ${responsavel.cpf}` : ""
+                      }`
+                    : "Nenhum responsável vinculado no Sponte."}
+                </div>
+              </div>
+              <Button variant="ghost" className="h-8 text-xs" onClick={limparAluno}>
+                Trocar aluno
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Passo 2 — exercício, conferência e emissão */}
+      {aluno && (
+        <section className="rounded-xl border border-border bg-card">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Receipt className="h-4 w-4 text-primary" /> 2. Ano do Imposto de Renda
+            </h2>
+          </header>
+          <div className="space-y-4 px-4 py-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <Label className="text-[11px] text-muted-foreground">Ano do Imposto de Renda</Label>
+                <Select value={String(anoIR)} onValueChange={(v) => setAnoIR(Number(v))}>
+                  <SelectTrigger className="h-9 w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {anos.map((a) => (
+                      <SelectItem key={a} value={String(a)}>
+                        IR {a}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="data-ir" className="text-[11px] text-muted-foreground">
+                  Data que consta no documento
+                </Label>
+                <Input
+                  id="data-ir"
+                  type="date"
+                  value={dataDocumento}
+                  className="h-9 w-44"
+                  onChange={(e) => setDataDocumento(e.target.value)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                IR {anoIR} declara os pagamentos realizados em {anoReferenciaIR(anoIR)} (só
+                Matrícula e Mensalidade já pagas).
+              </p>
+            </div>
+
+            {pagamentos.length === 0 ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Nenhum pagamento de Matrícula ou Mensalidade com baixa em {anoReferenciaIR(anoIR)}{" "}
+                para este aluno no Sponte.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Data do pagamento</TableHead>
+                      <TableHead>Categoria</TableHead>
+                      <TableHead>Parcela</TableHead>
+                      <TableHead className="text-right">Valor pago</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagamentos.map((p, i) => (
+                      <TableRow key={`${p.dataPagamento}-${p.categoria}-${p.parcela}-${i}`}>
+                        <TableCell>{formatarDataBR(p.dataPagamento)}</TableCell>
+                        <TableCell>{p.categoria}</TableCell>
+                        <TableCell>{p.parcela || "—"}</TableCell>
+                        <TableCell className="text-right">{formatarBRL(p.valor)}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow>
+                      <TableCell colSpan={3} className="font-medium">
+                        Total pago em {anoReferenciaIR(anoIR)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {formatarBRL(total)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {erros.length > 0 && (
+              <ul className="list-inside list-disc rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {erros.map((erro) => (
+                  <li key={erro}>{erro}</li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                className="gap-1"
+                disabled={erros.length > 0 || gerar.isPending}
+                onClick={() => gerar.mutate()}
+              >
+                {gerar.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                Gerar Declaração de IR (PDF)
               </Button>
             </div>
           </div>
@@ -1156,6 +1575,23 @@ function HistoricoDocumentos() {
       const data = row.data_recibo.slice(0, 10);
       const logoPath = colegios.find((c) => c.unidade === row.unidade)?.logo_path ?? null;
       const logo = await carregarLogoDoColegio(logoPath);
+      if (row.tipo === "declaracao_ir") {
+        const snap = row.snapshot as DeclaracaoIRSnapshot;
+        await baixarPdfDeclaracaoIR(
+          montarDeclaracaoIR({
+            numero: row.numero,
+            anoIR: snap.anoIR,
+            dataDocumento: data,
+            colegio: snap.colegio,
+            aluno: snap.aluno,
+            responsavelNome: snap.responsavelNome ?? "",
+            responsavelCpf: snap.responsavelCpf ?? "",
+            parcelas: snap.parcelas ?? [],
+          }),
+          logo,
+        );
+        return;
+      }
       if (row.tipo === "declaracao_debitos") {
         const snap = row.snapshot as DeclaracaoSnapshot;
         await baixarPdfDeclaracao(
@@ -1265,7 +1701,7 @@ function HistoricoDocumentos() {
                 </TableCell>
                 <TableCell>{r.responsavel_nome}</TableCell>
                 <TableCell className="text-right font-medium">
-                  {r.tipo === "recibo" ? formatarBRL(Number(r.valor_total)) : "—"}
+                  {r.tipo === "declaracao_debitos" ? "—" : formatarBRL(Number(r.valor_total))}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {r.created_by_nome || "—"}
