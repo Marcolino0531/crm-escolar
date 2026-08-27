@@ -205,6 +205,6 @@ describe("montagem do documento", () => {
       dataDocumento: "2026-03-15",
       pagamentos: pagamentosIR([parcela({})], 2026),
     });
-    expect(erros).toEqual(["Cadastre o CNPJ do colégio em Configuração dos Colégios."]);
+    expect(erros).toEqual(["Cadastre o CNPJ do colégio em Configurações → Dados dos Colégios."]);
   });
 });

@@ -5,14 +5,11 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   AlertTriangle,
-  Building2,
   Download,
   FileText,
   History,
-  Image as ImageIcon,
   Loader2,
   Receipt,
-  Save,
   Search,
   User,
 } from "lucide-react";
@@ -20,7 +17,6 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -48,7 +44,8 @@ import {
   type ResponsavelCadastroSponte,
 } from "@/lib/sponte.functions";
 import { parseBRLNumber } from "@/lib/currency";
-import { baixarPdfRecibo, carregarLogo, type LogoRecibo } from "@/lib/recibo-pdf";
+import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from "@/lib/colegios";
+import { baixarPdfRecibo, type LogoRecibo } from "@/lib/recibo-pdf";
 import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
 import { baixarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
 import {
@@ -97,33 +94,6 @@ function DocumentosGate() {
   return <DocumentosPage />;
 }
 
-const UNIDADES = ["CEC", "CEC Baby", "Núcleo Vale do Sereno", "Núcleo Belvedere"];
-const DOCUMENTOS_BUCKET = "documentos";
-
-type ColegioRow = {
-  unidade: string;
-  razao_social: string;
-  nome_fantasia: string;
-  cnpj: string;
-  inscricao_municipal: string;
-  endereco: string;
-  numero: string;
-  complemento: string;
-  bairro: string;
-  cidade: string;
-  uf: string;
-  cep: string;
-  telefone: string;
-  email: string;
-  site: string;
-  assinante_nome: string;
-  assinante_cargo: string;
-  observacao: string;
-  logo_path: string | null;
-  updated_at: string;
-  updated_by_nome: string;
-};
-
 type ReciboSnapshot = {
   colegio: ColegioRecibo;
   aluno: AlunoRecibo;
@@ -167,95 +137,8 @@ type DocumentoRow = {
   snapshot: ReciboSnapshot | DeclaracaoSnapshot | DeclaracaoIRSnapshot;
 };
 
-const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder?: string }[] = [
-  { key: "razao_social", label: "Razão social" },
-  { key: "nome_fantasia", label: "Nome fantasia" },
-  { key: "cnpj", label: "CNPJ", placeholder: "00.000.000/0000-00" },
-  { key: "inscricao_municipal", label: "Inscrição municipal" },
-  { key: "endereco", label: "Endereço (rua/av.)" },
-  { key: "numero", label: "Número" },
-  { key: "complemento", label: "Complemento" },
-  { key: "bairro", label: "Bairro" },
-  { key: "cidade", label: "Cidade" },
-  { key: "uf", label: "UF", placeholder: "MG" },
-  { key: "cep", label: "CEP" },
-  { key: "telefone", label: "Telefone" },
-  { key: "email", label: "E-mail" },
-  { key: "site", label: "Site" },
-  { key: "assinante_nome", label: "Assina o recibo (nome)" },
-  { key: "assinante_cargo", label: "Cargo de quem assina" },
-];
-
-function colegioVazio(unidade: string): ColegioRow {
-  return {
-    unidade,
-    razao_social: "",
-    nome_fantasia: "",
-    cnpj: "",
-    inscricao_municipal: "",
-    endereco: "",
-    numero: "",
-    complemento: "",
-    bairro: "",
-    cidade: "",
-    uf: "",
-    cep: "",
-    telefone: "",
-    email: "",
-    site: "",
-    assinante_nome: "",
-    assinante_cargo: "",
-    observacao: "",
-    logo_path: null,
-    updated_at: "",
-    updated_by_nome: "",
-  };
-}
-
-function paraColegioRecibo(row: ColegioRow): ColegioRecibo {
-  return {
-    unidade: row.unidade,
-    razaoSocial: row.razao_social,
-    nomeFantasia: row.nome_fantasia,
-    cnpj: row.cnpj,
-    inscricaoMunicipal: row.inscricao_municipal,
-    endereco: row.endereco,
-    numero: row.numero,
-    complemento: row.complemento,
-    bairro: row.bairro,
-    cidade: row.cidade,
-    uf: row.uf,
-    cep: row.cep,
-    telefone: row.telefone,
-    email: row.email,
-    site: row.site,
-    assinanteNome: row.assinante_nome,
-    assinanteCargo: row.assinante_cargo,
-    observacao: row.observacao,
-  };
-}
-
 function hojeYMD(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-}
-
-async function carregarLogoDoColegio(logoPath: string | null): Promise<LogoRecibo | null> {
-  if (!logoPath) return null;
-  const { data } = await supabase.storage.from(DOCUMENTOS_BUCKET).createSignedUrl(logoPath, 120);
-  if (!data?.signedUrl) return null;
-  return await carregarLogo(data.signedUrl);
-}
-
-function useColegios() {
-  return useQuery({
-    queryKey: ["documentos_colegios"],
-    queryFn: async (): Promise<ColegioRow[]> => {
-      const { data, error } = await supabase.from("documentos_colegios" as never).select("*");
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as unknown as ColegioRow[];
-      return UNIDADES.map((u) => rows.find((r) => r.unidade === u) ?? colegioVazio(u));
-    },
-  });
 }
 
 function DocumentosPage() {
@@ -279,9 +162,6 @@ function DocumentosPage() {
           <TabsTrigger value="historico" className="gap-1">
             <History className="h-4 w-4" /> Histórico
           </TabsTrigger>
-          <TabsTrigger value="colegios" className="gap-1">
-            <Building2 className="h-4 w-4" /> Configuração dos Colégios
-          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="documento" className="mt-4">
@@ -289,9 +169,6 @@ function DocumentosPage() {
         </TabsContent>
         <TabsContent value="historico" className="mt-4">
           <HistoricoDocumentos />
-        </TabsContent>
-        <TabsContent value="colegios" className="mt-4">
-          <ConfiguracaoColegios />
         </TabsContent>
       </Tabs>
     </div>
@@ -1725,203 +1602,6 @@ function HistoricoDocumentos() {
             ))}
           </TableBody>
         </Table>
-      )}
-    </div>
-  );
-}
-
-// ─── Configuração dos colégios ──────────────────────────────────────────────
-function ConfiguracaoColegios() {
-  const { canEdit } = usePermissions();
-  const podeEditar = canEdit("documentos");
-  const { data: colegios = [], isLoading } = useColegios();
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
-
-  const atual = colegios.find((c) => c.unidade === unidade);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-          <Select value={unidade} onValueChange={setUnidade}>
-            <SelectTrigger className="h-9 w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {UNIDADES.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {isLoading || !atual ? (
-        <Skeleton className="h-64 w-full" />
-      ) : (
-        <FormularioColegio key={atual.unidade} colegio={atual} podeEditar={podeEditar} />
-      )}
-    </div>
-  );
-}
-
-function FormularioColegio({ colegio, podeEditar }: { colegio: ColegioRow; podeEditar: boolean }) {
-  const qc = useQueryClient();
-  const { session } = useAuth();
-  const [form, setForm] = useState<ColegioRow>(colegio);
-  const [enviandoLogo, setEnviandoLogo] = useState(false);
-
-  const { data: logoUrl } = useQuery({
-    queryKey: ["documentos_logo", colegio.unidade, colegio.logo_path],
-    enabled: !!colegio.logo_path,
-    queryFn: async (): Promise<string | null> => {
-      const { data } = await supabase.storage
-        .from(DOCUMENTOS_BUCKET)
-        .createSignedUrl(colegio.logo_path as string, 300);
-      return data?.signedUrl ?? null;
-    },
-  });
-
-  const salvar = useMutation({
-    mutationFn: async (extra?: Partial<ColegioRow>) => {
-      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
-      const {
-        unidade,
-        updated_at: _updatedAt,
-        updated_by_nome: _updatedBy,
-        ...campos
-      } = {
-        ...form,
-        ...extra,
-      };
-      const { error } = await supabase.from("documentos_colegios" as never).upsert(
-        {
-          unidade,
-          ...campos,
-          updated_by: session?.user?.id ?? null,
-          updated_by_nome: meta?.full_name || session?.user?.email || "",
-        } as never,
-        { onConflict: "unidade" },
-      );
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      toast.success("Dados do colégio salvos.");
-      qc.invalidateQueries({ queryKey: ["documentos_colegios"] });
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar."),
-  });
-
-  const enviarLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (!/^image\/(png|jpeg|jpg|webp|svg\+xml)$/.test(file.type)) {
-      toast.error("Envie a logo em PNG, JPG, WEBP ou SVG.");
-      return;
-    }
-    setEnviandoLogo(true);
-    try {
-      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-      const path = `logos/${colegio.unidade.replace(/[^\w]+/g, "-")}-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from(DOCUMENTOS_BUCKET)
-        .upload(path, file, { contentType: file.type });
-      if (upErr) {
-        toast.error(`Falha ao enviar a logo: ${upErr.message}`);
-        return;
-      }
-      setForm((prev) => ({ ...prev, logo_path: path }));
-      await salvar.mutateAsync({ logo_path: path });
-      if (colegio.logo_path && colegio.logo_path !== path) {
-        await supabase.storage.from(DOCUMENTOS_BUCKET).remove([colegio.logo_path]);
-      }
-    } finally {
-      setEnviandoLogo(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4 rounded-xl border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex h-24 w-40 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border bg-muted/30">
-          {logoUrl ? (
-            <img src={logoUrl} alt={`Logo ${colegio.unidade}`} className="max-h-24 max-w-40" />
-          ) : (
-            <span className="flex flex-col items-center gap-1 text-[11px] text-muted-foreground">
-              <ImageIcon className="h-5 w-5" /> Sem logo
-            </span>
-          )}
-        </div>
-        {podeEditar && (
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
-            {enviandoLogo ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ImageIcon className="h-4 w-4" />
-            )}
-            {colegio.logo_path ? "Trocar logo" : "Enviar logo"}
-            <input type="file" accept="image/*" className="hidden" onChange={enviarLogo} />
-          </label>
-        )}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {COLEGIO_CAMPOS.map((campo) => (
-          <div key={campo.key} className="flex flex-col gap-1">
-            <Label htmlFor={`col-${campo.key}`} className="text-[11px] text-muted-foreground">
-              {campo.label}
-            </Label>
-            <Input
-              id={`col-${campo.key}`}
-              value={String(form[campo.key] ?? "")}
-              placeholder={campo.placeholder}
-              disabled={!podeEditar}
-              className="h-9"
-              onChange={(e) => setForm((prev) => ({ ...prev, [campo.key]: e.target.value }))}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="col-observacao" className="text-[11px] text-muted-foreground">
-          Observação impressa no pé do recibo
-        </Label>
-        <Textarea
-          id="col-observacao"
-          value={form.observacao}
-          disabled={!podeEditar}
-          rows={2}
-          onChange={(e) => setForm((prev) => ({ ...prev, observacao: e.target.value }))}
-        />
-      </div>
-
-      {podeEditar && (
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">
-            {colegio.updated_at
-              ? `Atualizado em ${formatarDataBR(colegio.updated_at.slice(0, 10))}${
-                  colegio.updated_by_nome ? ` por ${colegio.updated_by_nome}` : ""
-                }`
-              : "Ainda não cadastrado."}
-          </span>
-          <Button
-            className="gap-1"
-            disabled={salvar.isPending}
-            onClick={() => salvar.mutate(undefined)}
-          >
-            {salvar.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            Salvar dados do colégio
-          </Button>
-        </div>
       )}
     </div>
   );
