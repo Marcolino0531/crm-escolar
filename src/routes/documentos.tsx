@@ -14,6 +14,7 @@ import {
   User,
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
+import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,6 +49,8 @@ import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from 
 import { baixarPdfRecibo, type LogoRecibo } from "@/lib/recibo-pdf";
 import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
 import { baixarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
+import { baixarPdfTermoConfissao } from "@/lib/confissao-divida-pdf";
+import { montarTermoDoSnapshot, type TermoConfissaoSnapshot } from "@/lib/confissao-divida";
 import {
   anoIRPadrao,
   anoReferenciaIR,
@@ -134,7 +137,7 @@ type DocumentoRow = {
   valor_total: number;
   created_at: string;
   created_by_nome: string;
-  snapshot: ReciboSnapshot | DeclaracaoSnapshot | DeclaracaoIRSnapshot;
+  snapshot: ReciboSnapshot | DeclaracaoSnapshot | DeclaracaoIRSnapshot | TermoConfissaoSnapshot;
 };
 
 function hojeYMD(): string {
@@ -205,6 +208,7 @@ function GerarDocumento() {
       {tipo === "recibo" && <GerarRecibo />}
       {tipo === "declaracao_debitos" && <GerarDeclaracaoDebitos />}
       {tipo === "declaracao_ir" && <GerarDeclaracaoIR />}
+      {tipo === "termo_confissao_divida" && <GerarTermoConfissao />}
     </div>
   );
 }
@@ -1452,6 +1456,13 @@ function HistoricoDocumentos() {
       const data = row.data_recibo.slice(0, 10);
       const logoPath = colegios.find((c) => c.unidade === row.unidade)?.logo_path ?? null;
       const logo = await carregarLogoDoColegio(logoPath);
+      if (row.tipo === "termo_confissao_divida") {
+        await baixarPdfTermoConfissao(
+          montarTermoDoSnapshot(row.numero, data, row.snapshot as TermoConfissaoSnapshot),
+          logo,
+        );
+        return;
+      }
       if (row.tipo === "declaracao_ir") {
         const snap = row.snapshot as DeclaracaoIRSnapshot;
         await baixarPdfDeclaracaoIR(

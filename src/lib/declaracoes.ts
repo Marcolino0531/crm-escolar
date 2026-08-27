@@ -15,7 +15,11 @@ import {
   type ColegioRecibo,
 } from "./recibos";
 
-export type TipoDocumento = "recibo" | "declaracao_debitos" | "declaracao_ir";
+export type TipoDocumento =
+  | "recibo"
+  | "declaracao_debitos"
+  | "declaracao_ir"
+  | "termo_confissao_divida";
 
 export interface TipoDocumentoInfo {
   id: TipoDocumento;
@@ -28,6 +32,7 @@ export const TIPOS_DOCUMENTO: readonly TipoDocumentoInfo[] = [
   { id: "recibo", label: "Recibo" },
   { id: "declaracao_debitos", label: "Declaração de Inexistência de Débitos" },
   { id: "declaracao_ir", label: "Declaração de Imposto de Renda" },
+  { id: "termo_confissao_divida", label: "Termo de Confissão de Dívida e Outras Avenças" },
 ] as const;
 
 export function rotuloTipoDocumento(tipo: string): string {

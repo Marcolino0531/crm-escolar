@@ -1296,10 +1296,12 @@ export interface ResponsavelCadastroSponte {
   nome: string;
   cpf: string;
   parentesco: string;
+  dataNascimento: string; // YYYY-MM-DD ("" quando o Sponte não informa)
   endereco: string;
   numero: string;
   bairro: string;
   cidade: string;
+  uf: string;
   cep: string;
   email: string;
   telefone: string;
@@ -1382,10 +1384,12 @@ export const buscarDadosCadastraisAluno = createServerFn({ method: "POST" })
         nome,
         cpf: parseXmlValue(node, "CPFCNPJ") || parseXmlValue(node, "CPF"),
         parentesco: parseXmlValue(node, "Parentesco"),
+        dataNascimento: paraYMD(parseXmlValue(node, "DataNascimento")) ?? "",
         endereco: parseXmlValue(node, "Endereco"),
         numero: parseXmlValue(node, "NumeroEndereco"),
         bairro: parseXmlValue(node, "Bairro"),
         cidade: parseXmlValue(node, "Cidade"),
+        uf: parseXmlValue(node, "Estado") || parseXmlValue(node, "UF"),
         cep: parseXmlValue(node, "CEP"),
         email: parseXmlValue(node, "Email"),
         telefone: parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone"),

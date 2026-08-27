@@ -25,6 +25,8 @@ export type ColegioRow = {
   site: string;
   assinante_nome: string;
   assinante_cargo: string;
+  representante_nome: string;
+  representante_oab: string;
   observacao: string;
   logo_path: string | null;
   updated_at: string;
@@ -48,6 +50,8 @@ export const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder
   { key: "site", label: "Site" },
   { key: "assinante_nome", label: "Assina o recibo (nome)" },
   { key: "assinante_cargo", label: "Cargo de quem assina" },
+  { key: "representante_nome", label: "Representa o CREDOR (nome)" },
+  { key: "representante_oab", label: "OAB-MG do representante", placeholder: "000.000" },
 ];
 
 export function colegioVazio(unidade: string): ColegioRow {
@@ -69,6 +73,8 @@ export function colegioVazio(unidade: string): ColegioRow {
     site: "",
     assinante_nome: "",
     assinante_cargo: "",
+    representante_nome: "",
+    representante_oab: "",
     observacao: "",
     logo_path: null,
     updated_at: "",
@@ -95,6 +101,8 @@ export function paraColegioRecibo(row: ColegioRow): ColegioRecibo {
     site: row.site,
     assinanteNome: row.assinante_nome,
     assinanteCargo: row.assinante_cargo,
+    representanteNome: row.representante_nome ?? "",
+    representanteOab: row.representante_oab ?? "",
     observacao: row.observacao,
   };
 }
