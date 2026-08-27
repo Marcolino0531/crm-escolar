@@ -11,10 +11,10 @@
 //     e é persistido no banco, não em memória do processo, porque a função roda
 //     em várias instâncias serverless.
 //
-//  2. A escolha do próximo boleto em aberto do aluno, que é onde o valor da
-//     recarga deve entrar. Nunca se altera vencimento: o alvo é a parcela em
-//     aberto de vencimento mais próximo que ainda NÃO venceu, preferindo a
-//     mensalidade quando o mês tem mais de uma cobrança.
+//  2. O vencimento da cobrança da recarga no Sponte: o da próxima mensalidade
+//     em aberto do aluno (assim a recarga vence junto com o que a família já
+//     paga) e, quando não existe mensalidade futura em aberto, o dia 5 do mês
+//     seguinte.
 
 export const MAX_TENTATIVAS_LOGIN = 5;
 export const BLOQUEIO_MINUTOS = 15;
@@ -70,7 +70,7 @@ export function registrarSucesso(): TentativasLogin {
   return TENTATIVAS_ZERADAS;
 }
 
-// ─── Próximo boleto em aberto (alvo do lançamento da recarga) ────────────────
+// ─── Vencimento da cobrança da recarga ──────────────────────────────────────
 
 export interface ParcelaAberta {
   contaReceberID: string;
@@ -96,24 +96,60 @@ export function parcelasEmAberto<T extends ParcelaAberta>(parcelas: readonly T[]
   return parcelas.filter((p) => !p.quitada && Math.round(p.saldo * 100) > 0);
 }
 
-// Próxima parcela em aberto AINDA NÃO VENCIDA (vencimento >= hoje), de
-// vencimento mais próximo. Empate no mesmo dia resolve pela mensalidade (é o
-// boleto da escola, não um avulso). Retorna null quando o aluno só tem parcelas
-// vencidas (ou nenhuma em aberto): nesse caso não existe "próximo boleto" para
-// receber a recarga e a equipe trata manualmente.
-export function proximaParcelaEmAberto<T extends ParcelaAberta>(
+// Próxima MENSALIDADE em aberto ainda não vencida. É ela que define o
+// vencimento da conta a receber da recarga: o pai paga a recarga no mesmo dia
+// em que já paga a escola.
+export function proximaMensalidadeEmAberto<T extends ParcelaAberta>(
   parcelas: readonly T[],
   hojeYMD: string,
 ): T | null {
   const candidatas = parcelasEmAberto(parcelas).filter(
-    (p) => p.vencimento !== "" && p.vencimento >= hojeYMD,
+    (p) =>
+      p.vencimento !== "" &&
+      p.vencimento >= hojeYMD &&
+      normalizar(p.categoria).includes(CATEGORIA_MENSALIDADE),
   );
   if (candidatas.length === 0) return null;
+  return [...candidatas].sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
+}
 
-  const prioridade = (p: T) => (normalizar(p.categoria).includes(CATEGORIA_MENSALIDADE) ? 0 : 1);
-  return [...candidatas].sort(
-    (a, b) => a.vencimento.localeCompare(b.vencimento) || prioridade(a) - prioridade(b),
-  )[0];
+// Categoria financeira da recarga no Sponte (já cadastrada na conta do colégio).
+export const CATEGORIA_CANTINA_SPONTE = "Cantina";
+
+// Sem mensalidade futura em aberto (fim do ano letivo, aluno em dia sem próximo
+// boleto emitido), o vencimento cai no dia 5 do mês seguinte.
+export const DIA_VENCIMENTO_FALLBACK = 5;
+
+export function vencimentoPadraoRecarga(hojeYMD: string): string {
+  const [y, m] = hojeYMD.split("-").map((v) => parseInt(v, 10));
+  const ano = m === 12 ? y + 1 : y;
+  const mes = m === 12 ? 1 : m + 1;
+  return `${ano}-${String(mes).padStart(2, "0")}-${String(DIA_VENCIMENTO_FALLBACK).padStart(2, "0")}`;
+}
+
+export interface VencimentoRecarga {
+  vencimento: string; // YYYY-MM-DD
+  origem: "mensalidade" | "padrao";
+  mensalidade: ParcelaAberta | null;
+}
+
+// Regra acordada: vencimento da próxima mensalidade em aberto do aluno; se não
+// houver, dia 5 do mês seguinte.
+export function vencimentoRecarga<T extends ParcelaAberta>(
+  parcelas: readonly T[],
+  hojeYMD: string,
+): VencimentoRecarga {
+  const mensalidade = proximaMensalidadeEmAberto(parcelas, hojeYMD);
+  if (mensalidade) {
+    return { vencimento: mensalidade.vencimento, origem: "mensalidade", mensalidade };
+  }
+  return { vencimento: vencimentoPadraoRecarga(hojeYMD), origem: "padrao", mensalidade: null };
+}
+
+export function observacaoRecargaSponte(dataSolicitacaoYMD: string): string {
+  const [y, m, d] = dataSolicitacaoYMD.split("-");
+  const br = y && m && d ? `${d}/${m}/${y}` : dataSolicitacaoYMD;
+  return `Recarga do cartão da cantina — solicitação de ${br}`;
 }
 
 // ─── Solicitação de recarga ─────────────────────────────────────────────────
@@ -123,7 +159,7 @@ export type StatusRecarga = "pendente" | "efetivada" | "lancada_no_boleto";
 export const STATUS_RECARGA_LABEL: Record<StatusRecarga, string> = {
   pendente: "Pendente",
   efetivada: "Recarga efetivada",
-  lancada_no_boleto: "Lançada no boleto",
+  lancada_no_boleto: "Lançada no Sponte",
 };
 
 export type AcaoRecarga = "efetivar" | "marcar_lancada";
@@ -136,8 +172,8 @@ export interface TransicaoRecarga {
 
 // Transições permitidas da solicitação. É uma máquina de estados de mão única:
 // 'pendente' → 'efetivada' (a recarga física do cartão foi feita) e
-// 'efetivada' → 'lancada_no_boleto' (alguém CONFIRMOU MANUALMENTE ter incluído
-// o valor no boleto — o sistema não escreve nada no Sponte). Repetir a ação num
+// 'efetivada' → 'lancada_no_boleto' (a conta a receber da recarga existe no
+// Sponte — criada pelo sistema ou lançada à mão pela equipe). Repetir a ação num
 // status que já avançou é recusado, então clique duplo não gera transição nem
 // histórico duplicado.
 export function transicaoRecarga(atual: StatusRecarga, acao: AcaoRecarga): TransicaoRecarga {
@@ -152,20 +188,6 @@ export function transicaoRecarga(atual: StatusRecarga, acao: AcaoRecarga): Trans
     return { ok: false, erro: "Efetive a recarga do cartão antes de marcar o lançamento." };
   }
   return { ok: true, proximoStatus: "lancada_no_boleto" };
-}
-
-// Indicação MANUAL para a equipe: em qual boleto incluir o valor da recarga.
-// Sem próxima parcela em aberto, o texto orienta o lançamento no próximo boleto
-// a ser emitido — nunca afirma que algo foi lançado automaticamente.
-export function indicacaoLancamentoManual(
-  valor: number,
-  parcela: { numeroBoleto: string; vencimento: string } | null,
-): string {
-  const quanto = formatarBRLRecarga(valor);
-  if (!parcela) return `Incluir ${quanto} manualmente no próximo boleto a ser emitido.`;
-  const [y, m, d] = parcela.vencimento.split("-");
-  const venc = y && m && d ? `${d}/${m}/${y}` : parcela.vencimento;
-  return `Incluir ${quanto} no boleto ${parcela.numeroBoleto || "sem número"} (vencimento ${venc}).`;
 }
 
 export const VALOR_RECARGA_MINIMO = 1;

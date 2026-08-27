@@ -10,11 +10,13 @@ import {
   classificarUnidade,
   coletarTitulosAluno,
   escapeXml,
+  inserirPlanoSponte,
   parseXmlList,
   parseXmlValue,
   resolverCredenciais,
 } from "@/lib/sponte.functions";
 import {
+  CATEGORIA_CANTINA_SPONTE,
   TENTATIVAS_ZERADAS,
   cpfValido,
   estaBloqueado,
@@ -22,11 +24,12 @@ import {
   mensagemWhatsAppRecarga,
   minutosRestantesBloqueio,
   normalizarCpf,
-  proximaParcelaEmAberto,
+  observacaoRecargaSponte,
   registrarFalha,
   registrarSucesso,
   transicaoRecarga,
   valorRecargaValido,
+  vencimentoRecarga,
   type StatusRecarga,
   type TentativasLogin,
 } from "@/lib/cantina";
@@ -136,9 +139,7 @@ async function buscarAlunoPorCpf(cpfDigitos: string): Promise<AlunoPortal | null
 
         const turma = parseXmlValue(node, "TurmaAtual");
         // CEC e CEC Baby compartilham o token: a unidade real vem da turma.
-        const unidadeReal = creds.segmentaPorTurma
-          ? (classificarUnidade(turma) ?? "CEC")
-          : unidade;
+        const unidadeReal = creds.segmentaPorTurma ? (classificarUnidade(turma) ?? "CEC") : unidade;
         if (creds.segmentaPorTurma && unidadeReal !== unidade) continue;
 
         const responsaveis: ResponsavelPortal[] = parseXmlList(node, "wsResponsaveis")
@@ -325,13 +326,14 @@ interface RecargaRow {
   aluno_nome: string;
   valor: number;
   status: StatusRecarga;
+  sponte_conta_receber_id: string | null;
   historico: { status: string; at: string; por: string }[] | null;
 }
 
 async function carregarRecarga(id: string): Promise<RecargaRow | null> {
   const { data, error } = await supabaseAdmin
     .from("cantina_recargas" as never)
-    .select("id, unidade, aluno_id, aluno_nome, valor, status, historico")
+    .select("id, unidade, aluno_id, aluno_nome, valor, status, sponte_conta_receber_id, historico")
     .eq("id", id)
     .maybeSingle();
   if (error || !data) return null;
@@ -350,14 +352,104 @@ function historicoCom(
 export interface EfetivarRecargaResult {
   ok: boolean;
   erro?: string;
-  // Indicação manual: boleto em aberto em que a equipe deve incluir o valor
-  // (não existe método no Sponte para lançar isso automaticamente).
-  boletoNumero?: string;
-  boletoVencimento?: string;
-  boletoIndisponivel?: boolean;
+  // Lançamento automático no Sponte (mesmo mecanismo do Fechamento da Colônia:
+  // InsertPlano, conta a receber de 1 parcela na categoria "Cantina").
+  lancadaNoSponte?: boolean;
+  sponteContaReceberId?: string;
+  sponteVencimento?: string;
+  sponteErro?: string;
 }
 
 const IdInputSchema = z.object({ id: z.string().uuid() });
+
+function hojeSaoPaulo(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+// Guarda o motivo da falha do lançamento para a tela oferecer a retentativa.
+async function registrarErroSponte(id: string, erro: string): Promise<void> {
+  await supabaseAdmin
+    .from("cantina_recargas" as never)
+    .update({ sponte_erro: erro } as never)
+    .eq("id", id);
+}
+
+// Cria a conta a receber da recarga no Sponte e, com a confirmação do Sponte,
+// avança a solicitação para 'lancada_no_boleto'. Só é chamada com a linha já
+// reivindicada em 'efetivada' (ver abaixo), e a gravação final exige
+// status='efetivada' — assim nenhum caminho gera dois títulos para a mesma
+// recarga.
+async function lancarNoSponte(
+  recarga: RecargaRow,
+  nome: string,
+  userId: string,
+): Promise<EfetivarRecargaResult> {
+  const hojeYMD = hojeSaoPaulo();
+  const titulosResult = await coletarTitulosAluno(recarga.unidade, recarga.aluno_id);
+  // Sem conseguir ler as parcelas, o vencimento sairia errado (cairia no
+  // fallback como se o aluno não tivesse mensalidade): não lança.
+  if (titulosResult.indisponivel || titulosResult.error) {
+    const erro =
+      titulosResult.error ??
+      "Credenciais do Sponte ausentes para esta unidade — nenhuma cobrança foi criada.";
+    await registrarErroSponte(recarga.id, erro);
+    return { ok: true, lancadaNoSponte: false, sponteErro: erro };
+  }
+
+  // Vencimento acordado: próxima mensalidade em aberto do aluno; sem ela, dia 5
+  // do mês seguinte.
+  const { vencimento } = vencimentoRecarga(titulosResult.titulos, hojeYMD);
+
+  const inserido = await inserirPlanoSponte({
+    unidade: recarga.unidade,
+    sponteAlunoId: recarga.aluno_id,
+    valor: Number(recarga.valor),
+    vencimento,
+    categoria: CATEGORIA_CANTINA_SPONTE,
+    observacao: observacaoRecargaSponte(hojeYMD),
+    logTag: "[Cantina][Sponte]",
+  });
+
+  if (!inserido.ok) {
+    const erro =
+      inserido.error ??
+      "O Sponte não confirmou a criação da cobrança — nenhuma cobrança foi criada.";
+    await registrarErroSponte(recarga.id, erro);
+    return { ok: true, lancadaNoSponte: false, sponteErro: erro };
+  }
+
+  const agoraISO = new Date().toISOString();
+  const { error } = await supabaseAdmin
+    .from("cantina_recargas" as never)
+    .update({
+      status: "lancada_no_boleto",
+      lancada_at: agoraISO,
+      lancada_por: userId,
+      lancada_por_nome: nome,
+      lancada_automatica: true,
+      sponte_conta_receber_id: inserido.contaReceberID ?? "",
+      sponte_vencimento: vencimento,
+      sponte_erro: "",
+      historico: historicoCom(recarga, "lancada_no_boleto", nome, agoraISO),
+    } as never)
+    .eq("id", recarga.id)
+    .eq("status", "efetivada");
+
+  // A cobrança EXISTE no Sponte mesmo se a gravação local falhar — o aviso tem
+  // de dizer isso, para ninguém lançar o valor uma segunda vez.
+  if (error) {
+    const erro = `Cobrança criada no Sponte (conta ${inserido.contaReceberID ?? "sem número"}), mas o School Hub não conseguiu registrar o status. NÃO lance novamente.`;
+    await registrarErroSponte(recarga.id, erro);
+    return { ok: true, lancadaNoSponte: false, sponteErro: erro };
+  }
+
+  return {
+    ok: true,
+    lancadaNoSponte: true,
+    sponteContaReceberId: inserido.contaReceberID,
+    sponteVencimento: vencimento,
+  };
+}
 
 export const efetivarRecargaCantina = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -370,14 +462,8 @@ export const efetivarRecargaCantina = createServerFn({ method: "POST" })
     const transicao = transicaoRecarga(recarga.status, "efetivar");
     if (!transicao.ok) return { ok: false, erro: transicao.erro };
 
-    // Consulta o próximo boleto em aberto do aluno APENAS para indicar à equipe
-    // onde incluir o valor. Nada é escrito no Sponte.
-    const { titulos } = await coletarTitulosAluno(recarga.unidade, recarga.aluno_id);
-    const hojeYMD = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Sao_Paulo",
-    });
-    const proxima = proximaParcelaEmAberto(titulos, hojeYMD);
-
+    // Reivindica a linha ANTES de falar com o Sponte: quem perde a corrida do
+    // clique duplo não chega a criar cobrança nenhuma.
     const agoraISO = new Date().toISOString();
     const { data: atualizadas, error } = await supabaseAdmin
       .from("cantina_recargas" as never)
@@ -386,10 +472,6 @@ export const efetivarRecargaCantina = createServerFn({ method: "POST" })
         efetivada_at: agoraISO,
         efetivada_por: context.userId,
         efetivada_por_nome: nome,
-        boleto_conta_receber_id: proxima?.contaReceberID ?? "",
-        boleto_numero: proxima?.numeroBoleto ?? "",
-        boleto_vencimento: proxima?.vencimento ?? null,
-        boleto_indisponivel: !proxima,
         historico: historicoCom(recarga, "efetivada", nome, agoraISO),
       } as never)
       .eq("id", recarga.id)
@@ -401,12 +483,31 @@ export const efetivarRecargaCantina = createServerFn({ method: "POST" })
       return { ok: false, erro: "Esta solicitação já foi efetivada." };
     }
 
-    return {
-      ok: true,
-      boletoNumero: proxima?.numeroBoleto ?? "",
-      boletoVencimento: proxima?.vencimento ?? "",
-      boletoIndisponivel: !proxima,
-    };
+    return lancarNoSponte({ ...recarga, status: "efetivada" }, nome, context.userId);
+  });
+
+// Retentativa do lançamento quando o Sponte falhou no momento da efetivação.
+export const lancarRecargaNoSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => IdInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<EfetivarRecargaResult> => {
+    const nome = await assertPodeEditarCantina(context.userId);
+    const recarga = await carregarRecarga(data.id);
+    if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    if (recarga.status !== "efetivada") {
+      return {
+        ok: false,
+        erro:
+          recarga.status === "pendente"
+            ? "Efetive a recarga do cartão antes de lançar no Sponte."
+            : "Esta recarga já está lançada no Sponte.",
+      };
+    }
+    // Já existe título: repetir criaria cobrança dobrada para o responsável.
+    if (recarga.sponte_conta_receber_id) {
+      return { ok: false, erro: "Esta recarga já tem cobrança criada no Sponte." };
+    }
+    return lancarNoSponte(recarga, nome, context.userId);
   });
 
 const LancarInputSchema = z.object({
@@ -414,8 +515,10 @@ const LancarInputSchema = z.object({
   observacao: z.string().max(500).optional(),
 });
 
-// Confirmação MANUAL de que o valor foi incluído no boleto pela equipe. O
-// sistema não executa esse lançamento no Sponte — só registra quem o fez.
+// Saída de emergência: a equipe lançou o valor à mão no Sponte (quando a
+// criação automática falha, por exemplo por configuração da conta). Aqui o
+// sistema não escreve nada no Sponte — só registra quem confirmou.
+// lancada_automatica fica false, distinguindo do lançamento do sistema.
 export const marcarRecargaLancadaNoBoleto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => LancarInputSchema.parse(input))
@@ -434,6 +537,7 @@ export const marcarRecargaLancadaNoBoleto = createServerFn({ method: "POST" })
         lancada_at: agoraISO,
         lancada_por: context.userId,
         lancada_por_nome: nome,
+        lancada_automatica: false,
         observacao: data.observacao ?? "",
         historico: historicoCom(recarga, "lancada_no_boleto", nome, agoraISO),
       } as never)

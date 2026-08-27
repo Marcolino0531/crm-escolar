@@ -15,6 +15,9 @@ import {
   parseBrDecimal,
   valorBoletoDaParcela,
 } from "@/lib/sponte-baixa";
+import { contaReceberCriada, escapeXml, montarParametrosInsertPlano } from "@/lib/sponte-plano";
+
+export { escapeXml };
 
 // ─── Phase 6 (Option C migration) ───────────────────────────────────────────
 // Sponte inadimplência integration ported from the CRA app's api/sponte-batch.ts
@@ -2577,14 +2580,6 @@ export interface FaturarColoniaResult {
 const CATEGORIA_COLONIA = "Colônia de Férias";
 const FORMA_COBRANCA_BANCARIA = "Cobrança Bancária";
 
-export function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 // POST de um método SOAP do Sponte com parâmetros arbitrários (extraParams já
 // serializados na ordem do WSDL). callSponte é específico de sParametrosBusca.
 export async function callSponteMethod(
@@ -2650,9 +2645,10 @@ async function buscarFormaCobranca(
   nome: string,
   codigoCliente: string,
   token: string,
+  logTag: string,
 ): Promise<BuscaSponte> {
   const xml = await callSponteMethod("GetFormasCobrancas", "", codigoCliente, token);
-  console.info("[Colônia][Sponte] RAW GetFormasCobrancas:", xml);
+  console.info(`${logTag} RAW GetFormasCobrancas:`, xml);
   if (checkFault(xml)) return { match: null, opcoes: [] };
   const opcoes = parseOpcoesSponte(xml, "FormaCobrancaID", "Descricao");
   return { match: acharOpcaoSponte(opcoes, nome), opcoes };
@@ -2663,12 +2659,108 @@ async function buscarCategoria(
   nome: string,
   codigoCliente: string,
   token: string,
+  logTag: string,
 ): Promise<BuscaSponte> {
   const xml = await callSponteMethod("GetCategorias", "", codigoCliente, token);
-  console.info("[Colônia][Sponte] RAW GetCategorias:", xml);
+  console.info(`${logTag} RAW GetCategorias:`, xml);
   if (checkFault(xml)) return { match: null, opcoes: [] };
   const opcoes = parseOpcoesSponte(xml, "CategoriaID", "Nome");
   return { match: acharOpcaoSponte(opcoes, nome), opcoes };
+}
+
+// Cria UMA conta a receber no Sponte (título de 1 parcela) para o aluno, na
+// categoria pedida e com forma "Cobrança Bancária". É o único mecanismo de
+// escrita financeira disponível na API: o valor sai num título NOVO, não como
+// item de um boleto de mensalidade já emitido.
+// Usado pelo Fechamento da Colônia e pelas recargas da Cantina — sem trava de
+// duplicidade aqui: quem chama garante a unicidade antes de chamar.
+export interface InserirPlanoSponteParams {
+  unidade: string;
+  sponteAlunoId: string;
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+  categoria: string;
+  observacao: string;
+  logTag: string;
+}
+
+export interface InserirPlanoSponteResult {
+  ok: boolean;
+  contaReceberID?: string;
+  retornoOperacao?: string;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+export async function inserirPlanoSponte(
+  p: InserirPlanoSponteParams,
+): Promise<InserirPlanoSponteResult> {
+  const creds = resolverCredenciais(p.unidade);
+  if (!creds) return { ok: false, indisponivel: true };
+
+  let forma: BuscaSponte;
+  let categoria: BuscaSponte;
+  try {
+    [forma, categoria] = await Promise.all([
+      buscarFormaCobranca(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token, p.logTag),
+      buscarCategoria(p.categoria, creds.codigoCliente, creds.token, p.logTag),
+    ]);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+  }
+
+  // Sem a forma/categoria não há como lançar: devolve as opções que o Sponte
+  // retornou para identificarmos o nome exato cadastrado na conta.
+  if (!forma.match) {
+    console.warn(
+      `${p.logTag} Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada. Disponíveis: ${forma.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ") || "(nenhuma retornada)"}`,
+    );
+    return {
+      ok: false,
+      error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte. Formas disponíveis: ${forma.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
+    };
+  }
+  if (!categoria.match) {
+    console.warn(
+      `${p.logTag} Categoria "${p.categoria}" não encontrada. Disponíveis: ${categoria.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ") || "(nenhuma retornada)"}`,
+    );
+    return {
+      ok: false,
+      error: `Categoria "${p.categoria}" não encontrada no Sponte. Categorias disponíveis: ${categoria.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
+    };
+  }
+
+  const extra = montarParametrosInsertPlano({
+    sponteAlunoId: p.sponteAlunoId,
+    valor: p.valor,
+    vencimento: p.vencimento,
+    formaCobrancaId: forma.match.id,
+    categoriaId: categoria.match.id,
+    observacao: p.observacao,
+  });
+
+  let xml: string;
+  try {
+    xml = await callSponteMethod("InsertPlano", extra, creds.codigoCliente, creds.token);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Falha ao lançar no Sponte." };
+  }
+
+  const fault = checkFault(xml);
+  if (fault) return { ok: false, error: fault };
+
+  const retornoOperacao = parseXmlValue(xml, "RetornoOperacao");
+  const contaReceberID = parseXmlValue(xml, "ContaReceberID");
+
+  if (!contaReceberCriada(retornoOperacao, contaReceberID)) {
+    return {
+      ok: false,
+      retornoOperacao,
+      error: retornoOperacao || "O Sponte não confirmou a criação da cobrança.",
+    };
+  }
+
+  return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
 }
 
 export const faturarColoniaSponte = createServerFn({ method: "POST" })
@@ -2714,89 +2806,22 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
       }
     }
 
-    const creds = resolverCredenciais(unidade);
-    if (!creds) return { ok: false, indisponivel: true };
-
-    let forma: BuscaSponte;
-    let categoria: BuscaSponte;
-    try {
-      [forma, categoria] = await Promise.all([
-        buscarFormaCobranca(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token),
-        buscarCategoria(CATEGORIA_COLONIA, creds.codigoCliente, creds.token),
-      ]);
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
-    }
-
-    if (!forma.match) {
-      // Fallback: registra as opções retornadas pelo Sponte para identificarmos
-      // o nome exato configurado na conta.
-      const disponiveis = forma.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
-      console.warn(
-        `[Colônia][Sponte] Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
-      );
-      return {
-        ok: false,
-        error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte. Formas disponíveis: ${forma.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
-      };
-    }
-    if (!categoria.match) {
-      const disponiveis = categoria.opcoes.map((o) => `${o.id}=${o.nome}`).join(" | ");
-      console.warn(
-        `[Colônia][Sponte] Categoria "${CATEGORIA_COLONIA}" não encontrada. Disponíveis: ${disponiveis || "(nenhuma retornada)"}`,
-      );
-      return {
-        ok: false,
-        error: `Categoria "${CATEGORIA_COLONIA}" não encontrada no Sponte. Categorias disponíveis: ${categoria.opcoes.map((o) => o.nome).join(", ") || "(nenhuma retornada)"}`,
-      };
-    }
-
-    const formaId = forma.match.id;
-    const categoriaId = categoria.match.id;
-
     const inicioBr = ymdParaBr(weekStart);
     const fimBr = ymdParaBr(weekEnd);
     const observacao = `Colônia de Férias: Semana de ${inicioBr} a ${fimBr}`;
 
-    const extra =
-      `<nContratoID>0</nContratoID>` +
-      `<nContratoAulaLivreID>0</nContratoAulaLivreID>` +
-      `<nAlunoID>${escapeXml(sponteAlunoId)}</nAlunoID>` +
-      `<nTipoPlano>1</nTipoPlano>` +
-      `<nBolsaID>0</nBolsaID>` +
-      `<dDataPrimeiroVencimento>${vencimento}T00:00:00</dDataPrimeiroVencimento>` +
-      `<nNumeroParcelas>1</nNumeroParcelas>` +
-      `<nValorParcelas>${valor.toFixed(2)}</nValorParcelas>` +
-      `<nFormaCobrancaID>${formaId}</nFormaCobrancaID>` +
-      `<nCategoriaID>${categoriaId}</nCategoriaID>` +
-      `<sObservacao>${escapeXml(observacao)}</sObservacao>` +
-      `<nClienteID>0</nClienteID>` +
-      `<nContaID>0</nContaID>`;
+    const inserido = await inserirPlanoSponte({
+      unidade,
+      sponteAlunoId,
+      valor,
+      vencimento,
+      categoria: CATEGORIA_COLONIA,
+      observacao,
+      logTag: "[Colônia][Sponte]",
+    });
+    if (!inserido.ok) return inserido;
 
-    let xml: string;
-    try {
-      xml = await callSponteMethod("InsertPlano", extra, creds.codigoCliente, creds.token);
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Falha ao faturar no Sponte." };
-    }
-
-    const fault = checkFault(xml);
-    if (fault) return { ok: false, error: fault };
-
-    const retornoOperacao = parseXmlValue(xml, "RetornoOperacao");
-    const contaReceberID = parseXmlValue(xml, "ContaReceberID");
-    const contaNum = parseInt(contaReceberID, 10);
-    const sucesso =
-      (Number.isFinite(contaNum) && contaNum > 0) ||
-      normalizarTexto(retornoOperacao).includes("sucesso");
-
-    if (!sucesso) {
-      return {
-        ok: false,
-        retornoOperacao,
-        error: retornoOperacao || "O Sponte não confirmou a criação da cobrança.",
-      };
-    }
+    const { contaReceberID, retornoOperacao } = inserido;
 
     // Persiste o faturamento (idempotente): trava a duplicidade e alimenta o
     // estado "Faturado" no Fechamento Semanal. No refaturamento forçado o
