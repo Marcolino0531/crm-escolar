@@ -12,6 +12,8 @@ import {
   minutosRestantesBloqueio,
   normalizarCpf,
   mensagemPortalFechado,
+  diaVencimentoHabitual,
+  mesSeguinte,
   parcelasEmAberto,
   portalCantinaAberto,
   vencimentoPadraoRecarga,
@@ -151,44 +153,92 @@ describe("vencimento da cobrança da recarga no Sponte", () => {
     expect(abertas.map((p) => p.contaReceberID)).toEqual(["c"]);
   });
 
-  it("usa o vencimento da mensalidade em aberto mais próxima", () => {
+  it("usa a parcela do mês seguinte, não a do próprio mês nem a de depois", () => {
     const r = vencimentoRecarga(
       [
-        parcela({ vencimento: "2026-10-10" }),
+        parcela({ vencimento: "2026-08-10" }),
         parcela({ vencimento: "2026-09-10" }),
-        parcela({ vencimento: "2026-11-10" }),
+        parcela({ vencimento: "2026-10-10" }),
       ],
       hoje,
     );
     expect(r).toMatchObject({ vencimento: "2026-09-10", origem: "mensalidade" });
   });
 
-  it("aceita mensalidade que vence hoje", () => {
-    expect(vencimentoRecarga([parcela({ vencimento: hoje })], hoje).vencimento).toBe(hoje);
-  });
-
-  it("ignora mensalidade vencida e cai no dia 5 do mês seguinte", () => {
+  // Caso real (Ryan): a cobrança mensal está na categoria "Material Pedagógico"
+  // e vence dia 10 — o lançamento saía no dia 5 (fallback) porque a regra só
+  // aceitava a categoria "Mensalidade".
+  it("respeita o dia 10 do aluno mesmo com a cobrança fora da categoria Mensalidade", () => {
     const r = vencimentoRecarga(
-      [parcela({ vencimento: "2026-07-10" }), parcela({ vencimento: "2026-08-10" })],
+      [
+        parcela({
+          categoria: "Material Pedagógico",
+          vencimento: "2026-07-10",
+          quitada: true,
+          saldo: 0,
+        }),
+        parcela({
+          categoria: "Material Pedagógico",
+          vencimento: "2026-08-10",
+          quitada: true,
+          saldo: 0,
+        }),
+        parcela({ categoria: "Material Pedagógico", vencimento: "2026-09-10" }),
+        parcela({ categoria: "Material Pedagógico", vencimento: "2026-10-10" }),
+      ],
       hoje,
     );
-    expect(r).toMatchObject({ vencimento: "2026-09-05", origem: "padrao" });
+    expect(r).toMatchObject({ vencimento: "2026-09-10", origem: "mensalidade" });
   });
 
-  it("ignora mensalidade quitada e cai no fallback", () => {
+  it("respeita o dia 12 quando é o dia do aluno", () => {
+    const r = vencimentoRecarga(
+      [
+        parcela({ categoria: "Mensalidade", vencimento: "2026-08-12" }),
+        parcela({ categoria: "Mensalidade", vencimento: "2026-09-12" }),
+      ],
+      hoje,
+    );
+    expect(r.vencimento).toBe("2026-09-12");
+  });
+
+  it("usa a parcela quitada do mês seguinte (o dia é o que importa)", () => {
     const r = vencimentoRecarga(
       [parcela({ vencimento: "2026-09-10", quitada: true, saldo: 0 })],
       hoje,
     );
-    expect(r.origem).toBe("padrao");
+    expect(r).toMatchObject({ vencimento: "2026-09-10", origem: "mensalidade" });
   });
 
-  it("ignora cobranças que não são mensalidade (esportes, material)", () => {
+  it("sem parcela no mês seguinte, aplica o dia habitual do aluno nesse mês", () => {
+    const r = vencimentoRecarga(
+      [parcela({ vencimento: "2026-07-12" }), parcela({ vencimento: "2026-08-12" })],
+      hoje,
+    );
+    expect(r).toMatchObject({ vencimento: "2026-09-12", origem: "dia_habitual" });
+  });
+
+  it("encurta o dia habitual para o último dia do mês curto", () => {
+    const r = vencimentoRecarga([parcela({ vencimento: "2026-01-31" })], "2026-01-20");
+    expect(r).toMatchObject({ vencimento: "2026-02-28", origem: "dia_habitual" });
+  });
+
+  it("não usa lançamento anterior da própria Cantina como referência de dia", () => {
     const r = vencimentoRecarga(
       [
-        parcela({ categoria: "Esportes", vencimento: "2026-08-25" }),
-        parcela({ categoria: "Material", vencimento: "2026-08-28" }),
+        parcela({ categoria: "Cantina", vencimento: "2026-09-07" }),
         parcela({ categoria: "Mensalidade", vencimento: "2026-09-10" }),
+      ],
+      hoje,
+    );
+    expect(r.vencimento).toBe("2026-09-10");
+  });
+
+  it("escolhe a cobrança de maior saldo quando o mês tem dias diferentes", () => {
+    const r = vencimentoRecarga(
+      [
+        parcela({ categoria: "Esportes", vencimento: "2026-09-05", saldo: 150 }),
+        parcela({ categoria: "Mensalidade", vencimento: "2026-09-10", saldo: 1200 }),
       ],
       hoje,
     );
@@ -201,6 +251,22 @@ describe("vencimento da cobrança da recarga no Sponte", () => {
       origem: "padrao",
       mensalidade: null,
     });
+  });
+
+  it("dia habitual é o dia que mais se repete", () => {
+    expect(
+      diaVencimentoHabitual([
+        parcela({ vencimento: "2026-07-10" }),
+        parcela({ vencimento: "2026-08-10" }),
+        parcela({ categoria: "Esportes", vencimento: "2026-08-05" }),
+      ]),
+    ).toBe(10);
+    expect(diaVencimentoHabitual([])).toBeNull();
+  });
+
+  it("mês seguinte vira o ano em dezembro", () => {
+    expect(mesSeguinte("2026-08-18")).toBe("2026-09");
+    expect(mesSeguinte("2026-12-01")).toBe("2027-01");
   });
 
   it("viradas de ano no fallback", () => {

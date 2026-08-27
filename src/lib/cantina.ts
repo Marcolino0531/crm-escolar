@@ -82,7 +82,10 @@ export interface ParcelaAberta {
   quitada: boolean;
 }
 
-const CATEGORIA_MENSALIDADE = "mensalidade";
+// Categorias que não servem de referência para o dia de vencimento do aluno:
+// a própria recarga (evita realimentar o dia de um lançamento anterior errado)
+// e parcelas de acordo, cujo vencimento é negociado caso a caso.
+const CATEGORIAS_IGNORADAS = ["cantina", "acordo"];
 
 function normalizar(s: string): string {
   return s
@@ -96,28 +99,56 @@ export function parcelasEmAberto<T extends ParcelaAberta>(parcelas: readonly T[]
   return parcelas.filter((p) => !p.quitada && Math.round(p.saldo * 100) > 0);
 }
 
-// Próxima MENSALIDADE em aberto ainda não vencida. É ela que define o
-// vencimento da conta a receber da recarga: o pai paga a recarga no mesmo dia
-// em que já paga a escola.
-export function proximaMensalidadeEmAberto<T extends ParcelaAberta>(
+// Mês seguinte ao da recarga (M+1), no formato YYYY-MM.
+export function mesSeguinte(hojeYMD: string): string {
+  const [y, m] = hojeYMD.split("-").map((v) => parseInt(v, 10));
+  const ano = m === 12 ? y + 1 : y;
+  const mes = m === 12 ? 1 : m + 1;
+  return `${ano}-${String(mes).padStart(2, "0")}`;
+}
+
+function diasNoMes(ano: number, mes: number): number {
+  return new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+}
+
+function dataNoMes(mesYM: string, dia: number): string {
+  const [ano, mes] = mesYM.split("-").map((v) => parseInt(v, 10));
+  const diaValido = Math.min(dia, diasNoMes(ano, mes));
+  return `${mesYM}-${String(diaValido).padStart(2, "0")}`;
+}
+
+function referenciaValida<T extends ParcelaAberta>(p: T): boolean {
+  const cat = normalizar(p.categoria);
+  return p.vencimento !== "" && !CATEGORIAS_IGNORADAS.some((ign) => cat.includes(ign));
+}
+
+// Dia do mês em que a escola cobra ESTE aluno. Cada aluno tem o seu (5, 10,
+// 12…) e a categoria que carrega a mensalidade varia por unidade ("Mensalidade",
+// "Material Pedagógico"…), então o dia é deduzido do histórico de parcelas — o
+// dia que mais se repete, com empate resolvido pelo maior saldo e pelo menor
+// dia. Parcelas quitadas contam: o que interessa é o dia, não o saldo.
+export function diaVencimentoHabitual<T extends ParcelaAberta>(
   parcelas: readonly T[],
-  hojeYMD: string,
-): T | null {
-  const candidatas = parcelasEmAberto(parcelas).filter(
-    (p) =>
-      p.vencimento !== "" &&
-      p.vencimento >= hojeYMD &&
-      normalizar(p.categoria).includes(CATEGORIA_MENSALIDADE),
-  );
-  if (candidatas.length === 0) return null;
-  return [...candidatas].sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
+): number | null {
+  const porDia = new Map<number, { vezes: number; saldo: number }>();
+  for (const p of parcelas) {
+    if (!referenciaValida(p)) continue;
+    const dia = parseInt(p.vencimento.slice(8, 10), 10);
+    if (!Number.isFinite(dia) || dia < 1) continue;
+    const atual = porDia.get(dia) ?? { vezes: 0, saldo: 0 };
+    porDia.set(dia, { vezes: atual.vezes + 1, saldo: atual.saldo + Math.max(p.saldo, 0) });
+  }
+  if (porDia.size === 0) return null;
+  return [...porDia.entries()].sort(
+    (a, b) => b[1].vezes - a[1].vezes || b[1].saldo - a[1].saldo || a[0] - b[0],
+  )[0][0];
 }
 
 // Categoria financeira da recarga no Sponte (já cadastrada na conta do colégio).
 export const CATEGORIA_CANTINA_SPONTE = "Cantina";
 
-// Sem mensalidade futura em aberto (fim do ano letivo, aluno em dia sem próximo
-// boleto emitido), o vencimento cai no dia 5 do mês seguinte.
+// Aluno sem nenhuma parcela no Sponte (nenhuma referência de dia): o vencimento
+// cai no dia 5 do mês seguinte.
 export const DIA_VENCIMENTO_FALLBACK = 5;
 
 export function vencimentoPadraoRecarga(hojeYMD: string): string {
@@ -129,20 +160,37 @@ export function vencimentoPadraoRecarga(hojeYMD: string): string {
 
 export interface VencimentoRecarga {
   vencimento: string; // YYYY-MM-DD
-  origem: "mensalidade" | "padrao";
+  origem: "mensalidade" | "dia_habitual" | "padrao";
   mensalidade: ParcelaAberta | null;
 }
 
-// Regra acordada: vencimento da próxima mensalidade em aberto do aluno; se não
-// houver, dia 5 do mês seguinte.
+// Regra: recarga no mês M vence junto com a cobrança mensal do aluno no mês
+// M+1. O vencimento sai do próprio título do Sponte (data completa, sem
+// reconstruir o dia); só quando o aluno não tem parcela nenhuma em M+1 o dia
+// habitual dele é aplicado a esse mês, e o dia 5 é o último recurso.
 export function vencimentoRecarga<T extends ParcelaAberta>(
   parcelas: readonly T[],
   hojeYMD: string,
 ): VencimentoRecarga {
-  const mensalidade = proximaMensalidadeEmAberto(parcelas, hojeYMD);
-  if (mensalidade) {
-    return { vencimento: mensalidade.vencimento, origem: "mensalidade", mensalidade };
+  const mesAlvo = mesSeguinte(hojeYMD);
+  const dia = diaVencimentoHabitual(parcelas);
+  const doMesAlvo = parcelas.filter(
+    (p) => referenciaValida(p) && p.vencimento.slice(0, 7) === mesAlvo,
+  );
+
+  if (doMesAlvo.length > 0) {
+    const preferida =
+      (dia !== null && doMesAlvo.find((p) => parseInt(p.vencimento.slice(8, 10), 10) === dia)) ||
+      [...doMesAlvo].sort(
+        (a, b) => b.saldo - a.saldo || a.vencimento.localeCompare(b.vencimento),
+      )[0];
+    return { vencimento: preferida.vencimento, origem: "mensalidade", mensalidade: preferida };
   }
+
+  if (dia !== null) {
+    return { vencimento: dataNoMes(mesAlvo, dia), origem: "dia_habitual", mensalidade: null };
+  }
+
   return { vencimento: vencimentoPadraoRecarga(hojeYMD), origem: "padrao", mensalidade: null };
 }
 

@@ -472,7 +472,7 @@ async function lancarNoSponte(
   const hojeYMD = hojeSaoPaulo();
   const titulosResult = await coletarTitulosAluno(recarga.unidade, recarga.aluno_id);
   // Sem conseguir ler as parcelas, o vencimento sairia errado (cairia no
-  // fallback como se o aluno não tivesse mensalidade): não lança.
+  // fallback como se o aluno não tivesse cobrança mensal): não lança.
   if (titulosResult.indisponivel || titulosResult.error) {
     const erro =
       titulosResult.error ??
@@ -481,8 +481,8 @@ async function lancarNoSponte(
     return { ok: true, lancadaNoSponte: false, sponteErro: erro };
   }
 
-  // Vencimento acordado: próxima mensalidade em aberto do aluno; sem ela, dia 5
-  // do mês seguinte.
+  // Vencimento: a cobrança mensal deste aluno no mês seguinte ao da recarga
+  // (data real vinda do Sponte); sem parcela nesse mês, o dia habitual dele.
   const { vencimento } = vencimentoRecarga(titulosResult.titulos, hojeYMD);
 
   const inserido = await inserirPlanoSponte({
