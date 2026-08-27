@@ -8,6 +8,7 @@
 // A página é pública, então há também o limite de submissões por IP: a contagem
 // vem do banco e a decisão de recusar é tomada aqui.
 
+import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
 import type { MatriculaPayload, ResponsavelMatricula } from "@/lib/matriculas.sponte";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -59,8 +60,8 @@ export function cepCompletoValido(cep: string): boolean {
 }
 
 // Aceita apenas o formato do <input type="date"> e recusa data impossível
-// (31/02) e futura — data de nascimento nunca é no futuro.
-export function dataNascimentoValida(valor: string, hojeYMD: string): boolean {
+// (31/02). Não diz nada sobre passado/futuro.
+export function dataValida(valor: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor.trim());
   if (!m) return false;
   const ano = Number(m[1]);
@@ -69,8 +70,12 @@ export function dataNascimentoValida(valor: string, hojeYMD: string): boolean {
   if (mes < 1 || mes > 12 || dia < 1) return false;
   const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
   if (dia > ultimoDia) return false;
-  if (ano < 1900) return false;
-  return valor.trim() <= hojeYMD;
+  return ano >= 1900;
+}
+
+// Data de nascimento nunca é no futuro.
+export function dataNascimentoValida(valor: string, hojeYMD: string): boolean {
+  return dataValida(valor) && valor.trim() <= hojeYMD;
 }
 
 export function telefoneValido(v: string): boolean {
@@ -313,4 +318,137 @@ export function excedeuLimitePorIp(submissoesNaJanela: number): boolean {
 // Início da janela do limite, em ISO — usado no filtro da consulta.
 export function inicioJanelaLimite(agoraISO: string): string {
   return new Date(Date.parse(agoraISO) - JANELA_LIMITE_MINUTOS * 60_000).toISOString();
+}
+
+// ─── Etapa 2: Rotina Escolar ────────────────────────────────────────────────
+//
+// Deliberadamente FORA de `MatriculaForm`: nada daqui pode chegar ao Sponte, e
+// `montarPayloadMatricula` só enxerga `MatriculaForm`. A rotina tem destino
+// próprio (tabela student_routine) e reaproveita os tipos do Diário do Aluno
+// (MealKey/Weekday), para que a integração futura entre os dois seja direta.
+
+export const DIAS_UTEIS: readonly Weekday[] = WEEKDAYS.map((d) => d.value);
+export const REFEICOES_ROTINA: readonly MealKey[] = MEALS.map((m) => m.key);
+
+export const MEIO_PERIODO_MANHA = { entrada: "07:20", saida: "11:50" } as const;
+export const MEIO_PERIODO_TARDE = { entrada: "13:00", saida: "17:30" } as const;
+
+export interface HorarioDia {
+  entrada: string;
+  saida: string;
+}
+
+// Chave numérica do dia da semana (1=segunda … 5=sexta), como no Diário.
+export type HorariosRotina = Partial<Record<Weekday, HorarioDia>>;
+export type RefeicoesRotina = Record<MealKey, Weekday[]>;
+
+export interface RotinaForm {
+  dataInicio: string;
+  // Marcado = o aluno NÃO frequenta os cinco dias úteis; só então os dias são
+  // escolhidos manualmente.
+  frequenciaParcial: boolean;
+  diasSelecionados: Weekday[];
+  horarios: HorariosRotina;
+  semRefeicoes: boolean;
+  refeicoes: RefeicoesRotina;
+}
+
+export function refeicoesVazias(): RefeicoesRotina {
+  return { breakfast: [], lunch: [], snack: [], dinner: [] };
+}
+
+export const ROTINA_FORM_VAZIA: RotinaForm = {
+  dataInicio: "",
+  frequenciaParcial: false,
+  diasSelecionados: [...DIAS_UTEIS],
+  horarios: {},
+  semRefeicoes: false,
+  refeicoes: refeicoesVazias(),
+};
+
+/** Dias que aparecem na tabela de horários: os cinco úteis ou só os escolhidos. */
+export function diasAtivosRotina(rotina: RotinaForm): Weekday[] {
+  if (!rotina.frequenciaParcial) return [...DIAS_UTEIS];
+  return DIAS_UTEIS.filter((d) => rotina.diasSelecionados.includes(d));
+}
+
+export function horarioValido(valor: string): boolean {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(valor.trim());
+  return m !== null;
+}
+
+function minutos(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+export function algumaRefeicaoMarcada(rotina: RotinaForm): boolean {
+  const ativos = diasAtivosRotina(rotina);
+  return REFEICOES_ROTINA.some((r) => rotina.refeicoes[r].some((d) => ativos.includes(d)));
+}
+
+/**
+ * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
+ * ("rotina.horario.1"), para a tela destacar campo a campo.
+ */
+export function validarRotinaForm(rotina: RotinaForm): ErrosForm {
+  const erros: ErrosForm = {};
+
+  if (!dataValida(rotina.dataInicio)) erros["rotina.dataInicio"] = "Informe a data de início.";
+
+  const ativos = diasAtivosRotina(rotina);
+  if (ativos.length === 0)
+    erros["rotina.dias"] = "Escolha ao menos um dia da semana que o aluno frequenta.";
+
+  for (const dia of ativos) {
+    const h = rotina.horarios[dia];
+    if (!h || !horarioValido(h.entrada) || !horarioValido(h.saida)) {
+      erros[`rotina.horario.${dia}`] = "Informe os horários de entrada e saída.";
+      continue;
+    }
+    if (minutos(h.saida) <= minutos(h.entrada))
+      erros[`rotina.horario.${dia}`] = "A saída precisa ser depois da entrada.";
+  }
+
+  if (!rotina.semRefeicoes && !algumaRefeicaoMarcada(rotina))
+    erros["rotina.refeicoes"] =
+      "Marque ao menos uma refeição em um dia ou selecione “Não vou contratar nenhuma refeição”.";
+
+  return erros;
+}
+
+export interface RotinaPersistida {
+  dataInicio: string;
+  diasAtivos: Weekday[];
+  // Um item por dia ativo, sempre com entrada e saída preenchidas.
+  horarios: { weekday: Weekday; entrada: string; saida: string }[];
+  semRefeicoes: boolean;
+  refeicoes: RefeicoesRotina;
+}
+
+/**
+ * Normaliza a rotina para persistência: só dias ativos entram, e o checkbox de
+ * "nenhuma refeição" zera a grade (a marcação da tela não sobrevive ao envio).
+ */
+export function montarRotinaPersistida(rotina: RotinaForm): RotinaPersistida {
+  const ativos = diasAtivosRotina(rotina);
+  const refeicoes = refeicoesVazias();
+  if (!rotina.semRefeicoes) {
+    for (const r of REFEICOES_ROTINA)
+      refeicoes[r] = DIAS_UTEIS.filter(
+        (d) => ativos.includes(d) && rotina.refeicoes[r].includes(d),
+      );
+  }
+
+  return {
+    dataInicio: rotina.dataInicio.trim(),
+    diasAtivos: ativos,
+    horarios: ativos.map((d) => ({
+      weekday: d,
+      entrada: rotina.horarios[d]?.entrada.trim() ?? "",
+      saida: rotina.horarios[d]?.saida.trim() ?? "",
+    })),
+    semRefeicoes: rotina.semRefeicoes,
+    refeicoes,
+  };
 }

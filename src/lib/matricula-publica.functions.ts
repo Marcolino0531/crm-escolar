@@ -27,8 +27,11 @@ import {
   excedeuLimitePorIp,
   inicioJanelaLimite,
   montarPayloadMatricula,
+  montarRotinaPersistida,
   validarMatriculaForm,
+  validarRotinaForm,
   type MatriculaForm,
+  type RotinaForm,
 } from "@/lib/matricula-form";
 import { receberMatricula } from "@/lib/matriculas.receber";
 
@@ -121,8 +124,29 @@ const ResponsavelInput = z.object({
   endereco: EnderecoInput,
 });
 
+const HorarioInput = z.object({ entrada: z.string(), saida: z.string() });
+const DiaInput = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]);
+
+// Etapa 2 (Rotina Escolar) chega SEPARADA do formulário da etapa 1: o payload do
+// Sponte é montado só a partir de `form`, então nada daqui pode escorregar para
+// lá nem por descuido.
+const RotinaInput = z.object({
+  dataInicio: z.string(),
+  frequenciaParcial: z.boolean(),
+  diasSelecionados: z.array(DiaInput),
+  horarios: z.record(z.string(), HorarioInput),
+  semRefeicoes: z.boolean(),
+  refeicoes: z.object({
+    breakfast: z.array(DiaInput),
+    lunch: z.array(DiaInput),
+    snack: z.array(DiaInput),
+    dinner: z.array(DiaInput),
+  }),
+});
+
 const EnviarInput = z.object({
   captchaToken: z.string(),
+  rotina: RotinaInput,
   form: z.object({
     unidade: z.string(),
     aluno: z.object({
@@ -148,6 +172,34 @@ export interface EnviarMatriculaPublicaResult {
 
 function hojeSaoPaulo(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+// A rotina é gravada DEPOIS da matrícula, já com o AlunoID do Sponte. O upsert
+// por submission_id mantém o reenvio idempotente, igual à matrícula em si.
+async function salvarRotina(
+  form: MatriculaForm,
+  rotina: RotinaForm,
+  submissionId: string,
+  alunoId: number | null,
+): Promise<void> {
+  const dados = montarRotinaPersistida(rotina);
+  const { error } = await supabaseAdmin.from("student_routine" as never).upsert(
+    {
+      submission_id: submissionId,
+      unidade: form.unidade,
+      sponte_aluno_id: alunoId,
+      aluno_nome: form.aluno.nome.trim(),
+      data_inicio: dados.dataInicio,
+      dias_ativos: dados.diasAtivos,
+      horarios: dados.horarios,
+      sem_refeicoes: dados.semRefeicoes,
+      refeicoes: dados.refeicoes,
+    } as never,
+    { onConflict: "submission_id" } as never,
+  );
+  // A matrícula já está no Sponte: falhar aqui não pode desfazer nada nem
+  // esconder o sucesso do responsável — fica o registro para a secretaria.
+  if (error) console.error("[matrículas] falha ao gravar a rotina escolar:", error.message);
 }
 
 export const enviarMatriculaPublica = createServerFn({ method: "POST" })
@@ -182,7 +234,11 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     // Mesma validação da tela, agora do lado do servidor (a tela pode ser
     // burlada; o Sponte não pode receber lixo).
     const form = data.form as MatriculaForm;
-    const erros = validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE);
+    const rotina = data.rotina as RotinaForm;
+    const erros = {
+      ...validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE),
+      ...validarRotinaForm(rotina),
+    };
     if (Object.keys(erros).length > 0) {
       return { ok: false, erros, erro: "Confira os campos destacados." };
     }
@@ -192,7 +248,10 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
 
     const saida = await receberMatricula(payload, { origem: ORIGEM_SITE, ipHash });
 
-    if (saida.ok) return { ok: true, protocolo: submissionId };
+    if (saida.ok) {
+      await salvarRotina(form, rotina, submissionId, saida.alunoId ?? null);
+      return { ok: true, protocolo: submissionId };
+    }
 
     if (saida.status === "duplicado") {
       return {

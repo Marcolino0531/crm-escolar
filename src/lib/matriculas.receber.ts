@@ -31,6 +31,9 @@ export interface ReceberMatriculaSaida {
   corpo: Record<string, unknown>;
   status: string;
   ok: boolean;
+  // AlunoID no Sponte quando a matrícula foi concluída — é por ele que a etapa
+  // 2 (Rotina Escolar) se vincula ao aluno recém-matriculado.
+  alunoId?: number | null;
 }
 
 async function registrarLog(
@@ -127,6 +130,7 @@ export async function receberMatricula(
         },
         status: "ja_processado",
         ok: true,
+        alunoId: anterior.sponte_aluno_id,
       };
     }
   }
@@ -148,6 +152,7 @@ export async function receberMatricula(
       corpo: resultado as unknown as Record<string, unknown>,
       status: resultado.status,
       ok: resultado.ok,
+      alunoId: resultado.alunoId,
     };
   } catch (e) {
     const status = e instanceof MatriculaError ? e.status : "erro_aluno";
