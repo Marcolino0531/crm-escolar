@@ -12,8 +12,9 @@ import {
   Check,
   Tags,
   FileSpreadsheet,
+  UtensilsCrossed,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { PostgrestError } from "@supabase/supabase-js";
@@ -93,6 +94,13 @@ type LowStockVariant = {
   order_placed_at: string | null;
 };
 
+type RecargaPendente = {
+  id: string;
+  aluno_nome: string;
+  valor: number;
+  unidade: string;
+};
+
 type AvailableReceivable = {
   id: string;
   valor_liquido: number;
@@ -160,6 +168,7 @@ export function NotificationsBell() {
   const canTasks = canView("tasks");
   const canFluxo = canView("financeiro_fluxo");
   const canUniformes = canView("uniformes");
+  const canCantina = canView("cantina");
   const canCartao = canView("financeiro_cartao");
   const canDiario = canView("diario");
   const canAgenda = canView("agenda");
@@ -343,6 +352,28 @@ export function NotificationsBell() {
           orderPlacedAt: v.order_placed_at,
         }),
       );
+    },
+  });
+
+  // --- Cantina: solicitações de recarga que os pais fizeram no portal público e
+  // ainda aguardam a recarga física do cartão. NÃO dismissível — sai da lista
+  // quando a equipe marca "Recarga efetivada". ---
+  const unidadesPermitidas = useMemo(() => schools.map((s) => s.name), [schools]);
+
+  const { data: recargasPendentes = [] } = useQuery({
+    queryKey: ["cantina_recargas_pendentes", unidadesPermitidas],
+    enabled: !!userId && canCantina && unidadesPermitidas.length > 0,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("cantina_recargas" as any)
+        .select("id, aluno_nome, valor, unidade")
+        .eq("status", "pendente")
+        .in("unidade", unidadesPermitidas)
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (error) return [] as RecargaPendente[];
+      return (data ?? []) as unknown as RecargaPendente[];
     },
   });
 
@@ -647,6 +678,7 @@ export function NotificationsBell() {
       !canColonia &&
       !canColoniaFin &&
       !canExtrato &&
+      !canCantina &&
       !canConciliacao)
   )
     return null;
@@ -671,6 +703,7 @@ export function NotificationsBell() {
     forecasts.length +
     openTasks.length +
     lowStockStores.length +
+    recargasPendentes.length +
     availableReceivables.length +
     extraEvents.length +
     contadorNaoLidas(agendaTodas, agoraLocal) +
@@ -768,6 +801,34 @@ export function NotificationsBell() {
                     <Shirt className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
                     <div className="min-w-0">
                       <div className="font-medium text-red-600">{LOW_STOCK_ALERT_TEXT[key]}</div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {/* Cantina: recargas solicitadas no portal aguardando a carga do cartão. */}
+          {canCantina && recargasPendentes.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cantina
+              </div>
+              {recargasPendentes.map((r) => (
+                <Link
+                  key={r.id}
+                  to="/cantina"
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <UtensilsCrossed className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">
+                        Solicitação de recarga: {r.aluno_nome}, {fmtBRL(Number(r.valor) || 0)}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {r.unidade} · providencie a recarga do cartão.
+                      </div>
                     </div>
                   </div>
                 </Link>
@@ -1139,6 +1200,7 @@ export function NotificationsBell() {
             forecasts.length === 0 &&
             openTasks.length === 0 &&
             lowStockStores.length === 0 &&
+            recargasPendentes.length === 0 &&
             availableReceivables.length === 0 &&
             extraEvents.length === 0 &&
             coloniaPendencias.length === 0 &&

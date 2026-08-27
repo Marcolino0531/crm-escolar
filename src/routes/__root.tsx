@@ -37,6 +37,7 @@ import {
   Dumbbell,
   CreditCard,
   Menu,
+  UtensilsCrossed,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -342,8 +343,17 @@ function RootComponent() {
   );
 }
 
+// Rotas públicas: o portal de recarga da cantina é usado pelos PAIS, que não
+// têm usuário no Supabase Auth — ele autentica pelo CPF do aluno na própria
+// tela e por isso não passa pelo login interno nem pelo shell do app.
+const ROTAS_PUBLICAS = ["/portal-cantina"];
+
 function AuthGate() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { session, loading, recovery } = useAuth();
+  if (ROTAS_PUBLICAS.some((r) => pathname === r || pathname.startsWith(`${r}/`))) {
+    return <Outlet />;
+  }
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
@@ -376,6 +386,7 @@ function AppShell() {
   const showColonia = canView("colonia") || canView("colonia_financeiro");
   const showEsportes = canView("esportes");
   const showDocumentos = canView("documentos");
+  const showCantina = canView("cantina");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -494,6 +505,12 @@ function AppShell() {
           to: "/documentos",
           icon: FileText,
           label: "Documentos",
+        }),
+        ...item(showCantina, {
+          kind: "item",
+          to: "/cantina",
+          icon: UtensilsCrossed,
+          label: "Cantina",
         }),
         ...item(showCobranca, {
           kind: "item",

@@ -172,7 +172,7 @@ export function parseXmlValue(xml: string, tag: string): string {
   return match ? match[1].trim() : "";
 }
 
-function parseXmlList(xml: string, itemTag: string): string[] {
+export function parseXmlList(xml: string, itemTag: string): string[] {
   const items: string[] = [];
   const regex = new RegExp(`<${itemTag}[^>]*>[\\s\\S]*?</${itemTag}>`, "gi");
   let m;
@@ -372,7 +372,7 @@ function normalizar(texto: string): string {
 
 // Classifica a unidade pedagógica do aluno a partir do campo TurmaAtual do Sponte.
 // CEC Baby: Berçário e Maternal. CEC: Período e Ano (1º Período → 9º Ano).
-function classificarUnidade(turmaAtual: string): "CEC" | "CEC Baby" | null {
+export function classificarUnidade(turmaAtual: string): "CEC" | "CEC Baby" | null {
   if (!turmaAtual) return null;
   const t = normalizar(turmaAtual);
   if (t.includes("bercario") || t.includes("maternal")) return "CEC Baby";
