@@ -84,8 +84,18 @@ function formatDateBR(isoDate: string): string {
 }
 
 const MESES_PT = [
-  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+  "Janeiro",
+  "Fevereiro",
+  "Março",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro",
 ];
 
 // O Índice de Inadimplência depende do Faturamento (entradas) do Extrato, que
@@ -99,7 +109,10 @@ function fmtLocal(d: Date): string {
 
 // Intervalo do dia 1 ao último dia do mês (month0 = mês 0-indexado).
 function monthRange(year: number, month0: number): { inicio: string; fim: string } {
-  return { inicio: fmtLocal(new Date(year, month0, 1)), fim: fmtLocal(new Date(year, month0 + 1, 0)) };
+  return {
+    inicio: fmtLocal(new Date(year, month0, 1)),
+    fim: fmtLocal(new Date(year, month0 + 1, 0)),
+  };
 }
 
 // Intervalo de busca da Inadimplência para um mês. A inadimplência só inclui
@@ -197,9 +210,7 @@ function InadimplenciaPage() {
       );
     if (ehTimeout && !timeoutAvisadoRef.current) {
       timeoutAvisadoRef.current = true;
-      toast.error(
-        "A busca demorou muito. Por favor, tente selecionar um período de datas menor.",
-      );
+      toast.error("A busca demorou muito. Por favor, tente selecionar um período de datas menor.");
     }
   }, [serverError, isFetching]);
 
@@ -217,7 +228,13 @@ function InadimplenciaPage() {
     return [0, 1, 2].map((i) => {
       const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
       const { inicio, fim } = mesRange(d.getFullYear(), d.getMonth());
-      return { year: d.getFullYear(), month0: d.getMonth(), label: MESES_PT[d.getMonth()], inicio, fim };
+      return {
+        year: d.getFullYear(),
+        month0: d.getMonth(),
+        label: MESES_PT[d.getMonth()],
+        inicio,
+        fim,
+      };
     });
   }, []);
 
@@ -280,8 +297,10 @@ function InadimplenciaPage() {
   // "Sem Acordos": desconta ITEM A ITEM apenas a parcela "Acordo" de cada boleto
   // (valorAcordo, calculado no backend). Boletos mistos seguem somando o restante;
   // só o valor renegociado sai do montante. Mesma lógica do card anual.
-  const totalPendenteSemAcordo = pendenciasFiltradas
-    .reduce((sum, p) => sum + (p.valorTotalBoleto - p.valorAcordo), 0);
+  const totalPendenteSemAcordo = pendenciasFiltradas.reduce(
+    (sum, p) => sum + (p.valorTotalBoleto - p.valorAcordo),
+    0,
+  );
   const periodoLabel = getPeriodoLabel(dataInicio, dataFim);
 
   // ── Índice de Inadimplência ──────────────────────────────────────────────
@@ -298,7 +317,10 @@ function InadimplenciaPage() {
     .filter((p) => {
       if (!p.vencimento) return false;
       const v = p.vencimento.includes("/")
-        ? (() => { const [d, m, y] = p.vencimento.split("/"); return `${y}-${m}-${d}`; })()
+        ? (() => {
+            const [d, m, y] = p.vencimento.split("/");
+            return `${y}-${m}-${d}`;
+          })()
         : p.vencimento.slice(0, 10);
       return v < hojeYMD; // estritamente no passado
     })
@@ -325,7 +347,9 @@ function InadimplenciaPage() {
         return q as unknown as PromiseLike<PagedRows<ReceitaRow>>;
       });
       return rows.reduce((sum, t) => {
-        const desc = String(t.description ?? "").trim().toUpperCase();
+        const desc = String(t.description ?? "")
+          .trim()
+          .toUpperCase();
         const amt = Number(t.amount ?? 0);
         if (desc.includes("SALDO DIA")) return sum; // ignora marcadores de saldo
         if (amt === 1) return sum; // ignora placeholders de importação
@@ -406,7 +430,9 @@ function InadimplenciaPage() {
         return q as unknown as PromiseLike<PagedRows<ReceitaRow>>;
       });
       return rows.reduce((sum, t) => {
-        const desc = String(t.description ?? "").trim().toUpperCase();
+        const desc = String(t.description ?? "")
+          .trim()
+          .toUpperCase();
         const amt = Number(t.amount ?? 0);
         if (desc.includes("SALDO DIA")) return sum;
         if (amt === 1) return sum;
@@ -429,8 +455,7 @@ function InadimplenciaPage() {
 
   const faturamentoTotalAno = retroativoAno + (receitasAno ?? 0);
   const inadimplenteAno = anual?.totalInadimplente ?? 0;
-  const indiceAnual =
-    faturamentoTotalAno > 0 ? (inadimplenteAno / faturamentoTotalAno) * 100 : 0;
+  const indiceAnual = faturamentoTotalAno > 0 ? (inadimplenteAno / faturamentoTotalAno) * 100 : 0;
   const anualCarregando = anualFetching || receitasAnoFetching;
   const anualErro = anual?.error ?? null;
 
@@ -521,10 +546,15 @@ function InadimplenciaPage() {
           ) : (
             <>
               <p className="mt-1 text-2xl font-bold text-amber-600">
-                {indiceInadimplencia.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+                {indiceInadimplencia.toLocaleString("pt-BR", {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}
+                %
               </p>
               <p className="text-xs text-muted-foreground">
-                Inadimplente {formatarMoeda(totalInadimplente)} ÷ (Recebido {formatarMoeda(recebidoMes)} + Inadimplente)
+                Inadimplente {formatarMoeda(totalInadimplente)} ÷ (Recebido{" "}
+                {formatarMoeda(recebidoMes)} + Inadimplente)
               </p>
             </>
           )}
@@ -544,9 +574,7 @@ function InadimplenciaPage() {
           ) : !retroativoConfigurado ? (
             <div className="mt-1 flex items-start gap-2 text-xs text-violet-700">
               <Settings2 size={14} className="mt-0.5 shrink-0" />
-              <span>
-                Configure o faturamento retroativo nas Configurações para ativar este índice.
-              </span>
+              <span>Faturamento retroativo (Jan–Mai) não informado para esta unidade.</span>
             </div>
           ) : anualCarregando ? (
             <div className="mt-2 space-y-2">
@@ -566,10 +594,15 @@ function InadimplenciaPage() {
           ) : (
             <>
               <p className="mt-1 text-2xl font-bold text-violet-700">
-                {indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+                {indiceAnual.toLocaleString("pt-BR", {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}
+                %
               </p>
               <p className="text-xs text-muted-foreground">
-                Inadimplente {formatarMoeda(inadimplenteAno)} ÷ Faturamento {formatarMoeda(faturamentoTotalAno)}
+                Inadimplente {formatarMoeda(inadimplenteAno)} ÷ Faturamento{" "}
+                {formatarMoeda(faturamentoTotalAno)}
               </p>
             </>
           )}
@@ -836,7 +869,9 @@ function InadimplenciaPage() {
                       </p>
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">{p.nomeResponsavel}</td>
-                    <td className="px-4 py-3 font-mono text-sm text-foreground">{displayPhoneBR(p.telefone)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">
+                      {displayPhoneBR(p.telefone)}
+                    </td>
                     <td className="px-4 py-3 text-sm text-foreground">
                       {formatarData(p.vencimento)}
                     </td>

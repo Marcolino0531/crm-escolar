@@ -323,7 +323,7 @@ function MainDashboard() {
           }
           hint={
             !retroativoConfigurado
-              ? "Configure o faturamento retroativo nas Configurações"
+              ? "Faturamento retroativo (Jan–Mai) não informado"
               : anualErro
                 ? anualErro
                 : `${formatBRL(inadimplenteAno)} inadimplente no ano`

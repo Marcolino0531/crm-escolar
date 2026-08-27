@@ -213,10 +213,10 @@ export function validarDeclaracao(input: {
 }): string[] {
   const erros: string[] = [];
   if (!input.colegio || !input.colegio.razaoSocial.trim()) {
-    erros.push("Cadastre a razão social do colégio em Configuração dos Colégios.");
+    erros.push("Cadastre a razão social do colégio em Configurações → Dados dos Colégios.");
   }
   if (!input.colegio || !input.colegio.cnpj.trim()) {
-    erros.push("Cadastre o CNPJ do colégio em Configuração dos Colégios.");
+    erros.push("Cadastre o CNPJ do colégio em Configurações → Dados dos Colégios.");
   }
   if (!input.aluno) erros.push("Selecione o aluno.");
   if (!formatarDataBR(input.dataDocumento)) erros.push("Informe a data do documento.");

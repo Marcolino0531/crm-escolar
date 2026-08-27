@@ -23,6 +23,7 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  Building2,
   Users,
   ShieldCheck,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import {
   type AppModule,
 } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { DadosColegios } from "@/components/documentos/DadosColegios";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listManagedUsers,
@@ -74,7 +76,12 @@ function SettingsPage() {
           <TabsTrigger value="cc">Despesas</TabsTrigger>
           <TabsTrigger value="rev">Receitas</TabsTrigger>
           <TabsTrigger value="rules">Regras</TabsTrigger>
-          <TabsTrigger value="faturamento">Faturamento</TabsTrigger>
+          {canView("documentos") && (
+            <TabsTrigger value="colegios">
+              <Building2 className="h-3.5 w-3.5 mr-1" />
+              Dados dos Colégios
+            </TabsTrigger>
+          )}
           {isAdmin && (
             <TabsTrigger value="users">
               <Users className="h-3.5 w-3.5 mr-1" />
@@ -91,9 +98,11 @@ function SettingsPage() {
         <TabsContent value="rules" className="mt-4">
           <Rules podeEditar={podeEditar} />
         </TabsContent>
-        <TabsContent value="faturamento" className="mt-4">
-          <FaturamentoRetroativo podeEditar={isAdmin} />
-        </TabsContent>
+        {canView("documentos") && (
+          <TabsContent value="colegios" className="mt-4">
+            <DadosColegios podeEditar={canEdit("documentos")} />
+          </TabsContent>
+        )}
         {isAdmin && (
           <TabsContent value="users" className="mt-4">
             <UserManagement />
@@ -788,130 +797,6 @@ function UserManagement() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-type SchoolFaturamento = {
-  id: string;
-  name: string;
-  faturamento_retroativo_jan_mai: number | null;
-};
-
-// Converte o texto digitado (pt-BR, ex.: "1.234,56" ou "1234,56") em número.
-function parseMoedaInput(s: string): number | null {
-  const cleaned = s
-    .replace(/[^\d,.-]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  if (cleaned.trim() === "") return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
-// Faturamento histórico Jan–Mai por unidade (denominador da Inadimplência Anual).
-// Escrita restrita a administradores (RLS de public.schools); leitura aberta.
-function FaturamentoRetroativo({ podeEditar }: { podeEditar: boolean }) {
-  const qc = useQueryClient();
-  const [valores, setValores] = useState<Record<string, string>>({});
-  const [savingId, setSavingId] = useState<string | null>(null);
-
-  const { data: schools = [], isLoading } = useQuery({
-    queryKey: ["schools-faturamento"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("schools")
-        .select("id, name, faturamento_retroativo_jan_mai")
-        .order("name");
-      if (error) throw error;
-      return (data ?? []) as SchoolFaturamento[];
-    },
-  });
-
-  const valorExibido = (s: SchoolFaturamento) =>
-    valores[s.id] ??
-    (s.faturamento_retroativo_jan_mai != null
-      ? String(s.faturamento_retroativo_jan_mai).replace(".", ",")
-      : "");
-
-  async function salvar(s: SchoolFaturamento) {
-    const raw = valores[s.id];
-    if (raw === undefined) return;
-    const parsed = parseMoedaInput(raw);
-    if (raw.trim() !== "" && (parsed === null || parsed < 0)) {
-      return toast.error("Informe um valor monetário válido.");
-    }
-    setSavingId(s.id);
-    const { error } = await supabase
-      .from("schools")
-      .update({ faturamento_retroativo_jan_mai: raw.trim() === "" ? null : parsed })
-      .eq("id", s.id);
-    setSavingId(null);
-    if (error) return toast.error(error.message);
-    setValores((prev) => {
-      const copy = { ...prev };
-      delete copy[s.id];
-      return copy;
-    });
-    qc.invalidateQueries({ queryKey: ["schools-faturamento"] });
-    qc.invalidateQueries({ queryKey: ["faturamento-anual"] });
-    toast.success(`Faturamento retroativo de ${s.name} salvo.`);
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Faturamento Retroativo (Janeiro a Maio)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Informe, por unidade, o faturamento histórico de <strong>Janeiro a Maio</strong>. O
-          sistema só passou a registrar receitas reais a partir de Junho, então este valor compõe o
-          denominador do card <strong>Inadimplência Acumulada (Ano)</strong> na tela de
-          Inadimplência.
-        </p>
-        {!podeEditar && (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            Apenas administradores podem editar estes valores.
-          </p>
-        )}
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Carregando unidades…</p>
-        ) : schools.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhuma unidade cadastrada.</p>
-        ) : (
-          <div className="space-y-2">
-            {schools.map((s) => (
-              <div
-                key={s.id}
-                className="flex flex-wrap items-end gap-3 rounded-md border border-border p-3"
-              >
-                <div className="min-w-[200px] flex-1">
-                  <label className="text-xs font-medium text-muted-foreground">{s.name}</label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">R$</span>
-                    <Input
-                      inputMode="decimal"
-                      value={valorExibido(s)}
-                      disabled={!podeEditar}
-                      onChange={(e) => setValores((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                      placeholder="0,00"
-                    />
-                  </div>
-                </div>
-                {podeEditar && (
-                  <Button
-                    onClick={() => salvar(s)}
-                    disabled={savingId === s.id || valores[s.id] === undefined}
-                  >
-                    {savingId === s.id ? "Salvando…" : "Salvar"}
-                  </Button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
