@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Repeat, RefreshCw, Building2, Construction } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Pencil, Copy, Trash2, Repeat, RefreshCw, Building2, Construction } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
@@ -10,6 +10,7 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
+import { duplicarDespesa, temBaixaAutomatica, type DuplicacaoDespesa } from "@/lib/fluxo-futuro-duplicar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -170,6 +171,7 @@ function FluxoFuturoPage() {
   }, [focus, monthParam]);
   const [editing, setEditing] = useState<Forecast | null>(null);
   const [creating, setCreating] = useState(false);
+  const [duplicating, setDuplicating] = useState<DuplicacaoDespesa | null>(null);
   const [scopeDialog, setScopeDialog] = useState<{ kind: "edit" | "delete"; forecast: Forecast } | null>(null);
 
   const { data: costCenters = [] } = useQuery({
@@ -443,7 +445,7 @@ function FluxoFuturoPage() {
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           {f.description}
                           {f.series_id && <Repeat className="h-3 w-3 text-muted-foreground" aria-label="Despesa fixa" />}
-                          {(f.notes ?? "").includes("Baixado automaticamente via importação de extrato") && (
+                          {temBaixaAutomatica(f.notes) && (
                             <Badge
                               variant="outline"
                               className="border-green-200 bg-green-50 text-[10px] font-medium text-green-700"
@@ -512,6 +514,16 @@ function FluxoFuturoPage() {
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditClick(f)}>
                               <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Duplicar despesa"
+                              aria-label="Duplicar despesa"
+                              onClick={() => setDuplicating(duplicarDespesa(f))}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteClick(f)}>
                               <Trash2 className="h-3.5 w-3.5" />
@@ -608,16 +620,17 @@ function FluxoFuturoPage() {
         </CardContent>
       </Card>
 
-      {(creating || editing) && (
+      {(creating || editing || duplicating) && (
         <ForecastDialog
           schoolId={schoolId}
           month={month}
           forecast={editing}
+          duplicacao={duplicating}
           editScope="single"
           costCenters={costCenters}
           subCostCenters={subCostCenters}
-          onClose={() => { setCreating(false); setEditing(null); }}
-          onSaved={async () => { await refetch(); setCreating(false); setEditing(null); }}
+          onClose={() => { setCreating(false); setEditing(null); setDuplicating(null); }}
+          onSaved={async () => { await refetch(); setCreating(false); setEditing(null); setDuplicating(null); }}
         />
       )}
 
@@ -668,11 +681,12 @@ function FluxoFuturoPage() {
 }
 
 function ForecastDialog({
-  schoolId, month, forecast, editScope, costCenters, subCostCenters, onClose, onSaved,
+  schoolId, month, forecast, duplicacao, editScope, costCenters, subCostCenters, onClose, onSaved,
 }: {
   schoolId: string;
   month: string;
   forecast: (Forecast & { __scope?: string }) | null;
+  duplicacao: DuplicacaoDespesa | null;
   editScope: "single";
   costCenters: Array<{ id: string; name: string; color: string }>;
   subCostCenters: Array<{ id: string; name: string; cost_center_id: string }>;
@@ -681,20 +695,27 @@ function ForecastDialog({
 }) {
   const isEdit = !!forecast;
   const scope: "single" | "future" = (forecast as any)?.__scope === "future" ? "future" : "single";
-  const defaultDue = forecast?.due_date ?? month;
+  const defaultDue = forecast?.due_date ?? (duplicacao ? duplicacao.due_date : month);
   const [dueDate, setDueDate] = useState(defaultDue);
-  const [description, setDescription] = useState(forecast?.description ?? "");
-  const [amount, setAmount] = useState<string>(
-    forecast ? formatBRLInput(Number(forecast.projected_amount)) : "",
+  const [description, setDescription] = useState(forecast?.description ?? duplicacao?.description ?? "");
+  const [amount, setAmount] = useState<string>(() => {
+    const base = forecast ?? duplicacao;
+    return base ? formatBRLInput(Number(base.projected_amount)) : "";
+  });
+  const [costCenterId, setCostCenterId] = useState<string>(
+    forecast?.cost_center_id ?? duplicacao?.cost_center_id ?? "",
   );
-  const [costCenterId, setCostCenterId] = useState<string>(forecast?.cost_center_id ?? "");
-  const [subCostCenterId, setSubCostCenterId] = useState<string>(forecast?.sub_cost_center_id ?? "");
-  const [notes, setNotes] = useState<string>(forecast?.notes ?? "");
+  const [subCostCenterId, setSubCostCenterId] = useState<string>(
+    forecast?.sub_cost_center_id ?? duplicacao?.sub_cost_center_id ?? "",
+  );
+  const [notes, setNotes] = useState<string>(forecast?.notes ?? duplicacao?.notes ?? "");
   // "Tipo de Despesa": fixa, nao_fixa, parcelada ou sazonal
   const [tipo, setTipo] = useState<"fixa" | "nao_fixa" | "parcelada" | "sazonal">(
     forecast?.series_id ? "fixa" : "nao_fixa",
   );
-  const [status, setStatus] = useState<ForecastStatus>(forecast ? normalizeStatus(forecast.status) : "pending");
+  const [status, setStatus] = useState<ForecastStatus>(
+    forecast ? normalizeStatus(forecast.status) : normalizeStatus(duplicacao?.status ?? "pending"),
+  );
   const [parcelas, setParcelas] = useState<string>("2");
   // Meses de incidência (1..12) da Despesa Fixa Sazonal.
   const [incidenceMonths, setIncidenceMonths] = useState<number[]>([]);
@@ -898,7 +919,9 @@ function ForecastDialog({
           <DialogTitle>
             {isEdit
               ? (scope === "future" ? "Editar este mês e seguintes" : "Editar despesa")
-              : "Adicionar despesa futura"}
+              : duplicacao
+                ? "Duplicar despesa"
+                : "Adicionar despesa futura"}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
