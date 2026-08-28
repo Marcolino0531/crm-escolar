@@ -427,6 +427,92 @@ export async function sendBillingTemplateMultipla(
   return { messageId: body.messages[0].id };
 }
 
+// ─── Template de AUTENTICAÇÃO (código de verificação) ────────────────────────
+// Categoria "Authentication" da Meta: corpo com UMA variável (o código) e, em
+// regra, um botão de copiar código que repete o mesmo valor. O nome do template
+// vem de env porque é cadastrado no WhatsApp Business Manager:
+//   WHATSAPP_TEMPLATE_AUTENTICACAO_NAME   — nome exato do template aprovado
+//   WHATSAPP_TEMPLATE_AUTENTICACAO_BOTAO  — "copy_code" (default) ou "none"
+export interface WhatsAppAuthConfig {
+  token: string;
+  phoneNumberId: string;
+  templateName: string;
+  templateLang: string;
+  graphVersion: string;
+  botao: "copy_code" | "none";
+}
+
+export function getWhatsAppAuthConfig(): WhatsAppAuthConfig | null {
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const templateName = process.env.WHATSAPP_TEMPLATE_AUTENTICACAO_NAME;
+  if (!token || !phoneNumberId || !templateName) return null;
+  return {
+    token,
+    phoneNumberId,
+    templateName,
+    templateLang: process.env.WHATSAPP_TEMPLATE_AUTENTICACAO_LANG || "pt_BR",
+    graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
+    botao: process.env.WHATSAPP_TEMPLATE_AUTENTICACAO_BOTAO === "none" ? "none" : "copy_code",
+  };
+}
+
+// Envia o código de verificação pelo template de autenticação. O código NUNCA é
+// registrado em log — só o id da mensagem devolvido pela Meta. Lança em erro.
+export async function sendAuthenticationTemplate(
+  cfg: WhatsAppAuthConfig,
+  to: string,
+  codigo: string,
+): Promise<SendResult> {
+  const dest = toMetaPhone(to);
+  if (!dest) throw new Error("Telefone do responsável ausente ou inválido.");
+
+  const components: Record<string, unknown>[] = [
+    { type: "body", parameters: [textParam(codigo)] },
+  ];
+  if (cfg.botao === "copy_code") {
+    components.push({
+      type: "button",
+      sub_type: "url",
+      index: "0",
+      parameters: [{ type: "text", text: codigo }],
+    });
+  }
+
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/messages`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: dest,
+      type: "template",
+      template: {
+        name: cfg.templateName,
+        language: { code: cfg.templateLang },
+        components,
+      },
+    }),
+  });
+
+  const body = (await resp.json().catch(() => null)) as {
+    messages?: { id: string }[];
+    error?: { message?: string; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !body?.messages?.[0]?.id) {
+    const detail =
+      body?.error?.error_data?.details ||
+      body?.error?.message ||
+      `HTTP ${resp.status} ao chamar a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+  return { messageId: body.messages[0].id };
+}
+
 // Dispara o template de cobrança. Lança em caso de erro da API (o chamador grava
 // o log com status 'falha' e a mensagem de erro).
 export async function sendBillingTemplate(
