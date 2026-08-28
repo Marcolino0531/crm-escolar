@@ -1,0 +1,283 @@
+// Regras puras do portal de Rematrícula (sem I/O, testáveis isoladamente):
+//
+//  1. Autenticação por código de 6 dígitos enviado no WhatsApp: geração,
+//     validade de 10 minutos e bloqueio depois de 3 tentativas erradas.
+//  2. Parcelamento do material pedagógico: 1x a 8x, com o ajuste de centavos na
+//     última parcela para o somatório fechar exatamente o valor anual.
+//  3. Identificação da série do aluno a partir da turma do Sponte.
+//
+// A mensagem devolvida ao responsável é sempre GENÉRICA: o portal é público e
+// não pode confirmar se um CPF existe no sistema.
+
+export const CODIGO_DIGITOS = 6;
+export const CODIGO_VALIDADE_MINUTOS = 10;
+export const MAX_TENTATIVAS_CODIGO = 3;
+export const SESSAO_VALIDADE_MINUTOS = 30;
+
+export const MENSAGEM_CODIGO_ENVIADO =
+  "Se o CPF informado estiver cadastrado, enviamos um código de 6 dígitos por WhatsApp para o telefone do responsável financeiro. O código vale por 10 minutos.";
+
+export const MENSAGEM_CODIGO_INCORRETO =
+  "Código incorreto. Confira os 6 dígitos recebidos no WhatsApp e tente novamente.";
+
+export const MENSAGEM_CODIGO_EXPIRADO =
+  "Este código expirou. Solicite um novo código para continuar.";
+
+export const MENSAGEM_BLOQUEADO =
+  "Por segurança, o acesso foi bloqueado após 3 tentativas incorretas. Solicite um novo código para tentar de novo.";
+
+export const MENSAGEM_SESSAO_EXPIRADA =
+  "Sua sessão expirou. Informe o CPF novamente para receber um novo código.";
+
+// ─── Código de verificação ──────────────────────────────────────────────────
+
+// Gera o código a partir de um sorteio em [0, 1) — o gerador criptográfico fica
+// no chamador (server), aqui só entra a formatação de 6 dígitos com zeros à
+// esquerda ("004821" é um código válido).
+export function gerarCodigoVerificacao(sorteio: number): string {
+  const limite = 10 ** CODIGO_DIGITOS;
+  const bruto = Math.floor(Math.min(Math.max(sorteio, 0), 0.999999999) * limite);
+  return String(bruto).padStart(CODIGO_DIGITOS, "0");
+}
+
+export function codigoFormatoValido(codigo: string): boolean {
+  return new RegExp(`^\\d{${CODIGO_DIGITOS}}$`).test(codigo.trim());
+}
+
+export function expiracaoCodigo(agoraISO: string): string {
+  return new Date(Date.parse(agoraISO) + CODIGO_VALIDADE_MINUTOS * 60000).toISOString();
+}
+
+export function expiracaoSessao(agoraISO: string): string {
+  return new Date(Date.parse(agoraISO) + SESSAO_VALIDADE_MINUTOS * 60000).toISOString();
+}
+
+export function sessaoValida(expiraEmISO: string | null, agoraISO: string): boolean {
+  return !!expiraEmISO && expiraEmISO > agoraISO;
+}
+
+// Estado persistido do desafio de UM CPF (espelha rematricula_codigos).
+export interface DesafioCodigo {
+  codigoHash: string;
+  expiraEm: string | null; // ISO 8601
+  tentativas: number;
+  bloqueadoAte: string | null; // ISO 8601; null = sem bloqueio
+  consumidoEm: string | null;
+}
+
+export const DESAFIO_VAZIO: DesafioCodigo = {
+  codigoHash: "",
+  expiraEm: null,
+  tentativas: 0,
+  bloqueadoAte: null,
+  consumidoEm: null,
+};
+
+export type MotivoRecusa = "bloqueado" | "expirado" | "incorreto" | "inexistente";
+
+export interface ResultadoValidacao {
+  ok: boolean;
+  motivo?: MotivoRecusa;
+  mensagem?: string;
+  // Estado a ser gravado depois desta tentativa.
+  proximo: DesafioCodigo;
+}
+
+export function desafioBloqueado(d: DesafioCodigo, agoraISO: string): boolean {
+  return d.bloqueadoAte !== null && d.bloqueadoAte > agoraISO;
+}
+
+// Valida UMA tentativa. A comparação é feita sobre o HASH do código (o texto
+// nunca é guardado), então o chamador passa o hash do que o pai digitou.
+// Regras: código já usado ou inexistente e código vencido são recusados sem
+// consumir tentativa útil; errar 3 vezes bloqueia o desafio, que só se
+// desfaz pedindo um código novo.
+export function validarCodigo(
+  desafio: DesafioCodigo,
+  codigoHashInformado: string,
+  agoraISO: string,
+): ResultadoValidacao {
+  if (desafioBloqueado(desafio, agoraISO)) {
+    return { ok: false, motivo: "bloqueado", mensagem: MENSAGEM_BLOQUEADO, proximo: desafio };
+  }
+  if (!desafio.codigoHash || desafio.consumidoEm) {
+    return {
+      ok: false,
+      motivo: "inexistente",
+      mensagem: MENSAGEM_CODIGO_EXPIRADO,
+      proximo: desafio,
+    };
+  }
+  if (!desafio.expiraEm || desafio.expiraEm <= agoraISO) {
+    return { ok: false, motivo: "expirado", mensagem: MENSAGEM_CODIGO_EXPIRADO, proximo: desafio };
+  }
+  if (codigoHashInformado !== desafio.codigoHash) {
+    const tentativas = desafio.tentativas + 1;
+    const bloqueou = tentativas >= MAX_TENTATIVAS_CODIGO;
+    return {
+      ok: false,
+      motivo: bloqueou ? "bloqueado" : "incorreto",
+      mensagem: bloqueou ? MENSAGEM_BLOQUEADO : MENSAGEM_CODIGO_INCORRETO,
+      proximo: {
+        ...desafio,
+        tentativas,
+        // Bloqueio até a expiração do próprio código: pedir um novo código
+        // sobrescreve a linha e devolve as 3 tentativas.
+        bloqueadoAte: bloqueou ? desafio.expiraEm : desafio.bloqueadoAte,
+      },
+    };
+  }
+  // Acerto: o código é de uso único.
+  return {
+    ok: true,
+    proximo: { ...desafio, tentativas: 0, bloqueadoAte: null, consumidoEm: agoraISO },
+  };
+}
+
+export function tentativasRestantes(d: DesafioCodigo): number {
+  return Math.max(0, MAX_TENTATIVAS_CODIGO - d.tentativas);
+}
+
+// ─── Parcelamento do material pedagógico ────────────────────────────────────
+
+export const PARCELAS_MATERIAL_MIN = 1;
+export const PARCELAS_MATERIAL_MAX = 8;
+
+export function parcelasMaterialValida(parcelas: number): boolean {
+  return (
+    Number.isInteger(parcelas) &&
+    parcelas >= PARCELAS_MATERIAL_MIN &&
+    parcelas <= PARCELAS_MATERIAL_MAX
+  );
+}
+
+export interface OpcaoParcelamento {
+  parcelas: number;
+  // Valor das parcelas iguais (todas menos a última).
+  valorParcela: number;
+  // Última parcela: absorve os centavos da divisão inexata.
+  valorUltimaParcela: number;
+  total: number;
+}
+
+// Divide em centavos para não acumular erro de ponto flutuante: as primeiras
+// parcelas ficam com o valor truncado e a ÚLTIMA recebe a diferença, de modo que
+// a soma seja exatamente o valor anual (ex.: 1000,00 em 3x → 333,33 + 333,33 +
+// 333,34).
+export function parcelamentoMaterial(valorAnual: number, parcelas: number): OpcaoParcelamento {
+  if (!parcelasMaterialValida(parcelas)) {
+    throw new Error("Número de parcelas do material fora do intervalo permitido (1 a 8).");
+  }
+  const totalCentavos = Math.round(valorAnual * 100);
+  const base = Math.floor(totalCentavos / parcelas);
+  const ultima = totalCentavos - base * (parcelas - 1);
+  return {
+    parcelas,
+    valorParcela: base / 100,
+    valorUltimaParcela: ultima / 100,
+    total: totalCentavos / 100,
+  };
+}
+
+export function opcoesParcelamentoMaterial(valorAnual: number): OpcaoParcelamento[] {
+  const opcoes: OpcaoParcelamento[] = [];
+  for (let n = PARCELAS_MATERIAL_MIN; n <= PARCELAS_MATERIAL_MAX; n++) {
+    opcoes.push(parcelamentoMaterial(valorAnual, n));
+  }
+  return opcoes;
+}
+
+export function formatarBRL(valor: number): string {
+  return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Rótulo da opção na tela: "3x de R$ 333,33 (última de R$ 333,34)".
+export function rotuloParcelamento(op: OpcaoParcelamento): string {
+  const base = `${op.parcelas}x de ${formatarBRL(op.valorParcela)}`;
+  if (op.parcelas === 1 || op.valorUltimaParcela === op.valorParcela) return base;
+  return `${base} (última de ${formatarBRL(op.valorUltimaParcela)})`;
+}
+
+// ─── Mensalidade vigente e desconto ─────────────────────────────────────────
+
+// Parcela do Sponte reduzida ao que interessa aqui (GetParcelas/wsParcela).
+export interface ParcelaMensalidade {
+  categoria: string;
+  vencimento: string; // YYYY-MM-DD
+  valor: number;
+  // Campo BolsaAssociada, no formato "Bolsa Funcionário - 30,00%".
+  bolsaAssociada: string;
+}
+
+export interface MensalidadeVigente {
+  valor: number;
+  descontoPercentual: number;
+  vencimento: string;
+  categoria: string;
+}
+
+// Percentual de desconto lido do rótulo da bolsa ("... 30,00%" → 30).
+export function percentualBolsa(bolsaAssociada: string): number {
+  const m = bolsaAssociada.match(/(\d+)[,.]?(\d*)\s*%/);
+  if (!m) return 0;
+  return parseFloat(`${m[1]}.${m[2] || "0"}`);
+}
+
+// Mensalidade VIGENTE = a parcela de mensalidade com o vencimento mais próximo
+// ainda por vencer; se o ano já acabou (só parcelas passadas), a mais recente.
+// Sempre lida na hora do Sponte — não há cache desse valor em lugar nenhum.
+export function mensalidadeVigente(
+  parcelas: ParcelaMensalidade[],
+  hojeISO: string,
+): MensalidadeVigente | null {
+  const hoje = hojeISO.slice(0, 10);
+  const mensalidades = parcelas.filter(
+    (p) => chaveSerie(p.categoria).includes("mensalidade") && p.valor > 0 && p.vencimento,
+  );
+  if (mensalidades.length === 0) return null;
+
+  const futuras = mensalidades
+    .filter((p) => p.vencimento >= hoje)
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  const escolhida =
+    futuras[0] ?? [...mensalidades].sort((a, b) => b.vencimento.localeCompare(a.vencimento))[0];
+
+  return {
+    valor: escolhida.valor,
+    descontoPercentual: percentualBolsa(escolhida.bolsaAssociada),
+    vencimento: escolhida.vencimento,
+    categoria: escolhida.categoria,
+  };
+}
+
+// ─── Série do aluno ─────────────────────────────────────────────────────────
+
+// Chave de comparação da série: sem acento, minúscula, sem espaços repetidos e
+// com as variações de ordinal ("1º", "1o", "1ª") unificadas. É ela que casa o
+// cadastro digitado pelo administrador com a série lida do Sponte.
+export function chaveSerie(serie: string): string {
+  return serie
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[ºª°]/g, "")
+    .replace(/(\d)\s*o\b/gi, "$1")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Série a partir da turma do Sponte (campo TurmaAtual): a turma traz o
+// identificador da turma e, às vezes, turno ("3º Ano A - Manhã", "Maternal II B").
+// A série é o trecho antes do separador, sem a letra final que identifica a
+// turma.
+export function serieDaTurma(turma: string): string {
+  const semTurno = turma.split(/[-–—/(]/)[0].trim();
+  const partes = semTurno.split(/\s+/).filter(Boolean);
+  if (partes.length > 1) {
+    const ultima = partes[partes.length - 1];
+    // Letra isolada no fim = identificador da turma ("3º Ano A"); numeral
+    // romano ("Maternal II") faz parte do nome da série.
+    if (/^[A-Za-z]$/.test(ultima)) partes.pop();
+  }
+  return partes.join(" ");
+}
