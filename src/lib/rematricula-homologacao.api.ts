@@ -313,6 +313,10 @@ async function rodarTesteFinanceiro(
         contaReceberId: ultima.contaReceberID,
         numeroParcela: parseInt(ultima.numeroParcela, 10),
         valor: valorUltimaEsperado,
+        vencimento: ultima.vencimento,
+        categoria: CATEGORIA_MATERIAL_SPONTE,
+        observacao,
+        logTag: "[homologacao-rematricula]",
       });
       ajustes.push({
         tipo: "valor_ultima_parcela",
@@ -332,7 +336,11 @@ async function rodarTesteFinanceiro(
           unidade: UNIDADE_HOMOLOGACAO,
           contaReceberId: criadas[i].contaReceberID,
           numeroParcela: parseInt(criadas[i].numeroParcela, 10),
+          valor: cronograma[i].valor,
           vencimento: esperado,
+          categoria: CATEGORIA_MATERIAL_SPONTE,
+          observacao,
+          logTag: "[homologacao-rematricula]",
         });
         ajustes.push({
           tipo: "vencimento",
@@ -665,9 +673,13 @@ async function rodarTesteCadastralResponsavel(
 // ─── Dispatcher ─────────────────────────────────────────────────────────────
 
 interface CorpoTeste {
-  etapa?: "financeiro" | "cadastral" | "diagnostico";
+  etapa?: "financeiro" | "cadastral" | "diagnostico" | "ajuste";
   valorAnual?: number;
   parcelas?: number;
+  contaReceberID?: string;
+  numeroParcela?: number;
+  valor?: number;
+  vencimento?: string;
   ajustarUltimaParcela?: boolean;
   ajustarVencimentos?: boolean;
   alvoCadastral?: "aluno" | "responsavel";
@@ -752,6 +764,85 @@ export async function handleRematriculaHomologacaoApi(request: Request): Promise
       corpo.ajustarVencimentos !== false,
     );
     return json(resultado);
+  }
+
+  // Ajuste pontual de UMA parcela de material já criada no aluno de
+  // homologação: existe para exercitar o UpdateParcela sem criar título novo.
+  if (etapa === "ajuste") {
+    const contaReceberID = (corpo.contaReceberID ?? "").trim();
+    const numeroParcela = corpo.numeroParcela;
+    const valor = corpo.valor;
+    const vencimento = (corpo.vencimento ?? "").trim();
+    if (
+      !contaReceberID ||
+      typeof numeroParcela !== "number" ||
+      typeof valor !== "number" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(vencimento)
+    ) {
+      return json(
+        {
+          ok: false,
+          error: "Informe contaReceberID, numeroParcela, valor e vencimento (YYYY-MM-DD).",
+        },
+        400,
+      );
+    }
+
+    // Só mexe em parcela que pertence ao aluno de homologação e à categoria do
+    // material — nunca em título de aluno real.
+    const titulos = await coletarTitulosAluno(UNIDADE_HOMOLOGACAO, aluno.alunoId);
+    if (titulos.error || titulos.indisponivel) {
+      return json({ ok: false, etapa, error: titulos.error ?? "Unidade sem integração Sponte." });
+    }
+    const alvo = titulos.titulos.find(
+      (t) =>
+        t.contaReceberID === contaReceberID &&
+        parseInt(t.numeroParcela, 10) === numeroParcela &&
+        daCategoriaMaterial(t),
+    );
+    if (!alvo) {
+      return json(
+        {
+          ok: false,
+          etapa,
+          error: "Parcela não encontrada no aluno de homologação na categoria do material.",
+        },
+        422,
+      );
+    }
+
+    const r = await atualizarParcelaSponte({
+      unidade: UNIDADE_HOMOLOGACAO,
+      contaReceberId: contaReceberID,
+      numeroParcela,
+      valor,
+      vencimento,
+      categoria: CATEGORIA_MATERIAL_SPONTE,
+      observacao: MARCADOR,
+      logTag: "[homologacao-rematricula]",
+    });
+
+    const depois = await coletarTitulosAluno(UNIDADE_HOMOLOGACAO, aluno.alunoId);
+    const conferida = depois.titulos.find(
+      (t) => t.contaReceberID === contaReceberID && parseInt(t.numeroParcela, 10) === numeroParcela,
+    );
+
+    return json({
+      ok:
+        r.ok &&
+        !!conferida &&
+        conferida.vencimento === vencimento &&
+        Math.round(conferida.valor * 100) === Math.round(valor * 100),
+      etapa,
+      unidade: UNIDADE_HOMOLOGACAO,
+      alunoId: aluno.alunoId,
+      chamada: { metodo: "UpdateParcela", contaReceberID, numeroParcela },
+      antes: { vencimento: alvo.vencimento, valor: alvo.valor },
+      solicitado: { vencimento, valor },
+      depois: conferida ? { vencimento: conferida.vencimento, valor: conferida.valor } : null,
+      retornoOperacao: r.retornoOperacao,
+      error: r.error,
+    });
   }
 
   if (etapa === "cadastral") {

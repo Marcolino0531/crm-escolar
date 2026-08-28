@@ -64,25 +64,29 @@ export function contaReceberCriada(retornoOperacao: string, contaReceberID: stri
 export interface ParametrosUpdateParcela {
   contaReceberId: string;
   numeroParcela: number;
-  // Somente o que for informado é enviado: o UpdateParcela aceita campos
-  // opcionais e mexer em forma/categoria de uma parcela já criada não é
-  // necessário para o ajuste de centavos.
-  valor?: number;
-  vencimento?: string; // YYYY-MM-DD
-  observacao?: string;
+  // Todos os campos são obrigatórios na prática: o serviço do Sponte falha com
+  // "Object reference not set to an instance of an object" quando algum dos
+  // campos declarados como opcionais no WSDL não vem na requisição. Quem chama
+  // reenvia o valor ATUAL da parcela nos campos que não está alterando.
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+  formaCobrancaId: number;
+  categoriaId: number;
+  observacao: string;
 }
 
 // Ajuste de UMA parcela de um título existente (usado para deixar a última
-// parcela com os centavos da divisão inexata).
+// parcela com os centavos da divisão inexata e para corrigir vencimento que o
+// InsertPlano criou em fim de semana/feriado).
 export function montarParametrosUpdateParcela(p: ParametrosUpdateParcela): string {
-  const opcionais =
-    (p.vencimento ? `<dDataVencimento>${p.vencimento}T00:00:00</dDataVencimento>` : "") +
-    (p.valor === undefined ? "" : `<nValor>${p.valor.toFixed(2)}</nValor>`) +
-    (p.observacao === undefined ? "" : `<sObservacao>${escapeXml(p.observacao)}</sObservacao>`);
   return (
     `<nContaReceberID>${escapeXml(p.contaReceberId)}</nContaReceberID>` +
     `<nNumeroParcela>${Math.trunc(p.numeroParcela)}</nNumeroParcela>` +
     `<nBolsaID>0</nBolsaID>` +
-    opcionais
+    `<dDataVencimento>${p.vencimento}T00:00:00</dDataVencimento>` +
+    `<nValor>${p.valor.toFixed(2)}</nValor>` +
+    `<nFormaCobrancaID>${p.formaCobrancaId}</nFormaCobrancaID>` +
+    `<nCategoriaID>${p.categoriaId}</nCategoriaID>` +
+    `<sObservacao>${escapeXml(p.observacao)}</sObservacao>`
   );
 }
