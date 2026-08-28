@@ -5,9 +5,21 @@
 //  2. Parcelamento do material pedagógico: 1x a 8x, com o ajuste de centavos na
 //     última parcela para o somatório fechar exatamente o valor anual.
 //  3. Identificação da série do aluno a partir da turma do Sponte.
+//  4. Vencimentos das parcelas do material: a 1ª acompanha a mensalidade do
+//     aluno e as seguintes avançam um mês, rolando para o próximo dia útil.
 //
 // A mensagem devolvida ao responsável é sempre GENÉRICA: o portal é público e
 // não pode confirmar se um CPF existe no sistema.
+
+import {
+  dataNoMes,
+  diaVencimentoHabitual,
+  mesSeguinte,
+  vencimentoPadraoRecarga,
+  type ParcelaAberta,
+} from "./cantina";
+import { addMesesYMD } from "./confissao-divida";
+import { proximoDiaUtil } from "./billing-schedule";
 
 export const CODIGO_DIGITOS = 6;
 export const CODIGO_VALIDADE_MINUTOS = 10;
@@ -196,6 +208,95 @@ export function rotuloParcelamento(op: OpcaoParcelamento): string {
   const base = `${op.parcelas}x de ${formatarBRL(op.valorParcela)}`;
   if (op.parcelas === 1 || op.valorUltimaParcela === op.valorParcela) return base;
   return `${base} (última de ${formatarBRL(op.valorUltimaParcela)})`;
+}
+
+// ─── Vencimentos do lançamento do material ──────────────────────────────────
+
+// Categoria financeira do material no plano de contas do Sponte (mesmo nome nas
+// quatro unidades).
+export const CATEGORIA_MATERIAL_SPONTE = "Material Pedagógico";
+
+// Categorias que não servem de referência para o vencimento do material: o
+// próprio material (evita realimentar um lançamento anterior errado), a recarga
+// da cantina e as parcelas de acordo, negociadas caso a caso.
+const CATEGORIAS_SEM_REFERENCIA = ["material", "cantina", "acordo"];
+
+function semAcento(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function serveDeReferencia(p: ParcelaAberta): boolean {
+  const cat = semAcento(p.categoria);
+  return p.vencimento !== "" && !CATEGORIAS_SEM_REFERENCIA.some((ign) => cat.includes(ign));
+}
+
+export interface VencimentoMaterial {
+  vencimento: string; // YYYY-MM-DD
+  origem: "mensalidade" | "dia_habitual" | "padrao";
+}
+
+// Vencimento da 1ª parcela do material: a data REAL da próxima mensalidade em
+// aberto do aluno (a partir de hoje), como na Cantina. Sem mensalidade futura em
+// aberto, cai no dia habitual de cobrança do aluno no mês seguinte e, em último
+// recurso, no dia 5. A data vinda do Sponte é usada como está (a escola já cobra
+// nesse dia); as reconstruídas rolam para o próximo dia útil.
+export function primeiroVencimentoMaterial<T extends ParcelaAberta>(
+  parcelas: readonly T[],
+  hojeYMD: string,
+): VencimentoMaterial {
+  const proximas = parcelas
+    .filter(
+      (p) =>
+        serveDeReferencia(p) &&
+        !p.quitada &&
+        Math.round(p.saldo * 100) > 0 &&
+        p.vencimento >= hojeYMD,
+    )
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  if (proximas.length > 0) return { vencimento: proximas[0].vencimento, origem: "mensalidade" };
+
+  const dia = diaVencimentoHabitual(parcelas);
+  if (dia !== null) {
+    return {
+      vencimento: proximoDiaUtil(dataNoMes(mesSeguinte(hojeYMD), dia)),
+      origem: "dia_habitual",
+    };
+  }
+  return { vencimento: proximoDiaUtil(vencimentoPadraoRecarga(hojeYMD)), origem: "padrao" };
+}
+
+export interface ParcelaMaterial {
+  numero: number;
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+}
+
+// Cronograma completo do lançamento: valor por parcela (com o ajuste de centavos
+// na última, ver parcelamentoMaterial) e vencimento de cada uma — mesmo dia da
+// 1ª acrescido de um mês por parcela, empurrando sábado, domingo e feriado
+// nacional para o próximo dia útil.
+export function parcelasMaterialLancamento(
+  valorAnual: number,
+  parcelas: number,
+  primeiroVencimento: string,
+): ParcelaMaterial[] {
+  const op = parcelamentoMaterial(valorAnual, parcelas);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(primeiroVencimento)) {
+    throw new Error("Vencimento da primeira parcela inválido (esperado YYYY-MM-DD).");
+  }
+  const itens: ParcelaMaterial[] = [];
+  for (let i = 0; i < op.parcelas; i++) {
+    itens.push({
+      numero: i + 1,
+      valor: i === op.parcelas - 1 ? op.valorUltimaParcela : op.valorParcela,
+      vencimento: i === 0 ? primeiroVencimento : proximoDiaUtil(addMesesYMD(primeiroVencimento, i)),
+    });
+  }
+  return itens;
 }
 
 // ─── Mensalidade vigente e desconto ─────────────────────────────────────────

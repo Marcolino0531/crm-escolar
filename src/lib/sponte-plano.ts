@@ -24,11 +24,16 @@ export interface ParametrosInsertPlano {
   formaCobrancaId: number;
   categoriaId: number;
   observacao: string;
+  // Quantidade de parcelas do título (padrão 1). O InsertPlano só aceita UM
+  // valor para todas as parcelas: não existe campo de "1ª parcela
+  // diferenciada" no WSDL, então o ajuste de centavos da última parcela é
+  // feito depois, com UpdateParcela.
+  parcelas?: number;
 }
 
-// Parcela única: uma recarga/fechamento é sempre uma cobrança só, no vencimento
-// informado. A ordem das tags segue o WSDL.
+// A ordem das tags segue o WSDL.
 export function montarParametrosInsertPlano(p: ParametrosInsertPlano): string {
+  const parcelas = Math.max(1, Math.trunc(p.parcelas ?? 1));
   return (
     `<nContratoID>0</nContratoID>` +
     `<nContratoAulaLivreID>0</nContratoAulaLivreID>` +
@@ -36,7 +41,7 @@ export function montarParametrosInsertPlano(p: ParametrosInsertPlano): string {
     `<nTipoPlano>1</nTipoPlano>` +
     `<nBolsaID>0</nBolsaID>` +
     `<dDataPrimeiroVencimento>${p.vencimento}T00:00:00</dDataPrimeiroVencimento>` +
-    `<nNumeroParcelas>1</nNumeroParcelas>` +
+    `<nNumeroParcelas>${parcelas}</nNumeroParcelas>` +
     `<nValorParcelas>${p.valor.toFixed(2)}</nValorParcelas>` +
     `<nFormaCobrancaID>${p.formaCobrancaId}</nFormaCobrancaID>` +
     `<nCategoriaID>${p.categoriaId}</nCategoriaID>` +
@@ -54,4 +59,30 @@ export function contaReceberCriada(retornoOperacao: string, contaReceberID: stri
   const conta = parseInt(contaReceberID, 10);
   if (Number.isFinite(conta) && conta > 0) return true;
   return normalizarTexto(retornoOperacao).includes("sucesso");
+}
+
+export interface ParametrosUpdateParcela {
+  contaReceberId: string;
+  numeroParcela: number;
+  // Somente o que for informado é enviado: o UpdateParcela aceita campos
+  // opcionais e mexer em forma/categoria de uma parcela já criada não é
+  // necessário para o ajuste de centavos.
+  valor?: number;
+  vencimento?: string; // YYYY-MM-DD
+  observacao?: string;
+}
+
+// Ajuste de UMA parcela de um título existente (usado para deixar a última
+// parcela com os centavos da divisão inexata).
+export function montarParametrosUpdateParcela(p: ParametrosUpdateParcela): string {
+  const opcionais =
+    (p.vencimento ? `<dDataVencimento>${p.vencimento}T00:00:00</dDataVencimento>` : "") +
+    (p.valor === undefined ? "" : `<nValor>${p.valor.toFixed(2)}</nValor>`) +
+    (p.observacao === undefined ? "" : `<sObservacao>${escapeXml(p.observacao)}</sObservacao>`);
+  return (
+    `<nContaReceberID>${escapeXml(p.contaReceberId)}</nContaReceberID>` +
+    `<nNumeroParcela>${Math.trunc(p.numeroParcela)}</nNumeroParcela>` +
+    `<nBolsaID>0</nBolsaID>` +
+    opcionais
+  );
 }
