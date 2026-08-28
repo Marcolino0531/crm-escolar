@@ -11,11 +11,15 @@ import {
   gerarCodigoVerificacao,
   opcoesParcelamentoMaterial,
   parcelamentoMaterial,
+  parcelasMaterialLancamento,
+  primeiroVencimentoMaterial,
   rotuloParcelamento,
   serieDaTurma,
   validarCodigo,
   type DesafioCodigo,
 } from "@/lib/rematricula";
+import type { ParcelaAberta } from "@/lib/cantina";
+import { isDiaUtil, isFeriadoNacional } from "@/lib/billing-schedule";
 
 // Intl usa espaço não separável depois de "R$": normaliza para comparar texto.
 function semNbsp(s: string): string {
@@ -167,5 +171,121 @@ describe("série do aluno", () => {
     expect(chaveSerie("3º Ano")).toBe(chaveSerie("3 ano"));
     expect(chaveSerie("1º Período")).toBe(chaveSerie("1o periodo"));
     expect(chaveSerie(" Maternal  II ")).toBe("maternal ii");
+  });
+});
+
+describe("primeiro vencimento do material", () => {
+  const parcela = (
+    vencimento: string,
+    categoria: string,
+    saldo = 1200,
+    quitada = false,
+  ): ParcelaAberta => ({
+    contaReceberID: `c-${vencimento}`,
+    numeroBoleto: "1",
+    numeroParcela: "1",
+    vencimento,
+    categoria,
+    saldo,
+    quitada,
+  });
+
+  it("usa o vencimento da próxima mensalidade real em aberto", () => {
+    const r = primeiroVencimentoMaterial(
+      [
+        parcela("2026-02-10", "Mensalidade"),
+        parcela("2026-03-10", "Mensalidade"),
+        parcela("2026-01-10", "Mensalidade", 1200, true),
+      ],
+      "2026-01-20",
+    );
+    expect(r).toEqual({ vencimento: "2026-02-10", origem: "mensalidade" });
+  });
+
+  it("ignora recarga de cantina e acordo como referência", () => {
+    const r = primeiroVencimentoMaterial(
+      [parcela("2026-02-05", "Cantina"), parcela("2026-02-15", "Mensalidade")],
+      "2026-01-20",
+    );
+    expect(r.vencimento).toBe("2026-02-15");
+  });
+
+  it("cai no dia habitual do aluno quando não há mensalidade futura em aberto", () => {
+    const r = primeiroVencimentoMaterial(
+      [
+        parcela("2025-11-10", "Mensalidade", 1200, true),
+        parcela("2025-12-10", "Mensalidade", 1200, true),
+      ],
+      "2026-01-20",
+    );
+    expect(r.origem).toBe("dia_habitual");
+    expect(r.vencimento).toBe("2026-02-10");
+  });
+
+  it("empurra o dia habitual que cai em fim de semana para o próximo dia útil", () => {
+    // 10/01/2026 é sábado.
+    const r = primeiroVencimentoMaterial(
+      [parcela("2025-11-10", "Mensalidade", 1200, true)],
+      "2025-12-20",
+    );
+    expect(r.origem).toBe("dia_habitual");
+    expect(r.vencimento).toBe("2026-01-12");
+  });
+
+  it("usa o vencimento padrão quando o aluno não tem histórico", () => {
+    const r = primeiroVencimentoMaterial([], "2026-01-20");
+    expect(r.origem).toBe("padrao");
+    expect(isDiaUtil(r.vencimento)).toBe(true);
+  });
+});
+
+describe("cronograma das parcelas do material", () => {
+  it("gera 8 parcelas somando exatamente o valor anual, com centavos na última", () => {
+    const itens = parcelasMaterialLancamento(1000, 8, "2026-02-10");
+    expect(itens).toHaveLength(8);
+    expect(itens.slice(0, 7).every((p) => p.valor === 125)).toBe(true);
+    expect(itens[7].valor).toBe(125);
+    const soma = itens.reduce((acc, p) => acc + Math.round(p.valor * 100), 0);
+    expect(soma).toBe(100000);
+  });
+
+  it("joga a sobra de centavos na última parcela", () => {
+    const itens = parcelasMaterialLancamento(1000, 3, "2026-02-10");
+    expect(itens.map((p) => p.valor)).toEqual([333.33, 333.33, 333.34]);
+    expect(itens.reduce((acc, p) => acc + Math.round(p.valor * 100), 0)).toBe(100000);
+  });
+
+  it("avança um mês por parcela mantendo o dia da primeira", () => {
+    const itens = parcelasMaterialLancamento(800, 4, "2026-03-10");
+    expect(itens.map((p) => p.vencimento)).toEqual([
+      "2026-03-10",
+      "2026-04-10",
+      "2026-05-11", // 10/05/2026 é domingo
+      "2026-06-10",
+    ]);
+  });
+
+  it("empurra vencimento que cai em feriado nacional", () => {
+    // 1º parcela em 01/03; a de setembro cairia em 07/09 (Independência).
+    const itens = parcelasMaterialLancamento(700, 7, "2026-03-07");
+    expect(itens[6].vencimento).toBe("2026-09-08");
+    expect(isFeriadoNacional("2026-09-07")).toBe(true);
+  });
+
+  it("mantém o primeiro vencimento exatamente como informado", () => {
+    // Mesmo dia da mensalidade do aluno: não é reajustado pela regra de dia útil.
+    const itens = parcelasMaterialLancamento(800, 2, "2026-02-14");
+    expect(itens[0].vencimento).toBe("2026-02-14");
+  });
+
+  it("recusa parcelamento fora de 1 a 8 e data inválida", () => {
+    expect(() => parcelasMaterialLancamento(800, 9, "2026-02-10")).toThrow();
+    expect(() => parcelasMaterialLancamento(800, 8, "10/02/2026")).toThrow();
+  });
+
+  it("uma parcela só é o valor anual inteiro", () => {
+    expect(parcelasMaterialLancamento(999.99, 1, "2026-02-10")).toEqual([
+      { numero: 1, valor: 999.99, vencimento: "2026-02-10" },
+    ]);
   });
 });

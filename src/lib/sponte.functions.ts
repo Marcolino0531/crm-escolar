@@ -15,7 +15,12 @@ import {
   parseBrDecimal,
   valorBoletoDaParcela,
 } from "@/lib/sponte-baixa";
-import { contaReceberCriada, escapeXml, montarParametrosInsertPlano } from "@/lib/sponte-plano";
+import {
+  contaReceberCriada,
+  escapeXml,
+  montarParametrosInsertPlano,
+  montarParametrosUpdateParcela,
+} from "@/lib/sponte-plano";
 import { filtrarAlunosDaUnidade } from "@/lib/imposto-renda-lote";
 
 export { escapeXml };
@@ -188,7 +193,7 @@ export function parseXmlList(xml: string, itemTag: string): string[] {
 // formato de calendário "YYYY-MM-DD". É TIMEZONE-SAFE: trabalha só com os
 // componentes da string, sem criar Date (a Vercel roda em UTC e new Date()
 // deslocaria o dia). Retorna null quando não reconhece.
-function paraYMD(dateStr: string): string | null {
+export function paraYMD(dateStr: string): string | null {
   if (!dateStr) return null;
   const s = dateStr.trim();
   if (s.includes("/")) {
@@ -2687,6 +2692,10 @@ export interface InserirPlanoSponteParams {
   categoria: string;
   observacao: string;
   logTag: string;
+  // Título com mais de uma parcela (padrão 1). Todas saem com o MESMO valor: o
+  // InsertPlano não aceita valor diferenciado por parcela, então o ajuste de
+  // centavos da última é feito depois, com atualizarParcelaSponte.
+  parcelas?: number;
 }
 
 export interface InserirPlanoSponteResult {
@@ -2742,6 +2751,7 @@ export async function inserirPlanoSponte(
     formaCobrancaId: forma.match.id,
     categoriaId: categoria.match.id,
     observacao: p.observacao,
+    parcelas: p.parcelas,
   });
 
   let xml: string;
@@ -2766,6 +2776,52 @@ export async function inserirPlanoSponte(
   }
 
   return { ok: true, contaReceberID: contaReceberID || undefined, retornoOperacao };
+}
+
+// Ajuste de UMA parcela de um título já criado. Existe porque o InsertPlano
+// aplica o MESMO valor a todas as parcelas: a diferença de centavos da divisão
+// inexata é jogada na última parcela por aqui.
+export interface AtualizarParcelaSponteParams {
+  unidade: string;
+  contaReceberId: string;
+  numeroParcela: number;
+  valor?: number;
+  vencimento?: string; // YYYY-MM-DD
+  observacao?: string;
+}
+
+export async function atualizarParcelaSponte(
+  p: AtualizarParcelaSponteParams,
+): Promise<InserirPlanoSponteResult> {
+  const creds = resolverCredenciais(p.unidade);
+  if (!creds) return { ok: false, indisponivel: true };
+
+  const extra = montarParametrosUpdateParcela({
+    contaReceberId: p.contaReceberId,
+    numeroParcela: p.numeroParcela,
+    valor: p.valor,
+    vencimento: p.vencimento,
+    observacao: p.observacao,
+  });
+
+  let xml: string;
+  try {
+    xml = await callSponteMethod("UpdateParcela", extra, creds.codigoCliente, creds.token);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Falha ao ajustar a parcela." };
+  }
+  const fault = checkFault(xml);
+  if (fault) return { ok: false, error: fault };
+
+  const retornoOperacao = parseXmlValue(xml, "RetornoOperacao");
+  if (!retornoOperacao.trim().startsWith("01")) {
+    return {
+      ok: false,
+      retornoOperacao,
+      error: retornoOperacao || "O Sponte não confirmou o ajuste da parcela.",
+    };
+  }
+  return { ok: true, retornoOperacao };
 }
 
 export const faturarColoniaSponte = createServerFn({ method: "POST" })

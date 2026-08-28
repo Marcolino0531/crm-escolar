@@ -10,6 +10,9 @@ import { handleDiarioApi } from "./lib/diario.api";
 import { handleWhatsAppApi } from "./lib/whatsapp.api";
 import { handleAgendaApi } from "./lib/agenda.api";
 import { handleMatriculasApi } from "./lib/matriculas.api";
+// TEMPORÁRIO: homologação das escritas da Rematrícula (Fase A). Sai daqui
+// depois da validação do teste.
+import { handleRematriculaHomologacaoApi } from "./lib/rematricula-homologacao.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -110,6 +113,9 @@ export default {
       // Webhook de matrícula (Google Forms → Sponte: aluno + responsáveis).
       const matriculasResponse = await handleMatriculasApi(request);
       if (matriculasResponse) return matriculasResponse;
+
+      const homologacaoResponse = await handleRematriculaHomologacaoApi(request);
+      if (homologacaoResponse) return homologacaoResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

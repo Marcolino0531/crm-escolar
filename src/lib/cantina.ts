@@ -111,7 +111,7 @@ function diasNoMes(ano: number, mes: number): number {
   return new Date(Date.UTC(ano, mes, 0)).getUTCDate();
 }
 
-function dataNoMes(mesYM: string, dia: number): string {
+export function dataNoMes(mesYM: string, dia: number): string {
   const [ano, mes] = mesYM.split("-").map((v) => parseInt(v, 10));
   const diaValido = Math.min(dia, diasNoMes(ano, mes));
   return `${mesYM}-${String(diaValido).padStart(2, "0")}`;
