@@ -13,6 +13,7 @@ import { Route as UploadRouteImport } from './routes/upload'
 import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
+import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
 import { Route as RematriculaRouteImport } from './routes/rematricula'
 import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
@@ -59,6 +60,12 @@ const RhRoute = RhRouteImport.update({
   path: '/rh',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RematriculaAcompanhamentoRoute =
+  RematriculaAcompanhamentoRouteImport.update({
+    id: '/rematricula-acompanhamento',
+    path: '/rematricula-acompanhamento',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const RematriculaRoute = RematriculaRouteImport.update({
   id: '/rematricula',
   path: '/rematricula',
@@ -211,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula': typeof RematriculaRoute
+  '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -242,6 +250,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula': typeof RematriculaRoute
+  '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -274,6 +283,7 @@ export interface FileRoutesById {
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula': typeof RematriculaRoute
+  '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
@@ -307,6 +317,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/portal-cantina'
     | '/rematricula'
+    | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -338,6 +349,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/portal-cantina'
     | '/rematricula'
+    | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -369,6 +381,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/portal-cantina'
     | '/rematricula'
+    | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
@@ -401,6 +414,7 @@ export interface RootRouteChildren {
   OnboardingRoute: typeof OnboardingRoute
   PortalCantinaRoute: typeof PortalCantinaRoute
   RematriculaRoute: typeof RematriculaRoute
+  RematriculaAcompanhamentoRoute: typeof RematriculaAcompanhamentoRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
   UniformesRoute: typeof UniformesRoute
@@ -435,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/rh'
       fullPath: '/rh'
       preLoaderRoute: typeof RhRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rematricula-acompanhamento': {
+      id: '/rematricula-acompanhamento'
+      path: '/rematricula-acompanhamento'
+      fullPath: '/rematricula-acompanhamento'
+      preLoaderRoute: typeof RematriculaAcompanhamentoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rematricula': {
@@ -641,6 +662,7 @@ const rootRouteChildren: RootRouteChildren = {
   OnboardingRoute: OnboardingRoute,
   PortalCantinaRoute: PortalCantinaRoute,
   RematriculaRoute: RematriculaRoute,
+  RematriculaAcompanhamentoRoute: RematriculaAcompanhamentoRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
   UniformesRoute: UniformesRoute,

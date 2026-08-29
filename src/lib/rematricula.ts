@@ -3,10 +3,15 @@
 //  1. Autenticação por código de 6 dígitos enviado no WhatsApp: geração,
 //     validade de 10 minutos e bloqueio depois de 3 tentativas erradas.
 //  2. Parcelamento do material pedagógico: 1x a 8x, com o ajuste de centavos na
-//     última parcela para o somatório fechar exatamente o valor anual.
+//     primeira parcela para o somatório fechar exatamente o valor anual.
 //  3. Identificação da série do aluno a partir da turma do Sponte.
-//  4. Vencimentos das parcelas do material: a 1ª acompanha a mensalidade do
-//     aluno e as seguintes avançam um mês, rolando para o próximo dia útil.
+//  4. Vencimentos das parcelas do material: cada parcela vence no mesmo dia da
+//     mensalidade daquele mês, ancorada na primeira mensalidade em aberto do ano
+//     letivo configurado pela escola.
+//
+// As funções da fase de homologação (sobra na última parcela, vencimento a
+// partir de "hoje", rolagem para o próximo dia útil) seguem no arquivo porque a
+// rota temporária de teste as usa até a homologação terminar.
 //
 // A mensagem devolvida ao responsável é sempre GENÉRICA: o portal é público e
 // não pode confirmar se um CPF existe no sistema.
@@ -316,6 +321,166 @@ export function concentrarDiferenca(
     ...p,
     valor: (i === 0 ? base + sobra : base) / 100,
   }));
+}
+
+// ─── Fase B: ano letivo de referência, sobra na 1ª parcela e vencimentos ────
+
+export const ANO_LETIVO_MIN = 2024;
+export const ANO_LETIVO_MAX = 2100;
+
+export function anoLetivoValido(ano: number): boolean {
+  return Number.isInteger(ano) && ano >= ANO_LETIVO_MIN && ano <= ANO_LETIVO_MAX;
+}
+
+// Ciclo de vida da escolha do responsável: pendente → efetivada (a secretaria
+// reivindicou a linha) → lancada (o título existe no Sponte).
+export type StatusEscolhaRematricula = "pendente_lancamento" | "efetivada" | "lancada";
+
+export function observacaoMaterialSponte(anoLetivo: number, parcelas: number): string {
+  return `Material pedagógico ${anoLetivo} — rematrícula em ${parcelas}x`;
+}
+
+// Parcelamento com a sobra de centavos na PRIMEIRA parcela, como a tela nativa
+// do Sponte ("Lançar valor diferenciado para a 1ª parcela"): 1000,00 em 3x →
+// 333,34 + 333,33 + 333,33. `valorParcela` é o que vai em nValorParcelas do
+// InsertPlano e `valorPrimeiraParcela` é o que o UpdateParcela grava na 1ª.
+export interface ParcelamentoPrimeira {
+  parcelas: number;
+  valorParcela: number;
+  valorPrimeiraParcela: number;
+  total: number;
+}
+
+export function parcelamentoMaterialPrimeira(
+  valorAnual: number,
+  parcelas: number,
+): ParcelamentoPrimeira {
+  if (!parcelasMaterialValida(parcelas)) {
+    throw new Error("Número de parcelas do material fora do intervalo permitido (1 a 8).");
+  }
+  const totalCentavos = Math.round(valorAnual * 100);
+  const base = Math.floor(totalCentavos / parcelas);
+  const primeira = totalCentavos - base * (parcelas - 1);
+  return {
+    parcelas,
+    valorParcela: base / 100,
+    valorPrimeiraParcela: primeira / 100,
+    total: totalCentavos / 100,
+  };
+}
+
+export function opcoesParcelamentoMaterialPrimeira(valorAnual: number): ParcelamentoPrimeira[] {
+  const opcoes: ParcelamentoPrimeira[] = [];
+  for (let n = PARCELAS_MATERIAL_MIN; n <= PARCELAS_MATERIAL_MAX; n++) {
+    opcoes.push(parcelamentoMaterialPrimeira(valorAnual, n));
+  }
+  return opcoes;
+}
+
+// Rótulo na tela: "3x de R$ 333,33 (1ª de R$ 333,34)".
+export function rotuloParcelamentoPrimeira(op: ParcelamentoPrimeira): string {
+  const base = `${op.parcelas}x de ${formatarBRL(op.valorParcela)}`;
+  if (op.parcelas === 1 || op.valorPrimeiraParcela === op.valorParcela) return base;
+  return `${base} (1ª de ${formatarBRL(op.valorPrimeiraParcela)})`;
+}
+
+// Parcelas que representam a MENSALIDADE do aluno. A categoria que carrega a
+// mensalidade varia por unidade, então quando existe alguma na categoria
+// "Mensalidade" só ela conta; se o aluno não tem nenhuma assim, valem as demais
+// parcelas de referência (material, cantina e acordo já ficam de fora).
+export function mensalidadesDeReferencia<T extends ParcelaAberta>(
+  parcelas: readonly T[],
+): T[] {
+  const referencia = parcelas.filter(serveDeReferencia);
+  const rotuladas = referencia.filter((p) => semAcento(p.categoria).includes("mensalidade"));
+  return rotuladas.length > 0 ? rotuladas : referencia;
+}
+
+// Âncora do lançamento: a PRIMEIRA mensalidade em aberto do ano letivo
+// CONFIGURADO pela escola (não a "próxima em aberto a partir de hoje"). O
+// resultado é o mesmo para quem preenche o formulário em agosto/2026 e para quem
+// preenche em janeiro/2027, porque a data de hoje não entra na conta.
+export function primeiraMensalidadeDoAnoLetivo<T extends ParcelaAberta>(
+  parcelas: readonly T[],
+  anoLetivo: number,
+): T | null {
+  const prefixo = `${anoLetivo}-`;
+  const doAno = mensalidadesDeReferencia(parcelas)
+    .filter(
+      (p) => p.vencimento.startsWith(prefixo) && !p.quitada && Math.round(p.saldo * 100) > 0,
+    )
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  return doAno[0] ?? null;
+}
+
+// Vencimento de cada parcela do material: em cada mês, o MESMO dia da
+// mensalidade daquele mês — os dois boletos do mês não podem vencer em datas
+// diferentes. Nenhum ajuste de fim de semana ou feriado é feito aqui: a data que
+// vale é a que o Sponte já usa na mensalidade (o banco não cobra juros/multa no
+// próximo dia útil). Mês sem mensalidade cadastrada mantém o dia da 1ª parcela.
+export function vencimentosMaterialPelasMensalidades<T extends ParcelaAberta>(
+  mensalidades: readonly T[],
+  primeiroVencimento: string,
+  parcelas: number,
+): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(primeiroVencimento)) {
+    throw new Error("Vencimento da primeira parcela inválido (esperado YYYY-MM-DD).");
+  }
+  if (!parcelasMaterialValida(parcelas)) {
+    throw new Error("Número de parcelas do material fora do intervalo permitido (1 a 8).");
+  }
+  const porMes = new Map<string, string>();
+  for (const p of mensalidadesDeReferencia(mensalidades)) {
+    const mes = p.vencimento.slice(0, 7);
+    const atual = porMes.get(mes);
+    // Mais de uma mensalidade no mês (parcelamento avulso, rateio): vale a de
+    // menor vencimento, a mesma escolhida como âncora.
+    if (!atual || p.vencimento < atual) porMes.set(mes, p.vencimento);
+  }
+
+  const datas: string[] = [];
+  for (let i = 0; i < parcelas; i++) {
+    const nominal = addMesesYMD(primeiroVencimento, i);
+    datas.push(porMes.get(nominal.slice(0, 7)) ?? nominal);
+  }
+  return datas;
+}
+
+export interface CronogramaMaterial {
+  itens: ParcelaMaterial[];
+  // Valor comum enviado no InsertPlano (nValorParcelas).
+  valorParcela: number;
+  // Valor da 1ª parcela depois do UpdateParcela (absorve a sobra de centavos).
+  valorPrimeiraParcela: number;
+  total: number;
+  // Falso quando a divisão é exata: não há sobra para o UpdateParcela corrigir.
+  ajustaPrimeira: boolean;
+}
+
+// Cronograma final do lançamento do material: valores com sobra na 1ª parcela e
+// os vencimentos reais das mensalidades, um por mês.
+export function cronogramaMaterialFaseB(
+  valorAnual: number,
+  parcelas: number,
+  vencimentos: readonly string[],
+): CronogramaMaterial {
+  const op = parcelamentoMaterialPrimeira(valorAnual, parcelas);
+  if (vencimentos.length !== op.parcelas) {
+    throw new Error("Quantidade de vencimentos diferente do número de parcelas.");
+  }
+  const itens = vencimentos.map((vencimento, i) => ({
+    numero: i + 1,
+    valor: i === 0 ? op.valorPrimeiraParcela : op.valorParcela,
+    vencimento,
+  }));
+  return {
+    itens,
+    valorParcela: op.valorParcela,
+    valorPrimeiraParcela: op.valorPrimeiraParcela,
+    total: op.total,
+    ajustaPrimeira:
+      Math.round(op.valorPrimeiraParcela * 100) !== Math.round(op.valorParcela * 100),
+  };
 }
 
 // ─── Mensalidade vigente e desconto ─────────────────────────────────────────

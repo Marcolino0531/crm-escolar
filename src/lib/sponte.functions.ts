@@ -116,7 +116,7 @@ export function resolverCredenciais(unidade: string): SponteCreds | null {
 // sem nenhuma unidade vinculada recebe `[]` (acesso NEGADO a tudo, inclusive ao
 // consolidado "Todas as Unidades"). Usado para impedir que um usuário restrito
 // force, via requisição forjada, a leitura de dados fora da sua permissão.
-async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
+export async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
   const { data: roles } = await supabaseAdmin
     .from("user_roles" as any)
     .select("role")
@@ -3392,48 +3392,52 @@ export interface AlunosAtivosLoteIRResult {
 
 const AlunosAtivosLoteInputSchema = z.object({ unidade: z.string().min(1) });
 
+// Alunos ATIVOS de uma unidade, já segmentados quando a credencial é compartilhada
+// (CEC × CEC Baby pela turma). Sem auth: quem chama checa a permissão.
+export async function alunosAtivosDaUnidade(unidade: string): Promise<AlunosAtivosLoteIRResult> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return { alunos: [], error: "Unidade sem integração Sponte." };
+
+  let xml: string;
+  try {
+    xml = await callSponte(
+      "GetAlunos",
+      `Situacao=${SITUACAO_ATIVO}`,
+      creds.codigoCliente,
+      creds.token,
+    );
+  } catch (e) {
+    return { alunos: [], error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+  }
+  const fault = checkFault(xml);
+  if (fault) return { alunos: [], error: fault };
+
+  const brutos: AlunoAtivoLoteIR[] = [];
+  for (const node of parseXmlList(xml, "wsAluno")) {
+    const alunoId = parseXmlValue(node, "AlunoID");
+    if (!alunoId || alunoId === "0") continue;
+    brutos.push({
+      alunoId,
+      nome: parseXmlValue(node, "Nome").trim(),
+      turma: parseXmlValue(node, "TurmaAtual").trim(),
+    });
+  }
+
+  const alunos = filtrarAlunosDaUnidade(brutos, unidade, creds.segmentaPorTurma).sort((a, b) =>
+    a.nome.localeCompare(b.nome),
+  );
+  return { alunos };
+}
+
 export const listarAlunosAtivosLoteIR = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => AlunosAtivosLoteInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<AlunosAtivosLoteIRResult> => {
-    const { unidade } = data;
-
     const allowed = await allowedSponteUnidades(context.userId);
-    if (allowed !== null && !allowed.includes(unidade)) {
+    if (allowed !== null && !allowed.includes(data.unidade)) {
       return { alunos: [], error: "Sem permissão para esta unidade." };
     }
-    const creds = resolverCredenciais(unidade);
-    if (!creds) return { alunos: [], error: "Unidade sem integração Sponte." };
-
-    let xml: string;
-    try {
-      xml = await callSponte(
-        "GetAlunos",
-        `Situacao=${SITUACAO_ATIVO}`,
-        creds.codigoCliente,
-        creds.token,
-      );
-    } catch (e) {
-      return { alunos: [], error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
-    }
-    const fault = checkFault(xml);
-    if (fault) return { alunos: [], error: fault };
-
-    const brutos: AlunoAtivoLoteIR[] = [];
-    for (const node of parseXmlList(xml, "wsAluno")) {
-      const alunoId = parseXmlValue(node, "AlunoID");
-      if (!alunoId || alunoId === "0") continue;
-      brutos.push({
-        alunoId,
-        nome: parseXmlValue(node, "Nome").trim(),
-        turma: parseXmlValue(node, "TurmaAtual").trim(),
-      });
-    }
-
-    const alunos = filtrarAlunosDaUnidade(brutos, unidade, creds.segmentaPorTurma).sort((a, b) =>
-      a.nome.localeCompare(b.nome),
-    );
-    return { alunos };
+    return alunosAtivosDaUnidade(data.unidade);
   });
 
 export interface ResponsavelFinanceiroLoteIR {

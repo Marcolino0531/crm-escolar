@@ -9,12 +9,13 @@ import { Label } from "@/components/ui/label";
 import {
   CODIGO_DIGITOS,
   formatarBRL,
-  rotuloParcelamento,
-  type OpcaoParcelamento,
+  rotuloParcelamentoPrimeira,
+  type ParcelamentoPrimeira,
 } from "@/lib/rematricula";
 import {
   dadosRematricula,
   salvarEscolhaMaterialRematricula,
+  sincronizarCadastroRematricula,
   solicitarCodigoRematricula,
   validarCodigoRematricula,
   type DadosRematricula,
@@ -48,8 +49,8 @@ function mascararCpf(valor: string): string {
     .replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d)/, "$1.$2.$3-$4");
 }
 
-// Campo de exibição: o layout já é o da Parte 4 (edição), mas nesta fase todo
-// campo é readOnly — nada é enviado de volta ao Sponte.
+// Campo somente leitura: nome, CPF, data de nascimento, matrícula e UF não são
+// editáveis pelo portal (mudança de documento passa pela secretaria).
 function CampoLeitura({ label, valor }: { label: string; valor: string }) {
   return (
     <div className="space-y-1">
@@ -59,7 +60,71 @@ function CampoLeitura({ label, valor }: { label: string; valor: string }) {
   );
 }
 
-function BlocoResponsavel({ resp }: { resp: ResponsavelRematricula }) {
+// Campos que o responsável corrige no portal. O telefone digitado aqui vai para o
+// campo Celular do Sponte — o Fone Residencial nunca é tocado.
+interface EdicaoContato {
+  cep: string;
+  endereco: string;
+  numeroEndereco: string;
+  complementoEndereco: string;
+  bairro: string;
+  cidade: string;
+  celular: string;
+  email: string;
+}
+
+const CAMPOS_CONTATO: { chave: keyof EdicaoContato; label: string }[] = [
+  { chave: "celular", label: "Celular" },
+  { chave: "email", label: "Email" },
+  { chave: "cep", label: "CEP" },
+  { chave: "endereco", label: "Endereço" },
+  { chave: "numeroEndereco", label: "Número" },
+  { chave: "complementoEndereco", label: "Complemento" },
+  { chave: "bairro", label: "Bairro" },
+  { chave: "cidade", label: "Cidade" },
+];
+
+function CamposContato({
+  edicao,
+  onChange,
+}: {
+  edicao: EdicaoContato;
+  onChange: (chave: keyof EdicaoContato, valor: string) => void;
+}) {
+  return (
+    <>
+      {CAMPOS_CONTATO.map(({ chave, label }) => (
+        <div key={chave} className="space-y-1">
+          <Label className="text-xs text-muted-foreground">{label}</Label>
+          <Input value={edicao[chave]} onChange={(e) => onChange(chave, e.target.value)} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function contatoDoResponsavel(resp: ResponsavelRematricula): EdicaoContato {
+  return {
+    cep: resp.cep,
+    endereco: resp.endereco,
+    numeroEndereco: resp.numero,
+    complementoEndereco: resp.complemento,
+    bairro: resp.bairro,
+    cidade: resp.cidade,
+    celular: resp.telefone,
+    email: resp.email,
+  };
+}
+
+function BlocoResponsavel({
+  resp,
+  edicao,
+  onChange,
+}: {
+  resp: ResponsavelRematricula;
+  edicao: EdicaoContato;
+  onChange: (chave: keyof EdicaoContato, valor: string) => void;
+}) {
   return (
     <div className="rounded-lg border p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -74,15 +139,8 @@ function BlocoResponsavel({ resp }: { resp: ResponsavelRematricula }) {
         <CampoLeitura label="Nome" valor={resp.nome} />
         <CampoLeitura label="CPF" valor={resp.cpf} />
         <CampoLeitura label="Data de nascimento" valor={resp.dataNascimento} />
-        <CampoLeitura label="Telefone" valor={resp.telefone} />
-        <CampoLeitura label="Email" valor={resp.email} />
-        <CampoLeitura label="CEP" valor={resp.cep} />
-        <CampoLeitura label="Endereço" valor={resp.endereco} />
-        <CampoLeitura label="Número" valor={resp.numero} />
-        <CampoLeitura label="Complemento" valor={resp.complemento} />
-        <CampoLeitura label="Bairro" valor={resp.bairro} />
-        <CampoLeitura label="Cidade" valor={resp.cidade} />
         <CampoLeitura label="UF" valor={resp.uf} />
+        <CamposContato edicao={edicao} onChange={onChange} />
       </div>
     </div>
   );
@@ -97,6 +155,7 @@ function RematriculaPage() {
   const validar = useServerFn(validarCodigoRematricula);
   const carregar = useServerFn(dadosRematricula);
   const salvar = useServerFn(salvarEscolhaMaterialRematricula);
+  const sincronizar = useServerFn(sincronizarCadastroRematricula);
 
   const [etapa, setEtapa] = useState<Etapa>("cpf");
   const [cpf, setCpf] = useState("");
@@ -107,6 +166,9 @@ function RematriculaPage() {
   const [dados, setDados] = useState<DadosRematricula | null>(null);
   const [parcelas, setParcelas] = useState<number | null>(null);
   const [salvo, setSalvo] = useState(false);
+  const [contatoAluno, setContatoAluno] = useState<EdicaoContato | null>(null);
+  const [contatoResp, setContatoResp] = useState<Record<string, EdicaoContato>>({});
+  const [cadastroSalvo, setCadastroSalvo] = useState("");
 
   const solicitar = useMutation({
     mutationFn: async () => pedirCodigo({ data: { cpf } }),
@@ -139,6 +201,23 @@ function RematriculaPage() {
       setAviso("");
       setToken(novoToken);
       setDados(portal);
+      if (portal.aluno) {
+        setContatoAluno({
+          cep: portal.aluno.cep,
+          endereco: portal.aluno.endereco,
+          numeroEndereco: portal.aluno.numero,
+          complementoEndereco: portal.aluno.complemento,
+          bairro: portal.aluno.bairro,
+          cidade: portal.aluno.cidade,
+          celular: portal.aluno.telefone,
+          email: portal.aluno.email,
+        });
+      }
+      setContatoResp(
+        Object.fromEntries(
+          (portal.responsaveis ?? []).map((r) => [r.responsavelId, contatoDoResponsavel(r)]),
+        ),
+      );
       setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
       setSalvo(!!portal.material?.escolhaAtual);
       setEtapa("portal");
@@ -159,9 +238,45 @@ function RematriculaPage() {
     onError: () => setErro("Não foi possível salvar sua escolha agora. Tente novamente."),
   });
 
+  // Correção cadastral: vai direto para o Sponte (o servidor relê a ficha inteira
+  // antes de escrever) e só os campos alterados entram no payload.
+  const enviarCadastro = useMutation({
+    mutationFn: async () =>
+      sincronizar({
+        data: {
+          token,
+          aluno: contatoAluno ?? undefined,
+          responsaveis: Object.entries(contatoResp).map(([responsavelId, edicao]) => ({
+            responsavelId,
+            ...edicao,
+          })),
+        },
+      }),
+    onSuccess: (res) => {
+      const falhas = res.falhas ?? [];
+      if (!res.ok) {
+        setCadastroSalvo("");
+        setErro(
+          res.erro ||
+            falhas.map((f) => `${f.escopo}: ${f.erro}`).join(" — ") ||
+            "Não foi possível atualizar seus dados.",
+        );
+        return;
+      }
+      setErro("");
+      const total = (res.alteracoes ?? []).length;
+      setCadastroSalvo(
+        total === 0
+          ? "Nenhuma alteração para enviar — seus dados já estão como no cadastro da escola."
+          : `${total} ${total === 1 ? "campo atualizado" : "campos atualizados"} no cadastro da escola.`,
+      );
+    },
+    onError: () => setErro("Não foi possível atualizar seus dados agora. Tente novamente."),
+  });
+
   const aluno = dados?.aluno;
   const material = dados?.material;
-  const opcoes: OpcaoParcelamento[] = material?.opcoes ?? [];
+  const opcoes: ParcelamentoPrimeira[] = material?.opcoes ?? [];
 
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
@@ -279,20 +394,21 @@ function RematriculaPage() {
                 <CampoLeitura label="Matrícula" valor={aluno.matricula} />
                 <CampoLeitura label="Data de nascimento" valor={aluno.dataNascimento} />
                 <CampoLeitura label="Série atual" valor={aluno.serie} />
-                <CampoLeitura label="Telefone" valor={aluno.telefone} />
-                <CampoLeitura label="Email" valor={aluno.email} />
-                <CampoLeitura label="CEP" valor={aluno.cep} />
-                <CampoLeitura label="Endereço" valor={aluno.endereco} />
-                <CampoLeitura label="Número" valor={aluno.numero} />
-                <CampoLeitura label="Complemento" valor={aluno.complemento} />
-                <CampoLeitura label="Bairro" valor={aluno.bairro} />
-                <CampoLeitura label="Cidade" valor={aluno.cidade} />
                 <CampoLeitura label="UF" valor={aluno.uf} />
+                {contatoAluno && (
+                  <CamposContato
+                    edicao={contatoAluno}
+                    onChange={(chave, valor) => {
+                      setContatoAluno((atual) => (atual ? { ...atual, [chave]: valor } : atual));
+                      setCadastroSalvo("");
+                    }}
+                  />
+                )}
               </div>
               <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Os dados cadastrais estão em consulta nesta etapa. Para corrigir algo, fale com a
-                secretaria.
+                Corrija endereço, celular e email se algo estiver desatualizado. Nome, CPF e data de
+                nascimento só a secretaria altera.
               </p>
             </div>
 
@@ -322,10 +438,42 @@ function RematriculaPage() {
               <div className="space-y-3">
                 <h2 className="text-sm font-semibold">Responsáveis</h2>
                 {dados.responsaveis.map((r) => (
-                  <BlocoResponsavel key={r.responsavelId} resp={r} />
+                  <BlocoResponsavel
+                    key={r.responsavelId}
+                    resp={r}
+                    edicao={contatoResp[r.responsavelId] ?? contatoDoResponsavel(r)}
+                    onChange={(chave, valor) => {
+                      setContatoResp((atual) => ({
+                        ...atual,
+                        [r.responsavelId]: {
+                          ...(atual[r.responsavelId] ?? contatoDoResponsavel(r)),
+                          [chave]: valor,
+                        },
+                      }));
+                      setCadastroSalvo("");
+                    }}
+                  />
                 ))}
               </div>
             )}
+
+            <div className="rounded-lg border p-4">
+              <Button
+                className="w-full"
+                variant="secondary"
+                disabled={enviarCadastro.isPending}
+                onClick={() => enviarCadastro.mutate()}
+              >
+                {enviarCadastro.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar dados cadastrais
+              </Button>
+              {cadastroSalvo && (
+                <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {cadastroSalvo}
+                </p>
+              )}
+            </div>
 
             <div className="rounded-lg border p-4">
               <h2 className="mb-1 text-sm font-semibold">Material pedagógico</h2>
@@ -350,7 +498,7 @@ function RematriculaPage() {
                             : "hover:bg-muted/60"
                         }`}
                       >
-                        {rotuloParcelamento(op)}
+                        {rotuloParcelamentoPrimeira(op)}
                       </button>
                     ))}
                   </div>
@@ -365,8 +513,9 @@ function RematriculaPage() {
                   {salvo && parcelas && (
                     <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
                       <CheckCircle2 className="h-4 w-4" />
-                      Registramos o pagamento do material em {parcelas}x. A escola vai gerar os
-                      boletos e você receberá a confirmação.
+                      Registramos sua escolha de {parcelas}x. A secretaria vai revisar e, depois da
+                      conferência, emitir os boletos do material — eles não são gerados neste
+                      momento.
                     </p>
                   )}
                 </>

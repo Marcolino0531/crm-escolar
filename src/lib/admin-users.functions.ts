@@ -18,6 +18,7 @@ const APP_MODULES = [
   "esportes",
   "documentos",
   "cantina",
+  "rematricula",
   "financeiro",
   "configuracoes",
   // Financeiro sub-tabs (granular access)

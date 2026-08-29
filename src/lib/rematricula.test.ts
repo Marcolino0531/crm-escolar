@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   DESAFIO_VAZIO,
+  anoLetivoValido,
+  cronogramaMaterialFaseB,
+  opcoesParcelamentoMaterialPrimeira,
+  parcelamentoMaterialPrimeira,
+  primeiraMensalidadeDoAnoLetivo,
+  vencimentosMaterialPelasMensalidades,
   MAX_TENTATIVAS_CODIGO,
   MENSAGEM_BLOQUEADO,
   MENSAGEM_CODIGO_EXPIRADO,
@@ -15,6 +21,7 @@ import {
   parcelasMaterialLancamento,
   primeiroVencimentoMaterial,
   rotuloParcelamento,
+  rotuloParcelamentoPrimeira,
   serieDaTurma,
   validarCodigo,
   type DesafioCodigo,
@@ -305,5 +312,181 @@ describe("cronograma das parcelas do material", () => {
     expect(parcelasMaterialLancamento(999.99, 1, "2026-02-10")).toEqual([
       { numero: 1, valor: 999.99, vencimento: "2026-02-10" },
     ]);
+  });
+});
+
+// ─── Fase B: ano letivo de referência, sobra na 1ª parcela e vencimentos ────
+
+describe("parcelamento da Fase B (sobra na 1ª parcela)", () => {
+  it("reproduz a tela nativa do Sponte: 1.000,00 em 3x", () => {
+    const op = parcelamentoMaterialPrimeira(1000, 3);
+    expect(op.valorParcela).toBe(333.33);
+    expect(op.valorPrimeiraParcela).toBe(333.34);
+    expect(op.valorPrimeiraParcela + op.valorParcela * 2).toBeCloseTo(1000, 2);
+  });
+
+  it("fecha o valor anual exato em todas as opções de 1x a 8x", () => {
+    for (const op of opcoesParcelamentoMaterialPrimeira(800.05)) {
+      const centavos =
+        Math.round(op.valorPrimeiraParcela * 100) +
+        Math.round(op.valorParcela * 100) * (op.parcelas - 1);
+      expect(centavos).toBe(80005);
+    }
+  });
+
+  it("em divisão exata a 1ª parcela não é diferenciada", () => {
+    const op = parcelamentoMaterialPrimeira(1200, 4);
+    expect(op.valorPrimeiraParcela).toBe(300);
+    expect(semNbsp(rotuloParcelamentoPrimeira(op))).toBe("4x de R$ 300,00");
+    expect(semNbsp(rotuloParcelamentoPrimeira(parcelamentoMaterialPrimeira(1000, 3)))).toBe(
+      "3x de R$ 333,33 (1ª de R$ 333,34)",
+    );
+  });
+
+  it("recusa parcelamento fora de 1 a 8", () => {
+    expect(() => parcelamentoMaterialPrimeira(800, 0)).toThrow();
+    expect(() => parcelamentoMaterialPrimeira(800, 9)).toThrow();
+  });
+});
+
+describe("primeira mensalidade do ano letivo configurado", () => {
+  const parcela = (
+    vencimento: string,
+    categoria: string,
+    saldo = 1200,
+    quitada = false,
+  ): ParcelaAberta => ({
+    contaReceberID: `c-${vencimento}`,
+    numeroBoleto: "1",
+    numeroParcela: "1",
+    vencimento,
+    categoria,
+    saldo,
+    quitada,
+  });
+
+  const carne: ParcelaAberta[] = [
+    parcela("2026-08-10", "Mensalidade"),
+    parcela("2026-12-10", "Mensalidade"),
+    parcela("2027-01-10", "Mensalidade"),
+    parcela("2027-02-10", "Mensalidade"),
+    parcela("2027-03-10", "Mensalidade"),
+  ];
+
+  it("ancora na menor data em aberto DENTRO do ano configurado", () => {
+    expect(primeiraMensalidadeDoAnoLetivo(carne, 2027)?.vencimento).toBe("2027-01-10");
+  });
+
+  it("não depende da data em que o responsável preenche o formulário", () => {
+    // A função não recebe "hoje": agosto/2026 e janeiro/2027 caem na mesma âncora.
+    expect(primeiraMensalidadeDoAnoLetivo(carne, 2027)?.vencimento).toBe(
+      primeiraMensalidadeDoAnoLetivo([...carne].reverse(), 2027)?.vencimento,
+    );
+  });
+
+  it("ignora mensalidade já quitada e a de outro ano", () => {
+    const comQuitada = [parcela("2027-01-05", "Mensalidade", 1200, true), ...carne];
+    expect(primeiraMensalidadeDoAnoLetivo(comQuitada, 2027)?.vencimento).toBe("2027-01-10");
+    expect(primeiraMensalidadeDoAnoLetivo(carne, 2026)?.vencimento).toBe("2026-08-10");
+  });
+
+  it("ignora cantina e acordo como âncora", () => {
+    const r = primeiraMensalidadeDoAnoLetivo(
+      [parcela("2027-01-05", "Cantina"), parcela("2027-01-10", "Mensalidade")],
+      2027,
+    );
+    expect(r?.vencimento).toBe("2027-01-10");
+  });
+
+  it("devolve nulo quando não existe mensalidade em aberto no ano configurado", () => {
+    expect(primeiraMensalidadeDoAnoLetivo(carne, 2028)).toBeNull();
+  });
+
+  it("valida o intervalo do ano letivo de referência", () => {
+    expect(anoLetivoValido(2027)).toBe(true);
+    expect(anoLetivoValido(2023)).toBe(false);
+    expect(anoLetivoValido(2026.5)).toBe(false);
+  });
+});
+
+describe("vencimentos do material pelas mensalidades", () => {
+  const parcela = (vencimento: string, categoria = "Mensalidade"): ParcelaAberta => ({
+    contaReceberID: `c-${vencimento}`,
+    numeroBoleto: "1",
+    numeroParcela: "1",
+    vencimento,
+    categoria,
+    saldo: 1200,
+    quitada: false,
+  });
+
+  const mensalidades = [
+    parcela("2027-01-10"),
+    parcela("2027-02-08"),
+    parcela("2027-03-12"),
+    parcela("2027-04-10"),
+  ];
+
+  it("cada parcela vence no mesmo dia da mensalidade daquele mês", () => {
+    expect(vencimentosMaterialPelasMensalidades(mensalidades, "2027-01-10", 4)).toEqual([
+      "2027-01-10",
+      "2027-02-08",
+      "2027-03-12",
+      "2027-04-10",
+    ]);
+  });
+
+  it("não aplica nenhum ajuste de feriado nem de fim de semana", () => {
+    // 21/04/2027 é Tiradentes e 09/05/2027 é domingo: as duas datas são mantidas.
+    const datas = vencimentosMaterialPelasMensalidades(
+      [parcela("2027-04-21"), parcela("2027-05-09")],
+      "2027-04-21",
+      2,
+    );
+    expect(datas).toEqual(["2027-04-21", "2027-05-09"]);
+    expect(isFeriadoNacional("2027-04-21")).toBe(true);
+    expect(isDiaUtil("2027-05-09")).toBe(false);
+  });
+
+  it("mês sem mensalidade cadastrada mantém o dia da 1ª parcela", () => {
+    expect(vencimentosMaterialPelasMensalidades([parcela("2027-01-10")], "2027-01-10", 3)).toEqual([
+      "2027-01-10",
+      "2027-02-10",
+      "2027-03-10",
+    ]);
+  });
+
+  it("com duas mensalidades no mesmo mês vale a de menor vencimento", () => {
+    expect(
+      vencimentosMaterialPelasMensalidades(
+        [parcela("2027-01-10"), parcela("2027-01-25")],
+        "2027-01-10",
+        1,
+      ),
+    ).toEqual(["2027-01-10"]);
+  });
+
+  it("cronograma final leva a sobra na 1ª parcela e os vencimentos reais", () => {
+    const c = cronogramaMaterialFaseB(
+      1000,
+      3,
+      vencimentosMaterialPelasMensalidades(mensalidades, "2027-01-10", 3),
+    );
+    expect(c.itens).toEqual([
+      { numero: 1, valor: 333.34, vencimento: "2027-01-10" },
+      { numero: 2, valor: 333.33, vencimento: "2027-02-08" },
+      { numero: 3, valor: 333.33, vencimento: "2027-03-12" },
+    ]);
+    expect(c.valorParcela).toBe(333.33);
+    expect(c.ajustaPrimeira).toBe(true);
+    expect(
+      cronogramaMaterialFaseB(1200, 4, ["2027-01-10", "2027-02-08", "2027-03-12", "2027-04-10"])
+        .ajustaPrimeira,
+    ).toBe(false);
+  });
+
+  it("recusa vencimentos em quantidade diferente das parcelas e data inválida", () => {
+    expect(() => cronogramaMaterialFaseB(1000, 3, ["2027-01-10"])).toThrow();
+    expect(() => vencimentosMaterialPelasMensalidades(mensalidades, "10/01/2027", 3)).toThrow();
   });
 });

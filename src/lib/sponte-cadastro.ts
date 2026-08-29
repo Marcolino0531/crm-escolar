@@ -81,6 +81,9 @@ export interface FichaResponsavelSponte {
 
 // Campos que o portal de rematrícula pode editar. Qualquer outro campo é
 // somente leitura: entra no payload com o valor lido e sai igual.
+//
+// `telefone` (Fone Residencial no Sponte) NÃO está aqui de propósito: o telefone
+// informado no portal é sempre celular e grava só em `celular`.
 export const CAMPOS_EDITAVEIS_ALUNO = [
   "cep",
   "endereco",
@@ -88,7 +91,6 @@ export const CAMPOS_EDITAVEIS_ALUNO = [
   "complementoEndereco",
   "bairro",
   "cidade",
-  "telefone",
   "celular",
   "email",
 ] as const;
@@ -118,6 +120,18 @@ export function aplicarEdicao<T extends object>(
     (atualizada as Record<string, unknown>)[campo] = limpo;
   }
   return atualizada;
+}
+
+// O Sponte devolve campos de lista (CursoInteresse) serializados com ";" e
+// ACRESCENTA um separador a cada escrita — foi assim que um campo vazio virou
+// ";" e depois ";;" na homologação. Normalizar na leitura e no payload mantém
+// apenas os itens reais, então o valor não cresce a cada sincronização.
+export function normalizarListaSponte(valor: string): string {
+  return (valor ?? "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(";");
 }
 
 export interface CampoAlterado {
@@ -208,7 +222,7 @@ export function montarParametrosUpdateAlunos3(f: FichaAlunoSponte): string {
     tag("sRa", f.ra) +
     tag("sNumeroMatricula", f.numeroMatricula) +
     tag("sSituacao", f.situacao) +
-    tag("sCursoInteresse", f.cursoInteresse) +
+    tag("sCursoInteresse", normalizarListaSponte(f.cursoInteresse)) +
     tag("sInfoBloqueada", f.infoBloqueada) +
     tag("sOrigemNome", f.origemNome) +
     tag("nOrigemID", f.origemId)
