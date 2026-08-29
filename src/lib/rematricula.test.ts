@@ -1,21 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  DESAFIO_VAZIO,
+  MAX_LINKS_POR_JANELA,
+  MENSAGEM_LINK_INVALIDO,
   anoLetivoValido,
   cronogramaMaterialFaseB,
   opcoesParcelamentoMaterialPrimeira,
   parcelamentoMaterialPrimeira,
   primeiraMensalidadeDoAnoLetivo,
   vencimentosMaterialPelasMensalidades,
-  MAX_TENTATIVAS_CODIGO,
-  MENSAGEM_BLOQUEADO,
-  MENSAGEM_CODIGO_EXPIRADO,
-  MENSAGEM_CODIGO_INCORRETO,
+  assuntoEmailRematricula,
+  corpoEmailRematricula,
   chaveSerie,
   concentrarDiferenca,
-  codigoFormatoValido,
-  expiracaoCodigo,
-  gerarCodigoVerificacao,
+  excedeuLimiteLinks,
+  expiracaoLink,
+  inicioJanelaLinks,
   opcoesParcelamentoMaterial,
   parcelamentoMaterial,
   parcelasMaterialLancamento,
@@ -23,8 +22,10 @@ import {
   rotuloParcelamento,
   rotuloParcelamentoPrimeira,
   serieDaTurma,
-  validarCodigo,
-  type DesafioCodigo,
+  solicitacoesNaJanela,
+  urlLinkRematricula,
+  validarLinkMagico,
+  type LinkMagico,
 } from "@/lib/rematricula";
 import type { ParcelaAberta } from "@/lib/cantina";
 import { isDiaUtil, isFeriadoNacional } from "@/lib/billing-schedule";
@@ -84,86 +85,115 @@ describe("parcelamento do material pedagógico", () => {
   });
 });
 
-describe("código de verificação", () => {
-  it("gera sempre 6 dígitos, inclusive com zeros à esquerda", () => {
-    expect(gerarCodigoVerificacao(0)).toBe("000000");
-    expect(codigoFormatoValido(gerarCodigoVerificacao(0.004821))).toBe(true);
-    expect(gerarCodigoVerificacao(0.004821)).toBe("004821");
-    expect(gerarCodigoVerificacao(0.999999999)).toHaveLength(6);
-    for (const sorteio of [0.1, 0.42, 0.777, 0.98765]) {
-      expect(codigoFormatoValido(gerarCodigoVerificacao(sorteio))).toBe(true);
-    }
-  });
-
-  it("expira 10 minutos depois da geração", () => {
-    const agora = "2026-03-10T12:00:00.000Z";
-    expect(expiracaoCodigo(agora)).toBe("2026-03-10T12:10:00.000Z");
-  });
-
+describe("link mágico de acesso", () => {
   const agora = "2026-03-10T12:00:00.000Z";
-  const desafio = (over: Partial<DesafioCodigo> = {}): DesafioCodigo => ({
-    ...DESAFIO_VAZIO,
-    codigoHash: "hash-certo",
-    expiraEm: expiracaoCodigo(agora),
+  const link = (over: Partial<LinkMagico> = {}): LinkMagico => ({
+    expiraEm: expiracaoLink(agora),
+    usadoEm: null,
     ...over,
   });
 
-  it("aceita o código correto dentro da validade e o consome", () => {
-    const res = validarCodigo(desafio(), "hash-certo", agora);
-    expect(res.ok).toBe(true);
-    expect(res.proximo.consumidoEm).toBe(agora);
+  it("expira 15 minutos depois da geração", () => {
+    expect(expiracaoLink(agora)).toBe("2026-03-10T12:15:00.000Z");
   });
 
-  it("recusa o mesmo código numa segunda vez (uso único)", () => {
-    const primeiro = validarCodigo(desafio(), "hash-certo", agora);
-    const segundo = validarCodigo(primeiro.proximo, "hash-certo", agora);
-    expect(segundo.ok).toBe(false);
-    expect(segundo.motivo).toBe("inexistente");
+  it("aceita o link dentro da validade", () => {
+    expect(validarLinkMagico(link(), agora).ok).toBe(true);
   });
 
-  it("recusa código depois dos 10 minutos", () => {
-    const res = validarCodigo(desafio(), "hash-certo", "2026-03-10T12:10:01.000Z");
+  it("aceita no último instante antes de expirar e recusa no instante da expiração", () => {
+    expect(validarLinkMagico(link(), "2026-03-10T12:14:59.999Z").ok).toBe(true);
+    const noLimite = validarLinkMagico(link(), "2026-03-10T12:15:00.000Z");
+    expect(noLimite.ok).toBe(false);
+    expect(noLimite.motivo).toBe("expirado");
+  });
+
+  it("recusa link vencido", () => {
+    const res = validarLinkMagico(link(), "2026-03-10T12:15:01.000Z");
     expect(res.ok).toBe(false);
     expect(res.motivo).toBe("expirado");
-    expect(res.mensagem).toBe(MENSAGEM_CODIGO_EXPIRADO);
+    expect(res.mensagem).toBe(MENSAGEM_LINK_INVALIDO);
   });
 
-  it("aceita no limite exato antes de expirar e recusa no instante da expiração", () => {
-    expect(validarCodigo(desafio(), "hash-certo", "2026-03-10T12:09:59.999Z").ok).toBe(true);
-    expect(validarCodigo(desafio(), "hash-certo", "2026-03-10T12:10:00.000Z").ok).toBe(false);
-  });
-
-  it("conta tentativa errada e bloqueia na terceira", () => {
-    let estado = desafio();
-    for (let i = 1; i < MAX_TENTATIVAS_CODIGO; i++) {
-      const res = validarCodigo(estado, "hash-errado", agora);
-      expect(res.ok).toBe(false);
-      expect(res.motivo).toBe("incorreto");
-      expect(res.mensagem).toBe(MENSAGEM_CODIGO_INCORRETO);
-      expect(res.proximo.bloqueadoAte).toBeNull();
-      estado = res.proximo;
-    }
-    const terceira = validarCodigo(estado, "hash-errado", agora);
-    expect(terceira.ok).toBe(false);
-    expect(terceira.motivo).toBe("bloqueado");
-    expect(terceira.mensagem).toBe(MENSAGEM_BLOQUEADO);
-    expect(terceira.proximo.bloqueadoAte).not.toBeNull();
-  });
-
-  it("depois do bloqueio recusa até o código correto", () => {
-    let estado = desafio();
-    for (let i = 0; i < MAX_TENTATIVAS_CODIGO; i++) {
-      estado = validarCodigo(estado, "hash-errado", agora).proximo;
-    }
-    const res = validarCodigo(estado, "hash-certo", agora);
+  it("é de uso único: link já usado é recusado mesmo dentro dos 15 minutos", () => {
+    const res = validarLinkMagico(link({ usadoEm: "2026-03-10T12:01:00.000Z" }), agora);
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe("bloqueado");
+    expect(res.motivo).toBe("usado");
+    expect(res.mensagem).toBe(MENSAGEM_LINK_INVALIDO);
   });
 
-  it("não conta tentativa quando o desafio nem existe", () => {
-    const res = validarCodigo(DESAFIO_VAZIO, "qualquer", agora);
+  it("recusa token desconhecido com a mesma mensagem do expirado/usado", () => {
+    const res = validarLinkMagico(null, agora);
     expect(res.ok).toBe(false);
-    expect(res.proximo.tentativas).toBe(0);
+    expect(res.motivo).toBe("inexistente");
+    expect(res.mensagem).toBe(MENSAGEM_LINK_INVALIDO);
+  });
+
+  it("recusa link sem data de expiração", () => {
+    expect(validarLinkMagico(link({ expiraEm: null }), agora).ok).toBe(false);
+  });
+
+  it("monta a URL de verificação do portal", () => {
+    expect(urlLinkRematricula("https://schoolhubbr.vercel.app", "abc123")).toBe(
+      "https://schoolhubbr.vercel.app/rematricula/verificar?token=abc123",
+    );
+    expect(urlLinkRematricula("https://schoolhubbr.vercel.app/", "abc123")).toContain(
+      "/rematricula/verificar?token=abc123",
+    );
+  });
+
+  it("assunto e corpo do email levam o colégio e o link", () => {
+    expect(assuntoEmailRematricula(" Colégio Exemplo ")).toBe(
+      "Acesse a Rematrícula — Colégio Exemplo",
+    );
+    expect(assuntoEmailRematricula("")).toBe("Acesse a Rematrícula");
+    const corpo = corpoEmailRematricula({
+      responsavelNome: "Maria",
+      alunoNome: "João",
+      nomeColegio: "Colégio Exemplo",
+      url: "https://schoolhubbr.vercel.app/rematricula/verificar?token=abc",
+    });
+    expect(corpo.text).toContain("Olá, Maria");
+    expect(corpo.text).toContain("João");
+    expect(corpo.text).toContain("token=abc");
+    expect(corpo.html).toContain(
+      '<a href="https://schoolhubbr.vercel.app/rematricula/verificar?token=abc">',
+    );
+  });
+});
+
+describe("rate limit de links por CPF", () => {
+  const agora = "2026-03-10T12:00:00.000Z";
+  const minutosAtras = (m: number) => new Date(Date.parse(agora) - m * 60000).toISOString();
+
+  it("conta só as solicitações da última hora", () => {
+    const pedidos = [minutosAtras(5), minutosAtras(59), minutosAtras(61), minutosAtras(600)];
+    expect(solicitacoesNaJanela(pedidos, agora)).toBe(2);
+    expect(inicioJanelaLinks(agora)).toBe("2026-03-10T11:00:00.000Z");
+  });
+
+  it("libera do 1º ao 3º pedido e bloqueia o 4º na mesma hora", () => {
+    const pedidos: string[] = [];
+    for (let i = 0; i < MAX_LINKS_POR_JANELA; i++) {
+      expect(excedeuLimiteLinks(pedidos, agora)).toBe(false);
+      pedidos.push(minutosAtras(i));
+    }
+    expect(pedidos).toHaveLength(3);
+    expect(excedeuLimiteLinks(pedidos, agora)).toBe(true);
+  });
+
+  it("volta a liberar quando os 3 pedidos saem da janela de 1 hora", () => {
+    const pedidos = [minutosAtras(61), minutosAtras(75), minutosAtras(90)];
+    expect(excedeuLimiteLinks(pedidos, agora)).toBe(false);
+  });
+
+  it("ainda bloqueia se um dos 3 pedidos foi feito há 59 minutos", () => {
+    const pedidos = [minutosAtras(59), minutosAtras(30), minutosAtras(1)];
+    expect(excedeuLimiteLinks(pedidos, agora)).toBe(true);
+  });
+
+  it("ignora datas inválidas gravadas na tabela", () => {
+    expect(solicitacoesNaJanela(["", "nao-e-data", minutosAtras(1)], agora)).toBe(1);
   });
 });
 

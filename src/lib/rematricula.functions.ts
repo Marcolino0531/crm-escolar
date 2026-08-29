@@ -1,8 +1,8 @@
 // Server functions do portal PÚBLICO de Rematrícula e do cadastro de Material
 // Pedagógico por Série.
 //
-// Fronteira de confiança: o navegador manda apenas o CPF (para pedir o código) e
-// depois um token de sessão opaco. Aluno, unidade, mensalidade, série e telefone
+// Fronteira de confiança: o navegador manda apenas o CPF (para pedir o link de
+// acesso), o token do link recebido por email e depois um token de sessão opaco. Aluno, unidade, mensalidade, série e telefone
 // do responsável são SEMPRE relidos do Sponte pelo servidor — nada do que o
 // cliente informe é aceito como identidade.
 //
@@ -11,7 +11,7 @@
 // lançamento (InsertPlano + UpdateParcela) na tela interna. Já a correção
 // cadastral (endereço, celular, email) sincroniza na hora, com auditoria.
 
-import { createHash, randomBytes, randomInt } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -21,15 +21,19 @@ import {
   ANO_LETIVO_MAX,
   ANO_LETIVO_MIN,
   CATEGORIA_MATERIAL_SPONTE,
-  DESAFIO_VAZIO,
-  MENSAGEM_CODIGO_ENVIADO,
+  MENSAGEM_LIMITE_LINKS,
+  MENSAGEM_LINK_ENVIADO,
+  MENSAGEM_LINK_INVALIDO,
   MENSAGEM_SESSAO_EXPIRADA,
   anoLetivoValido,
+  assuntoEmailRematricula,
+  corpoEmailRematricula,
   chaveSerie,
   cronogramaMaterialFaseB,
-  expiracaoCodigo,
+  excedeuLimiteLinks,
+  expiracaoLink,
   expiracaoSessao,
-  gerarCodigoVerificacao,
+  inicioJanelaLinks,
   mensalidadeVigente,
   observacaoMaterialSponte,
   opcoesParcelamentoMaterialPrimeira,
@@ -37,9 +41,9 @@ import {
   parcelasMaterialValida,
   primeiraMensalidadeDoAnoLetivo,
   serieDaTurma,
-  validarCodigo,
+  urlLinkRematricula,
+  validarLinkMagico,
   vencimentosMaterialPelasMensalidades,
-  type DesafioCodigo,
   type MensalidadeVigente,
   type ParcelaMaterial,
   type ParcelaMensalidade,
@@ -82,17 +86,22 @@ import {
   resolverCredenciais,
 } from "@/lib/sponte.functions";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
-import { getWhatsAppAuthConfig, sendAuthenticationTemplate } from "@/lib/whatsapp.server";
+import { getResendConfig, sendEmail } from "@/lib/agenda.email";
+import { emailValido } from "@/lib/imposto-renda-lote";
 
 const LOG_TAG = "[rematricula]";
+
+// Endereço público do portal, usado para montar o link do email. Sobrescrevível
+// por env para ambientes de preview.
+const BASE_URL_PORTAL = (process.env.PORTAL_BASE_URL || "https://schoolhubbr.vercel.app").trim();
 
 // O CPF nunca é persistido: só o hash entra nas tabelas do portal.
 function hashCpf(cpfDigitos: string): string {
   return createHash("sha256").update(`rematricula:${cpfDigitos}`).digest("hex");
 }
 
-function hashCodigo(cpfDigitos: string, codigo: string): string {
-  return createHash("sha256").update(`rematricula-codigo:${cpfDigitos}:${codigo}`).digest("hex");
+function hashLink(token: string): string {
+  return createHash("sha256").update(`rematricula-link:${token}`).digest("hex");
 }
 
 function hashToken(token: string): string {
@@ -293,12 +302,13 @@ async function buscarResponsaveis(
   return lista;
 }
 
-// Telefone do responsável financeiro — o MESMO número que a cobrança usa hoje
-// para mandar boleto por WhatsApp (GetResponsavelFinanceiro).
-async function telefoneResponsavelFinanceiro(
+// Email do responsável financeiro — o MESMO destinatário que já recebe a
+// Declaração de IR (GetResponsavelFinanceiro). É para lá que o link de acesso
+// vai; o endereço nunca é devolvido ao navegador.
+async function emailResponsavelFinanceiro(
   unidade: string,
   alunoId: string,
-): Promise<{ nome: string; telefone: string } | null> {
+): Promise<{ nome: string; email: string } | null> {
   const creds = resolverCredenciais(unidade);
   if (!creds) return null;
   try {
@@ -313,12 +323,22 @@ async function telefoneResponsavelFinanceiro(
       parseXmlValue(n, "RetornoOperacao").startsWith("01"),
     );
     if (!node) return null;
-    const telefone = parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone");
-    if (!telefone.trim()) return null;
-    return { nome: parseXmlValue(node, "Nome"), telefone };
+    const email = parseXmlValue(node, "Email").trim();
+    if (!emailValido(email)) return null;
+    return { nome: parseXmlValue(node, "Nome"), email };
   } catch {
     return null;
   }
+}
+
+// Nome do colégio no assunto do email (cadastro de "Dados dos Colégios").
+async function nomeColegioDaUnidade(unidade: string): Promise<string> {
+  const { data } = await supabaseAdmin
+    .from("documentos_colegios" as never)
+    .select("nome_fantasia, razao_social")
+    .eq("unidade", unidade)
+    .maybeSingle<{ nome_fantasia: string; razao_social: string }>();
+  return (data?.nome_fantasia || data?.razao_social || unidade).trim();
 }
 
 // ─── Mensalidade vigente (GetParcelas) ──────────────────────────────────────
@@ -350,166 +370,190 @@ async function buscarMensalidadeVigente(
   return mensalidadeVigente(parcelas, new Date().toISOString());
 }
 
-// ─── Desafio / sessão ───────────────────────────────────────────────────────
+// ─── Link mágico / sessão ───────────────────────────────────────────────────
 
-interface LinhaDesafio {
-  codigo_hash: string;
-  expira_em: string | null;
-  tentativas: number;
-  bloqueado_ate: string | null;
-  consumido_em: string | null;
-  unidade: string;
-  aluno_id: string;
-}
+const SolicitarLinkSchema = z.object({ cpf: z.string().min(1) });
 
-function paraDesafio(linha: LinhaDesafio | null): DesafioCodigo {
-  if (!linha) return DESAFIO_VAZIO;
-  return {
-    codigoHash: linha.codigo_hash,
-    expiraEm: linha.expira_em,
-    tentativas: linha.tentativas,
-    bloqueadoAte: linha.bloqueado_ate,
-    consumidoEm: linha.consumido_em,
-  };
-}
-
-const SolicitarCodigoSchema = z.object({ cpf: z.string().min(1) });
-
-export interface SolicitarCodigoResult {
+export interface SolicitarLinkResult {
   ok: boolean;
   mensagem: string;
 }
 
-// PASSO 1 — pedir o código. A resposta é sempre a MESMA, exista ou não o CPF
-// (aluno sem cadastro, responsável sem telefone e falha de envio devolvem o
-// mesmo texto): o portal é público e não pode servir de consulta de cadastro.
-export const solicitarCodigoRematricula = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => SolicitarCodigoSchema.parse(input))
-  .handler(async ({ data }): Promise<SolicitarCodigoResult> => {
+// PASSO 1 — pedir o link de acesso por email. A resposta é sempre a MESMA,
+// exista ou não o CPF (aluno sem cadastro, responsável sem email cadastrado no
+// Sponte e falha de envio devolvem o mesmo texto): o portal é público e não pode
+// servir de consulta de cadastro. A única resposta diferente é a do rate limit,
+// que vale para qualquer CPF informado e por isso não revela nada.
+export const solicitarLinkRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => SolicitarLinkSchema.parse(input))
+  .handler(async ({ data }): Promise<SolicitarLinkResult> => {
     const cpf = normalizarCpf(data.cpf);
     if (!cpfValido(cpf)) {
       return { ok: false, mensagem: "Informe os 11 dígitos do CPF do aluno." };
     }
 
-    const generico: SolicitarCodigoResult = { ok: true, mensagem: MENSAGEM_CODIGO_ENVIADO };
+    const generico: SolicitarLinkResult = { ok: true, mensagem: MENSAGEM_LINK_ENVIADO };
     const cpfHash = hashCpf(cpf);
     const agora = new Date().toISOString();
 
-    const aluno = await buscarAlunoPorCpf(cpf);
-    if (!aluno) {
-      console.warn(`${LOG_TAG} pedido de código sem aluno correspondente (cpf_hash ${cpfHash}).`);
-      return generico;
+    // Rate limit ANTES de qualquer consulta ao Sponte: 3 pedidos por CPF por
+    // hora, contando também os CPFs sem aluno correspondente.
+    const { data: pedidos } = await supabaseAdmin
+      .from("rematricula_link_pedidos" as never)
+      .select("criado_em")
+      .eq("cpf_hash", cpfHash)
+      .gte("criado_em", inicioJanelaLinks(agora))
+      .returns<{ criado_em: string }[]>();
+    if (
+      excedeuLimiteLinks(
+        (pedidos ?? []).map((p) => p.criado_em),
+        agora,
+      )
+    ) {
+      return { ok: false, mensagem: MENSAGEM_LIMITE_LINKS };
     }
+    await supabaseAdmin
+      .from("rematricula_link_pedidos" as never)
+      .insert({ cpf_hash: cpfHash, criado_em: agora } as never);
 
-    const responsavel = await telefoneResponsavelFinanceiro(aluno.unidade, aluno.alunoId);
-    if (!responsavel) {
-      console.warn(
-        `${LOG_TAG} aluno ${aluno.alunoId} (${aluno.unidade}) sem telefone de responsável financeiro no Sponte.`,
-      );
-      return generico;
-    }
-
-    const cfg = getWhatsAppAuthConfig();
+    const cfg = getResendConfig();
     if (!cfg) {
       console.error(
-        `${LOG_TAG} template de autenticação não configurado (WHATSAPP_TEMPLATE_AUTENTICACAO_NAME); nenhum código enviado.`,
+        `${LOG_TAG} envio de email não configurado (RESEND_API_KEY/RESEND_FROM); nenhum link enviado.`,
       );
       return generico;
     }
 
-    // randomInt é criptográfico; o código em texto claro não é gravado nem logado.
-    const codigo = gerarCodigoVerificacao(randomInt(0, 1_000_000) / 1_000_000);
-
-    const { error: erroGrava } = await supabaseAdmin.from("rematricula_codigos" as never).upsert(
-      {
-        cpf_hash: cpfHash,
-        codigo_hash: hashCodigo(cpf, codigo),
-        expira_em: expiracaoCodigo(agora),
-        tentativas: 0,
-        bloqueado_ate: null,
-        consumido_em: null,
-        unidade: aluno.unidade,
-        aluno_id: aluno.alunoId,
-        enviado_em: agora,
-        updated_at: agora,
-      } as never,
-      { onConflict: "cpf_hash" },
-    );
-    if (erroGrava) {
-      console.error(`${LOG_TAG} falha ao registrar o desafio: ${erroGrava.message}`);
+    const aluno = await buscarAlunoPorCpf(cpf);
+    if (!aluno) {
+      console.warn(`${LOG_TAG} pedido de link sem aluno correspondente (cpf_hash ${cpfHash}).`);
       return generico;
     }
 
+    const responsavel = await emailResponsavelFinanceiro(aluno.unidade, aluno.alunoId);
+    if (!responsavel) {
+      console.warn(
+        `${LOG_TAG} aluno ${aluno.alunoId} (${aluno.unidade}) sem email de responsável financeiro no Sponte.`,
+      );
+      return generico;
+    }
+
+    // randomBytes é criptográfico; o token em texto claro só vai para a URL do
+    // email — o banco guarda apenas o hash.
+    const token = randomBytes(32).toString("hex");
+    const { error: erroGrava } = await supabaseAdmin.from("rematricula_links" as never).insert({
+      token_hash: hashLink(token),
+      cpf_hash: cpfHash,
+      unidade: aluno.unidade,
+      aluno_id: aluno.alunoId,
+      criado_em: agora,
+      expira_em: expiracaoLink(agora),
+      usado_em: null,
+    } as never);
+    if (erroGrava) {
+      console.error(`${LOG_TAG} falha ao registrar o link: ${erroGrava.message}`);
+      return generico;
+    }
+
+    const nomeColegio = await nomeColegioDaUnidade(aluno.unidade);
+    const corpo = corpoEmailRematricula({
+      responsavelNome: responsavel.nome,
+      alunoNome: aluno.nome,
+      nomeColegio,
+      url: urlLinkRematricula(BASE_URL_PORTAL, token),
+    });
     try {
-      await sendAuthenticationTemplate(cfg, responsavel.telefone, codigo);
+      await sendEmail(cfg, {
+        to: [responsavel.email],
+        subject: assuntoEmailRematricula(nomeColegio),
+        html: corpo.html,
+        text: corpo.text,
+      });
     } catch (e) {
       console.error(
-        `${LOG_TAG} falha ao enviar o código para o aluno ${aluno.alunoId}: ${
+        `${LOG_TAG} falha ao enviar o link para o aluno ${aluno.alunoId}: ${
           e instanceof Error ? e.message : "erro desconhecido"
         }`,
       );
     }
+
+    // Faxina oportunista dos links vencidos e dos pedidos fora da janela.
+    await supabaseAdmin
+      .from("rematricula_links" as never)
+      .delete()
+      .lt("expira_em", agora);
+    await supabaseAdmin
+      .from("rematricula_link_pedidos" as never)
+      .delete()
+      .lt("criado_em", inicioJanelaLinks(agora));
+
     return generico;
   });
 
-const ValidarCodigoSchema = z.object({
-  cpf: z.string().min(1),
-  codigo: z.string().min(1),
-});
+const ValidarLinkSchema = z.object({ token: z.string().min(16) });
 
-export interface ValidarCodigoResult {
+export interface ValidarLinkResult {
   ok: boolean;
   token?: string;
   expiraEm?: string;
   erro?: string;
 }
 
-// PASSO 2 — validar o código e abrir a sessão temporária. Expiração de 10
-// minutos e bloqueio na 3ª tentativa errada são decididos no servidor.
-export const validarCodigoRematricula = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => ValidarCodigoSchema.parse(input))
-  .handler(async ({ data }): Promise<ValidarCodigoResult> => {
-    const cpf = normalizarCpf(data.cpf);
-    const codigo = data.codigo.replace(/\D/g, "");
-    if (!cpfValido(cpf)) return { ok: false, erro: "Informe os 11 dígitos do CPF do aluno." };
-
-    const cpfHash = hashCpf(cpf);
+// PASSO 2 — abrir o link recebido no email e criar a sessão temporária. O link é
+// de USO ÚNICO: a marcação de `usado_em` é condicionada a `usado_em IS NULL`, de
+// modo que dois cliques simultâneos só produzem uma sessão.
+export const validarLinkRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => ValidarLinkSchema.parse(input))
+  .handler(async ({ data }): Promise<ValidarLinkResult> => {
     const agora = new Date().toISOString();
+    const linkHash = hashLink(data.token);
 
     const { data: linha } = await supabaseAdmin
-      .from("rematricula_codigos" as never)
-      .select("codigo_hash, expira_em, tentativas, bloqueado_ate, consumido_em, unidade, aluno_id")
-      .eq("cpf_hash", cpfHash)
-      .maybeSingle<LinhaDesafio>();
+      .from("rematricula_links" as never)
+      .select("expira_em, usado_em, unidade, aluno_id, cpf_hash")
+      .eq("token_hash", linkHash)
+      .maybeSingle<{
+        expira_em: string | null;
+        usado_em: string | null;
+        unidade: string;
+        aluno_id: string;
+        cpf_hash: string;
+      }>();
 
-    const desafio = paraDesafio(linha ?? null);
-    const resultado = validarCodigo(desafio, hashCodigo(cpf, codigo), agora);
-
-    if (resultado.proximo !== desafio && linha) {
-      await supabaseAdmin
-        .from("rematricula_codigos" as never)
-        .update({
-          tentativas: resultado.proximo.tentativas,
-          bloqueado_ate: resultado.proximo.bloqueadoAte,
-          consumido_em: resultado.proximo.consumidoEm,
-          updated_at: agora,
-        } as never)
-        .eq("cpf_hash", cpfHash);
+    const resultado = validarLinkMagico(
+      linha ? { expiraEm: linha.expira_em, usadoEm: linha.usado_em } : null,
+      agora,
+    );
+    if (!resultado.ok || !linha) {
+      return { ok: false, erro: resultado.mensagem ?? MENSAGEM_LINK_INVALIDO };
     }
 
-    if (!resultado.ok || !linha) return { ok: false, erro: resultado.mensagem };
+    const { data: queimado } = await supabaseAdmin
+      .from("rematricula_links" as never)
+      .update({ usado_em: agora } as never)
+      .eq("token_hash", linkHash)
+      .is("usado_em", null)
+      .select("token_hash")
+      .maybeSingle<{ token_hash: string }>();
+    if (!queimado) return { ok: false, erro: MENSAGEM_LINK_INVALIDO };
 
     const token = randomBytes(32).toString("hex");
     const expiraEm = expiracaoSessao(agora);
     const { error } = await supabaseAdmin.from("rematricula_sessoes" as never).insert({
       token_hash: hashToken(token),
-      cpf_hash: cpfHash,
+      cpf_hash: linha.cpf_hash,
       unidade: linha.unidade,
       aluno_id: linha.aluno_id,
       expira_em: expiraEm,
     } as never);
     if (error) {
       console.error(`${LOG_TAG} falha ao criar a sessão: ${error.message}`);
+      // Devolve o link ao estado não usado: sem isso o responsável ficaria sem
+      // sessão E sem link, gastando um dos 3 pedidos da hora por uma falha nossa.
+      await supabaseAdmin
+        .from("rematricula_links" as never)
+        .update({ usado_em: null } as never)
+        .eq("token_hash", linkHash);
       return { ok: false, erro: "Não foi possível abrir a sessão. Tente novamente." };
     }
 

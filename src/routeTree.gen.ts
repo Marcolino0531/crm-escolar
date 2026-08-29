@@ -39,6 +39,7 @@ import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RematriculaVerificarRouteImport } from './routes/rematricula_.verificar'
 
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
@@ -191,6 +192,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RematriculaVerificarRoute = RematriculaVerificarRouteImport.update({
+  id: '/rematricula_/verificar',
+  path: '/rematricula/verificar',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -223,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula/verificar': typeof RematriculaVerificarRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -255,6 +262,7 @@ export interface FileRoutesByTo {
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula/verificar': typeof RematriculaVerificarRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -288,6 +296,7 @@ export interface FileRoutesById {
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula_/verificar': typeof RematriculaVerificarRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -322,6 +331,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula/verificar'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -354,6 +364,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula/verificar'
   id:
     | '__root__'
     | '/'
@@ -386,6 +397,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula_/verificar'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -419,6 +431,7 @@ export interface RootRouteChildren {
   TasksRoute: typeof TasksRoute
   UniformesRoute: typeof UniformesRoute
   UploadRoute: typeof UploadRoute
+  RematriculaVerificarRoute: typeof RematriculaVerificarRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -633,6 +646,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rematricula_/verificar': {
+      id: '/rematricula_/verificar'
+      path: '/rematricula/verificar'
+      fullPath: '/rematricula/verificar'
+      preLoaderRoute: typeof RematriculaVerificarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -667,6 +687,7 @@ const rootRouteChildren: RootRouteChildren = {
   TasksRoute: TasksRoute,
   UniformesRoute: UniformesRoute,
   UploadRoute: UploadRoute,
+  RematriculaVerificarRoute: RematriculaVerificarRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
