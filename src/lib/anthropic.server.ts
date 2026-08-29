@@ -84,8 +84,17 @@ function classificarStatus(status: number, corpo: string): MotivoFalhaIA {
 
 type CorpoResposta = {
   model?: string;
-  content?: { type?: string; text?: string }[];
+  content?: BlocoResposta[];
+  stop_reason?: string;
   usage?: { input_tokens?: number; output_tokens?: number };
+};
+
+type BlocoResposta = {
+  type?: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
 };
 
 // Extrai o texto dos blocos de conteúdo da resposta. A API devolve uma lista de
@@ -100,10 +109,10 @@ function textoDosBlocos(corpo: CorpoResposta): string {
     .trim();
 }
 
-export async function gerarMensagemIA(
+async function chamarMessages(
   cfg: AnthropicConfig,
-  input: { system: string; mensagens: MensagemAnthropic[] },
-): Promise<RespostaAnthropic> {
+  corpo: Record<string, unknown>,
+): Promise<CorpoResposta> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -111,12 +120,7 @@ export async function gerarMensagemIA(
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    body: JSON.stringify({
-      model: cfg.modelo,
-      max_tokens: MAX_TOKENS_RESPOSTA,
-      system: input.system,
-      messages: input.mensagens,
-    }),
+    body: JSON.stringify(corpo),
   });
 
   const bodyText = await res.text();
@@ -128,18 +132,90 @@ export async function gerarMensagemIA(
     );
   }
 
-  let corpo: CorpoResposta;
   try {
-    corpo = JSON.parse(bodyText) as CorpoResposta;
+    return JSON.parse(bodyText) as CorpoResposta;
   } catch {
     throw new ErroIA("desconhecido", `Resposta não-JSON da Anthropic: ${bodyText.slice(0, 300)}`);
   }
+}
+
+export async function gerarMensagemIA(
+  cfg: AnthropicConfig,
+  input: { system: string; mensagens: MensagemAnthropic[] },
+): Promise<RespostaAnthropic> {
+  const corpo = await chamarMessages(cfg, {
+    model: cfg.modelo,
+    max_tokens: MAX_TOKENS_RESPOSTA,
+    system: input.system,
+    messages: input.mensagens,
+  });
 
   const texto = textoDosBlocos(corpo);
-  if (!texto) throw new ErroIA("resposta_vazia", bodyText.slice(0, 300));
+  if (!texto) throw new ErroIA("resposta_vazia", JSON.stringify(corpo).slice(0, 300));
 
   return {
     texto,
+    modelo: corpo.model ?? cfg.modelo,
+    tokensEntrada: corpo.usage?.input_tokens ?? 0,
+    tokensSaida: corpo.usage?.output_tokens ?? 0,
+  };
+}
+
+// ─── Tool calling ────────────────────────────────────────────────────────────
+//
+// A lista de ferramentas é sempre montada pelo servidor (nunca pela entrada do
+// usuário) e o modelo só devolve NOME + ARGUMENTOS: quem executa a consulta é o
+// chamador, depois de validar o nome contra a sua allowlist.
+
+export type FerramentaAnthropic = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+};
+
+export type UsoFerramenta = { id: string; nome: string; args: unknown };
+
+// Blocos aceitos no histórico enviado de volta à API: texto do usuário, os
+// blocos crus do turno do assistente e o resultado de cada ferramenta.
+export type ConteudoMensagem = string | Record<string, unknown>[];
+export type MensagemComFerramentas = { role: "user" | "assistant"; content: ConteudoMensagem };
+
+export type RespostaComFerramentas = {
+  texto: string;
+  usos: UsoFerramenta[];
+  // Blocos crus do turno do assistente, para reenviar no próximo round.
+  blocosAssistente: Record<string, unknown>[];
+  modelo: string;
+  tokensEntrada: number;
+  tokensSaida: number;
+};
+
+export async function gerarComFerramentas(
+  cfg: AnthropicConfig,
+  input: {
+    system: string;
+    mensagens: MensagemComFerramentas[];
+    ferramentas: FerramentaAnthropic[];
+    maxTokens?: number;
+  },
+): Promise<RespostaComFerramentas> {
+  const corpo = await chamarMessages(cfg, {
+    model: cfg.modelo,
+    max_tokens: input.maxTokens ?? MAX_TOKENS_RESPOSTA,
+    system: input.system,
+    messages: input.mensagens,
+    tools: input.ferramentas,
+  });
+
+  const blocos = Array.isArray(corpo.content) ? corpo.content : [];
+  const usos: UsoFerramenta[] = blocos
+    .filter((b) => b?.type === "tool_use" && typeof b.name === "string" && typeof b.id === "string")
+    .map((b) => ({ id: b.id as string, nome: b.name as string, args: b.input }));
+
+  return {
+    texto: textoDosBlocos(corpo),
+    usos,
+    blocosAssistente: blocos as Record<string, unknown>[],
     modelo: corpo.model ?? cfg.modelo,
     tokensEntrada: corpo.usage?.input_tokens ?? 0,
     tokensSaida: corpo.usage?.output_tokens ?? 0,

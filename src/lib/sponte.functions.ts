@@ -1525,7 +1525,7 @@ const InputSchema = z.object({
 // pendência. Reutilizado tanto pela visão mensal (fetchSponteInadimplencia)
 // quanto pela acumulada anual (fetchSponteInadimplenciaAnual). Retorna apenas
 // as pendências (ou error/indisponivel); cada chamador monta seu próprio meta.
-async function coletarInadimplenciaPorEscopo(
+export async function coletarInadimplenciaPorEscopo(
   unidadeKey: string | null,
   inicioYMD: string,
   fimYMD: string,
