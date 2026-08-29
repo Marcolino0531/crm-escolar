@@ -32,6 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedagogicoSeries";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
@@ -42,6 +44,7 @@ import {
   filtrarPorStatus,
   montarLinhasAcompanhamento,
   ordenarAcompanhamento,
+  turmasAcompanhamento,
   type LinhaAcompanhamento,
   type StatusAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
@@ -227,6 +230,7 @@ function RematriculaAcompanhamentoPage() {
   const [busca, setBusca] = useState("");
   const [filtroUnidade, setFiltroUnidade] = useState<string>("todas");
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusAcompanhamento>("todos");
+  const [filtroTurma, setFiltroTurma] = useState<string>("todas");
   const [revisando, setRevisando] = useState<LinhaAcompanhamento | null>(null);
 
   // Isolamento por unidade: com uma unidade selecionada no topo só ela é
@@ -263,16 +267,22 @@ function RematriculaAcompanhamentoPage() {
 
   // Base dos cards: mesma coleção da tabela antes do filtro de status, para os
   // contadores nunca contradizerem o que a secretaria vê ao filtrar.
-  const base = useMemo(
+  // As turmas oferecidas no filtro saem das linhas já restritas à unidade; se a
+  // turma escolhida não pertence mais à unidade atual, o filtro volta a "todas".
+  const daUnidade = useMemo(
     () =>
-      ordenarAcompanhamento(
-        filtrarAcompanhamento(linhas, {
-          unidade: filtroUnidade === "todas" ? unidadeAtiva : filtroUnidade,
-          unidadesPermitidas: schools.map((s) => s.name),
-          busca,
-        }),
-      ),
-    [linhas, filtroUnidade, unidadeAtiva, schools, busca],
+      filtrarAcompanhamento(linhas, {
+        unidade: filtroUnidade === "todas" ? unidadeAtiva : filtroUnidade,
+        unidadesPermitidas: schools.map((s) => s.name),
+      }),
+    [linhas, filtroUnidade, unidadeAtiva, schools],
+  );
+  const turmas = useMemo(() => turmasAcompanhamento(daUnidade), [daUnidade]);
+  const turmaAtiva = filtroTurma !== "todas" && turmas.includes(filtroTurma) ? filtroTurma : null;
+
+  const base = useMemo(
+    () => ordenarAcompanhamento(filtrarAcompanhamento(daUnidade, { turma: turmaAtiva, busca })),
+    [daUnidade, turmaAtiva, busca],
   );
 
   const cards = useMemo(() => contadoresAcompanhamento(base), [base]);
@@ -294,136 +304,166 @@ function RematriculaAcompanhamentoPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">Alunos ativos</p>
-          <p className="text-2xl font-semibold">{cards.total}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">Já responderam</p>
-          <p className="text-2xl font-semibold">{cards.responderam}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">Ainda não responderam</p>
-          <p className="text-2xl font-semibold">{cards.naoResponderam}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs text-muted-foreground">Aguardando aprovação</p>
-          <p className="text-2xl font-semibold">{cards.aguardandoAprovacao}</p>
-        </div>
-      </div>
+      <Tabs defaultValue="alunos">
+        <TabsList>
+          <TabsTrigger value="alunos">Alunos</TabsTrigger>
+          <TabsTrigger value="material">Material Pedagógico por Série</TabsTrigger>
+        </TabsList>
 
-      {erros && (
-        <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          {erros}
-        </p>
-      )}
+        <TabsContent value="alunos" className="mt-4 space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground">Alunos ativos</p>
+              <p className="text-2xl font-semibold">{cards.total}</p>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground">Já responderam</p>
+              <p className="text-2xl font-semibold">{cards.responderam}</p>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground">Ainda não responderam</p>
+              <p className="text-2xl font-semibold">{cards.naoResponderam}</p>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground">Aguardando aprovação</p>
+              <p className="text-2xl font-semibold">{cards.aguardandoAprovacao}</p>
+            </div>
+          </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder="Buscar por aluno"
-          className="max-w-xs"
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-        />
-        <Select value={filtroUnidade} onValueChange={setFiltroUnidade}>
-          <SelectTrigger className="w-56">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todas">Todas as unidades</SelectItem>
-            {unidades.map((u) => (
-              <SelectItem key={u} value={u}>
-                {u}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={filtroStatus}
-          onValueChange={(v) => setFiltroStatus(v as "todos" | StatusAcompanhamento)}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos os status</SelectItem>
-            <SelectItem value="nao_iniciado">{STATUS_ACOMPANHAMENTO_LABEL.nao_iniciado}</SelectItem>
-            <SelectItem value="em_andamento">{STATUS_ACOMPANHAMENTO_LABEL.em_andamento}</SelectItem>
-            <SelectItem value="aguardando_aprovacao">
-              {STATUS_ACOMPANHAMENTO_LABEL.aguardando_aprovacao}
-            </SelectItem>
-            <SelectItem value="rematriculado">
-              {STATUS_ACOMPANHAMENTO_LABEL.rematriculado}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+          {erros && (
+            <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {erros}
+            </p>
+          )}
 
-      {carregando ? (
-        <Skeleton className="h-64 w-full" />
-      ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Aluno</TableHead>
-                <TableHead>Unidade</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Última atualização</TableHead>
-                <TableHead>Parcelamento</TableHead>
-                <TableHead>Dados cadastrais</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visiveis.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
-                    Nenhum aluno encontrado.
-                  </TableCell>
-                </TableRow>
-              )}
-              {visiveis.map((l) => (
-                <TableRow key={`${l.unidade}-${l.alunoId}`}>
-                  <TableCell>
-                    <p className="font-medium">{l.nome}</p>
-                    {l.turma && <p className="text-xs text-muted-foreground">{l.turma}</p>}
-                  </TableCell>
-                  <TableCell>{l.unidade}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className={CORES_STATUS[l.status]}>
-                      {STATUS_ACOMPANHAMENTO_LABEL[l.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {formatarDataHora(l.atualizadoEm)}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{l.parcelamento || "—"}</TableCell>
-                  <TableCell>
-                    {l.cadastroAlterado ? (
-                      <span className="flex items-center gap-1 text-sm text-blue-800">
-                        <PencilLine className="h-4 w-4 shrink-0" />
-                        Alterados
-                      </span>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Sem alteração</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {podeEditar && l.status === "aguardando_aprovacao" && (
-                      <Button size="sm" variant="outline" onClick={() => setRevisando(l)}>
-                        Revisar e Aprovar
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              placeholder="Buscar por aluno"
+              className="max-w-xs"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+            />
+            <Select value={filtroUnidade} onValueChange={setFiltroUnidade}>
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as unidades</SelectItem>
+                {unidades.map((u) => (
+                  <SelectItem key={u} value={u}>
+                    {u}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={turmaAtiva ?? "todas"} onValueChange={setFiltroTurma}>
+              <SelectTrigger className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as turmas</SelectItem>
+                {turmas.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={filtroStatus}
+              onValueChange={(v) => setFiltroStatus(v as "todos" | StatusAcompanhamento)}
+            >
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os status</SelectItem>
+                <SelectItem value="nao_iniciado">
+                  {STATUS_ACOMPANHAMENTO_LABEL.nao_iniciado}
+                </SelectItem>
+                <SelectItem value="em_andamento">
+                  {STATUS_ACOMPANHAMENTO_LABEL.em_andamento}
+                </SelectItem>
+                <SelectItem value="aguardando_aprovacao">
+                  {STATUS_ACOMPANHAMENTO_LABEL.aguardando_aprovacao}
+                </SelectItem>
+                <SelectItem value="rematriculado">
+                  {STATUS_ACOMPANHAMENTO_LABEL.rematriculado}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {carregando ? (
+            <Skeleton className="h-64 w-full" />
+          ) : (
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Aluno</TableHead>
+                    <TableHead>Unidade</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Última atualização</TableHead>
+                    <TableHead>Parcelamento</TableHead>
+                    <TableHead>Dados cadastrais</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visiveis.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                        Nenhum aluno encontrado.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {visiveis.map((l) => (
+                    <TableRow key={`${l.unidade}-${l.alunoId}`}>
+                      <TableCell>
+                        <p className="font-medium">{l.nome}</p>
+                        {l.turma && <p className="text-xs text-muted-foreground">{l.turma}</p>}
+                      </TableCell>
+                      <TableCell>{l.unidade}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className={CORES_STATUS[l.status]}>
+                          {STATUS_ACOMPANHAMENTO_LABEL[l.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {formatarDataHora(l.atualizadoEm)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{l.parcelamento || "—"}</TableCell>
+                      <TableCell>
+                        {l.cadastroAlterado ? (
+                          <span className="flex items-center gap-1 text-sm text-blue-800">
+                            <PencilLine className="h-4 w-4 shrink-0" />
+                            Alterados
+                          </span>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Sem alteração</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {podeEditar && l.status === "aguardando_aprovacao" && (
+                          <Button size="sm" variant="outline" onClick={() => setRevisando(l)}>
+                            Revisar e Aprovar
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="material" className="mt-4">
+          <MaterialPedagogicoSeries podeEditar={podeEditar} />
+        </TabsContent>
+      </Tabs>
 
       {revisando && <DialogoRevisao linha={revisando} onFechar={() => setRevisando(null)} />}
     </div>

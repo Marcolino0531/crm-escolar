@@ -23,7 +23,6 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  BookOpen,
   Building2,
   Users,
   ShieldCheck,
@@ -39,7 +38,6 @@ import {
 } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { DadosColegios } from "@/components/documentos/DadosColegios";
-import { MaterialPedagogicoSeries } from "@/components/configuracoes/MaterialPedagogicoSeries";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listManagedUsers,
@@ -84,10 +82,6 @@ function SettingsPage() {
               Dados dos Colégios
             </TabsTrigger>
           )}
-          <TabsTrigger value="material">
-            <BookOpen className="h-3.5 w-3.5 mr-1" />
-            Material Pedagógico por Série
-          </TabsTrigger>
           {isAdmin && (
             <TabsTrigger value="users">
               <Users className="h-3.5 w-3.5 mr-1" />
@@ -109,9 +103,6 @@ function SettingsPage() {
             <DadosColegios podeEditar={canEdit("documentos")} />
           </TabsContent>
         )}
-        <TabsContent value="material" className="mt-4">
-          <MaterialPedagogicoSeries podeEditar={podeEditar} />
-        </TabsContent>
         {isAdmin && (
           <TabsContent value="users" className="mt-4">
             <UserManagement />

@@ -152,20 +152,34 @@ export function montarLinhasAcompanhamento(entrada: {
   });
 }
 
-// Só a unidade e a busca por nome afetam a coleção que gera os cards; o filtro
+// Unidade, turma e busca por nome afetam a coleção que gera os cards; o filtro
 // de status é aplicado depois, sobre ela.
 export function filtrarAcompanhamento(
   linhas: readonly LinhaAcompanhamento[],
-  filtros: { unidade?: string | null; unidadesPermitidas?: readonly string[]; busca?: string },
+  filtros: {
+    unidade?: string | null;
+    unidadesPermitidas?: readonly string[];
+    turma?: string | null;
+    busca?: string;
+  },
 ): LinhaAcompanhamento[] {
   const termo = (filtros.busca ?? "").trim().toLowerCase();
   const permitidas = filtros.unidadesPermitidas ? new Set(filtros.unidadesPermitidas) : null;
   return linhas.filter((l) => {
     if (filtros.unidade ? l.unidade !== filtros.unidade : permitidas && !permitidas.has(l.unidade))
       return false;
+    if (filtros.turma && l.turma !== filtros.turma) return false;
     if (!termo) return true;
     return l.nome.toLowerCase().includes(termo);
   });
+}
+
+// Opções do filtro de Turma: saem das próprias linhas já restritas à unidade,
+// para nunca oferecer turma de outra unidade.
+export function turmasAcompanhamento(linhas: readonly LinhaAcompanhamento[]): string[] {
+  const turmas = new Set<string>();
+  for (const l of linhas) if (l.turma) turmas.add(l.turma);
+  return [...turmas].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }
 
 export function filtrarPorStatus(
