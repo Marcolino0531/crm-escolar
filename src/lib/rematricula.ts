@@ -299,6 +299,25 @@ export function parcelasMaterialLancamento(
   return itens;
 }
 
+// Move a sobra de centavos da última parcela para a primeira, replicando o
+// "Lançar valor diferenciado para a 1ª parcela" da tela nativa do Sponte
+// (R$ 1.000,00 em 3x → 333,34 + 333,33 + 333,33). Com `naPrimeira` falso o
+// cronograma volta inalterado (sobra na última).
+export function concentrarDiferenca(
+  itens: ParcelaMaterial[],
+  naPrimeira: boolean,
+): ParcelaMaterial[] {
+  if (!naPrimeira || itens.length < 2) return itens;
+  const centavos = itens.map((p) => Math.round(p.valor * 100));
+  const base = centavos[0];
+  const sobra = centavos[centavos.length - 1] - base;
+  if (sobra === 0) return itens;
+  return itens.map((p, i) => ({
+    ...p,
+    valor: (i === 0 ? base + sobra : base) / 100,
+  }));
+}
+
 // ─── Mensalidade vigente e desconto ─────────────────────────────────────────
 
 // Parcela do Sponte reduzida ao que interessa aqui (GetParcelas/wsParcela).

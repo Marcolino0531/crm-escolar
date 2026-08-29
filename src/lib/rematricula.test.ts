@@ -6,6 +6,7 @@ import {
   MENSAGEM_CODIGO_EXPIRADO,
   MENSAGEM_CODIGO_INCORRETO,
   chaveSerie,
+  concentrarDiferenca,
   codigoFormatoValido,
   expiracaoCodigo,
   gerarCodigoVerificacao,
@@ -276,6 +277,23 @@ describe("cronograma das parcelas do material", () => {
     // Mesmo dia da mensalidade do aluno: não é reajustado pela regra de dia útil.
     const itens = parcelasMaterialLancamento(800, 2, "2026-02-14");
     expect(itens[0].vencimento).toBe("2026-02-14");
+  });
+
+  it("concentra a sobra de centavos na primeira parcela, como a tela nativa", () => {
+    const itens = concentrarDiferenca(parcelasMaterialLancamento(1000, 3, "2026-02-10"), true);
+    expect(itens.map((p) => p.valor)).toEqual([333.34, 333.33, 333.33]);
+    expect(itens.reduce((acc, p) => acc + Math.round(p.valor * 100), 0)).toBe(100000);
+    expect(itens.map((p) => p.vencimento)).toEqual(["2026-02-10", "2026-03-10", "2026-04-10"]);
+  });
+
+  it("não muda nada quando a divisão é exata ou a sobra fica na última", () => {
+    const exato = parcelasMaterialLancamento(1000, 8, "2026-02-10");
+    expect(concentrarDiferenca(exato, true)).toEqual(exato);
+    const inexato = parcelasMaterialLancamento(800.05, 8, "2026-02-10");
+    expect(concentrarDiferenca(inexato, false)).toEqual(inexato);
+    expect(concentrarDiferenca(inexato, true).map((p) => p.valor)).toEqual([
+      100.05, 100, 100, 100, 100, 100, 100, 100,
+    ]);
   });
 
   it("recusa parcelamento fora de 1 a 8 e data inválida", () => {
