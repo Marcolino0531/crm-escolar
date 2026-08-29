@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CATEGORIA_CANTINA_SPONTE, observacaoRecargaSponte, vencimentoRecarga } from "./cantina";
-import { contaReceberCriada, montarParametrosInsertPlano } from "./sponte-plano";
+import {
+  contaReceberCriada,
+  montarParametrosInsertPlano,
+  montarParametrosUpdateParcela,
+} from "./sponte-plano";
 
 function tag(xml: string, nome: string): string {
   return xml.match(new RegExp(`<${nome}>([^<]*)</${nome}>`))?.[1] ?? "";
@@ -70,6 +74,45 @@ describe("conta a receber da recarga da cantina (InsertPlano)", () => {
     expect(tag(xml, "nBolsaID")).toBe("0");
     expect(tag(xml, "nContaID")).toBe("0");
     expect(tag(xml, "nTipoPlano")).toBe("1");
+  });
+});
+
+describe("ajuste de parcela existente (UpdateParcela)", () => {
+  // O serviço do Sponte quebra com erro de referência nula quando um dos campos
+  // "opcionais" do WSDL não vem na requisição: a parcela vai inteira, com o
+  // valor atual repetido no que não está sendo alterado.
+  const xml = montarParametrosUpdateParcela({
+    contaReceberId: "12848",
+    numeroParcela: 8,
+    valor: 100.05,
+    vencimento: "2027-04-08",
+    formaCobrancaId: -4,
+    categoriaId: 777,
+    observacao: "HOMOLOG",
+  });
+
+  it("envia a parcela completa (nenhum campo omitido)", () => {
+    for (const campo of [
+      "nContaReceberID",
+      "nNumeroParcela",
+      "nBolsaID",
+      "dDataVencimento",
+      "nValor",
+      "nFormaCobrancaID",
+      "nCategoriaID",
+      "sObservacao",
+    ]) {
+      expect(xml).toContain(`<${campo}>`);
+    }
+  });
+
+  it("mantém os centavos do valor e o formato de data do Sponte", () => {
+    expect(tag(xml, "nValor")).toBe("100.05");
+    expect(tag(xml, "dDataVencimento")).toBe("2027-04-08T00:00:00");
+    expect(tag(xml, "nContaReceberID")).toBe("12848");
+    expect(tag(xml, "nNumeroParcela")).toBe("8");
+    expect(tag(xml, "nCategoriaID")).toBe("777");
+    expect(tag(xml, "nFormaCobrancaID")).toBe("-4");
   });
 });
 

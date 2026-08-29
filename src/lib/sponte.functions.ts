@@ -2781,13 +2781,19 @@ export async function inserirPlanoSponte(
 // Ajuste de UMA parcela de um título já criado. Existe porque o InsertPlano
 // aplica o MESMO valor a todas as parcelas: a diferença de centavos da divisão
 // inexata é jogada na última parcela por aqui.
+// O Sponte exige a parcela INTEIRA na atualização (valor, vencimento, forma,
+// categoria e observação): campos ausentes derrubam o serviço com erro de
+// referência nula. Por isso `valor`, `vencimento` e `categoria` são
+// obrigatórios — quem chama reenvia o valor atual do que não está mudando.
 export interface AtualizarParcelaSponteParams {
   unidade: string;
   contaReceberId: string;
   numeroParcela: number;
-  valor?: number;
-  vencimento?: string; // YYYY-MM-DD
-  observacao?: string;
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+  categoria: string;
+  observacao: string;
+  logTag?: string;
 }
 
 export async function atualizarParcelaSponte(
@@ -2796,11 +2802,34 @@ export async function atualizarParcelaSponte(
   const creds = resolverCredenciais(p.unidade);
   if (!creds) return { ok: false, indisponivel: true };
 
+  const logTag = p.logTag ?? "[sponte-update-parcela]";
+  let forma: BuscaSponte;
+  let categoria: BuscaSponte;
+  try {
+    [forma, categoria] = await Promise.all([
+      buscarFormaCobranca(FORMA_COBRANCA_BANCARIA, creds.codigoCliente, creds.token, logTag),
+      buscarCategoria(p.categoria, creds.codigoCliente, creds.token, logTag),
+    ]);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
+  }
+  if (!forma.match) {
+    return {
+      ok: false,
+      error: `Forma de cobrança "${FORMA_COBRANCA_BANCARIA}" não encontrada no Sponte.`,
+    };
+  }
+  if (!categoria.match) {
+    return { ok: false, error: `Categoria "${p.categoria}" não encontrada no Sponte.` };
+  }
+
   const extra = montarParametrosUpdateParcela({
     contaReceberId: p.contaReceberId,
     numeroParcela: p.numeroParcela,
     valor: p.valor,
     vencimento: p.vencimento,
+    formaCobrancaId: forma.match.id,
+    categoriaId: categoria.match.id,
     observacao: p.observacao,
   });
 
