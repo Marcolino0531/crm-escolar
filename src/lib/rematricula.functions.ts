@@ -34,6 +34,8 @@ import {
   expiracaoLink,
   expiracaoSessao,
   inicioJanelaLinks,
+  mascararEmail,
+  mensagemLinkEnviadoPara,
   mensalidadeVigente,
   observacaoMaterialSponte,
   opcoesParcelamentoMaterialPrimeira,
@@ -456,11 +458,13 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
     }
 
     const nomeColegio = await nomeColegioDaUnidade(aluno.unidade);
+    const emailMascarado = mascararEmail(responsavel.email);
     const corpo = corpoEmailRematricula({
       responsavelNome: responsavel.nome,
       alunoNome: aluno.nome,
       nomeColegio,
       url: urlLinkRematricula(BASE_URL_PORTAL, token),
+      emailMascarado,
     });
     try {
       await sendEmail(cfg, {
@@ -487,7 +491,9 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
       .delete()
       .lt("criado_em", inicioJanelaLinks(agora));
 
-    return generico;
+    // Único ponto em que a resposta deixa de ser genérica: o pai precisa saber
+    // para qual caixa olhar. Só a versão mascarada sai do servidor.
+    return { ok: true, mensagem: mensagemLinkEnviadoPara(emailMascarado) };
   });
 
 const ValidarLinkSchema = z.object({ token: z.string().min(16) });
