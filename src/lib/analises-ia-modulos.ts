@@ -377,6 +377,7 @@ const propMesFim = { type: "string", description: "Último mês do intervalo, em
 export const TEMAS_DISPONIVEIS: string[] = [
   "Financeiro: despesas do Fluxo Futuro (previstas, agendadas e pagas)",
   "Financeiro: receitas previstas (Sponte) e realizadas (extrato conciliado)",
+  "Financeiro: lançamentos (saídas) do extrato bancário importado, agrupados por descrição/beneficiário e confrontados com o Fluxo Futuro",
   "Financeiro: divergências de despesas recorrentes",
   "Financeiro: inadimplência agregada por unidade e período",
   "Financeiro: saldo projetado por unidade e mês",

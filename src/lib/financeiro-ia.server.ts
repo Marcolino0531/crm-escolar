@@ -14,6 +14,7 @@ import {
   type FiltroPeriodo,
   type FonteDadosFinanceiros,
   type InadimplenciaAgregada,
+  type LancamentoExtrato,
   type ReceitaPrevista,
   type ReceitaRealizada,
   type SerieRecorrente,
@@ -93,6 +94,8 @@ type LinhaTransacao = {
   sub_cost_center_id: string | null;
 };
 
+type LinhaTransacaoSaida = LinhaTransacao & { description: string | null };
+
 function statusDespesa(status: string | null): StatusDespesa {
   return status === "paid" || status === "scheduled" ? status : "pending";
 }
@@ -163,6 +166,41 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
           d.unidade !== "" &&
           combina(d.categoria, filtro.categoria) &&
           combina(d.subcategoria, filtro.subcategoria),
+      );
+  }
+
+  // Saídas realmente importadas do extrato bancário — a mesma tabela que a baixa
+  // automática do Fluxo Futuro consome. A descrição É lida aqui (é o
+  // beneficiário/fornecedor da saída); entradas ficam de fora justamente porque
+  // o histórico delas carrega o nome do pagador.
+  async function lancamentosExtrato(filtro: FiltroPeriodo): Promise<LancamentoExtrato[]> {
+    const { ids, nomePorId } = await idsDe(filtro.unidades);
+    if (ids.length === 0) return [];
+    const { categorias: cats, subcategorias: subs } = await catalogos();
+    const { data, error } = await supabaseAdmin
+      .from("transactions" as never)
+      .select("school_id, date, amount, description, cost_center_id, sub_cost_center_id")
+      .eq("type", "saida")
+      .in("school_id", ids)
+      .gte("date", filtro.dataInicio)
+      .lte("date", filtro.dataFim);
+    if (error) throw new Error(error.message);
+
+    return ((data ?? []) as unknown as LinhaTransacaoSaida[])
+      .map((r) => ({
+        unidade: nomePorId.get(r.school_id) ?? "",
+        data: String(r.date).slice(0, 10),
+        descricao: (r.description ?? "").trim(),
+        categoria: (r.cost_center_id && cats.get(r.cost_center_id)) || "",
+        subcategoria: (r.sub_cost_center_id && subs.get(r.sub_cost_center_id)) || "",
+        valor: Math.abs(Number(r.amount ?? 0)),
+      }))
+      .filter(
+        (l) =>
+          l.unidade !== "" &&
+          l.descricao !== "" &&
+          combina(l.categoria, filtro.categoria) &&
+          combina(l.subcategoria, filtro.subcategoria),
       );
   }
 
@@ -287,6 +325,7 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
 
   return {
     despesasFluxo,
+    lancamentosExtrato,
     receitasRealizadas,
     receitasPrevistas,
     seriesRecorrentes,

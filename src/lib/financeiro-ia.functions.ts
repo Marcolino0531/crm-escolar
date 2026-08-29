@@ -20,7 +20,9 @@ import {
   type MensagemComFerramentas,
 } from "@/lib/anthropic.server";
 import {
+  cobrancaDeFerramenta,
   executarFerramenta,
+  ferramentaObrigatoriaPara,
   FERRAMENTAS_ANALISE,
   montarSystemPrompt,
   validarChamadaFerramenta,
@@ -81,7 +83,11 @@ export const perguntarAnaliseFinanceira = createServerFn({ method: "POST" })
       hoje: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
     };
     const fonte = criarFonteDados(context.userId);
-    const system = montarSystemPrompt(escopo);
+    const system = montarSystemPrompt(escopo, data.pergunta);
+    // Assunto com consulta obrigatória (hoje: extrato bancário): se o modelo
+    // tentar concluir sem ter chamado a consulta certa, ele é cobrado uma vez.
+    const obrigatoria = ferramentaObrigatoriaPara(data.pergunta);
+    let cobrada = false;
 
     const mensagens: MensagemComFerramentas[] = [{ role: "user", content: data.pergunta }];
     const usadas: AnaliseResult["ferramentas"] = [];
@@ -105,6 +111,12 @@ export const perguntarAnaliseFinanceira = createServerFn({ method: "POST" })
         if (resposta.usos.length === 0) {
           const texto = resposta.texto.trim();
           if (!texto) throw new ErroIA("resposta_vazia");
+          if (obrigatoria && !cobrada && !usadas.some((u) => u.nome === obrigatoria)) {
+            cobrada = true;
+            mensagens.push({ role: "assistant", content: resposta.blocosAssistente });
+            mensagens.push({ role: "user", content: cobrancaDeFerramenta(obrigatoria) });
+            continue;
+          }
           await registrarAnalise({
             userId: context.userId,
             pergunta: data.pergunta,

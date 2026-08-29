@@ -20,7 +20,9 @@ import {
 import {
   compararRecorrentes,
   executarFerramenta,
+  ferramentaObrigatoriaPara,
   FERRAMENTAS_ANALISE,
+  montarSystemPrompt,
   NOMES_FERRAMENTAS,
   resolverUnidades,
   validarChamadaFerramenta,
@@ -29,7 +31,9 @@ import {
   type EscopoAnalise,
   type FiltroPeriodo,
   type FonteDadosFinanceiros,
+  type GrupoExtrato,
   type InadimplenciaAgregada,
+  type LancamentoExtrato,
   type ReceitaPrevista,
   type ReceitaRealizada,
   type SerieRecorrente,
@@ -54,10 +58,23 @@ function despesa(over: Partial<DespesaFluxo>): DespesaFluxo {
   };
 }
 
+function lancamento(over: Partial<LancamentoExtrato>): LancamentoExtrato {
+  return {
+    unidade: "CEC",
+    data: "2026-08-05",
+    descricao: "CEMIG",
+    categoria: "Infraestrutura",
+    subcategoria: "Energia",
+    valor: 1000,
+    ...over,
+  };
+}
+
 // Dublê da fonte real: guarda os filtros recebidos (para provar que a ferramenta
 // repassa unidade/categoria/subcategoria/intervalo) e devolve dados fixos.
 function fonteFake(dados: {
   despesas?: DespesaFluxo[];
+  extrato?: LancamentoExtrato[];
   receitasRealizadas?: ReceitaRealizada[];
   receitasPrevistas?: ReceitaPrevista[];
   series?: SerieRecorrente[];
@@ -90,6 +107,17 @@ function fonteFake(dados: {
     async despesasFluxo(filtro) {
       chamadas.push({ fn: "despesasFluxo", filtro });
       return aplicaFiltros(dados.despesas ?? [], filtro);
+    },
+    async lancamentosExtrato(filtro) {
+      chamadas.push({ fn: "lancamentosExtrato", filtro });
+      return (dados.extrato ?? []).filter(
+        (l) =>
+          filtro.unidades.includes(l.unidade) &&
+          l.data >= filtro.dataInicio &&
+          l.data <= filtro.dataFim &&
+          (!filtro.categoria || l.categoria === filtro.categoria) &&
+          (!filtro.subcategoria || l.subcategoria === filtro.subcategoria),
+      );
     },
     async receitasRealizadas(filtro) {
       chamadas.push({ fn: "receitasRealizadas", filtro });
@@ -234,6 +262,7 @@ describe("lista fechada de ferramentas", () => {
   it("expõe exatamente as consultas permitidas (financeiras + módulos)", () => {
     expect([...NOMES_FERRAMENTAS]).toEqual([
       "buscar_despesas_fluxo_futuro",
+      "buscar_lancamentos_extrato_bancario",
       "buscar_receitas",
       "comparar_despesas_recorrentes",
       "buscar_inadimplencia",
@@ -248,7 +277,7 @@ describe("lista fechada de ferramentas", () => {
       "buscar_folha_rh",
       "listar_consultas_disponiveis",
     ]);
-    expect(FERRAMENTAS_ANALISE).toHaveLength(14);
+    expect(FERRAMENTAS_ANALISE).toHaveLength(15);
     expect(FERRAMENTAS_ANALISE.map((f) => f.nome)).toEqual([...NOMES_FERRAMENTAS]);
     // Todo módulo novo entra pela lista dos módulos, nunca por permissão genérica.
     expect(NOMES_FERRAMENTAS_MODULOS).toHaveLength(9);
@@ -1341,5 +1370,149 @@ describe("auditoria das ferramentas dos módulos", () => {
     );
     expect(r.erro).toContain("fora do escopo");
     expect(chamadas).toHaveLength(0);
+  });
+});
+
+describe("lançamentos do extrato bancário", () => {
+  const junhoAAgosto = { dataInicio: "2026-06-01", dataFim: "2026-08-31" };
+
+  const extrato = [
+    lancamento({ data: "2026-06-10", descricao: "CEMIG 06/2026", valor: 900 }),
+    lancamento({ data: "2026-07-10", descricao: "CEMIG 07/2026", valor: 1000 }),
+    lancamento({ data: "2026-08-10", descricao: "CEMIG 08/2026", valor: 1100 }),
+    lancamento({
+      data: "2026-08-15",
+      descricao: "Vigilância Alfa",
+      categoria: "Serviços",
+      subcategoria: "Segurança",
+      valor: 2000,
+    }),
+    lancamento({ unidade: "CEC Baby", data: "2026-08-12", descricao: "Copasa", valor: 300 }),
+  ];
+
+  it("filtra por unidade e período e agrupa a mesma descrição mês a mês", async () => {
+    const { fonte, chamadas } = fonteFake({ extrato });
+    const r = await roda(
+      "buscar_lancamentos_extrato_bancario",
+      { unidade: "CEC", ...junhoAAgosto },
+      fonte,
+    );
+    expect(chamadas.find((c) => c.fn === "lancamentosExtrato")?.filtro).toMatchObject({
+      unidades: ["CEC"],
+      ...junhoAAgosto,
+    });
+    const dados = r.dados as {
+      quantidadeLancamentos: number;
+      totalSaidas: number;
+      mesesAnalisados: string[];
+      grupos: GrupoExtrato[];
+    };
+    expect(dados.quantidadeLancamentos).toBe(4);
+    expect(dados.totalSaidas).toBe(5000);
+    expect(dados.mesesAnalisados).toEqual(["2026-06", "2026-07", "2026-08"]);
+    const cemig = dados.grupos.find((g) => g.descricao.startsWith("CEMIG"))!;
+    // A numeração da descrição não quebra o agrupamento (CEMIG 06 = CEMIG 07).
+    expect(cemig.quantidadeLancamentos).toBe(3);
+    expect(cemig.mesesComLancamento).toEqual(["2026-06", "2026-07", "2026-08"]);
+    expect(cemig.valorTotal).toBe(3000);
+    expect(cemig.valorMedio).toBe(1000);
+    expect(cemig.recorrenteNoExtrato).toBe(true);
+    // Outra unidade não entra no recorte.
+    expect(dados.grupos.some((g) => g.unidade === "CEC Baby")).toBe(false);
+  });
+
+  it("aponta a saída recorrente do banco que não tem despesa no Fluxo Futuro", async () => {
+    const { fonte } = fonteFake({
+      extrato,
+      // O Fluxo Futuro tem a energia lançada, mas não a vigilância.
+      despesas: [
+        despesa({ mes: "2026-06-01", descricao: "CEMIG" }),
+        despesa({ mes: "2026-07-01", descricao: "CEMIG" }),
+        despesa({ mes: "2026-08-01", descricao: "CEMIG" }),
+      ],
+    });
+    const r = await roda("buscar_lancamentos_extrato_bancario", junhoAAgosto, fonte);
+    const dados = r.dados as {
+      grupos: GrupoExtrato[];
+      recorrentesSemFluxoFuturo: GrupoExtrato[];
+    };
+    expect(dados.grupos.find((g) => g.descricao.startsWith("CEMIG"))!.temDespesaNoFluxoFuturo).toBe(
+      true,
+    );
+    expect(
+      dados.grupos.find((g) => g.descricao === "Vigilância Alfa")!.temDespesaNoFluxoFuturo,
+    ).toBe(false);
+    // Só 1 mês de vigilância no período de 3 meses: não é recorrente ainda.
+    expect(dados.recorrentesSemFluxoFuturo).toEqual([]);
+
+    const { fonte: fonte2 } = fonteFake({
+      extrato: [
+        lancamento({ data: "2026-06-15", descricao: "Vigilância Alfa", valor: 2000 }),
+        lancamento({ data: "2026-07-15", descricao: "Vigilância Alfa", valor: 2000 }),
+        lancamento({ data: "2026-08-15", descricao: "Vigilância Alfa", valor: 2000 }),
+      ],
+      despesas: [],
+    });
+    const r2 = await roda("buscar_lancamentos_extrato_bancario", junhoAAgosto, fonte2);
+    const dados2 = r2.dados as { recorrentesSemFluxoFuturo: GrupoExtrato[] };
+    expect(dados2.recorrentesSemFluxoFuturo.map((g) => g.descricao)).toEqual(["Vigilância Alfa"]);
+  });
+
+  it("aceita minimoMeses e filtro de descrição, e informa a fonte", async () => {
+    const { fonte } = fonteFake({ extrato });
+    const r = await roda(
+      "buscar_lancamentos_extrato_bancario",
+      { ...junhoAAgosto, descricao: "vigilancia", minimoMeses: 1 },
+      fonte,
+    );
+    const dados = r.dados as { grupos: GrupoExtrato[]; minimoMesesRecorrencia: number };
+    expect(dados.minimoMesesRecorrencia).toBe(1);
+    expect(dados.grupos.map((g) => g.descricao)).toEqual(["Vigilância Alfa"]);
+    expect(dados.grupos[0].recorrenteNoExtrato).toBe(true);
+    expect(r.fonte).toContain("Extrato bancário");
+  });
+
+  it("não aceita SQL, tabela nem argumento extra", () => {
+    expect(
+      validarChamadaFerramenta("buscar_lancamentos_extrato_bancario", {
+        ...junhoAAgosto,
+        sql: "select * from transactions",
+      }).ok,
+    ).toBe(false);
+    expect(
+      validarChamadaFerramenta("buscar_lancamentos_extrato_bancario", { dataInicio: "2026-08-01" })
+        .ok,
+    ).toBe(false);
+  });
+});
+
+describe("roteamento obrigatório de consulta por assunto", () => {
+  const perguntas = [
+    "Quais despesas aparecem todo mês no extrato bancário, nas unidades do Vale do Sereno e Belvedere, mas não aparecem no fluxo futuro?",
+    "o que saiu da conta em agosto?",
+    "me mostra o extrato de julho",
+    "quais lançamentos do banco não estão categorizados?",
+    "quanto foi debitado da conta bancária em julho?",
+  ];
+
+  it("perguntas sobre extrato bancário exigem buscar_lancamentos_extrato_bancario", () => {
+    for (const pergunta of perguntas) {
+      expect(ferramentaObrigatoriaPara(pergunta)).toBe("buscar_lancamentos_extrato_bancario");
+      const prompt = montarSystemPrompt(escopo, pergunta);
+      expect(prompt).toContain("CONSULTA OBRIGATÓRIA NESTA PERGUNTA");
+      expect(prompt).toContain("buscar_lancamentos_extrato_bancario");
+    }
+  });
+
+  it("não impõe consulta a pergunta de outro assunto", () => {
+    expect(ferramentaObrigatoriaPara("como está a inadimplência do trimestre?")).toBeNull();
+    expect(montarSystemPrompt(escopo, "como está a inadimplência do trimestre?")).not.toContain(
+      "CONSULTA OBRIGATÓRIA",
+    );
+  });
+
+  it("o prompt separa o extrato do cadastro de despesas recorrentes", () => {
+    const prompt = montarSystemPrompt(escopo);
+    expect(prompt).toContain("`comparar_despesas_recorrentes` NÃO lê o extrato");
   });
 });

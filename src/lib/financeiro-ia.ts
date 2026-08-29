@@ -40,6 +40,20 @@ export type DespesaFluxo = {
   recorrente: boolean;
 };
 
+// Saída realmente importada do extrato bancário (a mesma tabela que gera a
+// etiqueta "Baixado automaticamente via importação de extrato" no Fluxo Futuro).
+// Só SAÍDAS entram aqui: a descrição de uma saída é o beneficiário/fornecedor,
+// enquanto a de uma entrada costuma trazer o nome do pagador (responsável), que
+// está fora do escopo desta análise.
+export type LancamentoExtrato = {
+  unidade: string;
+  data: string;
+  descricao: string;
+  categoria: string;
+  subcategoria: string;
+  valor: number;
+};
+
 export type ReceitaRealizada = {
   unidade: string;
   data: string;
@@ -87,6 +101,7 @@ export type FiltroPeriodo = {
 // permite testar cada consulta sem banco.
 export interface FonteDadosFinanceiros {
   despesasFluxo(filtro: FiltroPeriodo): Promise<DespesaFluxo[]>;
+  lancamentosExtrato(filtro: FiltroPeriodo): Promise<LancamentoExtrato[]>;
   receitasRealizadas(filtro: FiltroPeriodo): Promise<ReceitaRealizada[]>;
   receitasPrevistas(filtro: {
     unidades: string[];
@@ -157,6 +172,17 @@ export const DespesasFluxoArgsSchema = z
   .strict()
   .superRefine(janela(JANELA_BANCO_DIAS));
 
+export const ExtratoBancarioArgsSchema = z
+  .object({
+    ...FiltrosBase,
+    descricao: z.string().trim().min(2).max(120).optional(),
+    // Mínimo de meses distintos em que a descrição precisa aparecer para o grupo
+    // ser considerado recorrente no extrato.
+    minimoMeses: z.number().int().min(1).max(24).optional(),
+  })
+  .strict()
+  .superRefine(janela(JANELA_BANCO_DIAS));
+
 export const ReceitasArgsSchema = z
   .object({
     ...FiltrosBase,
@@ -209,6 +235,7 @@ export const SaldoProjetadoArgsSchema = z
 
 export const NOMES_FERRAMENTAS_FINANCEIRO = [
   "buscar_despesas_fluxo_futuro",
+  "buscar_lancamentos_extrato_bancario",
   "buscar_receitas",
   "comparar_despesas_recorrentes",
   "buscar_inadimplencia",
@@ -266,6 +293,28 @@ const FERRAMENTAS_FINANCEIRO: DefinicaoFerramentaFinanceiro[] = [
           enum: ["previstas", "pagas", "todas"],
           description:
             "previstas = ainda não pagas (pendentes/agendadas); pagas = já quitadas; todas = ambas. Padrão: todas.",
+        },
+      },
+      required: ["dataInicio", "dataFim"],
+      additionalProperties: false,
+    },
+  },
+  {
+    nome: "buscar_lancamentos_extrato_bancario",
+    descricao:
+      "Saídas realmente importadas do extrato bancário (a mesma fonte da baixa automática do Fluxo Futuro), agrupadas por descrição/beneficiário recorrente, com os meses em que cada descrição apareceu e se existe despesa equivalente no Fluxo Futuro no período. USE ESTA CONSULTA sempre que a pergunta mencionar extrato bancário, extrato, conta bancária, lançamentos do banco, o que 'saiu da conta' ou o que 'foi debitado' — inclusive quando a pergunta comparar o extrato com o Fluxo Futuro. `comparar_despesas_recorrentes` NÃO lê o extrato: ela só olha o cadastro de despesas fixas contra o Fluxo Futuro.",
+    schemaJson: {
+      type: "object",
+      properties: {
+        ...propsPeriodo,
+        descricao: {
+          type: "string",
+          description: "Trecho da descrição/beneficiário do lançamento, para filtrar (opcional).",
+        },
+        minimoMeses: {
+          type: "number",
+          description:
+            "Mínimo de meses distintos em que a descrição precisa aparecer para ser tratada como recorrente no extrato. Padrão: todos os meses do período.",
         },
       },
       required: ["dataInicio", "dataFim"],
@@ -346,6 +395,10 @@ export const FERRAMENTAS_ANALISE: DefinicaoFerramenta[] = [
 
 export type ChamadaFerramentaFinanceiro =
   | { nome: "buscar_despesas_fluxo_futuro"; args: z.infer<typeof DespesasFluxoArgsSchema> }
+  | {
+      nome: "buscar_lancamentos_extrato_bancario";
+      args: z.infer<typeof ExtratoBancarioArgsSchema>;
+    }
   | { nome: "buscar_receitas"; args: z.infer<typeof ReceitasArgsSchema> }
   | {
       nome: "comparar_despesas_recorrentes";
@@ -374,6 +427,7 @@ export function validarChamadaFerramenta(nome: string, args: unknown): Validacao
     ? schemaFerramentaModulo(nome)
     : {
         buscar_despesas_fluxo_futuro: DespesasFluxoArgsSchema,
+        buscar_lancamentos_extrato_bancario: ExtratoBancarioArgsSchema,
         buscar_receitas: ReceitasArgsSchema,
         comparar_despesas_recorrentes: DivergenciasRecorrentesArgsSchema,
         buscar_inadimplencia: InadimplenciaArgsSchema,
@@ -577,6 +631,99 @@ export function agregarInadimplencia(linhas: InadimplenciaAgregada[]) {
         valorEmAberto: arred(l.valorTotal),
         valorRenegociadoAcordo: arred(l.valorAcordo),
       })),
+  };
+}
+
+export type GrupoExtrato = {
+  unidade: string;
+  descricao: string;
+  categoria: string;
+  subcategoria: string;
+  quantidadeLancamentos: number;
+  mesesComLancamento: string[];
+  valorTotal: number;
+  valorMedio: number;
+  recorrenteNoExtrato: boolean;
+  // Existe despesa com descrição equivalente no Fluxo Futuro, na mesma unidade e
+  // dentro do período consultado?
+  temDespesaNoFluxoFuturo: boolean;
+};
+
+// Agrupa as saídas do extrato por unidade + descrição normalizada e confronta
+// cada grupo com as despesas do Fluxo Futuro do mesmo período. É isso que
+// permite responder "aparece todo mês no extrato mas não está no Fluxo Futuro"
+// com lançamento real do banco, não com o cadastro de despesas fixas.
+export function agruparLancamentosExtrato(
+  lancamentos: LancamentoExtrato[],
+  despesasFluxo: DespesaFluxo[],
+  meses: string[],
+  minimoMeses?: number,
+): {
+  quantidadeLancamentos: number;
+  totalSaidas: number;
+  mesesAnalisados: string[];
+  minimoMesesRecorrencia: number;
+  grupos: GrupoExtrato[];
+  recorrentesSemFluxoFuturo: GrupoExtrato[];
+  truncado: boolean;
+} {
+  const minimo = Math.max(1, minimoMeses ?? meses.length);
+  const noFluxo = new Set(despesasFluxo.map((d) => `${d.unidade}|${chaveDescricao(d.descricao)}`));
+
+  const porChave = new Map<
+    string,
+    {
+      unidade: string;
+      descricao: string;
+      categoria: string;
+      subcategoria: string;
+      meses: Set<string>;
+      valores: number[];
+    }
+  >();
+  for (const l of lancamentos) {
+    const chave = `${l.unidade}|${chaveDescricao(l.descricao)}`;
+    const atual = porChave.get(chave) ?? {
+      unidade: l.unidade,
+      descricao: l.descricao,
+      categoria: l.categoria,
+      subcategoria: l.subcategoria,
+      meses: new Set<string>(),
+      valores: [],
+    };
+    atual.meses.add(competencia(l.data));
+    atual.valores.push(l.valor);
+    porChave.set(chave, atual);
+  }
+
+  const grupos: GrupoExtrato[] = [...porChave.entries()]
+    .map(([chave, g]) => {
+      const total = g.valores.reduce((s, v) => s + v, 0);
+      return {
+        unidade: g.unidade,
+        descricao: g.descricao,
+        categoria: g.categoria,
+        subcategoria: g.subcategoria,
+        quantidadeLancamentos: g.valores.length,
+        mesesComLancamento: [...g.meses].sort(),
+        valorTotal: arred(total),
+        valorMedio: arred(total / g.valores.length),
+        recorrenteNoExtrato: g.meses.size >= minimo,
+        temDespesaNoFluxoFuturo: noFluxo.has(chave),
+      };
+    })
+    .sort((a, b) => b.valorTotal - a.valorTotal);
+
+  return {
+    quantidadeLancamentos: lancamentos.length,
+    totalSaidas: arred(lancamentos.reduce((s, l) => s + l.valor, 0)),
+    mesesAnalisados: [...meses],
+    minimoMesesRecorrencia: minimo,
+    grupos: grupos.slice(0, LIMITE_LINHAS),
+    recorrentesSemFluxoFuturo: grupos.filter(
+      (g) => g.recorrenteNoExtrato && !g.temDespesaNoFluxoFuturo,
+    ),
+    truncado: grupos.length > LIMITE_LINHAS,
   };
 }
 
@@ -792,6 +939,24 @@ export async function executarFerramenta(
         dados: agregarDespesas(filtradas),
       };
     }
+    case "buscar_lancamentos_extrato_bancario": {
+      const { dataInicio, dataFim, categoria, subcategoria, descricao, minimoMeses } = chamada.args;
+      const [lancamentos, despesas] = await Promise.all([
+        fonte.lancamentosExtrato({ unidades, dataInicio, dataFim, categoria, subcategoria }),
+        fonte.despesasFluxo({ unidades, dataInicio, dataFim }),
+      ]);
+      const filtrados = descricao
+        ? lancamentos.filter((l) => chaveDescricao(l.descricao).includes(chaveDescricao(descricao)))
+        : lancamentos;
+      const meses = mesesDoIntervalo(competencia(dataInicio), competencia(dataFim));
+      return {
+        ferramenta: chamada.nome,
+        fonte:
+          "Extrato bancário importado no School Hub (saídas), agrupado por descrição/beneficiário e confrontado com as despesas do Fluxo Futuro do mesmo período",
+        filtros: { ...filtros, mesesAnalisados: meses.join(", ") },
+        dados: agruparLancamentosExtrato(filtrados, despesas, meses, minimoMeses),
+      };
+    }
     case "buscar_receitas": {
       const { dataInicio, dataFim, categoria, subcategoria, situacao = "todas" } = chamada.args;
       const querPrevistas = situacao === "todas" || situacao === "previstas";
@@ -887,7 +1052,36 @@ export async function executarFerramenta(
 
 // ─── Prompt ──────────────────────────────────────────────────────────────────
 
-export function montarSystemPrompt(escopo: EscopoAnalise): string {
+// Roteamento determinístico por assunto: algumas perguntas têm uma consulta
+// obrigatória, e deixar essa escolha só a cargo do modelo já se mostrou frágil
+// (pergunta sobre extrato bancário sendo respondida com o cadastro de despesas
+// fixas). Quando a pergunta casa com um destes padrões, a ferramenta é imposta
+// no prompt e cobrada antes da resposta final.
+const ROTEAMENTO_OBRIGATORIO: { padrao: RegExp; ferramenta: NomeFerramenta }[] = [
+  {
+    padrao:
+      /extratos?\s+banc[áa]ri|extratos?\b|contas?\s+banc[áa]ri|lan[çc]amentos?\s+d[oa]s?\s+(banco|conta)|saiu\s+d[ao]\s+(banco|conta)|debitad/i,
+    ferramenta: "buscar_lancamentos_extrato_bancario",
+  },
+];
+
+export function ferramentaObrigatoriaPara(pergunta: string): NomeFerramenta | null {
+  for (const regra of ROTEAMENTO_OBRIGATORIO) {
+    if (regra.padrao.test(pergunta)) return regra.ferramenta;
+  }
+  return null;
+}
+
+export function cobrancaDeFerramenta(ferramenta: NomeFerramenta): string {
+  return [
+    `Você não chamou \`${ferramenta}\`, que é a consulta obrigatória para esta pergunta.`,
+    "Chame essa consulta agora, com a unidade e o período da pergunta, e só depois responda",
+    "com base no resultado dela. Não afirme que o dado depende de conferência manual.",
+  ].join(" ");
+}
+
+export function montarSystemPrompt(escopo: EscopoAnalise, pergunta?: string): string {
+  const obrigatoria = pergunta ? ferramentaObrigatoriaPara(pergunta) : null;
   return [
     "Você é o analista financeiro do School Hub, um sistema de gestão de colégios brasileiros.",
     "Responda SEMPRE em português do Brasil.",
@@ -901,6 +1095,17 @@ export function montarSystemPrompt(escopo: EscopoAnalise): string {
     "TEMAS COBERTOS PELA LISTA FECHADA:",
     ...TEMAS_DISPONIVEIS.map((t) => `- ${t}`),
     "",
+    "ESCOLHA DA CONSULTA:",
+    "- pergunta que fala de extrato bancário, extrato, conta bancária, lançamento do banco, o que saiu da conta ou foi debitado: use `buscar_lancamentos_extrato_bancario`, que lê as saídas realmente importadas do extrato;",
+    "- `comparar_despesas_recorrentes` NÃO lê o extrato: ela compara o cadastro de despesas fixas com o Fluxo Futuro. Nunca a use sozinha para responder sobre o extrato bancário;",
+    "- comparação entre extrato e Fluxo Futuro: `buscar_lancamentos_extrato_bancario` já devolve, por descrição, os meses em que ela apareceu no banco e se existe despesa equivalente no Fluxo Futuro (`temDespesaNoFluxoFuturo`, `recorrentesSemFluxoFuturo`) — use esses campos em vez de dizer que a conciliação é manual.",
+    "",
+    ...(obrigatoria
+      ? [
+          `CONSULTA OBRIGATÓRIA NESTA PERGUNTA: chame \`${obrigatoria}\` antes de responder. Não responda a partir de outra consulta nem afirme que o dado depende de conferência manual sem ter chamado esta.`,
+          "",
+        ]
+      : []),
     `Hoje é ${escopo.hoje}. Unidades que este usuário pode consultar: ${escopo.unidadesPermitidas.join(", ") || "nenhuma"}.`,
     "Quando a pergunta não indicar a unidade, consulte todas as permitidas e diga isso na resposta.",
     "",
