@@ -6,6 +6,8 @@
 // Sponte sai daqui, justamente para não vazar dado cadastral.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { FonteDadosModulos } from "@/lib/analises-ia-modulos";
+import { criarFonteDadosModulos } from "@/lib/analises-ia-modulos.server";
 import {
   competencia,
   type DespesaFluxo,
@@ -95,7 +97,7 @@ function statusDespesa(status: string | null): StatusDespesa {
   return status === "paid" || status === "scheduled" ? status : "pending";
 }
 
-export function criarFonteDados(userId: string): FonteDadosFinanceiros {
+export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDadosModulos {
   // Caches por requisição: os catálogos são pequenos e usados por quase toda
   // ferramenta, e uma pergunta pode disparar várias consultas.
   let escolas: Escola[] | null = null;
@@ -289,6 +291,9 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros {
     receitasPrevistas,
     seriesRecorrentes,
     inadimplencia,
+    // Ferramentas dos módulos operacionais: mesma lista fechada, mesmo escopo de
+    // unidades (o `idsDe` daqui já aplica o RBAC).
+    ...criarFonteDadosModulos(idsDe),
   };
 }
 

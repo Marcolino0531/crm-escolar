@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   agregaVendas,
+  agregaVendasPorPeriodo,
   anoBRT,
   dataDaVenda,
   vendaDoAno,
+  vendaNoPeriodo,
   type CatalogoVariacoes,
   type PedidoVenda,
 } from "./uniformes.vendas";
@@ -166,5 +168,53 @@ describe("agregação por peça e tamanho", () => {
       catalogo,
     );
     expect(vendas[0]).toMatchObject({ produto: "Peça extinta", tamanho: "—" });
+  });
+});
+
+describe("venda em um intervalo de datas", () => {
+  it("usa a data efetiva do pagamento no fuso de São Paulo, com limites inclusivos", () => {
+    expect(vendaNoPeriodo(pedido(), "2026-03-01", "2026-03-31")).toBe(true);
+    expect(vendaNoPeriodo(pedido(), "2026-03-10", "2026-03-10")).toBe(true);
+    expect(vendaNoPeriodo(pedido(), "2026-03-11", "2026-03-31")).toBe(false);
+    expect(vendaNoPeriodo(pedido(), "2026-02-01", "2026-03-09")).toBe(false);
+    // 31/08 às 22h BRT ainda é agosto (em UTC já seria 01/09).
+    expect(
+      vendaNoPeriodo(pedido({ paid_at: "2026-08-31T22:00:00-03:00" }), "2026-08-01", "2026-08-31"),
+    ).toBe(true);
+  });
+
+  it("sem paid_at cai para a conclusão do pedido e ignora não pago/cancelado", () => {
+    const semPaidAt = pedido({
+      paid_at: null,
+      completed_at: { date: "2026-08-04 19:06:11.000000" },
+    });
+    expect(vendaNoPeriodo(semPaidAt, "2026-08-01", "2026-08-31")).toBe(true);
+    expect(vendaNoPeriodo(pedido({ payment_status: "pending" }), "2026-01-01", "2026-12-31")).toBe(
+      false,
+    );
+    expect(vendaNoPeriodo(pedido({ status: "cancelled" }), "2026-01-01", "2026-12-31")).toBe(false);
+    expect(
+      vendaNoPeriodo(
+        pedido({ cancelled_at: "2026-03-12T10:00:00-03:00" }),
+        "2026-01-01",
+        "2026-12-31",
+      ),
+    ).toBe(false);
+  });
+
+  it("agrega por peça e tamanho apenas o que caiu no intervalo", () => {
+    const pedidos = [
+      pedido({ paid_at: "2026-08-05T10:00:00-03:00" }),
+      pedido({
+        paid_at: "2026-08-20T10:00:00-03:00",
+        products: [{ product_id: 10, variant_id: 101, quantity: 3, price: "90.00" }],
+      }),
+      pedido({ paid_at: "2026-09-02T10:00:00-03:00" }),
+    ];
+    const vendas = agregaVendasPorPeriodo("cec", pedidos, "2026-08-01", "2026-08-31", catalogo);
+    expect(vendas.map((v) => [v.tamanho, v.quantidade, v.receita])).toEqual([
+      ["10", 3, 270],
+      ["8", 2, 160],
+    ]);
   });
 });

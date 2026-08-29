@@ -1,5 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
+  NOMES_FERRAMENTAS_MODULOS,
+  RESPOSTA_SEM_CONSULTA,
+  type ContrachequeEnvioIA,
+  type ConversaAtendimentoIA,
+  type DocumentoEmitidoIA,
+  type FolhaTransporteIA,
+  type FonteDadosModulos,
+  type ItemEstoqueUniformeIA,
+  type LinhaRematriculaIA,
+  type PedidoUniformeIA,
+  type QuadroFuncionariosIA,
+  type RecargaCantinaIA,
+  type RepasseEsporteIA,
+  type SubmissaoMatriculaIA,
+  type TurmaAtivosIA,
+  type TurmaEsporteIA,
+} from "@/lib/analises-ia-modulos";
+import {
   compararRecorrentes,
   executarFerramenta,
   FERRAMENTAS_ANALISE,
@@ -44,6 +62,19 @@ function fonteFake(dados: {
   receitasPrevistas?: ReceitaPrevista[];
   series?: SerieRecorrente[];
   inadimplencia?: InadimplenciaAgregada[];
+  cantina?: RecargaCantinaIA[];
+  rematricula?: LinhaRematriculaIA[];
+  repasses?: RepasseEsporteIA[];
+  turmasEsporte?: TurmaEsporteIA[];
+  estoqueUniformes?: ItemEstoqueUniformeIA[];
+  pedidosUniformes?: PedidoUniformeIA[];
+  documentos?: DocumentoEmitidoIA[];
+  submissoes?: SubmissaoMatriculaIA[];
+  ativos?: TurmaAtivosIA[];
+  conversas?: ConversaAtendimentoIA[];
+  contracheques?: ContrachequeEnvioIA[];
+  folhasTransporte?: FolhaTransporteIA[];
+  quadro?: QuadroFuncionariosIA[];
 }) {
   const chamadas: { fn: string; filtro: unknown }[] = [];
   const aplicaFiltros = (linhas: DespesaFluxo[], f: FiltroPeriodo) =>
@@ -84,26 +115,143 @@ function fonteFake(dados: {
       return (dados.inadimplencia ?? []).filter((l) => filtro.unidades.includes(l.unidade));
     },
   };
-  return { fonte, chamadas };
+
+  // Dublê das fontes dos módulos: cada método aplica o mesmo recorte do adapter
+  // real (unidade e período/mês) sobre linhas fixas.
+  const modulos: FonteDadosModulos = {
+    async recargasCantina(filtro) {
+      chamadas.push({ fn: "recargasCantina", filtro });
+      return (dados.cantina ?? []).filter(
+        (r) =>
+          filtro.unidades.includes(r.unidade) &&
+          r.data >= filtro.dataInicio &&
+          r.data <= filtro.dataFim,
+      );
+    },
+    async rematriculaMaterial(filtro) {
+      chamadas.push({ fn: "rematriculaMaterial", filtro });
+      return {
+        linhas: (dados.rematricula ?? []).filter(
+          (l) =>
+            filtro.unidades.includes(l.unidade) &&
+            (filtro.anoLetivo === undefined || l.anoLetivo === filtro.anoLetivo),
+        ),
+        avisos: [],
+      };
+    },
+    async esportes(filtro) {
+      chamadas.push({ fn: "esportes", filtro });
+      const casa = (modalidade: string) =>
+        !filtro.modalidade ||
+        modalidade.toLowerCase().includes(filtro.modalidade.trim().toLowerCase());
+      return {
+        repasses: (dados.repasses ?? []).filter(
+          (r) =>
+            filtro.unidades.includes(r.unidade) &&
+            casa(r.modalidade) &&
+            r.mesReferencia >= filtro.mesInicio &&
+            r.mesReferencia <= filtro.mesFim,
+        ),
+        turmas: (dados.turmasEsporte ?? []).filter(
+          (t) => filtro.unidades.includes(t.unidade) && casa(t.modalidade),
+        ),
+      };
+    },
+    async uniformes(filtro) {
+      chamadas.push({ fn: "uniformes", filtro });
+      return {
+        estoque: dados.estoqueUniformes ?? [],
+        pedidos: dados.pedidosUniformes ?? [],
+        avisos: [],
+      };
+    },
+    async documentosEmitidos(filtro) {
+      chamadas.push({ fn: "documentosEmitidos", filtro });
+      return (dados.documentos ?? []).filter(
+        (d) =>
+          filtro.unidades.includes(d.unidade) &&
+          d.data >= filtro.dataInicio &&
+          d.data <= filtro.dataFim &&
+          (!filtro.tipo || d.tipo === filtro.tipo),
+      );
+    },
+    async matriculas(filtro) {
+      chamadas.push({ fn: "matriculas", filtro });
+      return {
+        submissoes: (dados.submissoes ?? []).filter(
+          (s) =>
+            filtro.unidades.includes(s.unidade) &&
+            s.data >= filtro.dataInicio &&
+            s.data <= filtro.dataFim,
+        ),
+        ativos: (dados.ativos ?? []).filter((a) => filtro.unidades.includes(a.unidade)),
+        avisos: [],
+      };
+    },
+    async atendimento(filtro) {
+      chamadas.push({ fn: "atendimento", filtro });
+      return {
+        conversas: (dados.conversas ?? []).filter(
+          (c) =>
+            filtro.unidades.includes(c.unidade) &&
+            c.data >= filtro.dataInicio &&
+            c.data <= filtro.dataFim,
+        ),
+      };
+    },
+    async folhaRh(filtro) {
+      chamadas.push({ fn: "folhaRh", filtro });
+      return {
+        contracheques: (dados.contracheques ?? []).filter(
+          (c) =>
+            filtro.unidades.includes(c.unidade) &&
+            c.competencia >= filtro.mesInicio &&
+            c.competencia <= filtro.mesFim,
+        ),
+        folhasTransporte: (dados.folhasTransporte ?? []).filter(
+          (f) =>
+            filtro.unidades.includes(f.unidade) &&
+            f.mesReferencia >= filtro.mesInicio &&
+            f.mesReferencia <= filtro.mesFim,
+        ),
+        quadro: (dados.quadro ?? []).filter((q) => filtro.unidades.includes(q.unidade)),
+      };
+    },
+  };
+
+  return { fonte: { ...fonte, ...modulos }, chamadas };
 }
 
-async function roda(nome: string, args: unknown, fonte: FonteDadosFinanceiros) {
+type FonteCompleta = FonteDadosFinanceiros & FonteDadosModulos;
+
+async function roda(nome: string, args: unknown, fonte: FonteCompleta) {
   const v = validarChamadaFerramenta(nome, args);
   if (!v.ok) throw new Error(`validação falhou: ${v.erro}`);
   return executarFerramenta(v.chamada, fonte, escopo);
 }
 
 describe("lista fechada de ferramentas", () => {
-  it("expõe exatamente as cinco consultas permitidas", () => {
+  it("expõe exatamente as consultas permitidas (financeiras + módulos)", () => {
     expect([...NOMES_FERRAMENTAS]).toEqual([
       "buscar_despesas_fluxo_futuro",
       "buscar_receitas",
       "comparar_despesas_recorrentes",
       "buscar_inadimplencia",
       "calcular_saldo_projetado",
+      "buscar_recargas_cantina",
+      "buscar_rematricula_material",
+      "buscar_esportes_repasses",
+      "buscar_uniformes_estoque_pedidos",
+      "buscar_documentos_emitidos",
+      "buscar_matriculas_alunos_ativos",
+      "buscar_atendimento_conversas",
+      "buscar_folha_rh",
+      "listar_consultas_disponiveis",
     ]);
-    expect(FERRAMENTAS_ANALISE).toHaveLength(5);
+    expect(FERRAMENTAS_ANALISE).toHaveLength(14);
     expect(FERRAMENTAS_ANALISE.map((f) => f.nome)).toEqual([...NOMES_FERRAMENTAS]);
+    // Todo módulo novo entra pela lista dos módulos, nunca por permissão genérica.
+    expect(NOMES_FERRAMENTAS_MODULOS).toHaveLength(9);
   });
 
   it("nenhuma ferramenta aceita SQL, código ou propriedade extra", () => {
@@ -620,5 +768,578 @@ describe("auditoria das ferramentas disparadas", () => {
       expect(r.fonte.length).toBeGreaterThan(0);
       expect(r.filtros.unidades).toBe("CEC, CEC Baby");
     }
+  });
+});
+
+// ─── Ferramentas dos módulos ────────────────────────────────────────────────
+
+const periodoAgosto = { dataInicio: "2026-08-01", dataFim: "2026-08-31" };
+
+describe("buscar_recargas_cantina", () => {
+  const cantina: RecargaCantinaIA[] = [
+    { unidade: "CEC", data: "2026-08-05", status: "pendente", valor: 50 },
+    { unidade: "CEC", data: "2026-08-10", status: "efetivada", valor: 100 },
+    { unidade: "CEC Baby", data: "2026-08-20", status: "lancada_no_boleto", valor: 200 },
+    { unidade: "CEC", data: "2026-09-02", status: "efetivada", valor: 999 },
+  ];
+
+  it("soma valor e contagem por status no período, agregando por unidade", async () => {
+    const { fonte } = fonteFake({ cantina });
+    const r = await roda("buscar_recargas_cantina", periodoAgosto, fonte);
+    const dados = r.dados as {
+      quantidadeSolicitadas: number;
+      valorSolicitado: number;
+      porStatus: { status: string; quantidade: number; valor: number }[];
+      porUnidade: { unidade: string; valorSolicitado: number }[];
+    };
+    expect(dados.quantidadeSolicitadas).toBe(3);
+    expect(dados.valorSolicitado).toBe(350);
+    expect(dados.porStatus).toEqual([
+      { status: "pendente", rotulo: expect.any(String), quantidade: 1, valor: 50 },
+      { status: "efetivada", rotulo: expect.any(String), quantidade: 1, valor: 100 },
+      { status: "lancada_no_boleto", rotulo: expect.any(String), quantidade: 1, valor: 200 },
+    ]);
+    expect(dados.porUnidade).toEqual([
+      expect.objectContaining({ unidade: "CEC", valorSolicitado: 150 }),
+      expect.objectContaining({ unidade: "CEC Baby", valorSolicitado: 200 }),
+    ]);
+  });
+
+  it("filtra por unidade e não devolve dado de aluno ou responsável", async () => {
+    const { fonte, chamadas } = fonteFake({ cantina });
+    const r = await roda("buscar_recargas_cantina", { ...periodoAgosto, unidade: "CEC" }, fonte);
+    expect((r.dados as { quantidadeSolicitadas: number }).quantidadeSolicitadas).toBe(2);
+    expect(chamadas[0].filtro).toEqual({ unidades: ["CEC"], ...periodoAgosto });
+    expect(JSON.stringify(r.dados)).not.toMatch(/aluno|responsavel|responsável|telefone|boleto_/i);
+  });
+});
+
+describe("buscar_rematricula_material", () => {
+  const rematricula: LinhaRematriculaIA[] = [
+    { unidade: "CEC", status: "nao_iniciado", parcelas: null, valorAnual: null, anoLetivo: 2027 },
+    { unidade: "CEC", status: "em_andamento", parcelas: null, valorAnual: null, anoLetivo: 2027 },
+    {
+      unidade: "CEC",
+      status: "aguardando_aprovacao",
+      parcelas: 3,
+      valorAnual: 900,
+      anoLetivo: 2027,
+    },
+    {
+      unidade: "CEC Baby",
+      status: "rematriculado",
+      parcelas: 8,
+      valorAnual: 1600,
+      anoLetivo: 2027,
+    },
+    { unidade: "CEC", status: "rematriculado", parcelas: 4, valorAnual: 500, anoLetivo: 2026 },
+  ];
+
+  it("conta os quatro status sobre os alunos ativos e distribui 1x a 8x", async () => {
+    const { fonte } = fonteFake({ rematricula });
+    const r = await roda("buscar_rematricula_material", { anoLetivo: 2027 }, fonte);
+    const dados = r.dados as {
+      totalAlunosAtivos: number;
+      porStatus: { status: string; quantidade: number }[];
+      distribuicaoParcelamentos: { parcelas: number; quantidade: number }[];
+      valorMaterialAReceber: number;
+    };
+    expect(dados.totalAlunosAtivos).toBe(4);
+    expect(dados.porStatus.map((s) => [s.status, s.quantidade])).toEqual([
+      ["nao_iniciado", 1],
+      ["em_andamento", 1],
+      ["aguardando_aprovacao", 1],
+      ["rematriculado", 1],
+    ]);
+    expect(dados.distribuicaoParcelamentos).toHaveLength(8);
+    expect(dados.distribuicaoParcelamentos.filter((d) => d.quantidade > 0)).toEqual([
+      { parcelas: 3, quantidade: 1 },
+      { parcelas: 8, quantidade: 1 },
+    ]);
+    expect(dados.valorMaterialAReceber).toBe(2500);
+  });
+
+  it("agrega por unidade e ano letivo sem devolver nome ou id de aluno", async () => {
+    const { fonte } = fonteFake({ rematricula });
+    const r = await roda("buscar_rematricula_material", { unidade: "CEC" }, fonte);
+    const dados = r.dados as {
+      totalAlunosAtivos: number;
+      porUnidade: { unidade: string; anosLetivos: number[]; valorMaterialAReceber: number }[];
+    };
+    expect(dados.totalAlunosAtivos).toBe(4);
+    expect(dados.porUnidade).toHaveLength(1);
+    expect(dados.porUnidade[0].unidade).toBe("CEC");
+    expect(dados.porUnidade[0].anosLetivos.sort()).toEqual([2026, 2027]);
+    expect(dados.porUnidade[0].valorMaterialAReceber).toBe(1400);
+    expect(JSON.stringify(r.dados)).not.toMatch(/alunoId|aluno_id|cpf|nome/i);
+  });
+});
+
+describe("buscar_esportes_repasses", () => {
+  const repasses: RepasseEsporteIA[] = [
+    {
+      unidade: "CEC",
+      modalidade: "Judô",
+      parceiro: "Parceiro A",
+      tipoRepasse: "percentual",
+      mesReferencia: "2026-08",
+      valorArrecadado: 1000,
+      valorRepasse: 700,
+      valorRetido: 300,
+      pago: true,
+    },
+    {
+      unidade: "CEC",
+      modalidade: "Judô",
+      parceiro: "Parceiro A",
+      tipoRepasse: "percentual",
+      mesReferencia: "2026-09",
+      valorArrecadado: 1000,
+      valorRepasse: 700,
+      valorRetido: 300,
+      pago: false,
+    },
+    {
+      unidade: "CEC",
+      modalidade: "Ballet",
+      parceiro: "Parceiro B",
+      tipoRepasse: "fixo",
+      mesReferencia: "2026-08",
+      valorArrecadado: 800,
+      valorRepasse: 500,
+      valorRetido: 300,
+      pago: true,
+    },
+    {
+      unidade: "CEC",
+      modalidade: "Judô",
+      parceiro: "Parceiro A",
+      tipoRepasse: "percentual",
+      mesReferencia: "2026-07",
+      valorArrecadado: 5000,
+      valorRepasse: 3500,
+      valorRetido: 1500,
+      pago: true,
+    },
+  ];
+  const turmasEsporte: TurmaEsporteIA[] = [
+    { unidade: "CEC", modalidade: "Judô", turma: "Turma A", quantidadeAlunos: 12 },
+    { unidade: "CEC", modalidade: "Ballet", turma: "Turma B", quantidadeAlunos: 7 },
+  ];
+  const intervalo = { mesInicio: "2026-08", mesFim: "2026-09" };
+
+  it("separa repasse percentual de fixo e agrega alunos por turma", async () => {
+    const { fonte } = fonteFake({ repasses, turmasEsporte });
+    const r = await roda("buscar_esportes_repasses", intervalo, fonte);
+    const dados = r.dados as {
+      totalArrecadado: number;
+      totalRepassado: number;
+      totalRetido: number;
+      totalRepassadoPercentual: number;
+      totalRepassadoFixo: number;
+      porParceiro: { parceiro: string; meses: number; repassesPagos: number }[];
+      alunosPorTurma: TurmaEsporteIA[];
+      totalAlunosMatriculados: number;
+    };
+    expect(dados.totalArrecadado).toBe(2800);
+    expect(dados.totalRepassado).toBe(1900);
+    expect(dados.totalRetido).toBe(900);
+    expect(dados.totalRepassadoPercentual).toBe(1400);
+    expect(dados.totalRepassadoFixo).toBe(500);
+    expect(dados.porParceiro[0]).toEqual(
+      expect.objectContaining({ parceiro: "Parceiro A", meses: 2, repassesPagos: 1 }),
+    );
+    expect(dados.totalAlunosMatriculados).toBe(19);
+    expect(dados.alunosPorTurma).toHaveLength(2);
+  });
+
+  it("filtra por modalidade e unidade sem devolver matrícula individual", async () => {
+    const { fonte, chamadas } = fonteFake({ repasses, turmasEsporte });
+    const r = await roda(
+      "buscar_esportes_repasses",
+      { ...intervalo, unidade: "CEC", modalidade: "Judô" },
+      fonte,
+    );
+    const dados = r.dados as { totalRepassado: number; totalAlunosMatriculados: number };
+    expect(chamadas[0].filtro).toEqual({
+      unidades: ["CEC"],
+      ...intervalo,
+      modalidade: "Judô",
+    });
+    expect(dados.totalRepassado).toBe(1400);
+    expect(dados.totalAlunosMatriculados).toBe(12);
+    expect(JSON.stringify(r.dados)).not.toMatch(/aluno_id|alunoId|cpf|telefone/i);
+  });
+});
+
+describe("buscar_uniformes_estoque_pedidos", () => {
+  const estoqueUniformes: ItemEstoqueUniformeIA[] = [
+    {
+      loja: "CEC / CEC Baby",
+      produto: "Bermuda Tactel / Azul",
+      tamanho: "8",
+      estoque: 2,
+      estoqueMinimo: 5,
+      pedidoRealizado: false,
+    },
+    {
+      loja: "CEC / CEC Baby",
+      produto: "Camiseta / Azul",
+      tamanho: "10",
+      estoque: 1,
+      estoqueMinimo: 3,
+      pedidoRealizado: true,
+    },
+    {
+      loja: "CEC / CEC Baby",
+      produto: "Agasalho / Azul",
+      tamanho: "12",
+      estoque: 10,
+      estoqueMinimo: 5,
+      pedidoRealizado: false,
+    },
+  ];
+  const pedidosUniformes: PedidoUniformeIA[] = [
+    {
+      loja: "CEC / CEC Baby",
+      produto: "Bermuda Tactel / Azul",
+      tamanho: "8",
+      quantidade: 4,
+      receita: 400,
+    },
+    {
+      loja: "CEC / CEC Baby",
+      produto: "Camiseta / Azul",
+      tamanho: "10",
+      quantidade: 2,
+      receita: 150,
+    },
+  ];
+
+  it("lista só o que está abaixo do mínimo e o volume de pedidos pagos", async () => {
+    const { fonte, chamadas } = fonteFake({ estoqueUniformes, pedidosUniformes });
+    const r = await roda("buscar_uniformes_estoque_pedidos", periodoAgosto, fonte);
+    const dados = r.dados as {
+      itensAbaixoDoMinimo: number;
+      itensAbaixoDoMinimoSemPedido: number;
+      itens: ItemEstoqueUniformeIA[];
+      pedidos: { quantidadePecas: number; receita: number; porPeca: PedidoUniformeIA[] };
+    };
+    expect(chamadas[0].filtro).toEqual({ unidades: ["CEC", "CEC Baby"], ...periodoAgosto });
+    expect(dados.itensAbaixoDoMinimo).toBe(2);
+    expect(dados.itensAbaixoDoMinimoSemPedido).toBe(1);
+    expect(dados.itens.map((i) => i.produto)).toEqual(["Camiseta / Azul", "Bermuda Tactel / Azul"]);
+    expect(dados.pedidos.quantidadePecas).toBe(6);
+    expect(dados.pedidos.receita).toBe(550);
+    expect(dados.pedidos.porPeca[0].produto).toBe("Bermuda Tactel / Azul");
+  });
+
+  it("não devolve comprador, sku nem dado de cliente", async () => {
+    const { fonte } = fonteFake({ estoqueUniformes, pedidosUniformes });
+    const r = await roda("buscar_uniformes_estoque_pedidos", periodoAgosto, fonte);
+    expect(JSON.stringify(r.dados)).not.toMatch(/sku|comprador|cliente|endereco|endereço|email/i);
+  });
+});
+
+describe("buscar_documentos_emitidos", () => {
+  const documentos: DocumentoEmitidoIA[] = [
+    { unidade: "CEC", tipo: "recibo", data: "2026-08-03", valorTotal: 1200 },
+    { unidade: "CEC", tipo: "recibo", data: "2026-08-04", valorTotal: 800 },
+    { unidade: "CEC Baby", tipo: "declaracao_debitos", data: "2026-08-10", valorTotal: 0 },
+    { unidade: "CEC", tipo: "termo_confissao_divida", data: "2026-08-15", valorTotal: 5000 },
+    { unidade: "CEC", tipo: "declaracao_ir", data: "2026-07-31", valorTotal: 0 },
+  ];
+
+  it("conta por tipo e unidade no período, declarando o lote como indisponível", async () => {
+    const { fonte } = fonteFake({ documentos });
+    const r = await roda("buscar_documentos_emitidos", periodoAgosto, fonte);
+    const dados = r.dados as {
+      quantidadeTotal: number;
+      porTipo: { tipo: string; quantidade: number; valorTotal: number }[];
+      porUnidade: { unidade: string; quantidade: number }[];
+      statusEnvioEmLote: string;
+    };
+    expect(dados.quantidadeTotal).toBe(4);
+    expect(dados.porTipo.filter((t) => t.quantidade > 0)).toEqual([
+      expect.objectContaining({ tipo: "recibo", quantidade: 2, valorTotal: 2000 }),
+      expect.objectContaining({ tipo: "declaracao_debitos", quantidade: 1 }),
+      expect.objectContaining({ tipo: "termo_confissao_divida", quantidade: 1, valorTotal: 5000 }),
+    ]);
+    expect(dados.porUnidade.map((u) => [u.unidade, u.quantidade])).toEqual([
+      ["CEC", 3],
+      ["CEC Baby", 1],
+    ]);
+    // O envio em lote não é persistido: a ferramenta diz isso em vez de inventar.
+    expect(dados.statusEnvioEmLote).toContain("não disponível");
+  });
+
+  it("restringe ao tipo pedido e não devolve responsável, CPF nem snapshot", async () => {
+    const { fonte, chamadas } = fonteFake({ documentos });
+    const r = await roda(
+      "buscar_documentos_emitidos",
+      { ...periodoAgosto, unidade: "CEC", tipo: "recibo" },
+      fonte,
+    );
+    expect(chamadas[0].filtro).toEqual({
+      unidades: ["CEC"],
+      ...periodoAgosto,
+      tipo: "recibo",
+    });
+    expect((r.dados as { quantidadeTotal: number }).quantidadeTotal).toBe(2);
+    expect(JSON.stringify(r.dados)).not.toMatch(/cpf|snapshot|responsavel|responsável|itens/i);
+  });
+});
+
+describe("buscar_matriculas_alunos_ativos", () => {
+  const submissoes: SubmissaoMatriculaIA[] = [
+    { unidade: "CEC", status: "sucesso", data: "2026-08-02" },
+    { unidade: "CEC Baby", status: "sucesso", data: "2026-08-09" },
+    { unidade: "CEC", status: "erro_aluno", data: "2026-08-11" },
+    { unidade: "CEC", status: "duplicado", data: "2026-09-01" },
+  ];
+  const ativos: TurmaAtivosIA[] = [
+    { unidade: "CEC", turma: "06 - 2º Período T", quantidadeAlunos: 20 },
+    { unidade: "CEC", turma: "07 - 3º Período M", quantidadeAlunos: 15 },
+    { unidade: "CEC Baby", turma: "01 - Berçário", quantidadeAlunos: 10 },
+  ];
+
+  it("conta confirmadas por status e alunos ativos por turma/unidade", async () => {
+    const { fonte } = fonteFake({ submissoes, ativos });
+    const r = await roda("buscar_matriculas_alunos_ativos", periodoAgosto, fonte);
+    const dados = r.dados as {
+      matriculasConfirmadas: number;
+      submissoesTotal: number;
+      porStatus: { status: string; quantidade: number }[];
+      porUnidade: { unidade: string; matriculasConfirmadas: number; alunosAtivos: number }[];
+      totalAlunosAtivos: number;
+      alunosAtivosPorTurma: TurmaAtivosIA[];
+    };
+    expect(dados.matriculasConfirmadas).toBe(2);
+    expect(dados.submissoesTotal).toBe(3);
+    expect(dados.porStatus).toEqual([
+      { status: "erro_aluno", quantidade: 1 },
+      { status: "sucesso", quantidade: 2 },
+    ]);
+    expect(dados.totalAlunosAtivos).toBe(45);
+    expect(dados.alunosAtivosPorTurma).toHaveLength(3);
+    expect(dados.porUnidade).toEqual([
+      expect.objectContaining({ unidade: "CEC", matriculasConfirmadas: 1, alunosAtivos: 35 }),
+      expect.objectContaining({ unidade: "CEC Baby", matriculasConfirmadas: 1, alunosAtivos: 10 }),
+    ]);
+  });
+
+  it("filtra por unidade e não devolve payload da submissão", async () => {
+    const { fonte, chamadas } = fonteFake({ submissoes, ativos });
+    const r = await roda(
+      "buscar_matriculas_alunos_ativos",
+      { ...periodoAgosto, unidade: "CEC Baby" },
+      fonte,
+    );
+    expect(chamadas[0].filtro).toEqual({ unidades: ["CEC Baby"], ...periodoAgosto });
+    expect((r.dados as { totalAlunosAtivos: number }).totalAlunosAtivos).toBe(10);
+    expect(JSON.stringify(r.dados)).not.toMatch(/payload|cpf|aluno_nome|telefone|endereco/i);
+  });
+});
+
+describe("buscar_atendimento_conversas", () => {
+  const conversas: ConversaAtendimentoIA[] = [
+    {
+      unidade: "CEC",
+      data: "2026-08-03",
+      mensagensRecebidas: 4,
+      mensagensEnviadas: 3,
+      primeiraRespostaMinutos: 10,
+    },
+    {
+      unidade: "CEC",
+      data: "2026-08-04",
+      mensagensRecebidas: 2,
+      mensagensEnviadas: 2,
+      primeiraRespostaMinutos: 20,
+    },
+    {
+      unidade: "CEC Baby",
+      data: "2026-08-05",
+      mensagensRecebidas: 1,
+      mensagensEnviadas: 0,
+      primeiraRespostaMinutos: null,
+    },
+  ];
+
+  it("soma o volume por unidade e calcula a média só das conversas com par", async () => {
+    const { fonte } = fonteFake({ conversas });
+    const r = await roda("buscar_atendimento_conversas", periodoAgosto, fonte);
+    const dados = r.dados as {
+      quantidadeConversas: number;
+      mensagensRecebidas: number;
+      mensagensEnviadas: number;
+      tempoMedioPrimeiraRespostaMinutos: number | null;
+      conversasComPrimeiraResposta: number;
+      porUnidade: { unidade: string; tempoMedioPrimeiraRespostaMinutos: number | null }[];
+    };
+    expect(dados.quantidadeConversas).toBe(3);
+    expect(dados.mensagensRecebidas).toBe(7);
+    expect(dados.mensagensEnviadas).toBe(5);
+    expect(dados.tempoMedioPrimeiraRespostaMinutos).toBe(15);
+    expect(dados.conversasComPrimeiraResposta).toBe(2);
+    expect(dados.porUnidade).toEqual([
+      expect.objectContaining({ unidade: "CEC", tempoMedioPrimeiraRespostaMinutos: 15 }),
+      expect.objectContaining({ unidade: "CEC Baby", tempoMedioPrimeiraRespostaMinutos: null }),
+    ]);
+  });
+
+  it("devolve tempo indisponível (não estimado) quando não há par confiável", async () => {
+    const { fonte } = fonteFake({ conversas: [conversas[2]] });
+    const r = await roda("buscar_atendimento_conversas", periodoAgosto, fonte);
+    const dados = r.dados as {
+      tempoMedioPrimeiraRespostaMinutos: number | null;
+      observacaoTempoResposta: string;
+    };
+    expect(dados.tempoMedioPrimeiraRespostaMinutos).toBeNull();
+    expect(dados.observacaoTempoResposta).toContain("indisponível");
+  });
+
+  it("não devolve telefone, nome nem conteúdo de mensagem", async () => {
+    const { fonte } = fonteFake({ conversas });
+    const r = await roda("buscar_atendimento_conversas", periodoAgosto, fonte);
+    expect(JSON.stringify(r.dados)).not.toMatch(/telefone|phone|wa_id|corpo|body|media|preview/i);
+  });
+});
+
+describe("buscar_folha_rh", () => {
+  const intervalo = { mesInicio: "2026-08", mesFim: "2026-09" };
+  const contracheques: ContrachequeEnvioIA[] = [
+    { unidade: "CEC", competencia: "2026-08", status: "enviado" },
+    { unidade: "CEC", competencia: "2026-08", status: "enviado" },
+    { unidade: "CEC", competencia: "2026-08", status: "falha" },
+    { unidade: "CEC Baby", competencia: "2026-09", status: "enviado" },
+    { unidade: "CEC", competencia: "2026-06", status: "enviado" },
+  ];
+  const folhasTransporte: FolhaTransporteIA[] = [
+    { unidade: "CEC", mesReferencia: "2026-08", valorTotal: 1500 },
+    { unidade: "CEC Baby", mesReferencia: "2026-08", valorTotal: 700 },
+  ];
+  const quadro: QuadroFuncionariosIA[] = [
+    { unidade: "CEC", funcionariosAtivos: 20 },
+    { unidade: "CEC Baby", funcionariosAtivos: 8 },
+  ];
+
+  it("agrega envios, competências, vale-transporte e quadro por unidade", async () => {
+    const { fonte } = fonteFake({ contracheques, folhasTransporte, quadro });
+    const r = await roda("buscar_folha_rh", intervalo, fonte);
+    const dados = r.dados as {
+      contrachequesEnviados: number;
+      contrachequesPorStatus: { status: string; quantidade: number }[];
+      contrachequesPorCompetencia: { competencia: string; quantidade: number }[];
+      totalFolhaTransporte: number;
+      funcionariosAtivos: number;
+      porUnidade: { unidade: string; totalFolhaTransporte: number }[];
+      observacaoFolhaSalarial: string;
+    };
+    expect(dados.contrachequesEnviados).toBe(4);
+    expect(dados.contrachequesPorStatus).toEqual([
+      { status: "enviado", quantidade: 3 },
+      { status: "falha", quantidade: 1 },
+    ]);
+    expect(dados.contrachequesPorCompetencia).toEqual([
+      { competencia: "2026-08", quantidade: 3 },
+      { competencia: "2026-09", quantidade: 1 },
+    ]);
+    expect(dados.totalFolhaTransporte).toBe(2200);
+    expect(dados.funcionariosAtivos).toBe(28);
+    expect(dados.porUnidade).toEqual([
+      expect.objectContaining({ unidade: "CEC", totalFolhaTransporte: 1500 }),
+      expect.objectContaining({ unidade: "CEC Baby", totalFolhaTransporte: 700 }),
+    ]);
+    // Valor salarial não é persistido (só o PDF é fatiado e enviado).
+    expect(dados.observacaoFolhaSalarial).toContain("indisponível");
+  });
+
+  it("filtra por unidade e não devolve dado cadastral de funcionário", async () => {
+    const { fonte, chamadas } = fonteFake({ contracheques, folhasTransporte, quadro });
+    const r = await roda("buscar_folha_rh", { ...intervalo, unidade: "CEC" }, fonte);
+    expect(chamadas[0].filtro).toEqual({ unidades: ["CEC"], ...intervalo });
+    expect((r.dados as { funcionariosAtivos: number }).funcionariosAtivos).toBe(20);
+    expect(JSON.stringify(r.dados)).not.toMatch(/cpf|endereco|endereço|telefone|email|employee/i);
+  });
+});
+
+describe("listar_consultas_disponiveis", () => {
+  it("responde que não existe consulta e lista os temas cobertos", async () => {
+    const { fonte, chamadas } = fonteFake({});
+    const r = await roda("listar_consultas_disponiveis", { assunto: "previsão do tempo" }, fonte);
+    const dados = r.dados as { resposta: string; temas: string[]; instrucao: string };
+    expect(dados.resposta).toBe(RESPOSTA_SEM_CONSULTA);
+    expect(dados.temas.length).toBeGreaterThanOrEqual(13);
+    for (const tema of ["Cantina", "Rematrícula", "Esportes", "Uniformes", "Documentos", "RH"]) {
+      expect(dados.temas.join(" | ")).toContain(tema);
+    }
+    expect(dados.instrucao).toMatch(/não tente responder por conhecimento próprio/);
+    // O assunto é só rótulo de auditoria: nenhuma fonte de dados é consultada.
+    expect(chamadas).toHaveLength(0);
+  });
+
+  it("não aceita o assunto como consulta (nada de SQL nem tabela)", () => {
+    for (const args of [
+      { assunto: "select * from alunos", tabela: "alunos" },
+      { sql: "select 1" },
+      { assunto: "" },
+    ]) {
+      expect(validarChamadaFerramenta("listar_consultas_disponiveis", args).ok).toBe(false);
+    }
+  });
+});
+
+describe("auditoria das ferramentas dos módulos", () => {
+  const chamadasModulos: ChamadaFerramenta[] = [
+    { nome: "buscar_recargas_cantina", args: periodoAgosto },
+    { nome: "buscar_rematricula_material", args: {} },
+    { nome: "buscar_esportes_repasses", args: { mesInicio: "2026-08", mesFim: "2026-08" } },
+    { nome: "buscar_uniformes_estoque_pedidos", args: periodoAgosto },
+    { nome: "buscar_documentos_emitidos", args: periodoAgosto },
+    { nome: "buscar_matriculas_alunos_ativos", args: periodoAgosto },
+    { nome: "buscar_atendimento_conversas", args: periodoAgosto },
+    { nome: "buscar_folha_rh", args: { mesInicio: "2026-08", mesFim: "2026-08" } },
+    { nome: "listar_consultas_disponiveis", args: {} },
+  ];
+
+  it("toda ferramenta disparada devolve nome, fonte e filtros para o log", async () => {
+    const { fonte } = fonteFake({});
+    expect(chamadasModulos.map((c) => c.nome)).toEqual([...NOMES_FERRAMENTAS_MODULOS]);
+    for (const chamada of chamadasModulos) {
+      const r = await executarFerramenta(chamada, fonte, escopo);
+      expect(r.ferramenta).toBe(chamada.nome);
+      expect(NOMES_FERRAMENTAS).toContain(r.ferramenta);
+      expect(r.fonte.length).toBeGreaterThan(0);
+      expect(r.erro).toBeUndefined();
+    }
+  });
+
+  it("ferramenta que falha na leitura ainda identifica qual consulta rodou", async () => {
+    const { fonte } = fonteFake({});
+    const quebrada = {
+      ...fonte,
+      async recargasCantina() {
+        throw new Error("PostgREST: relação inexistente");
+      },
+    };
+    await expect(
+      executarFerramenta(
+        { nome: "buscar_recargas_cantina", args: periodoAgosto },
+        quebrada,
+        escopo,
+      ),
+    ).rejects.toThrow(/PostgREST/);
+  });
+
+  it("recusa unidade fora do escopo em ferramenta de módulo", async () => {
+    const { fonte, chamadas } = fonteFake({ cantina: [] });
+    const r = await roda(
+      "buscar_recargas_cantina",
+      { ...periodoAgosto, unidade: "Núcleo Belvedere" },
+      fonte,
+    );
+    expect(r.erro).toContain("fora do escopo");
+    expect(chamadas).toHaveLength(0);
   });
 });

@@ -30,6 +30,9 @@ const EXEMPLOS = [
   "Quais despesas aparecem todo mês mas não estão cadastradas como recorrentes?",
   "Faça um resumo do fechamento de agosto da unidade CEC.",
   "Como está a inadimplência do último trimestre por unidade?",
+  "Quantos alunos já confirmaram a rematrícula e qual parcelamento escolheram?",
+  "Quanto foi repassado aos parceiros dos esportes nos últimos três meses?",
+  "Quais peças de uniforme estão abaixo do estoque mínimo?",
 ];
 
 function Resposta({ texto }: { texto: string }) {
