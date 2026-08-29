@@ -974,7 +974,7 @@ export interface AnoLetivoRematricula {
 export const obterAnoLetivoRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AnoLetivoRematricula> => {
-    await exigirPermissaoConfiguracoes(context.userId, false);
+    await exigirPermissaoMaterialPedagogico(context.userId, false);
     const { data } = await supabaseAdmin
       .from("rematricula_config" as never)
       .select("ano_letivo, updated_at, updated_by_nome")
@@ -991,7 +991,7 @@ export const salvarAnoLetivoRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoLetivo: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoConfiguracoes(context.userId, true);
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }
@@ -1504,10 +1504,10 @@ export interface MaterialSerieRegistro {
   atualizadoPor: string;
 }
 
-async function exigirPermissaoConfiguracoes(userId: string, edicao: boolean): Promise<void> {
+async function exigirPermissaoMaterialPedagogico(userId: string, edicao: boolean): Promise<void> {
   const { data, error } = await supabaseAdmin.rpc(
     (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "configuracoes" } as never,
+    { _user_id: userId, _module: "rematricula" } as never,
   );
   if (error) throw new Error(error.message);
   if (!data) {
@@ -1522,7 +1522,7 @@ async function exigirPermissaoConfiguracoes(userId: string, edicao: boolean): Pr
 export const listarMaterialSeries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialSerieRegistro[]> => {
-    await exigirPermissaoConfiguracoes(context.userId, false);
+    await exigirPermissaoMaterialPedagogico(context.userId, false);
     const { data, error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
       .select("id, unidade, serie, valor_anual, updated_at, updated_by_nome")
@@ -1558,7 +1558,7 @@ export const salvarMaterialSerie = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => SalvarMaterialSerieSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoConfiguracoes(context.userId, true);
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
     if (!UNIDADES_SPONTE.includes(data.unidade)) {
       throw new Error("Unidade inválida.");
     }
@@ -1595,7 +1595,7 @@ export const excluirMaterialSerie = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoConfiguracoes(context.userId, true);
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
       .delete()
