@@ -29,9 +29,76 @@ import { formatarBRL, opcoesParcelamentoMaterial, rotuloParcelamento } from "@/l
 import {
   excluirMaterialSerie,
   listarMaterialSeries,
+  obterAnoLetivoRematricula,
+  salvarAnoLetivoRematricula,
   salvarMaterialSerie,
   type MaterialSerieRegistro,
 } from "@/lib/rematricula.functions";
+
+// Ano letivo para o qual o formulário de rematrícula ativo aponta (em 2026 a
+// escola configura 2027). É esse ano que define qual mensalidade em aberto do
+// aluno ancora o vencimento da 1ª parcela do material no lançamento.
+function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const obter = useServerFn(obterAnoLetivoRematricula);
+  const salvar = useServerFn(salvarAnoLetivoRematricula);
+  const [ano, setAno] = useState("");
+
+  const config = useQuery({
+    queryKey: ["rematricula_ano_letivo"],
+    queryFn: async () => obter({ data: undefined }),
+  });
+
+  const gravar = useMutation({
+    mutationFn: async () => salvar({ data: { anoLetivo: Number(ano) } }),
+    onSuccess: () => {
+      toast.success("Ano letivo de referência atualizado.");
+      setAno("");
+      void qc.invalidateQueries({ queryKey: ["rematricula_ano_letivo"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
+  const atual = config.data?.anoLetivo ?? null;
+
+  return (
+    <div className="rounded-lg border p-4">
+      <h3 className="text-sm font-semibold">Ano Letivo de Referência</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {atual
+          ? `A rematrícula em andamento é para ${atual}. A 1ª parcela do material vence junto da primeira mensalidade em aberto de ${atual}.`
+          : "Ainda não configurado. Sem ele a secretaria não consegue lançar o material no Sponte."}
+        {config.data?.atualizadoEm
+          ? ` Última alteração: ${new Date(config.data.atualizadoEm).toLocaleDateString("pt-BR")}${
+              config.data.atualizadoPor ? ` · ${config.data.atualizadoPor}` : ""
+            }.`
+          : ""}
+      </p>
+      {podeEditar && (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Ano</Label>
+            <Input
+              className="h-9 w-28"
+              inputMode="numeric"
+              placeholder={String(new Date().getFullYear() + 1)}
+              value={ano}
+              onChange={(e) => setAno(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            />
+          </div>
+          <Button
+            className="gap-2"
+            disabled={ano.length !== 4 || gravar.isPending}
+            onClick={() => gravar.mutate()}
+          >
+            {gravar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Salvar ano letivo
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Valor anual do material pedagógico por unidade + série. É o valor que o portal
 // público de Rematrícula oferece ao responsável para parcelar em até 8x — cada
@@ -91,6 +158,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
 
   return (
     <div className="space-y-6">
+      <AnoLetivoReferencia podeEditar={podeEditar} />
       {podeEditar && (
         <div className="rounded-lg border p-4">
           <h3 className="mb-3 text-sm font-semibold">

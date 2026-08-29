@@ -18,6 +18,7 @@ import {
 import {
   montarParametrosUpdateAlunos3,
   montarParametrosUpdateResponsaveis2,
+  normalizarListaSponte,
   type FichaAlunoSponte,
   type FichaResponsavelSponte,
 } from "./sponte-cadastro";
@@ -81,7 +82,9 @@ export async function lerFichaAlunoSponte(
     ra: parseXmlValue(node, "RA"),
     numeroMatricula: parseXmlValue(node, "NumeroMatricula"),
     situacao: parseXmlValue(node, "Situacao"),
-    cursoInteresse: parseXmlValue(node, "CursoInteresse"),
+    // Campo de lista: normalizado já na leitura para que o ";" que o Sponte
+    // acrescenta a cada escrita não entre na comparação nem cresça no payload.
+    cursoInteresse: normalizarListaSponte(parseXmlValue(node, "CursoInteresse")),
     infoBloqueada: parseXmlValue(node, "InfoBloqueada"),
     origemNome: parseXmlValue(node, "NomeOrigem"),
     origemId: parseXmlValue(node, "Origem"),

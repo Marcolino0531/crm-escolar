@@ -8,6 +8,7 @@ import {
   divergenciasForaDaEdicao,
   montarParametrosUpdateAlunos3,
   montarParametrosUpdateResponsaveis2,
+  normalizarListaSponte,
   type FichaAlunoSponte,
   type FichaResponsavelSponte,
 } from "@/lib/sponte-cadastro";
@@ -80,12 +81,12 @@ describe("edição cadastral do portal", () => {
   it("troca só os campos editados e preserva o resto da ficha lida", () => {
     const atualizada = aplicarEdicao(
       ALUNO,
-      { cep: "30190002", telefone: "3133334444" },
+      { cep: "30190002", celular: "3133334444" },
       CAMPOS_EDITAVEIS_ALUNO,
     );
     expect(atualizada.cep).toBe("30190002");
-    expect(atualizada.telefone).toBe("3133334444");
-    expect({ ...atualizada, cep: ALUNO.cep, telefone: ALUNO.telefone }).toEqual(ALUNO);
+    expect(atualizada.celular).toBe("3133334444");
+    expect({ ...atualizada, cep: ALUNO.cep, celular: ALUNO.celular }).toEqual(ALUNO);
   });
 
   it("descarta valor em branco em vez de apagar o dado do Sponte", () => {
@@ -135,14 +136,14 @@ describe("edição cadastral do portal", () => {
   });
 
   it("releitura idêntica fora dos campos editados não gera divergência", () => {
-    const relida = { ...ALUNO, cep: "30190002", telefone: "3133334444" };
-    expect(divergenciasForaDaEdicao(ALUNO, relida, ["cep", "telefone"])).toEqual([]);
+    const relida = { ...ALUNO, cep: "30190002", celular: "3133334444" };
+    expect(divergenciasForaDaEdicao(ALUNO, relida, ["cep", "celular"])).toEqual([]);
   });
 });
 
 describe("payload de UpdateAlunos3", () => {
   const payload = montarParametrosUpdateAlunos3(
-    aplicarEdicao(ALUNO, { cep: "30190002", telefone: "3133334444" }, CAMPOS_EDITAVEIS_ALUNO),
+    aplicarEdicao(ALUNO, { cep: "30190002", celular: "3133334444" }, CAMPOS_EDITAVEIS_ALUNO),
   );
   const t = tags(payload);
 
@@ -163,10 +164,10 @@ describe("payload de UpdateAlunos3", () => {
     expect(t.nResponsavelDidaticoID).toBe("888");
   });
 
-  it("aplica a edição do portal", () => {
+  it("aplica a edição do portal no Celular, nunca no Fone Residencial", () => {
     expect(t.sCEP).toBe("30190002");
-    expect(t.sTelefone).toBe("3133334444");
-    expect(t.sCelular).toBe(ALUNO.celular);
+    expect(t.sCelular).toBe("3133334444");
+    expect(t.sTelefone).toBe(ALUNO.telefone);
   });
 
   it("não inventa campo fora do contrato de UpdateAlunos3", () => {
@@ -219,7 +220,7 @@ describe("payload de UpdateAlunos3", () => {
 
 describe("payload de UpdateResponsaveis2", () => {
   const payload = montarParametrosUpdateResponsaveis2(
-    aplicarEdicao(RESPONSAVEL, { cep: "30190002", telefone: "3133334444" }, CAMPOS_EDITAVEIS_ALUNO),
+    aplicarEdicao(RESPONSAVEL, { cep: "30190002", celular: "3133334444" }, CAMPOS_EDITAVEIS_ALUNO),
   );
   const t = tags(payload);
 
@@ -249,10 +250,10 @@ describe("payload de UpdateResponsaveis2", () => {
     expect(invertido.lResponsavelDidatico).toBe("1");
   });
 
-  it("aplica só CEP e telefone editados", () => {
+  it("aplica só CEP e Celular editados", () => {
     expect(t.sCEP).toBe("30190002");
-    expect(t.sTelefone).toBe("3133334444");
-    expect(t.sCelular).toBe(RESPONSAVEL.celular);
+    expect(t.sCelular).toBe("3133334444");
+    expect(t.sTelefone).toBe(RESPONSAVEL.telefone);
     expect(t.sEndereco).toBe(RESPONSAVEL.endereco);
   });
 
@@ -283,5 +284,26 @@ describe("payload de UpdateResponsaveis2", () => {
         "sComplementoEndereco",
       ].sort(),
     );
+  });
+});
+
+describe("campo de lista do Sponte (CursoInteresse)", () => {
+  it("não acumula separador a cada envio", () => {
+    expect(normalizarListaSponte("")).toBe("");
+    expect(normalizarListaSponte(";")).toBe("");
+    expect(normalizarListaSponte(";;")).toBe("");
+    expect(normalizarListaSponte("Ensino Fundamental;")).toBe("Ensino Fundamental");
+    expect(normalizarListaSponte("Ensino Fundamental;;Berçário")).toBe(
+      "Ensino Fundamental;Berçário",
+    );
+  });
+
+  it("o payload do UpdateAlunos3 envia a lista já normalizada", () => {
+    const p = tags(montarParametrosUpdateAlunos3({ ...ALUNO, cursoInteresse: ";" }));
+    expect(p.sCursoInteresse).toBe("");
+    expect(
+      tags(montarParametrosUpdateAlunos3({ ...ALUNO, cursoInteresse: "Integral;" }))
+        .sCursoInteresse,
+    ).toBe("Integral");
   });
 });

@@ -38,6 +38,7 @@ import {
   CreditCard,
   Menu,
   UtensilsCrossed,
+  GraduationCap,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -389,6 +390,7 @@ function AppShell() {
   const showEsportes = canView("esportes");
   const showDocumentos = canView("documentos");
   const showCantina = canView("cantina");
+  const showRematricula = canView("rematricula");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -514,6 +516,12 @@ function AppShell() {
           icon: UtensilsCrossed,
           label: "Cantina",
         }),
+        ...item(showRematricula, {
+          kind: "item",
+          to: "/rematricula-acompanhamento",
+          icon: GraduationCap,
+          label: "Rematrícula",
+        }),
         ...item(showCobranca, {
           kind: "item",
           to: "/cobranca-automatica",
@@ -591,6 +599,7 @@ function AppShell() {
     showColonia,
     showEsportes,
     showDocumentos,
+    showRematricula,
     showFinanceiro,
     showDashboard,
     showUpload,
