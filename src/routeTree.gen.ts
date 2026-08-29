@@ -36,6 +36,7 @@ import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
 import { Route as CantinaRouteImport } from './routes/cantina'
 import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
 import { Route as AtendimentoRouteImport } from './routes/atendimento'
+import { Route as AnalisesIaRouteImport } from './routes/analises-ia'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
@@ -177,6 +178,11 @@ const AtendimentoRoute = AtendimentoRouteImport.update({
   path: '/atendimento',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AnalisesIaRoute = AnalisesIaRouteImport.update({
+  id: '/analises-ia',
+  path: '/analises-ia',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AgendaRoute = AgendaRouteImport.update({
   id: '/agenda',
   path: '/agenda',
@@ -202,6 +208,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
   '/cantina': typeof CantinaRoute
@@ -235,6 +242,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
   '/cantina': typeof CantinaRoute
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admissoes': typeof AdmissoesRoute
   '/agenda': typeof AgendaRoute
+  '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
   '/cantina': typeof CantinaRoute
@@ -304,6 +313,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
     | '/cantina'
@@ -337,6 +347,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
     | '/cantina'
@@ -370,6 +381,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admissoes'
     | '/agenda'
+    | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
     | '/cantina'
@@ -404,6 +416,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdmissoesRoute: typeof AdmissoesRoute
   AgendaRoute: typeof AgendaRoute
+  AnalisesIaRoute: typeof AnalisesIaRoute
   AtendimentoRoute: typeof AtendimentoRoute
   AtendimentoIaRoute: typeof AtendimentoIaRoute
   CantinaRoute: typeof CantinaRoute
@@ -625,6 +638,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AtendimentoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/analises-ia': {
+      id: '/analises-ia'
+      path: '/analises-ia'
+      fullPath: '/analises-ia'
+      preLoaderRoute: typeof AnalisesIaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agenda': {
       id: '/agenda'
       path: '/agenda'
@@ -660,6 +680,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdmissoesRoute: AdmissoesRoute,
   AgendaRoute: AgendaRoute,
+  AnalisesIaRoute: AnalisesIaRoute,
   AtendimentoRoute: AtendimentoRoute,
   AtendimentoIaRoute: AtendimentoIaRoute,
   CantinaRoute: CantinaRoute,

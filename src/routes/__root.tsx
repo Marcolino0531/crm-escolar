@@ -30,6 +30,7 @@ import {
   Bot,
   MessageSquare,
   Sparkles,
+  BrainCircuit,
   Shirt,
   Package,
   BookOpen,
@@ -524,6 +525,12 @@ function AppShell() {
         }),
       ]),
       ...group("financeiro", "Financeiro", [
+        ...item(showFinanceiro, {
+          kind: "item",
+          to: "/analises-ia",
+          icon: BrainCircuit,
+          label: "Análises com IA",
+        }),
         ...item(showFinanceiro && showDashboard, {
           kind: "item",
           to: "/extrato-bancario",
