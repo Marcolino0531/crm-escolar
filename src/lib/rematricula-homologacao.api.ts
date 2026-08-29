@@ -56,6 +56,7 @@ import {
 } from "@/lib/sponte-cadastro";
 import {
   CATEGORIA_MATERIAL_SPONTE,
+  concentrarDiferenca,
   parcelasMaterialLancamento,
   primeiroVencimentoMaterial,
   type ParcelaMaterial,
@@ -195,6 +196,8 @@ async function rodarTesteFinanceiro(
   quantidade: number,
   ajustarUltimaParcela: boolean,
   ajustarVencimentos: boolean,
+  vencimentoPrimeira: string,
+  diferencaNaPrimeira: boolean,
 ): Promise<Record<string, unknown>> {
   const titulosAntes = await coletarTitulosAluno(UNIDADE_HOMOLOGACAO, aluno.alunoId);
   if (titulosAntes.error || titulosAntes.indisponivel) {
@@ -205,8 +208,17 @@ async function rodarTesteFinanceiro(
     };
   }
 
-  const referencia = primeiroVencimentoMaterial(titulosAntes.titulos, hojeYMD());
-  const cronograma = parcelasMaterialLancamento(valorAnual, quantidade, referencia.vencimento);
+  // O vencimento informado entra exatamente como veio (sem empurrar para o
+  // próximo dia útil): é assim que se observa o que o Sponte faz com a data.
+  const referencia: { vencimento: string; origem: string } = vencimentoPrimeira
+    ? { vencimento: vencimentoPrimeira, origem: "informado" }
+    : primeiroVencimentoMaterial(titulosAntes.titulos, hojeYMD());
+  const cronograma = concentrarDiferenca(
+    parcelasMaterialLancamento(valorAnual, quantidade, referencia.vencimento),
+    diferencaNaPrimeira,
+  );
+  // Índice da parcela que carrega a sobra de centavos.
+  const indiceDiferenca = diferencaNaPrimeira ? 0 : cronograma.length - 1;
   const vencimentosEsperados = cronograma.map((p) => p.vencimento);
 
   // Idempotência: material já lançado nos mesmos vencimentos não é lançado de
@@ -235,7 +247,7 @@ async function rodarTesteFinanceiro(
   // Uma chamada só, com nNumeroParcelas = 8. Todas as parcelas saem com o valor
   // base (o InsertPlano não aceita valor por parcela); a diferença de centavos
   // vai para a última via UpdateParcela.
-  const base = cronograma[0].valor;
+  const base = cronograma[diferencaNaPrimeira ? 1 : 0]?.valor ?? cronograma[0].valor;
   const observacao = `${MARCADOR} ${referencia.vencimento} ${quantidade}x`;
   const insercao = await inserirPlanoSponte({
     unidade: UNIDADE_HOMOLOGACAO,
@@ -302,8 +314,8 @@ async function rodarTesteFinanceiro(
   // Ajuste dos centavos da última parcela e, se o Sponte não tiver empurrado
   // vencimento de fim de semana/feriado, das datas divergentes.
   if (criadas.length === quantidade) {
-    const ultima = criadas[criadas.length - 1];
-    const valorUltimaEsperado = cronograma[cronograma.length - 1].valor;
+    const ultima = criadas[indiceDiferenca];
+    const valorUltimaEsperado = cronograma[indiceDiferenca].valor;
     if (
       ajustarUltimaParcela &&
       Math.round(ultima.valor * 100) !== Math.round(valorUltimaEsperado * 100)
@@ -319,7 +331,7 @@ async function rodarTesteFinanceiro(
         logTag: "[homologacao-rematricula]",
       });
       ajustes.push({
-        tipo: "valor_ultima_parcela",
+        tipo: diferencaNaPrimeira ? "valor_primeira_parcela" : "valor_ultima_parcela",
         contaReceberID: ultima.contaReceberID,
         numeroParcela: ultima.numeroParcela,
         de: ultima.valor,
@@ -400,10 +412,10 @@ async function rodarTesteFinanceiro(
       vencimentosOk,
       somaSponte,
       totalOk,
-      ajusteCentavosUltimaParcela: {
-        esperado: cronograma[cronograma.length - 1].valor,
-        noSponte:
-          parcelasFinais.length > 0 ? parcelasFinais[parcelasFinais.length - 1].valor : null,
+      diferencaDeCentavosEm: diferencaNaPrimeira ? "primeira_parcela" : "ultima_parcela",
+      ajusteCentavos: {
+        esperado: cronograma[indiceDiferenca].valor,
+        noSponte: parcelasFinais[indiceDiferenca]?.valor ?? null,
       },
     },
     limpeza: {
@@ -420,7 +432,8 @@ async function rodarTesteFinanceiro(
 
 interface EdicaoTeste {
   cep: string;
-  telefone: string;
+  telefone?: string;
+  celular?: string;
 }
 
 async function rodarTesteCadastralAluno(
@@ -682,9 +695,12 @@ interface CorpoTeste {
   vencimento?: string;
   ajustarUltimaParcela?: boolean;
   ajustarVencimentos?: boolean;
+  vencimentoPrimeira?: string;
+  diferencaNaPrimeira?: boolean;
   alvoCadastral?: "aluno" | "responsavel";
   cep?: string;
   telefone?: string;
+  campoTelefone?: "telefone" | "celular";
   restaurar?: boolean;
 }
 
@@ -756,12 +772,18 @@ export async function handleRematriculaHomologacaoApi(request: Request): Promise
         400,
       );
     }
+    const vencimentoPrimeira = (corpo.vencimentoPrimeira ?? "").trim();
+    if (vencimentoPrimeira && !/^\d{4}-\d{2}-\d{2}$/.test(vencimentoPrimeira)) {
+      return json({ ok: false, error: "vencimentoPrimeira deve ser YYYY-MM-DD." }, 400);
+    }
     const resultado = await rodarTesteFinanceiro(
       aluno,
       valorAnual,
       parcelas,
       corpo.ajustarUltimaParcela !== false,
       corpo.ajustarVencimentos !== false,
+      vencimentoPrimeira,
+      corpo.diferencaNaPrimeira === true,
     );
     return json(resultado);
   }
@@ -851,7 +873,8 @@ export async function handleRematriculaHomologacaoApi(request: Request): Promise
     if (!cep || !telefone) {
       return json({ ok: false, error: "Informe cep e telefone de teste." }, 400);
     }
-    const edicao = { cep, telefone };
+    const edicao: EdicaoTeste =
+      corpo.campoTelefone === "celular" ? { cep, celular: telefone } : { cep, telefone };
     const restaurar = corpo.restaurar !== false;
     const resultado =
       corpo.alvoCadastral === "responsavel"
