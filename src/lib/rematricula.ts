@@ -1,7 +1,7 @@
 // Regras puras do portal de Rematrícula (sem I/O, testáveis isoladamente):
 //
-//  1. Autenticação por código de 6 dígitos enviado no WhatsApp: geração,
-//     validade de 10 minutos e bloqueio depois de 3 tentativas erradas.
+//  1. Autenticação por LINK MÁGICO enviado por email (Resend): validade de 15
+//     minutos, uso único e no máximo 3 links por CPF por hora.
 //  2. Parcelamento do material pedagógico: 1x a 8x, com o ajuste de centavos na
 //     primeira parcela para o somatório fechar exatamente o valor anual.
 //  3. Identificação da série do aluno a partir da turma do Sponte.
@@ -26,43 +26,27 @@ import {
 import { addMesesYMD } from "./confissao-divida";
 import { proximoDiaUtil } from "./billing-schedule";
 
-export const CODIGO_DIGITOS = 6;
-export const CODIGO_VALIDADE_MINUTOS = 10;
-export const MAX_TENTATIVAS_CODIGO = 3;
+export const LINK_VALIDADE_MINUTOS = 15;
+export const MAX_LINKS_POR_JANELA = 3;
+export const JANELA_LINKS_MINUTOS = 60;
 export const SESSAO_VALIDADE_MINUTOS = 30;
 
-export const MENSAGEM_CODIGO_ENVIADO =
-  "Se o CPF informado estiver cadastrado, enviamos um código de 6 dígitos por WhatsApp para o telefone do responsável financeiro. O código vale por 10 minutos.";
+export const MENSAGEM_LINK_ENVIADO =
+  "Se o CPF informado estiver cadastrado, enviamos um link de acesso para o email do responsável financeiro. O link vale por 15 minutos — confira também a caixa de spam.";
 
-export const MENSAGEM_CODIGO_INCORRETO =
-  "Código incorreto. Confira os 6 dígitos recebidos no WhatsApp e tente novamente.";
+export const MENSAGEM_LINK_INVALIDO =
+  "Este link expirou ou já foi utilizado. Solicite um novo link de acesso para continuar.";
 
-export const MENSAGEM_CODIGO_EXPIRADO =
-  "Este código expirou. Solicite um novo código para continuar.";
-
-export const MENSAGEM_BLOQUEADO =
-  "Por segurança, o acesso foi bloqueado após 3 tentativas incorretas. Solicite um novo código para tentar de novo.";
+export const MENSAGEM_LIMITE_LINKS =
+  "Já enviamos 3 links de acesso na última hora. Confira sua caixa de entrada (e o spam) ou tente novamente mais tarde.";
 
 export const MENSAGEM_SESSAO_EXPIRADA =
-  "Sua sessão expirou. Informe o CPF novamente para receber um novo código.";
+  "Sua sessão expirou. Informe o CPF novamente para receber um novo link de acesso.";
 
-// ─── Código de verificação ──────────────────────────────────────────────────
+// ─── Link mágico de acesso ──────────────────────────────────────────────────
 
-// Gera o código a partir de um sorteio em [0, 1) — o gerador criptográfico fica
-// no chamador (server), aqui só entra a formatação de 6 dígitos com zeros à
-// esquerda ("004821" é um código válido).
-export function gerarCodigoVerificacao(sorteio: number): string {
-  const limite = 10 ** CODIGO_DIGITOS;
-  const bruto = Math.floor(Math.min(Math.max(sorteio, 0), 0.999999999) * limite);
-  return String(bruto).padStart(CODIGO_DIGITOS, "0");
-}
-
-export function codigoFormatoValido(codigo: string): boolean {
-  return new RegExp(`^\\d{${CODIGO_DIGITOS}}$`).test(codigo.trim());
-}
-
-export function expiracaoCodigo(agoraISO: string): string {
-  return new Date(Date.parse(agoraISO) + CODIGO_VALIDADE_MINUTOS * 60000).toISOString();
+export function expiracaoLink(agoraISO: string): string {
+  return new Date(Date.parse(agoraISO) + LINK_VALIDADE_MINUTOS * 60000).toISOString();
 }
 
 export function expiracaoSessao(agoraISO: string): string {
@@ -73,86 +57,110 @@ export function sessaoValida(expiraEmISO: string | null, agoraISO: string): bool
   return !!expiraEmISO && expiraEmISO > agoraISO;
 }
 
-// Estado persistido do desafio de UM CPF (espelha rematricula_codigos).
-export interface DesafioCodigo {
-  codigoHash: string;
+// Estado persistido de UM link (espelha rematricula_links). O token em texto
+// claro só existe na URL enviada por email: a tabela guarda apenas o hash.
+export interface LinkMagico {
   expiraEm: string | null; // ISO 8601
-  tentativas: number;
-  bloqueadoAte: string | null; // ISO 8601; null = sem bloqueio
-  consumidoEm: string | null;
+  usadoEm: string | null; // ISO 8601; preenchido = link queimado
 }
 
-export const DESAFIO_VAZIO: DesafioCodigo = {
-  codigoHash: "",
-  expiraEm: null,
-  tentativas: 0,
-  bloqueadoAte: null,
-  consumidoEm: null,
-};
+export type MotivoRecusaLink = "inexistente" | "expirado" | "usado";
 
-export type MotivoRecusa = "bloqueado" | "expirado" | "incorreto" | "inexistente";
-
-export interface ResultadoValidacao {
+export interface ResultadoLink {
   ok: boolean;
-  motivo?: MotivoRecusa;
+  motivo?: MotivoRecusaLink;
   mensagem?: string;
-  // Estado a ser gravado depois desta tentativa.
-  proximo: DesafioCodigo;
 }
 
-export function desafioBloqueado(d: DesafioCodigo, agoraISO: string): boolean {
-  return d.bloqueadoAte !== null && d.bloqueadoAte > agoraISO;
+// Token desconhecido, vencido e já usado devolvem a MESMA mensagem: o portal é
+// público e não confirma se um link existiu. O uso único é decidido aqui e
+// gravado pelo chamador na mesma transação lógica do login.
+export function validarLinkMagico(link: LinkMagico | null, agoraISO: string): ResultadoLink {
+  if (!link) return { ok: false, motivo: "inexistente", mensagem: MENSAGEM_LINK_INVALIDO };
+  if (link.usadoEm) return { ok: false, motivo: "usado", mensagem: MENSAGEM_LINK_INVALIDO };
+  if (!link.expiraEm || link.expiraEm <= agoraISO) {
+    return { ok: false, motivo: "expirado", mensagem: MENSAGEM_LINK_INVALIDO };
+  }
+  return { ok: true };
 }
 
-// Valida UMA tentativa. A comparação é feita sobre o HASH do código (o texto
-// nunca é guardado), então o chamador passa o hash do que o pai digitou.
-// Regras: código já usado ou inexistente e código vencido são recusados sem
-// consumir tentativa útil; errar 3 vezes bloqueia o desafio, que só se
-// desfaz pedindo um código novo.
-export function validarCodigo(
-  desafio: DesafioCodigo,
-  codigoHashInformado: string,
-  agoraISO: string,
-): ResultadoValidacao {
-  if (desafioBloqueado(desafio, agoraISO)) {
-    return { ok: false, motivo: "bloqueado", mensagem: MENSAGEM_BLOQUEADO, proximo: desafio };
-  }
-  if (!desafio.codigoHash || desafio.consumidoEm) {
-    return {
-      ok: false,
-      motivo: "inexistente",
-      mensagem: MENSAGEM_CODIGO_EXPIRADO,
-      proximo: desafio,
-    };
-  }
-  if (!desafio.expiraEm || desafio.expiraEm <= agoraISO) {
-    return { ok: false, motivo: "expirado", mensagem: MENSAGEM_CODIGO_EXPIRADO, proximo: desafio };
-  }
-  if (codigoHashInformado !== desafio.codigoHash) {
-    const tentativas = desafio.tentativas + 1;
-    const bloqueou = tentativas >= MAX_TENTATIVAS_CODIGO;
-    return {
-      ok: false,
-      motivo: bloqueou ? "bloqueado" : "incorreto",
-      mensagem: bloqueou ? MENSAGEM_BLOQUEADO : MENSAGEM_CODIGO_INCORRETO,
-      proximo: {
-        ...desafio,
-        tentativas,
-        // Bloqueio até a expiração do próprio código: pedir um novo código
-        // sobrescreve a linha e devolve as 3 tentativas.
-        bloqueadoAte: bloqueou ? desafio.expiraEm : desafio.bloqueadoAte,
-      },
-    };
-  }
-  // Acerto: o código é de uso único.
+// Solicitações dentro da janela de 1 hora contada para trás a partir de agora.
+export function solicitacoesNaJanela(criadosISO: readonly string[], agoraISO: string): number {
+  const inicio = Date.parse(agoraISO) - JANELA_LINKS_MINUTOS * 60000;
+  return criadosISO.filter((iso) => {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && t > inicio;
+  }).length;
+}
+
+// Rate limit por CPF: o 4º pedido na mesma hora é recusado. Vale por CPF
+// informado (não por aluno encontrado), para que tentar CPFs inexistentes não
+// dê nenhum sinal diferente nem gere email.
+export function excedeuLimiteLinks(criadosISO: readonly string[], agoraISO: string): boolean {
+  return solicitacoesNaJanela(criadosISO, agoraISO) >= MAX_LINKS_POR_JANELA;
+}
+
+export function inicioJanelaLinks(agoraISO: string): string {
+  return new Date(Date.parse(agoraISO) - JANELA_LINKS_MINUTOS * 60000).toISOString();
+}
+
+// ─── Email do link mágico ───────────────────────────────────────────────────
+
+export function urlLinkRematricula(baseUrl: string, token: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  return `${base}/rematricula/verificar?token=${encodeURIComponent(token)}`;
+}
+
+export function assuntoEmailRematricula(nomeColegio: string): string {
+  const colegio = (nomeColegio ?? "").trim();
+  return colegio ? `Acesse a Rematrícula — ${colegio}` : "Acesse a Rematrícula";
+}
+
+function escaparHtmlEmail(texto: string): string {
+  return (texto ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export interface CorpoEmailRematricula {
+  html: string;
+  text: string;
+}
+
+// Mesmo padrão dos outros emails do projeto (parágrafos simples, remetente da
+// Resend configurado em RESEND_FROM). O link aparece como link e como texto,
+// porque alguns clientes de email quebram a âncora.
+export function corpoEmailRematricula(input: {
+  responsavelNome: string;
+  alunoNome: string;
+  nomeColegio: string;
+  url: string;
+}): CorpoEmailRematricula {
+  const saudacao = input.responsavelNome.trim() ? `Olá, ${input.responsavelNome.trim()}` : "Olá";
+  const colegio = input.nomeColegio.trim() || "o colégio";
+  const linhas = [
+    `${saudacao},`,
+    `Para revisar os dados e confirmar a rematrícula do(a) aluno(a) ${input.alunoNome.trim()}, ` +
+      "acesse o link abaixo:",
+    input.url,
+    `O link vale por ${LINK_VALIDADE_MINUTOS} minutos e só pode ser usado uma vez. Se ele expirar, ` +
+      "basta informar o CPF do aluno no portal e pedir um novo.",
+    "Se você não solicitou este acesso, ignore este email.",
+    `Atenciosamente,\n${colegio}`,
+  ];
+  const url = escaparHtmlEmail(input.url);
   return {
-    ok: true,
-    proximo: { ...desafio, tentativas: 0, bloqueadoAte: null, consumidoEm: agoraISO },
+    text: linhas.join("\n\n"),
+    html: linhas
+      .map((l) =>
+        l === input.url
+          ? `<p><a href="${url}">${url}</a></p>`
+          : `<p>${escaparHtmlEmail(l).replace(/\n/g, "<br />")}</p>`,
+      )
+      .join("\n"),
   };
-}
-
-export function tentativasRestantes(d: DesafioCodigo): number {
-  return Math.max(0, MAX_TENTATIVAS_CODIGO - d.tentativas);
 }
 
 // ─── Parcelamento do material pedagógico ────────────────────────────────────
@@ -388,9 +396,7 @@ export function rotuloParcelamentoPrimeira(op: ParcelamentoPrimeira): string {
 // mensalidade varia por unidade, então quando existe alguma na categoria
 // "Mensalidade" só ela conta; se o aluno não tem nenhuma assim, valem as demais
 // parcelas de referência (material, cantina e acordo já ficam de fora).
-export function mensalidadesDeReferencia<T extends ParcelaAberta>(
-  parcelas: readonly T[],
-): T[] {
+export function mensalidadesDeReferencia<T extends ParcelaAberta>(parcelas: readonly T[]): T[] {
   const referencia = parcelas.filter(serveDeReferencia);
   const rotuladas = referencia.filter((p) => semAcento(p.categoria).includes("mensalidade"));
   return rotuladas.length > 0 ? rotuladas : referencia;
@@ -406,9 +412,7 @@ export function primeiraMensalidadeDoAnoLetivo<T extends ParcelaAberta>(
 ): T | null {
   const prefixo = `${anoLetivo}-`;
   const doAno = mensalidadesDeReferencia(parcelas)
-    .filter(
-      (p) => p.vencimento.startsWith(prefixo) && !p.quitada && Math.round(p.saldo * 100) > 0,
-    )
+    .filter((p) => p.vencimento.startsWith(prefixo) && !p.quitada && Math.round(p.saldo * 100) > 0)
     .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
   return doAno[0] ?? null;
 }
@@ -478,8 +482,7 @@ export function cronogramaMaterialFaseB(
     valorParcela: op.valorParcela,
     valorPrimeiraParcela: op.valorPrimeiraParcela,
     total: op.total,
-    ajustaPrimeira:
-      Math.round(op.valorPrimeiraParcela * 100) !== Math.round(op.valorParcela * 100),
+    ajustaPrimeira: Math.round(op.valorPrimeiraParcela * 100) !== Math.round(op.valorParcela * 100),
   };
 }
 

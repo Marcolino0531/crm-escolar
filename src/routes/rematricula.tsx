@@ -1,23 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, GraduationCap, KeyRound, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { CheckCircle2, GraduationCap, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  CODIGO_DIGITOS,
+  LINK_VALIDADE_MINUTOS,
   formatarBRL,
   rotuloParcelamentoPrimeira,
   type ParcelamentoPrimeira,
 } from "@/lib/rematricula";
+import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import {
   dadosRematricula,
   salvarEscolhaMaterialRematricula,
   sincronizarCadastroRematricula,
-  solicitarCodigoRematricula,
-  validarCodigoRematricula,
+  solicitarLinkRematricula,
   type DadosRematricula,
   type ResponsavelRematricula,
 } from "@/lib/rematricula.functions";
@@ -39,7 +39,7 @@ export const Route = createFileRoute("/rematricula")({
   component: RematriculaPage,
 });
 
-type Etapa = "cpf" | "codigo" | "portal";
+type Etapa = "cpf" | "portal";
 
 function mascararCpf(valor: string): string {
   const d = valor.replace(/\D/g, "").slice(0, 11);
@@ -146,21 +146,21 @@ function BlocoResponsavel({
   );
 }
 
-// Portal PÚBLICO de Rematrícula. O acesso é por CPF do aluno + código de 6
-// dígitos enviado no WhatsApp do responsável financeiro cadastrado no Sponte; o
-// token de sessão devolvido pelo servidor tem validade curta e vive apenas na
-// memória desta página (nada em localStorage).
+// Portal PÚBLICO de Rematrícula. O acesso é por CPF do aluno + LINK MÁGICO
+// enviado por email ao responsável financeiro cadastrado no Sponte (a
+// verificação do link fica em /rematricula/verificar). O token de sessão
+// devolvido pelo servidor tem validade curta e vive em sessionStorage — a aba
+// fechada já perde o acesso, e nada vai para localStorage.
 function RematriculaPage() {
-  const pedirCodigo = useServerFn(solicitarCodigoRematricula);
-  const validar = useServerFn(validarCodigoRematricula);
+  const pedirLink = useServerFn(solicitarLinkRematricula);
   const carregar = useServerFn(dadosRematricula);
   const salvar = useServerFn(salvarEscolhaMaterialRematricula);
   const sincronizar = useServerFn(sincronizarCadastroRematricula);
 
   const [etapa, setEtapa] = useState<Etapa>("cpf");
   const [cpf, setCpf] = useState("");
-  const [codigo, setCodigo] = useState("");
   const [aviso, setAviso] = useState("");
+  const [abrindo, setAbrindo] = useState(true);
   const [erro, setErro] = useState("");
   const [token, setToken] = useState("");
   const [dados, setDados] = useState<DadosRematricula | null>(null);
@@ -171,59 +171,69 @@ function RematriculaPage() {
   const [cadastroSalvo, setCadastroSalvo] = useState("");
 
   const solicitar = useMutation({
-    mutationFn: async () => pedirCodigo({ data: { cpf } }),
+    mutationFn: async () => pedirLink({ data: { cpf } }),
     onSuccess: (res) => {
       if (!res.ok) {
+        setAviso("");
         setErro(res.mensagem);
         return;
       }
       setErro("");
       setAviso(res.mensagem);
-      setCodigo("");
-      setEtapa("codigo");
     },
-    onError: () => setErro("Não foi possível enviar o código agora. Tente novamente."),
+    onError: () => setErro("Não foi possível enviar o link agora. Tente novamente."),
   });
 
-  const entrar = useMutation({
-    mutationFn: async () => {
-      const res = await validar({ data: { cpf, codigo } });
-      if (!res.ok || !res.token) throw new Error(res.erro ?? "Código inválido.");
-      const portal = await carregar({ data: { token: res.token } });
-      return { token: res.token, portal };
-    },
-    onSuccess: ({ token: novoToken, portal }) => {
-      if (!portal.ok) {
-        setErro(portal.erro ?? "Não foi possível carregar seus dados.");
-        return;
+  // A sessão vem do link verificado em /rematricula/verificar: aqui ela só é
+  // resgatada da aba e trocada pelos dados do aluno.
+  useEffect(() => {
+    const guardado = sessionStorage.getItem(CHAVE_SESSAO_REMATRICULA);
+    if (!guardado) {
+      setAbrindo(false);
+      return;
+    }
+    let ativo = true;
+    void (async () => {
+      try {
+        const portal = await carregar({ data: { token: guardado } });
+        if (!ativo) return;
+        if (!portal.ok) {
+          sessionStorage.removeItem(CHAVE_SESSAO_REMATRICULA);
+          setErro(portal.erro ?? "Sua sessão expirou. Informe o CPF para receber um novo link.");
+          return;
+        }
+        setToken(guardado);
+        setDados(portal);
+        if (portal.aluno) {
+          setContatoAluno({
+            cep: portal.aluno.cep,
+            endereco: portal.aluno.endereco,
+            numeroEndereco: portal.aluno.numero,
+            complementoEndereco: portal.aluno.complemento,
+            bairro: portal.aluno.bairro,
+            cidade: portal.aluno.cidade,
+            celular: portal.aluno.telefone,
+            email: portal.aluno.email,
+          });
+        }
+        setContatoResp(
+          Object.fromEntries(
+            (portal.responsaveis ?? []).map((r) => [r.responsavelId, contatoDoResponsavel(r)]),
+          ),
+        );
+        setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
+        setSalvo(!!portal.material?.escolhaAtual);
+        setEtapa("portal");
+      } catch {
+        if (ativo) setErro("Não foi possível carregar seus dados agora. Tente novamente.");
+      } finally {
+        if (ativo) setAbrindo(false);
       }
-      setErro("");
-      setAviso("");
-      setToken(novoToken);
-      setDados(portal);
-      if (portal.aluno) {
-        setContatoAluno({
-          cep: portal.aluno.cep,
-          endereco: portal.aluno.endereco,
-          numeroEndereco: portal.aluno.numero,
-          complementoEndereco: portal.aluno.complemento,
-          bairro: portal.aluno.bairro,
-          cidade: portal.aluno.cidade,
-          celular: portal.aluno.telefone,
-          email: portal.aluno.email,
-        });
-      }
-      setContatoResp(
-        Object.fromEntries(
-          (portal.responsaveis ?? []).map((r) => [r.responsavelId, contatoDoResponsavel(r)]),
-        ),
-      );
-      setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
-      setSalvo(!!portal.material?.escolhaAtual);
-      setEtapa("portal");
-    },
-    onError: (e) => setErro(e instanceof Error ? e.message : "Código inválido."),
-  });
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [carregar]);
 
   const confirmar = useMutation({
     mutationFn: async () => salvar({ data: { token, parcelas: parcelas ?? 0 } }),
@@ -297,7 +307,14 @@ function RematriculaPage() {
           </p>
         )}
 
-        {etapa === "cpf" && (
+        {abrindo && etapa === "cpf" && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Carregando…
+          </p>
+        )}
+
+        {!abrindo && etapa === "cpf" && (
           <form
             className="space-y-4"
             onSubmit={(e) => {
@@ -316,65 +333,20 @@ function RematriculaPage() {
                 onChange={(e) => setCpf(e.target.value.replace(/\D/g, "").slice(0, 11))}
               />
               <p className="text-xs text-muted-foreground">
-                Enviaremos um código de {CODIGO_DIGITOS} dígitos no WhatsApp do responsável
-                financeiro cadastrado na escola.
+                Enviaremos um link de acesso para o email do responsável financeiro cadastrado na
+                escola. O link vale por {LINK_VALIDADE_MINUTOS} minutos.
               </p>
             </div>
+            {aviso && (
+              <p className="rounded-md bg-primary/10 px-3 py-2 text-sm text-primary">{aviso}</p>
+            )}
             <Button type="submit" className="w-full" disabled={solicitar.isPending}>
               {solicitar.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
-                <Lock className="mr-2 h-4 w-4" />
+                <Mail className="mr-2 h-4 w-4" />
               )}
-              Receber código
-            </Button>
-          </form>
-        )}
-
-        {etapa === "codigo" && (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              entrar.mutate();
-            }}
-          >
-            {aviso && <p className="text-sm text-muted-foreground">{aviso}</p>}
-            <div className="space-y-1">
-              <Label htmlFor="codigo">Código recebido</Label>
-              <Input
-                id="codigo"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                placeholder="000000"
-                value={codigo}
-                onChange={(e) =>
-                  setCodigo(e.target.value.replace(/\D/g, "").slice(0, CODIGO_DIGITOS))
-                }
-              />
-            </div>
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={entrar.isPending || codigo.length !== CODIGO_DIGITOS}
-            >
-              {entrar.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <KeyRound className="mr-2 h-4 w-4" />
-              )}
-              Entrar
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full"
-              onClick={() => {
-                setErro("");
-                setEtapa("cpf");
-              }}
-            >
-              Informar outro CPF
+              Enviar link de acesso
             </Button>
           </form>
         )}

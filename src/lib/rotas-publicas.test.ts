@@ -8,6 +8,10 @@ describe("rotas públicas dos portais", () => {
     expect(ehRotaPublica("/rematricula/")).toBe(true);
   });
 
+  it("libera a verificação do link mágico enviado por email", () => {
+    expect(ehRotaPublica("/rematricula/verificar")).toBe(true);
+  });
+
   it("libera os demais portais dos pais", () => {
     expect(ehRotaPublica("/portal-cantina")).toBe(true);
     expect(ehRotaPublica("/matricula")).toBe(true);
