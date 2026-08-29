@@ -53,13 +53,36 @@ export function anoBRT(iso: string | null | undefined): number | null {
   return Number.isFinite(ano) ? ano : null;
 }
 
+// Data civil (fuso de São Paulo, YYYY-MM-DD) de um instante ISO.
+export function dataBRT(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(normalizaData(iso));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+
+// Pedido pago e não cancelado — a parte da regra que não depende do período.
+function pedidoPago(pedido: PedidoVenda): boolean {
+  if ((pedido.payment_status ?? "").toLowerCase() !== "paid") return false;
+  if ((pedido.status ?? "").toLowerCase() === "cancelled") return false;
+  return !pedido.cancelled_at;
+}
+
 // Pedido que representa peça efetivamente vendida no ano: pago, não cancelado e
 // com o pagamento dentro do ano pedido.
 export function vendaDoAno(pedido: PedidoVenda, ano: number): boolean {
-  if ((pedido.payment_status ?? "").toLowerCase() !== "paid") return false;
-  if ((pedido.status ?? "").toLowerCase() === "cancelled") return false;
-  if (pedido.cancelled_at) return false;
-  return anoBRT(dataDaVenda(pedido)) === ano;
+  return pedidoPago(pedido) && anoBRT(dataDaVenda(pedido)) === ano;
+}
+
+// Mesma regra do ano, para um intervalo de datas (inclusivo, fuso de São Paulo).
+export function vendaNoPeriodo(
+  pedido: PedidoVenda,
+  dataInicio: string,
+  dataFim: string,
+): boolean {
+  if (!pedidoPago(pedido)) return false;
+  const data = dataBRT(dataDaVenda(pedido));
+  return data !== null && data >= dataInicio && data <= dataFim;
 }
 
 // "2026-08-04 19:06:11.000000" (UTC, formato do `completed_at`) não é aceito
@@ -105,10 +128,32 @@ export function agregaVendas(
   ano: number,
   catalogo: CatalogoVariacoes,
 ): VendaAgregada[] {
+  return agregaVendasSe(storeKey, pedidos, catalogo, (p) => vendaDoAno(p, ano));
+}
+
+// Vendas de um intervalo de datas, com a mesma agregação por peça e tamanho.
+export function agregaVendasPorPeriodo(
+  storeKey: StoreKey,
+  pedidos: PedidoVenda[],
+  dataInicio: string,
+  dataFim: string,
+  catalogo: CatalogoVariacoes,
+): VendaAgregada[] {
+  return agregaVendasSe(storeKey, pedidos, catalogo, (p) =>
+    vendaNoPeriodo(p, dataInicio, dataFim),
+  );
+}
+
+function agregaVendasSe(
+  storeKey: StoreKey,
+  pedidos: PedidoVenda[],
+  catalogo: CatalogoVariacoes,
+  aceita: (pedido: PedidoVenda) => boolean,
+): VendaAgregada[] {
   const acc = new Map<string, VendaAgregada>();
 
   for (const pedido of pedidos) {
-    if (!vendaDoAno(pedido, ano)) continue;
+    if (!aceita(pedido)) continue;
     for (const item of pedido.products ?? []) {
       const qtd = quantidade(item);
       if (qtd === 0) continue;

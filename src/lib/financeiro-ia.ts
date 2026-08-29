@@ -10,6 +10,16 @@
 // unidade/período — quantidade de boletos e valores, nunca quem deve.
 
 import { z } from "zod";
+import {
+  ehFerramentaModulo,
+  executarFerramentaModulo,
+  FERRAMENTAS_MODULOS,
+  NOMES_FERRAMENTAS_MODULOS,
+  schemaFerramentaModulo,
+  TEMAS_DISPONIVEIS,
+  type ChamadaFerramentaModulo,
+  type FonteDadosModulos,
+} from "./analises-ia-modulos";
 
 // ─── Filtros e registros das fontes reais ────────────────────────────────────
 
@@ -197,7 +207,7 @@ export const SaldoProjetadoArgsSchema = z
       });
   });
 
-export const NOMES_FERRAMENTAS = [
+export const NOMES_FERRAMENTAS_FINANCEIRO = [
   "buscar_despesas_fluxo_futuro",
   "buscar_receitas",
   "comparar_despesas_recorrentes",
@@ -205,10 +215,26 @@ export const NOMES_FERRAMENTAS = [
   "calcular_saldo_projetado",
 ] as const;
 
+// Allowlist completa: consultas do Financeiro + consultas dos demais módulos
+// (`analises-ia-modulos.ts`). Só nome desta lista é aceito e executado.
+export const NOMES_FERRAMENTAS = [
+  ...NOMES_FERRAMENTAS_FINANCEIRO,
+  ...NOMES_FERRAMENTAS_MODULOS,
+] as const;
+
+export type NomeFerramentaFinanceiro = (typeof NOMES_FERRAMENTAS_FINANCEIRO)[number];
+
 export type NomeFerramenta = (typeof NOMES_FERRAMENTAS)[number];
 
 export type DefinicaoFerramenta = {
   nome: NomeFerramenta;
+  descricao: string;
+  // Schema JSON enviado à Anthropic (documentação dos argumentos).
+  schemaJson: Record<string, unknown>;
+};
+
+type DefinicaoFerramentaFinanceiro = {
+  nome: NomeFerramentaFinanceiro;
   descricao: string;
   // Schema JSON enviado à Anthropic (documentação dos argumentos).
   schemaJson: Record<string, unknown>;
@@ -226,7 +252,7 @@ const propsPeriodo = {
   dataFim: { type: "string", description: "Fim do intervalo, em YYYY-MM-DD." },
 };
 
-export const FERRAMENTAS_ANALISE: DefinicaoFerramenta[] = [
+const FERRAMENTAS_FINANCEIRO: DefinicaoFerramentaFinanceiro[] = [
   {
     nome: "buscar_despesas_fluxo_futuro",
     descricao:
@@ -313,7 +339,12 @@ export const FERRAMENTAS_ANALISE: DefinicaoFerramenta[] = [
   },
 ];
 
-export type ChamadaFerramenta =
+export const FERRAMENTAS_ANALISE: DefinicaoFerramenta[] = [
+  ...FERRAMENTAS_FINANCEIRO,
+  ...FERRAMENTAS_MODULOS,
+];
+
+export type ChamadaFerramentaFinanceiro =
   | { nome: "buscar_despesas_fluxo_futuro"; args: z.infer<typeof DespesasFluxoArgsSchema> }
   | { nome: "buscar_receitas"; args: z.infer<typeof ReceitasArgsSchema> }
   | {
@@ -322,6 +353,8 @@ export type ChamadaFerramenta =
     }
   | { nome: "buscar_inadimplencia"; args: z.infer<typeof InadimplenciaArgsSchema> }
   | { nome: "calcular_saldo_projetado"; args: z.infer<typeof SaldoProjetadoArgsSchema> };
+
+export type ChamadaFerramenta = ChamadaFerramentaFinanceiro | ChamadaFerramentaModulo;
 
 export type ValidacaoChamada =
   | { ok: true; chamada: ChamadaFerramenta }
@@ -337,13 +370,15 @@ export function validarChamadaFerramenta(nome: string, args: unknown): Validacao
       erro: `Ferramenta "${nome}" não existe. Só estas consultas estão disponíveis: ${NOMES_FERRAMENTAS.join(", ")}.`,
     };
   }
-  const schema = {
-    buscar_despesas_fluxo_futuro: DespesasFluxoArgsSchema,
-    buscar_receitas: ReceitasArgsSchema,
-    comparar_despesas_recorrentes: DivergenciasRecorrentesArgsSchema,
-    buscar_inadimplencia: InadimplenciaArgsSchema,
-    calcular_saldo_projetado: SaldoProjetadoArgsSchema,
-  }[nome as NomeFerramenta];
+  const schema = ehFerramentaModulo(nome)
+    ? schemaFerramentaModulo(nome)
+    : {
+        buscar_despesas_fluxo_futuro: DespesasFluxoArgsSchema,
+        buscar_receitas: ReceitasArgsSchema,
+        comparar_despesas_recorrentes: DivergenciasRecorrentesArgsSchema,
+        buscar_inadimplencia: InadimplenciaArgsSchema,
+        calcular_saldo_projetado: SaldoProjetadoArgsSchema,
+      }[nome as NomeFerramentaFinanceiro];
 
   const parsed = schema.safeParse(args ?? {});
   if (!parsed.success) {
@@ -704,20 +739,34 @@ function filtrosTexto(args: Record<string, unknown>, unidades: string[]): Record
 
 export async function executarFerramenta(
   chamada: ChamadaFerramenta,
-  fonte: FonteDadosFinanceiros,
+  fonte: FonteDadosFinanceiros & FonteDadosModulos,
   escopo: EscopoAnalise,
 ): Promise<ResultadoFerramenta> {
-  const unidadesPedidas = resolverUnidades(chamada.args.unidade, escopo);
+  const unidadePedida = "unidade" in chamada.args ? chamada.args.unidade : undefined;
+  const unidadesPedidas = resolverUnidades(unidadePedida, escopo);
   if (!unidadesPedidas.ok) {
     return {
       ferramenta: chamada.nome,
       fonte: "—",
-      filtros: { unidade: chamada.args.unidade ?? "" },
+      filtros: { unidade: unidadePedida ?? "" },
       erro: unidadesPedidas.erro,
     };
   }
   const unidades = unidadesPedidas.unidades;
   const filtros = filtrosTexto(chamada.args as Record<string, unknown>, unidades);
+
+  if (ehFerramentaModulo(chamada.nome)) {
+    const resultado = await executarFerramentaModulo(chamada as ChamadaFerramentaModulo, fonte, {
+      unidades,
+    });
+    return {
+      ferramenta: chamada.nome,
+      fonte: resultado.fonte,
+      filtros: { ...filtros, ...(resultado.filtrosExtra ?? {}) },
+      erro: resultado.erro,
+      dados: resultado.dados,
+    };
+  }
 
   switch (chamada.nome) {
     case "buscar_despesas_fluxo_futuro": {
@@ -826,6 +875,13 @@ export async function executarFerramenta(
         },
       };
     }
+    default:
+      return {
+        ferramenta: chamada.nome,
+        fonte: "—",
+        filtros,
+        erro: `Ferramenta "${chamada.nome}" não tem execução registrada.`,
+      };
   }
 }
 
@@ -838,8 +894,12 @@ export function montarSystemPrompt(escopo: EscopoAnalise): string {
     "",
     "REGRA CENTRAL: você não sabe nada sobre as finanças desta escola por conhecimento próprio.",
     "Todo número que você escrever precisa ter vindo do resultado de uma das ferramentas desta conversa.",
-    "Se a pergunta não puder ser respondida com as ferramentas disponíveis, diga exatamente o que falta",
-    "e que essa consulta ainda não está liberada — nunca estime, complete ou invente valores.",
+    "Se a pergunta não puder ser respondida com as ferramentas disponíveis, chame",
+    "`listar_consultas_disponiveis` e responda que não existe consulta disponível para esse assunto,",
+    "listando resumidamente os temas cobertos — nunca estime, complete ou invente valores.",
+    "",
+    "TEMAS COBERTOS PELA LISTA FECHADA:",
+    ...TEMAS_DISPONIVEIS.map((t) => `- ${t}`),
     "",
     `Hoje é ${escopo.hoje}. Unidades que este usuário pode consultar: ${escopo.unidadesPermitidas.join(", ") || "nenhuma"}.`,
     "Quando a pergunta não indicar a unidade, consulte todas as permitidas e diga isso na resposta.",
