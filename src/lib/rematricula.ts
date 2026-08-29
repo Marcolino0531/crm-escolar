@@ -111,6 +111,31 @@ export function urlLinkRematricula(baseUrl: string, token: string): string {
   return `${base}/rematricula/verificar?token=${encodeURIComponent(token)}`;
 }
 
+// Mostra só a 1ª letra do usuário e a 1ª letra do domínio: o suficiente para o
+// responsável reconhecer a caixa de entrada, sem publicar o email no portal.
+// "sergiogmribeiro@gmail.com" → "s**************@g****.com"
+export function mascararEmail(email: string): string {
+  const limpo = (email ?? "").trim();
+  const arroba = limpo.lastIndexOf("@");
+  if (arroba <= 0 || arroba === limpo.length - 1) return "";
+
+  const usuario = limpo.slice(0, arroba);
+  const dominio = limpo.slice(arroba + 1);
+  const ponto = dominio.indexOf(".");
+  const rotulo = ponto === -1 ? dominio : dominio.slice(0, ponto);
+  const sufixo = ponto === -1 ? "" : dominio.slice(ponto);
+
+  const esconder = (parte: string) => parte[0] + "*".repeat(Math.max(parte.length - 1, 1));
+
+  return `${esconder(usuario)}@${esconder(rotulo)}${sufixo}`;
+}
+
+export function mensagemLinkEnviadoPara(emailMascarado: string): string {
+  return emailMascarado
+    ? `Enviamos um link de acesso para ${emailMascarado}. O link vale por ${LINK_VALIDADE_MINUTOS} minutos — confira também a caixa de spam.`
+    : MENSAGEM_LINK_ENVIADO;
+}
+
 export function assuntoEmailRematricula(nomeColegio: string): string {
   const colegio = (nomeColegio ?? "").trim();
   return colegio ? `Acesse a Rematrícula — ${colegio}` : "Acesse a Rematrícula";
@@ -137,6 +162,7 @@ export function corpoEmailRematricula(input: {
   alunoNome: string;
   nomeColegio: string;
   url: string;
+  emailMascarado: string;
 }): CorpoEmailRematricula {
   const saudacao = input.responsavelNome.trim() ? `Olá, ${input.responsavelNome.trim()}` : "Olá";
   const colegio = input.nomeColegio.trim() || "o colégio";
@@ -145,6 +171,7 @@ export function corpoEmailRematricula(input: {
     `Para revisar os dados e confirmar a rematrícula do(a) aluno(a) ${input.alunoNome.trim()}, ` +
       "acesse o link abaixo:",
     input.url,
+    ...(input.emailMascarado ? [`Este link foi enviado para ${input.emailMascarado}.`] : []),
     `O link vale por ${LINK_VALIDADE_MINUTOS} minutos e só pode ser usado uma vez. Se ele expirar, ` +
       "basta informar o CPF do aluno no portal e pedir um novo.",
     "Se você não solicitou este acesso, ignore este email.",

@@ -10,6 +10,9 @@ import {
   vencimentosMaterialPelasMensalidades,
   assuntoEmailRematricula,
   corpoEmailRematricula,
+  MENSAGEM_LINK_ENVIADO,
+  mascararEmail,
+  mensagemLinkEnviadoPara,
   chaveSerie,
   concentrarDiferenca,
   excedeuLimiteLinks,
@@ -152,13 +155,43 @@ describe("link mágico de acesso", () => {
       alunoNome: "João",
       nomeColegio: "Colégio Exemplo",
       url: "https://schoolhubbr.vercel.app/rematricula/verificar?token=abc",
+      emailMascarado: "s**************@g****.com",
     });
     expect(corpo.text).toContain("Olá, Maria");
     expect(corpo.text).toContain("João");
     expect(corpo.text).toContain("token=abc");
+    expect(corpo.text).toContain("s**************@g****.com");
     expect(corpo.html).toContain(
       '<a href="https://schoolhubbr.vercel.app/rematricula/verificar?token=abc">',
     );
+  });
+});
+
+describe("email mascarado do destino", () => {
+  it("mantém só a 1ª letra do usuário e a 1ª do domínio", () => {
+    expect(mascararEmail("sergiogmribeiro@gmail.com")).toBe("s**************@g****.com");
+    expect(mascararEmail("joao@gmail.com")).toBe("j***@g****.com");
+  });
+
+  it("preserva subdomínios e domínios compostos", () => {
+    expect(mascararEmail("contato@colegio.com.br")).toBe("c******@c******.com.br");
+  });
+
+  it("nunca deixa o usuário ou o domínio de 1 letra a descoberto", () => {
+    expect(mascararEmail("a@b.com")).toBe("a*@b*.com");
+  });
+
+  it("devolve vazio para email inválido, sem quebrar o fluxo", () => {
+    expect(mascararEmail("")).toBe("");
+    expect(mascararEmail("sem-arroba")).toBe("");
+    expect(mascararEmail("@gmail.com")).toBe("");
+    expect(mascararEmail("joao@")).toBe("");
+  });
+
+  it("cai na mensagem genérica quando não há máscara para mostrar", () => {
+    expect(mensagemLinkEnviadoPara("j***@g****.com")).toContain("j***@g****.com");
+    expect(mensagemLinkEnviadoPara("j***@g****.com")).toContain("15 minutos");
+    expect(mensagemLinkEnviadoPara("")).toBe(MENSAGEM_LINK_ENVIADO);
   });
 });
 
