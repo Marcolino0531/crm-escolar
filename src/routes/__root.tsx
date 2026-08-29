@@ -57,6 +57,7 @@ import { NotificationsBell } from "@/components/NotificationsBell";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { ehRotaPublica } from "@/lib/rotas-publicas";
 import {
   isExpanded,
   toggleExclusive,
@@ -344,17 +345,10 @@ function RootComponent() {
   );
 }
 
-// Rotas públicas: usadas pelos PAIS, que não têm usuário no Supabase Auth — o
-// portal de recarga autentica pelo CPF do aluno na própria tela e o formulário
-// de matrícula é protegido por captcha, então nenhuma das duas passa pelo login
-// interno nem pelo shell do app. (O painel interno /matriculas, no plural,
-// continua exigindo login.)
-const ROTAS_PUBLICAS = ["/portal-cantina", "/matricula"];
-
 function AuthGate() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { session, loading, recovery } = useAuth();
-  if (ROTAS_PUBLICAS.some((r) => pathname === r || pathname.startsWith(`${r}/`))) {
+  if (ehRotaPublica(pathname)) {
     return <Outlet />;
   }
   if (loading) {
