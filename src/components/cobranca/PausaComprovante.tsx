@@ -12,6 +12,14 @@ import { toast } from "sonner";
 
 import { useAuth } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import { chaveTelefone } from "@/lib/billing-recurrence";
 import {
@@ -152,73 +160,87 @@ export function AcaoPausarCobranca({
 
   if (!podeEditar) return null;
 
-  if (daConversa.length > 0) {
-    const agora = new Date();
-    return (
-      <div className="mb-2 space-y-1.5 rounded-lg border border-sky-300 bg-sky-50 px-2.5 py-2 text-[11px] text-sky-900">
-        {daConversa.map((p) => (
-          <div key={p.id} className="flex flex-wrap items-center gap-2">
-            <PauseCircle className="h-3.5 w-3.5 shrink-0" />
-            <span className="flex-1">
-              Cobrança e lembrete automáticos pausados — escopo: <strong>{escopoLabel(p)}</strong> ·
-              até {formatExpiracao(p.expira_em)} ({rotuloRestante(comoPausa(p), agora)})
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 gap-1 px-2 text-[11px]"
-              disabled={cancelar.isPending}
-              onClick={() => cancelar.mutate(p.id)}
-            >
-              <PlayCircle className="h-3 w-3" /> Cancelar pausa
-            </Button>
-          </div>
-        ))}
-        {conversa.aluno_id && daConversa.every((p) => p.aluno_id) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-[11px]"
-            disabled={pausar.isPending}
-            onClick={() => pausar.mutate(false)}
-          >
-            Ampliar para todos os filhos do responsável
-          </Button>
-        )}
-      </div>
-    );
-  }
+  const agora = new Date();
+  const pausado = daConversa.length > 0;
+  const escopoNovo = conversa.aluno_id
+    ? `somente ${conversa.aluno_name || `AlunoID ${conversa.aluno_id}`}`
+    : "todos os filhos deste responsável";
+
+  const explicacao = pausado
+    ? `Cobrança e lembrete automáticos pausados — ${daConversa
+        .map(
+          (p) =>
+            `escopo: ${escopoLabel(p)}, até ${formatExpiracao(p.expira_em)} (${rotuloRestante(comoPausa(p), agora)})`,
+        )
+        .join("; ")}. Abra para cancelar a pausa.`
+    : `Comprovante recebido — pausar cobrança de inadimplência e lembrete de vencimento por ${HORAS_PAUSA_COMPROVANTE}h. Escopo: ${escopoNovo}.`;
 
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 gap-1.5 text-[11px]"
-        disabled={pausar.isPending}
-        onClick={() => pausar.mutate(Boolean(conversa.aluno_id))}
-        title="Suspende cobrança de inadimplência e lembrete de vencimento por 24h"
-      >
-        <ClipboardCheck className="h-3.5 w-3.5" />
-        Comprovante recebido — pausar cobrança 24h
-      </Button>
-      <span className="text-[10px] text-muted-foreground">
-        {conversa.aluno_id
-          ? `Escopo: somente ${conversa.aluno_name || `AlunoID ${conversa.aluno_id}`}`
-          : "Escopo: todos os filhos deste responsável"}
-      </span>
-      {conversa.aluno_id && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-[10px]"
-          disabled={pausar.isPending}
-          onClick={() => pausar.mutate(false)}
-        >
-          Pausar o responsável inteiro
-        </Button>
-      )}
-    </div>
+    <DropdownMenu>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className={`h-10 w-10 shrink-0 ${pausado ? "border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100" : ""}`}
+                disabled={pausar.isPending || cancelar.isPending}
+                aria-label={explicacao}
+                title={explicacao}
+              >
+                {pausado ? (
+                  <PauseCircle className="h-4 w-4" />
+                ) : (
+                  <ClipboardCheck className="h-4 w-4" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-sm">{explicacao}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
+      <DropdownMenuContent align="start" className="max-w-xs">
+        <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
+          {explicacao}
+        </DropdownMenuLabel>
+        {pausado ? (
+          <>
+            {daConversa.map((p) => (
+              <DropdownMenuItem
+                key={p.id}
+                disabled={cancelar.isPending}
+                onClick={() => cancelar.mutate(p.id)}
+              >
+                <PlayCircle className="mr-2 h-3.5 w-3.5" /> Cancelar pausa ({escopoLabel(p)})
+              </DropdownMenuItem>
+            ))}
+            {conversa.aluno_id && daConversa.every((p) => p.aluno_id) && (
+              <DropdownMenuItem disabled={pausar.isPending} onClick={() => pausar.mutate(false)}>
+                <PauseCircle className="mr-2 h-3.5 w-3.5" /> Ampliar para todos os filhos do
+                responsável
+              </DropdownMenuItem>
+            )}
+          </>
+        ) : (
+          <>
+            <DropdownMenuItem
+              disabled={pausar.isPending}
+              onClick={() => pausar.mutate(Boolean(conversa.aluno_id))}
+            >
+              <ClipboardCheck className="mr-2 h-3.5 w-3.5" /> Pausar {HORAS_PAUSA_COMPROVANTE}h (
+              {escopoNovo})
+            </DropdownMenuItem>
+            {conversa.aluno_id && (
+              <DropdownMenuItem disabled={pausar.isPending} onClick={() => pausar.mutate(false)}>
+                <PauseCircle className="mr-2 h-3.5 w-3.5" /> Pausar o responsável inteiro
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -241,8 +263,8 @@ export function PausasPorComprovante({ podeEditar }: { podeEditar: boolean }) {
       </div>
 
       <p className="border-b border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-        Criadas no Atendimento quando o responsável envia o comprovante e a baixa ainda não entrou no
-        Sponte. Valem para a cobrança de inadimplência <strong>e</strong> para o lembrete de
+        Criadas no Atendimento quando o responsável envia o comprovante e a baixa ainda não entrou
+        no Sponte. Valem para a cobrança de inadimplência <strong>e</strong> para o lembrete de
         vencimento, expiram sozinhas em {HORAS_PAUSA_COMPROVANTE}h e podem ser canceladas aqui. Se a
         parcela já estiver quitada quando a pausa expirar, nada é disparado.
       </p>

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { chaveDoDia, rotuloDoDia, agruparPorDia, instanteDaMensagem } from "./atendimento-dias";
+import {
+  chaveDoDia,
+  rotuloDoDia,
+  rotuloRelativoLista,
+  agruparPorDia,
+  instanteDaMensagem,
+} from "./atendimento-dias";
 
 const TZ = "America/Sao_Paulo";
 // 12/08/2026 10:27 em Brasília.
@@ -28,13 +34,43 @@ describe("rotuloDoDia", () => {
     expect(rotuloDoDia("2026-08-11", AGORA, TZ)).toBe("Ontem");
   });
 
-  it("usa a data por extenso nos demais dias", () => {
-    expect(rotuloDoDia("2026-08-07", AGORA, TZ)).toBe("07 de agosto de 2026");
-    expect(rotuloDoDia("2026-07-31", AGORA, TZ)).toBe("31 de julho de 2026");
+  it("usa o dia da semana por extenso de 2 a 6 dias atrás", () => {
+    expect(rotuloDoDia("2026-08-10", AGORA, TZ)).toBe("segunda-feira");
+    expect(rotuloDoDia("2026-08-07", AGORA, TZ)).toBe("sexta-feira");
+  });
+
+  it("usa a data completa a partir de 7 dias atrás", () => {
+    expect(rotuloDoDia("2026-08-05", AGORA, TZ)).toBe("05/08/2026");
+    expect(rotuloDoDia("2026-07-31", AGORA, TZ)).toBe("31/07/2026");
   });
 
   it("não escorrega de dia na virada do mês", () => {
-    expect(rotuloDoDia("2026-08-01", AGORA, TZ)).toBe("01 de agosto de 2026");
+    expect(rotuloDoDia("2026-08-01", AGORA, TZ)).toBe("01/08/2026");
+  });
+});
+
+describe("rotuloRelativoLista", () => {
+  it("mostra só o horário nas mensagens de hoje", () => {
+    expect(rotuloRelativoLista("2026-08-12T13:07:00Z", AGORA, TZ)).toBe("10:07");
+  });
+
+  it("mostra Ontem", () => {
+    expect(rotuloRelativoLista("2026-08-11T14:10:00Z", AGORA, TZ)).toBe("Ontem");
+  });
+
+  it("mostra o dia da semana de 2 a 6 dias atrás", () => {
+    expect(rotuloRelativoLista("2026-08-10T14:00:00Z", AGORA, TZ)).toBe("segunda-feira");
+    expect(rotuloRelativoLista("2026-08-07T14:00:00Z", AGORA, TZ)).toBe("sexta-feira");
+  });
+
+  it("mostra a data completa a partir de 7 dias atrás", () => {
+    expect(rotuloRelativoLista("2026-08-05T14:00:00Z", AGORA, TZ)).toBe("05/08/2026");
+    expect(rotuloRelativoLista("2026-07-23T14:00:00Z", AGORA, TZ)).toBe("23/07/2026");
+  });
+
+  it("devolve vazio sem data utilizável", () => {
+    expect(rotuloRelativoLista(null, AGORA, TZ)).toBe("");
+    expect(rotuloRelativoLista("inválido", AGORA, TZ)).toBe("");
   });
 });
 
@@ -51,7 +87,7 @@ describe("agruparPorDia", () => {
       TZ,
     );
     expect(itens.map((i) => (i.tipo === "divisor" ? i.label : "msg"))).toEqual([
-      "24 de julho de 2026",
+      "24/07/2026",
       "msg",
       "msg",
       "Ontem",
@@ -95,7 +131,7 @@ describe("agruparPorDia", () => {
     expect(itens[0]).toEqual({
       tipo: "divisor",
       dia: "2026-08-10",
-      label: "10 de agosto de 2026",
+      label: "segunda-feira",
     });
   });
 

@@ -37,6 +37,8 @@ import {
 import {
   getWhatsAppConfig,
   getWhatsAppSendConfig,
+  getWhatsAppSendConfigDoGrupo,
+  getNumerosPublicos,
   getMediaUrl,
   downloadMedia,
   renderBillingMessage,
@@ -68,11 +70,7 @@ import {
   mapaExcecoes,
   type ExcecaoCobranca,
 } from "@/lib/billing-exceptions";
-import {
-  filtrarPorPausa,
-  pausasVigentes,
-  type PausaComprovante,
-} from "@/lib/billing-pauses";
+import { filtrarPorPausa, pausasVigentes, type PausaComprovante } from "@/lib/billing-pauses";
 import {
   agruparLembretesPorResponsavel,
   etiquetaPrazo,
@@ -83,6 +81,8 @@ import {
   type ParcelaLembrete,
 } from "@/lib/billing-reminders";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
+import { grupoDoPhoneNumberId, type NumeroGrupo } from "@/lib/whatsapp-numeros";
+import { parseReacao } from "@/lib/whatsapp-reacoes";
 import { slotDaRota, slotLembreteDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
 import {
   parseIncomingMessage,
@@ -944,6 +944,8 @@ interface WebhookMessage {
     button_reply?: { title?: string };
     list_reply?: { title?: string };
   };
+  // Reação a uma mensagem existente (emoji vazio = reação removida).
+  reaction?: { message_id?: string; emoji?: string };
   // Eventos administrativos (troca de número/identidade). Não é mensagem real.
   system?: {
     body?: string;
@@ -986,6 +988,9 @@ interface WebhookPayload {
   entry?: {
     changes?: {
       value?: {
+        // Número da escola que RECEBEU o evento: define o par de unidades da
+        // conversa e por qual número a resposta sai.
+        metadata?: { phone_number_id?: string; display_phone_number?: string };
         statuses?: WebhookStatus[];
         messages?: WebhookMessage[];
         contacts?: WebhookContact[];
@@ -1031,6 +1036,21 @@ interface ConversaRow {
   id: string;
   aluno_id: string | null;
   aluno_name: string;
+  phone_number_id?: string | null;
+}
+
+// Número da escola que recebeu o evento (metadata da Meta) e o par de unidades
+// a que ele pertence — grupo null quando o número não está configurado por env.
+interface NumeroReceptor {
+  phoneNumberId: string | null;
+  grupo: NumeroGrupo | null;
+}
+
+function numeroReceptor(phoneNumberId: string | null): NumeroReceptor {
+  return {
+    phoneNumberId,
+    grupo: grupoDoPhoneNumberId(phoneNumberId, getNumerosPublicos()),
+  };
 }
 
 // Garante a conversa da telefone (cria se não existir) e, na criação, tenta
@@ -1038,13 +1058,20 @@ interface ConversaRow {
 async function getOrCreateConversa(
   waPhone: string,
   contactName: string,
+  numero: NumeroReceptor,
 ): Promise<ConversaRow | null> {
+  const { phoneNumberId, grupo } = numero;
   // Casa pelos últimos 8 dígitos: o wa_id da Meta e o telefone gravado no disparo
   // podem divergir no 9º dígito/DDI. Converge para uma única conversa.
-  const atual = (await findConversaBySuffix(waPhone)) as ConversaRow | null;
+  const atual = (await findConversaBySuffix(waPhone, phoneNumberId)) as ConversaRow | null;
   if (atual) {
     const patch: Record<string, string> = {};
     if (contactName && !atual.aluno_name) patch.contact_name = contactName;
+    // Grava o número por onde a conversa chega (conversa antiga não tem).
+    if (phoneNumberId && atual.phone_number_id !== phoneNumberId) {
+      patch.phone_number_id = phoneNumberId;
+      if (grupo) patch.numero_grupo = grupo;
+    }
     // Auto-reparo do vínculo: se a conversa ainda não está ligada a um aluno,
     // tenta de novo — a cobrança que identifica o telefone pode ter sido
     // registrada depois de a conversa já existir (ex.: pai que escreveu antes).
@@ -1085,8 +1112,10 @@ async function getOrCreateConversa(
       aluno_name: vinculo?.aluno_name ?? "",
       responsavel_name: vinculo?.responsavel_name ?? "",
       unidade: vinculo?.unidade ?? "",
+      phone_number_id: phoneNumberId,
+      numero_grupo: grupo,
     } as never)
-    .select("id, aluno_id, aluno_name")
+    .select("id, aluno_id, aluno_name, phone_number_id")
     .single();
   if (error) {
     console.warn("[whatsapp] criar conversa falhou:", error.message);
@@ -1100,13 +1129,16 @@ async function getOrCreateConversa(
 // wa_phone para o novo número (preservando histórico e vínculo) e grava uma nota
 // interna discreta. Qualquer outro caso (identidade, sem número novo, sem
 // conversa anterior) é ignorado silenciosamente.
-async function processarEventoSystem(msg: WebhookMessage): Promise<void> {
+async function processarEventoSystem(msg: WebhookMessage, numero: NumeroReceptor): Promise<void> {
   const decision = decideSystemAction(parseSystemEvent(msg));
   if (decision.action !== "migrate") return;
 
   const oldDigits = onlyDigits(decision.oldWaId);
   const newDigits = onlyDigits(decision.newWaId);
-  const conversa = (await findConversaBySuffix(oldDigits)) as ConversaRow | null;
+  const conversa = (await findConversaBySuffix(
+    oldDigits,
+    numero.phoneNumberId,
+  )) as ConversaRow | null;
   if (!conversa) return; // sem conversa do número antigo → nada a migrar
 
   if (newDigits && newDigits !== oldDigits) {
@@ -1148,31 +1180,52 @@ async function processarEventoSystem(msg: WebhookMessage): Promise<void> {
     .eq("id", conversa.id);
 }
 
+// Cola a reação na mensagem original (por wamid). Emoji null = reação removida.
+// Reação a uma mensagem que o School Hub não conhece é ignorada.
+async function aplicarReacao(alvoWamid: string, emoji: string | null): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("whatsapp_messages" as never)
+    .update({ reaction_emoji: emoji } as never)
+    .eq("wa_message_id", alvoWamid);
+  if (error) console.warn("[whatsapp] aplicar reação falhou:", error.message);
+}
+
 // Processa as mensagens RECEBIDAS de um bloco de webhook: grava cada mensagem,
 // cria/atualiza a conversa e incrementa o não-lidas.
 async function processarMensagensRecebidas(
   messages: WebhookMessage[],
   contacts: WebhookContact[],
+  numero: NumeroReceptor,
 ): Promise<void> {
   const nomePorWaId = new Map<string, string>();
   for (const c of contacts) {
     if (c.wa_id) nomePorWaId.set(onlyDigits(c.wa_id), c.profile?.name ?? "");
   }
 
-  const sendCfg = getWhatsAppSendConfig();
+  // A mídia é baixada com o token do número que recebeu o evento.
+  const sendCfg =
+    (numero.grupo ? getWhatsAppSendConfigDoGrupo(numero.grupo) : null) ?? getWhatsAppSendConfig();
 
   for (const msg of messages) {
     // Eventos type:"system" (troca de número/identidade) não são mensagens de
     // conversa: nunca criam conversa fantasma nem gravam "[system não suportada]".
     if (msg.type === "system") {
-      await processarEventoSystem(msg);
+      await processarEventoSystem(msg, numero);
       continue;
     }
 
     const from = onlyDigits(msg.from);
     if (!from || !msg.id) continue;
 
-    const conversa = await getOrCreateConversa(from, nomePorWaId.get(from) ?? "");
+    // Reação: cola o emoji na mensagem original, sem criar mensagem nova nem
+    // marcar a conversa como não lida.
+    const reacao = parseReacao(msg);
+    if (reacao) {
+      await aplicarReacao(reacao.alvoWamid, reacao.emoji);
+      continue;
+    }
+
+    const conversa = await getOrCreateConversa(from, nomePorWaId.get(from) ?? "", numero);
     if (!conversa) continue;
 
     const parsed = parseIncomingMessage(msg);
@@ -1289,7 +1342,11 @@ async function processarWebhook(payload: WebhookPayload | null): Promise<void> {
     for (const change of entry.changes ?? []) {
       const value = change.value;
       if (value?.messages?.length) {
-        await processarMensagensRecebidas(value.messages, value.contacts ?? []);
+        await processarMensagensRecebidas(
+          value.messages,
+          value.contacts ?? [],
+          numeroReceptor(value.metadata?.phone_number_id ?? null),
+        );
       }
       for (const st of value?.statuses ?? []) {
         const wamid = st.id;

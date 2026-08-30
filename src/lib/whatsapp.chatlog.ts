@@ -7,6 +7,8 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { onlyDigits } from "@/lib/phone";
+import { escolherConversaDoNumero, grupoDaUnidade, type NumeroGrupo } from "@/lib/whatsapp-numeros";
+import { getNumerosPublicos, getWhatsAppSendConfigDoGrupo } from "@/lib/whatsapp.server";
 
 export interface VinculoAluno {
   aluno_id: string | null;
@@ -26,40 +28,57 @@ export interface ConversaMatch {
   id: string;
   aluno_id: string | null;
   aluno_name: string;
+  // Número da escola por onde a conversa é atendida (null em conversas antigas).
+  phone_number_id: string | null;
+  numero_grupo: string | null;
+  unidade: string | null;
 }
 
 // Localiza a conversa de um telefone tolerando o 9º dígito e o DDI que a Meta
 // omite no wa_id (ex.: dispara "5531993034128" mas o wa_id chega "553193034128"):
 // casa pelos últimos 8 dígitos, a MESMA regra do cruzamento telefone→aluno. Assim
 // o disparo e o webhook convergem para uma única conversa (evita duplicatas).
-export async function findConversaBySuffix(waPhone: string): Promise<ConversaMatch | null> {
+export async function findConversaBySuffix(
+  waPhone: string,
+  phoneNumberId?: string | null,
+): Promise<ConversaMatch | null> {
   const suffix = waPhone.slice(-8);
   if (suffix.length < 8) return null;
   const { data } = await supabaseAdmin
     .from("whatsapp_conversations" as never)
-    .select("id, aluno_id, aluno_name")
+    .select("id, aluno_id, aluno_name, phone_number_id, numero_grupo, unidade")
     .ilike("wa_phone", `%${suffix}%`)
     .order("last_message_at", { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  return (data as unknown as ConversaMatch | null) ?? null;
+    .limit(10);
+  const candidatas = (data ?? []) as unknown as ConversaMatch[];
+  return escolherConversaDoNumero(candidatas, phoneNumberId, getNumerosPublicos());
 }
 
 // Garante a conversa do telefone com os dados do aluno já conhecidos no disparo;
 // completa o vínculo se a conversa existir sem aluno associado.
 async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<string | null> {
-  const atual = await findConversaBySuffix(waPhone);
+  // O disparo sai pelo número da unidade do aluno, então a conversa espelhada
+  // nasce (ou é reaproveitada) já amarrada a esse número.
+  const grupo: NumeroGrupo | null = grupoDaUnidade(v.unidade);
+  const phoneNumberId = grupo ? (getWhatsAppSendConfigDoGrupo(grupo)?.phoneNumberId ?? null) : null;
+  const atual = await findConversaBySuffix(waPhone, phoneNumberId);
 
   if (atual) {
+    const patch: Record<string, string | null> = {};
     if (!atual.aluno_id && v.aluno_id) {
+      patch.aluno_id = v.aluno_id;
+      patch.aluno_name = v.aluno_name;
+      patch.responsavel_name = v.responsavel_name;
+      patch.unidade = v.unidade;
+    }
+    if (phoneNumberId && !atual.phone_number_id) {
+      patch.phone_number_id = phoneNumberId;
+      patch.numero_grupo = grupo;
+    }
+    if (Object.keys(patch).length > 0) {
       await supabaseAdmin
         .from("whatsapp_conversations" as never)
-        .update({
-          aluno_id: v.aluno_id,
-          aluno_name: v.aluno_name,
-          responsavel_name: v.responsavel_name,
-          unidade: v.unidade,
-        } as never)
+        .update(patch as never)
         .eq("id", atual.id);
     }
     return atual.id;
@@ -74,6 +93,8 @@ async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<strin
       aluno_name: v.aluno_name,
       responsavel_name: v.responsavel_name,
       unidade: v.unidade,
+      phone_number_id: phoneNumberId,
+      numero_grupo: grupo,
     } as never)
     .select("id")
     .single();
