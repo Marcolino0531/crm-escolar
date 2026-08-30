@@ -33,12 +33,13 @@ import {
   BookmarkPlus,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { usePermissions } from "@/lib/app-context";
+import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import {
   enviarMensagemChat,
@@ -51,7 +52,8 @@ import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/l
 import { displayPhoneBR } from "@/lib/phone";
 import { AcaoPausarCobranca } from "@/components/cobranca/PausaComprovante";
 import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
-import { agruparPorDia } from "@/lib/atendimento-dias";
+import { agruparPorDia, rotuloRelativoLista } from "@/lib/atendimento-dias";
+import { conversaVisivelNaUnidade } from "@/lib/whatsapp-numeros";
 import {
   caminhoMidiaSaida,
   estadoJanela24h,
@@ -82,6 +84,8 @@ type Conversation = {
   aluno_name: string;
   responsavel_name: string;
   unidade: string;
+  // Número da escola por onde a conversa é atendida (null nas conversas antigas).
+  numero_grupo: string | null;
   last_message_at: string | null;
   last_message_preview: string;
   last_message_direction: "in" | "out";
@@ -104,6 +108,7 @@ type ChatMessage = {
   media_path: string | null;
   media_mime: string | null;
   media_filename: string | null;
+  reaction_emoji: string | null;
 };
 
 // Sugestão de IA viva na tela (nada é enviado sem clique humano).
@@ -161,6 +166,7 @@ function horaCurta(iso: string | null): string {
 
 function AtendimentoPage() {
   const { canEdit } = usePermissions();
+  const { selected, schools } = useSchool();
   const podeResponder = canEdit("financeiro_atendimento");
   const podeUsarIa = canEdit("financeiro_atendimento_ia");
   const queryClient = useQueryClient();
@@ -204,7 +210,7 @@ function AtendimentoPage() {
       const { data, error } = await supabase
         .from("whatsapp_conversations" as never)
         .select(
-          "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
+          "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, numero_grupo, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
         )
         .order("last_message_at", { ascending: false, nullsFirst: false })
         .limit(200);
@@ -232,7 +238,18 @@ function AtendimentoPage() {
     };
   }, [queryClient]);
 
-  const conversas = useMemo(() => conversasQuery.data ?? [], [conversasQuery.data]);
+  // Cada número atende duas unidades, então o seletor do topo filtra a lista
+  // pelo número correspondente à unidade escolhida (Todas não filtra).
+  const unidadeSelecionada = useMemo(
+    () => (selected === "all" ? null : (schools.find((s) => s.id === selected)?.name ?? null)),
+    [selected, schools],
+  );
+
+  const conversas = useMemo(
+    () =>
+      (conversasQuery.data ?? []).filter((c) => conversaVisivelNaUnidade(c, unidadeSelecionada)),
+    [conversasQuery.data, unidadeSelecionada],
+  );
   const { ativas, arquivadas } = useMemo(() => separarPorAba(conversas), [conversas]);
   const listaDaAba = aba === "arquivadas" ? arquivadas : ativas;
 
@@ -420,7 +437,7 @@ function AtendimentoPage() {
                             )}
                           </span>
                           <span className="shrink-0 text-[10px] text-muted-foreground">
-                            {horaCurta(c.last_message_at)}
+                            {rotuloRelativoLista(c.last_message_at, new Date())}
                           </span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
@@ -502,6 +519,7 @@ function ThreadConversa({
   const enviarFn = useServerFn(enviarMensagemChat);
   const enviarMidiaFn = useServerFn(enviarMidiaChat);
   const registrarEnvioFn = useServerFn(registrarEnvioDaSugestao);
+  const gerarSugestaoFn = useServerFn(gerarSugestaoResposta);
   const [texto, setTexto] = useState("");
   const arquivoRef = useRef<HTMLInputElement>(null);
   // Sugestão viva na tela e o texto exato que a IA propôs, para saber depois se
@@ -517,6 +535,31 @@ function ThreadConversa({
   } | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
 
+  // Geração da sugestão: disparada pelo ícone de IA na barra de digitação. O
+  // texto só entra na caixa de resposta com o clique em "Usar esta resposta".
+  const gerarSugestao = useMutation({
+    mutationFn: () => gerarSugestaoFn({ data: { conversationId: conversa.id } }),
+    onSuccess: (res) => {
+      if (!res.ok || !res.sugestao) {
+        toast.error(res.error ?? "Não foi possível gerar a sugestão.");
+        return;
+      }
+      const nova: Sugestao = {
+        id: res.suggestionId ?? null,
+        texto: res.sugestao,
+        sensivel: res.sensivel === true,
+        motivoSensivel: res.motivoSensivel ?? "",
+        baseFinanceira: res.baseFinanceira ?? "",
+        tokens: (res.tokens?.entrada ?? 0) + (res.tokens?.saida ?? 0),
+      };
+      setSugestao(nova);
+      ultimaGeradaRef.current = { id: nova.id, texto: nova.texto };
+      void queryClient.invalidateQueries({ queryKey: ["atendimento-ia-uso"] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a sugestão."),
+  });
+
   const mensagensQuery = useQuery({
     queryKey: ["atendimento-mensagens", conversa.id],
     refetchInterval: 10000,
@@ -524,7 +567,7 @@ function ThreadConversa({
       const { data, error } = await supabase
         .from("whatsapp_messages" as never)
         .select(
-          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at, message_type, media_path, media_mime, media_filename",
+          "id, conversation_id, wa_message_id, direction, body, status, erro_mensagem, wa_timestamp, origem, created_at, message_type, media_path, media_mime, media_filename, reaction_emoji",
         )
         .eq("conversation_id", conversa.id)
         .order("created_at", { ascending: true })
@@ -716,14 +759,12 @@ function ThreadConversa({
 
       {podeResponder ? (
         <div className="border-t border-border p-3">
-          {podeUsarIa && (
+          {podeUsarIa && sugestao && (
             <CardSugestaoIa
-              conversaId={conversa.id}
               sugestao={sugestao}
-              onSugestao={(s) => {
-                setSugestao(s);
-                if (s) ultimaGeradaRef.current = { id: s.id, texto: s.texto };
-              }}
+              gerando={gerarSugestao.isPending}
+              onGerar={() => gerarSugestao.mutate()}
+              onDescartar={() => setSugestao(null)}
               onUsar={(s) => {
                 setTexto(s.texto);
                 sugestaoUsadaRef.current = s.id ? { id: s.id, texto: s.texto } : null;
@@ -737,8 +778,6 @@ function ThreadConversa({
               onFechar={() => setExemploCandidato(null)}
             />
           )}
-          <AcaoPausarCobranca conversa={conversa} podeEditar={podeResponder} />
-          <AvisoJanela24h janela={janela} />
           <div className="flex items-end gap-2">
             <input
               ref={arquivoRef}
@@ -769,6 +808,15 @@ function ThreadConversa({
               desabilitado={ocupado}
               onGravado={(arquivo) => enviarMidia.mutate(arquivo)}
             />
+            {podeUsarIa && (
+              <BotaoSugestaoIa
+                gerando={gerarSugestao.isPending}
+                desabilitado={ocupado}
+                onGerar={() => gerarSugestao.mutate()}
+              />
+            )}
+            <AcaoPausarCobranca conversa={conversa} podeEditar={podeResponder} />
+            <AvisoJanela24h janela={janela} />
             <Textarea
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
@@ -809,6 +857,7 @@ function ThreadConversa({
 // bloqueia o envio — o histórico local pode estar incompleto (conversa iniciada
 // por cobrança, mensagem antiga não sincronizada) e travar a caixa deixaria o
 // atendimento sem saída; quando a Meta recusa, o erro aparece no próprio balão.
+// Fica como ícone na barra de digitação, com a explicação no hover.
 function AvisoJanela24h({ janela }: { janela: EstadoJanela }) {
   if (janela.estado !== "fechada") return null;
   const desde = janela.ultimaEntrada.toLocaleString("pt-BR", {
@@ -817,15 +866,23 @@ function AvisoJanela24h({ janela }: { janela: EstadoJanela }) {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const explicacao = `A janela de 24h fechou (última mensagem do responsável em ${desde}). A Meta pode recusar texto, imagem, PDF e áudio até que ele escreva de novo — nesse caso, use um template de cobrança.`;
   return (
-    <div className="mb-2 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900">
-      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <span>
-        A janela de 24h fechou (última mensagem do responsável em {desde}). A Meta pode recusar
-        texto, imagem, PDF e áudio até que ele escreva de novo — nesse caso, use um template de
-        cobrança.
-      </span>
-    </div>
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            role="note"
+            aria-label={explicacao}
+            title={explicacao}
+            className="flex h-10 w-10 shrink-0 cursor-help items-center justify-center rounded-lg border border-amber-300 bg-amber-50 text-amber-800"
+          >
+            <AlertTriangle className="h-4 w-4" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{explicacao}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -972,46 +1029,67 @@ function GravadorAudio({
   );
 }
 
-// Card "Sugestão de resposta (IA)" — modo treinamento: gera um rascunho a partir
-// do histórico da conversa e da situação financeira consultada no Sponte na hora,
-// e só coloca o texto na caixa de envio quando o operador clica em "Usar esta
-// resposta". A IA nunca envia nada por conta própria.
+// Ícone de IA (roxo) na barra de digitação: um clique gera o rascunho de resposta
+// a partir do histórico da conversa e das parcelas em aberto no Sponte. A
+// explicação e o custo por token ficam no tooltip, para não ocupar a tela.
+function BotaoSugestaoIa({
+  gerando,
+  desabilitado,
+  onGerar,
+}: {
+  gerando: boolean;
+  desabilitado: boolean;
+  onGerar: () => void;
+}) {
+  const uso = useUsoIaDoMes(true);
+  const explicacao =
+    "Sugestão de resposta (IA): a IA lê o histórico desta conversa e consulta as parcelas em aberto no Sponte na hora de sugerir. Ela nunca envia nada — o texto só vai para o campo de resposta se você clicar em \u201cUsar esta resposta\u201d. Uso pago por token na API da Anthropic: cada geração tem custo, que cresce com o tamanho do histórico." +
+    (uso.data
+      ? ` ${uso.data.total} sugestão(ões) em ${uso.data.competencia} · ${uso.data.tokens.toLocaleString("pt-BR")} tokens.`
+      : "");
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 shrink-0 border-violet-300 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+            disabled={desabilitado || gerando}
+            onClick={onGerar}
+            aria-label="Gerar sugestão de resposta (IA)"
+            title={explicacao}
+          >
+            {gerando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">{explicacao}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// Rascunho gerado pela IA (modo treinamento). Só aparece depois de gerar, e o
+// texto vai para a caixa de envio apenas com o clique em "Usar esta resposta":
+// a IA nunca envia nada por conta própria.
 function CardSugestaoIa({
-  conversaId,
   sugestao,
-  onSugestao,
+  gerando,
+  onGerar,
+  onDescartar,
   onUsar,
 }: {
-  conversaId: string;
-  sugestao: Sugestao | null;
-  onSugestao: (s: Sugestao | null) => void;
+  sugestao: Sugestao;
+  gerando: boolean;
+  onGerar: () => void;
+  onDescartar: () => void;
   onUsar: (s: Sugestao) => void;
 }) {
-  const queryClient = useQueryClient();
-  const gerarFn = useServerFn(gerarSugestaoResposta);
-  const uso = useUsoIaDoMes(true);
-
-  const gerar = useMutation({
-    mutationFn: () => gerarFn({ data: { conversationId: conversaId } }),
-    onSuccess: (res) => {
-      if (!res.ok || !res.sugestao) {
-        toast.error(res.error ?? "Não foi possível gerar a sugestão.");
-        return;
-      }
-      onSugestao({
-        id: res.suggestionId ?? null,
-        texto: res.sugestao,
-        sensivel: res.sensivel === true,
-        motivoSensivel: res.motivoSensivel ?? "",
-        baseFinanceira: res.baseFinanceira ?? "",
-        tokens: (res.tokens?.entrada ?? 0) + (res.tokens?.saida ?? 0),
-      });
-      void queryClient.invalidateQueries({ queryKey: ["atendimento-ia-uso"] });
-    },
-    onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Não foi possível gerar a sugestão."),
-  });
-
   return (
     <div className="mb-3 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1029,79 +1107,60 @@ function CardSugestaoIa({
             size="sm"
             variant="outline"
             className="h-7 gap-1 border-violet-300 text-violet-800 hover:bg-violet-100"
-            disabled={gerar.isPending}
-            onClick={() => gerar.mutate()}
+            disabled={gerando}
+            onClick={onGerar}
           >
-            {gerar.isPending ? (
+            {gerando ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <Sparkles className="h-3.5 w-3.5" />
             )}
-            {gerar.isPending ? "Gerando…" : sugestao ? "Gerar outra" : "Gerar sugestão"}
+            {gerando ? "Gerando…" : "Gerar outra"}
           </Button>
         </div>
       </div>
 
-      {sugestao ? (
-        sugestao.sensivel ? (
-          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
-              <ShieldAlert className="h-4 w-4" /> Assunto sensível, recomendo responder
-              pessoalmente.
-            </div>
-            <p className="mt-1 text-xs text-amber-900">
-              Motivo: {sugestao.motivoSensivel}. Nenhum texto foi gerado para este caso.
-            </p>
+      {sugestao.sensivel ? (
+        <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2.5">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+            <ShieldAlert className="h-4 w-4" /> Assunto sensível, recomendo responder pessoalmente.
           </div>
-        ) : (
-          <div className="mt-2 space-y-2">
-            <div className="whitespace-pre-wrap rounded-md border border-violet-200 bg-card p-2.5 text-sm">
-              {sugestao.texto}
-            </div>
-            {sugestao.baseFinanceira && (
-              <p className="text-[11px] text-muted-foreground">
-                Base usada: {sugestao.baseFinanceira}
-              </p>
-            )}
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                className="h-7 gap-1"
-                onClick={() => {
-                  onUsar(sugestao);
-                  toast.success(
-                    "Sugestão copiada para o campo de resposta. Revise antes de enviar.",
-                  );
-                }}
-              >
-                <ClipboardCheck className="h-3.5 w-3.5" /> Usar esta resposta
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 gap-1 text-muted-foreground"
-                onClick={() => onSugestao(null)}
-              >
-                <X className="h-3.5 w-3.5" /> Descartar
-              </Button>
-            </div>
-          </div>
-        )
+          <p className="mt-1 text-xs text-amber-900">
+            Motivo: {sugestao.motivoSensivel}. Nenhum texto foi gerado para este caso.
+          </p>
+        </div>
       ) : (
-        <p className="mt-1.5 text-[11px] text-muted-foreground">
-          A IA lê o histórico desta conversa e consulta as parcelas em aberto no Sponte na hora de
-          sugerir. Ela nunca envia nada: o texto só vai para o campo de resposta se você clicar em
-          &quot;Usar esta resposta&quot;.
-        </p>
+        <div className="mt-2 space-y-2">
+          <div className="whitespace-pre-wrap rounded-md border border-violet-200 bg-card p-2.5 text-sm">
+            {sugestao.texto}
+          </div>
+          {sugestao.baseFinanceira && (
+            <p className="text-[11px] text-muted-foreground">
+              Base usada: {sugestao.baseFinanceira}
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-7 gap-1"
+              onClick={() => {
+                onUsar(sugestao);
+                toast.success("Sugestão copiada para o campo de resposta. Revise antes de enviar.");
+              }}
+            >
+              <ClipboardCheck className="h-3.5 w-3.5" /> Usar esta resposta
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1 text-muted-foreground"
+              onClick={onDescartar}
+            >
+              <X className="h-3.5 w-3.5" /> Descartar
+            </Button>
+          </div>
+        </div>
       )}
-
-      <p className="mt-2 text-[10px] text-muted-foreground">
-        Uso pago por token na API da Anthropic — cada geração tem custo, que cresce com o tamanho do
-        histórico.
-        {uso.data
-          ? ` ${uso.data.total} sugestão(ões) em ${uso.data.competencia} · ${uso.data.tokens.toLocaleString("pt-BR")} tokens.`
-          : ""}
-      </p>
     </div>
   );
 }
@@ -1376,73 +1435,88 @@ function Bolha({ msg }: { msg: ChatMessage }) {
   const st = STATUS_MSG[msg.status];
   const Icon = st.icon;
   return (
-    <div className={`flex ${out ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
-          out
-            ? msg.status === "falha"
-              ? "bg-red-100 text-red-800"
-              : automatica
-                ? "bg-amber-50 text-amber-950 ring-1 ring-amber-200"
-                : "bg-emerald-100 text-emerald-950"
-            : "bg-card text-foreground"
-        }`}
-      >
-        {automatica && (
-          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-            <Bot className="h-3 w-3" /> Cobrança automática
-          </div>
-        )}
-        {msg.message_type === "image" && msg.media_path ? (
-          <div className="space-y-1">
-            <ImagemMensagem path={msg.media_path} />
-            {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
-          </div>
-        ) : msg.message_type === "image" ? (
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <ImageOff className="h-4 w-4" /> {msg.body}
-          </div>
-        ) : msg.message_type === "document" && msg.media_path ? (
-          <div className="space-y-1">
-            <DocumentoMensagem path={msg.media_path} filename={msg.media_filename} />
-            {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
-          </div>
-        ) : msg.message_type === "document" ? (
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <FileX className="h-4 w-4" /> {msg.body}
-          </div>
-        ) : msg.message_type === "audio" && msg.media_path ? (
-          <AudioMensagem path={msg.media_path} mime={msg.media_mime} />
-        ) : msg.message_type === "audio" ? (
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <MicOff className="h-4 w-4" /> {msg.body}
-          </div>
-        ) : (
-          <div className="whitespace-pre-wrap break-words">{msg.body}</div>
-        )}
+    <div
+      className={`flex ${out ? "justify-end" : "justify-start"} ${msg.reaction_emoji ? "pb-3" : ""}`}
+    >
+      <div className="relative max-w-[80%]">
         <div
-          className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
-            out ? "text-emerald-700/70" : "text-muted-foreground"
+          className={`rounded-2xl px-3 py-2 text-sm shadow-sm ${
+            out
+              ? msg.status === "falha"
+                ? "bg-red-100 text-red-800"
+                : automatica
+                  ? "bg-amber-50 text-amber-950 ring-1 ring-amber-200"
+                  : "bg-emerald-100 text-emerald-950"
+              : "bg-card text-foreground"
           }`}
         >
-          <span>{horaCurta(msg.wa_timestamp ?? msg.created_at)}</span>
-          {out && Icon && (
-            <span
-              className={`inline-flex items-center gap-0.5 ${
-                msg.status === "lido"
-                  ? "text-sky-600"
-                  : msg.status === "falha"
-                    ? "text-red-600"
-                    : ""
-              }`}
-              title={st.label}
-            >
-              <Icon className="h-3 w-3" />
-            </span>
+          {automatica && (
+            <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+              <Bot className="h-3 w-3" /> Cobrança automática
+            </div>
+          )}
+          {msg.message_type === "image" && msg.media_path ? (
+            <div className="space-y-1">
+              <ImagemMensagem path={msg.media_path} />
+              {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
+            </div>
+          ) : msg.message_type === "image" ? (
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <ImageOff className="h-4 w-4" /> {msg.body}
+            </div>
+          ) : msg.message_type === "document" && msg.media_path ? (
+            <div className="space-y-1">
+              <DocumentoMensagem path={msg.media_path} filename={msg.media_filename} />
+              {msg.body && <div className="whitespace-pre-wrap break-words">{msg.body}</div>}
+            </div>
+          ) : msg.message_type === "document" ? (
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <FileX className="h-4 w-4" /> {msg.body}
+            </div>
+          ) : msg.message_type === "audio" && msg.media_path ? (
+            <AudioMensagem path={msg.media_path} mime={msg.media_mime} />
+          ) : msg.message_type === "audio" ? (
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <MicOff className="h-4 w-4" /> {msg.body}
+            </div>
+          ) : (
+            <div className="whitespace-pre-wrap break-words">{msg.body}</div>
+          )}
+          <div
+            className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
+              out ? "text-emerald-700/70" : "text-muted-foreground"
+            }`}
+          >
+            <span>{horaCurta(msg.wa_timestamp ?? msg.created_at)}</span>
+            {out && Icon && (
+              <span
+                className={`inline-flex items-center gap-0.5 ${
+                  msg.status === "lido"
+                    ? "text-sky-600"
+                    : msg.status === "falha"
+                      ? "text-red-600"
+                      : ""
+                }`}
+                title={st.label}
+              >
+                <Icon className="h-3 w-3" />
+              </span>
+            )}
+          </div>
+          {msg.status === "falha" && msg.erro_mensagem && (
+            <div className="mt-1 text-[10px] text-red-600">{msg.erro_mensagem}</div>
           )}
         </div>
-        {msg.status === "falha" && msg.erro_mensagem && (
-          <div className="mt-1 text-[10px] text-red-600">{msg.erro_mensagem}</div>
+        {/* Reação do responsável à mensagem, sobreposta ao pé do balão como no
+            WhatsApp nativo. Remover a reação no celular limpa o campo e o selo sai. */}
+        {msg.reaction_emoji && (
+          <span
+            aria-label={`Reação: ${msg.reaction_emoji}`}
+            title={`Reagiu com ${msg.reaction_emoji}`}
+            className={`absolute -bottom-2.5 ${out ? "left-2" : "right-2"} rounded-full border border-border bg-background px-1.5 py-0.5 text-xs leading-none shadow-sm`}
+          >
+            {msg.reaction_emoji}
+          </span>
         )}
       </div>
     </div>

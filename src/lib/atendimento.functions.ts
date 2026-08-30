@@ -9,7 +9,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
-  getWhatsAppSendConfig,
+  getWhatsAppSendConfigDaConversa,
   sendMediaMessage,
   sendTextMessage,
   toMetaPhone,
@@ -29,6 +29,14 @@ async function assertCanEditAtendimento(userId: string, acao: string) {
   if (!data) throw new Error(`Você não tem permissão para ${acao} no Atendimento.`);
 }
 
+// Dados da conversa necessários para escolher o número de envio.
+interface ConversaEnvio {
+  id: string;
+  wa_phone: string;
+  unidade: string | null;
+  phone_number_id: string | null;
+}
+
 const EnviarMensagemInputSchema = z.object({
   conversationId: z.string().uuid(),
   body: z.string().trim().min(1).max(4000),
@@ -46,7 +54,16 @@ export const enviarMensagemChat = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<EnviarMensagemResult> => {
     await assertCanEditAtendimento(context.userId, "responder");
 
-    const cfg = getWhatsAppSendConfig();
+    const { data: conv } = await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .select("id, wa_phone, unidade, phone_number_id")
+      .eq("id", data.conversationId)
+      .maybeSingle();
+    const conversa = conv as unknown as ConversaEnvio | null;
+    if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+
+    // A resposta sai pelo MESMO número por onde a conversa chegou.
+    const cfg = getWhatsAppSendConfigDaConversa(conversa);
     if (!cfg) {
       return {
         ok: false,
@@ -54,14 +71,6 @@ export const enviarMensagemChat = createServerFn({ method: "POST" })
           "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN e WHATSAPP_PHONE_NUMBER_ID).",
       };
     }
-
-    const { data: conv } = await supabaseAdmin
-      .from("whatsapp_conversations" as never)
-      .select("id, wa_phone")
-      .eq("id", data.conversationId)
-      .maybeSingle();
-    const conversa = conv as unknown as { id: string; wa_phone: string } | null;
-    if (!conversa) return { ok: false, error: "Conversa não encontrada." };
 
     const nowIso = new Date().toISOString();
 
@@ -134,24 +143,24 @@ export const enviarMidiaChat = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<EnviarMidiaResult> => {
     await assertCanEditAtendimento(context.userId, "enviar arquivos");
 
-    const cfg = getWhatsAppSendConfig();
+    const { data: conv } = await supabaseAdmin
+      .from("whatsapp_conversations" as never)
+      .select("id, wa_phone, unidade, phone_number_id")
+      .eq("id", data.conversationId)
+      .maybeSingle();
+    const conversa = conv as unknown as ConversaEnvio | null;
+    if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+    if (!toMetaPhone(conversa.wa_phone)) {
+      return { ok: false, error: "Telefone do responsável ausente ou inválido." };
+    }
+
+    const cfg = getWhatsAppSendConfigDaConversa(conversa);
     if (!cfg) {
       return {
         ok: false,
         error:
           "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN e WHATSAPP_PHONE_NUMBER_ID).",
       };
-    }
-
-    const { data: conv } = await supabaseAdmin
-      .from("whatsapp_conversations" as never)
-      .select("id, wa_phone")
-      .eq("id", data.conversationId)
-      .maybeSingle();
-    const conversa = conv as unknown as { id: string; wa_phone: string } | null;
-    if (!conversa) return { ok: false, error: "Conversa não encontrada." };
-    if (!toMetaPhone(conversa.wa_phone)) {
-      return { ok: false, error: "Telefone do responsável ausente ou inválido." };
     }
 
     const baixado = await supabaseAdmin.storage

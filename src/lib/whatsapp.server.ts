@@ -10,8 +10,17 @@
 //   WHATSAPP_TEMPLATE_NAME    — nome do template aprovado (ex.: "cobranca_lembrete")
 //   WHATSAPP_TEMPLATE_LANG    — código de idioma do template (default "pt_BR")
 //   WHATSAPP_GRAPH_VERSION    — versão do Graph API (default "v21.0")
+//   WHATSAPP_TOKEN_BELVEDERE / WHATSAPP_PHONE_NUMBER_ID_BELVEDERE
+//                             — segundo número, que atende Núcleo Belvedere e
+//                               Núcleo Vale do Sereno (ver whatsapp-numeros)
 
 import { onlyDigits } from "@/lib/phone";
+import {
+  numeroDeEnvio,
+  type ConversaRoteavel,
+  type NumeroGrupo,
+  type NumeroWhatsApp,
+} from "@/lib/whatsapp-numeros";
 
 export interface WhatsAppConfig {
   token: string;
@@ -61,6 +70,61 @@ export function getWhatsAppSendConfig(): WhatsAppSendConfig | null {
     phoneNumberId,
     graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
   };
+}
+
+// Números da escola na Cloud API. O par CEC/CEC Baby usa WHATSAPP_TOKEN e
+// WHATSAPP_PHONE_NUMBER_ID; Núcleo Belvedere/Núcleo Vale do Sereno usam
+// WHATSAPP_TOKEN_BELVEDERE e WHATSAPP_PHONE_NUMBER_ID_BELVEDERE. Sem o segundo
+// número configurado, a lista tem só o primeiro e nada muda no comportamento.
+interface NumeroConfigurado extends NumeroWhatsApp {
+  token: string;
+}
+
+export function getNumerosWhatsApp(): NumeroConfigurado[] {
+  const numeros: NumeroConfigurado[] = [];
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (token && phoneNumberId) numeros.push({ grupo: "cec", token, phoneNumberId });
+  const tokenBel = process.env.WHATSAPP_TOKEN_BELVEDERE;
+  const phoneBel = process.env.WHATSAPP_PHONE_NUMBER_ID_BELVEDERE;
+  if (tokenBel && phoneBel) {
+    numeros.push({ grupo: "belvedere", token: tokenBel, phoneNumberId: phoneBel });
+  }
+  return numeros;
+}
+
+// Identificadores dos números sem o token, para resolver o grupo de unidades a
+// partir do `phone_number_id` que a Meta manda no webhook.
+export function getNumerosPublicos(): NumeroWhatsApp[] {
+  return getNumerosWhatsApp().map((n) => ({ grupo: n.grupo, phoneNumberId: n.phoneNumberId }));
+}
+
+function toSendConfig(numero: NumeroConfigurado): WhatsAppSendConfig {
+  return {
+    token: numero.token,
+    phoneNumberId: numero.phoneNumberId,
+    graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
+  };
+}
+
+// Config de envio do número por onde a conversa é atendida: o `phone_number_id`
+// gravado na conversa (número que recebeu a mensagem) manda; sem ele, cai na
+// unidade e, por fim, no número histórico.
+export function getWhatsAppSendConfigDaConversa(
+  conversa: ConversaRoteavel,
+): WhatsAppSendConfig | null {
+  const numeros = getNumerosWhatsApp();
+  const escolhido = numeroDeEnvio(conversa, numeros);
+  if (!escolhido) return null;
+  const completo = numeros.find((n) => n.phoneNumberId === escolhido.phoneNumberId);
+  return completo ? toSendConfig(completo) : null;
+}
+
+// Config de envio de um grupo de unidades (usada no recebimento, para baixar a
+// mídia com o token do número que recebeu o evento).
+export function getWhatsAppSendConfigDoGrupo(grupo: NumeroGrupo): WhatsAppSendConfig | null {
+  const numero = getNumerosWhatsApp().find((n) => n.grupo === grupo);
+  return numero ? toSendConfig(numero) : null;
 }
 
 // Envia uma mensagem de TEXTO LIVRE pelo endpoint padrão da Cloud API. Só
