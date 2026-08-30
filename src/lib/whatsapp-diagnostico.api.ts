@@ -80,6 +80,20 @@ function falhou<T>(r: T | GraphErro): r is GraphErro {
   return typeof r === "object" && r !== null && "erro" in (r as GraphErro);
 }
 
+async function graphPost(url: string, token: string): Promise<{ ok: boolean; detalhe?: string }> {
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = (await resp.json()) as { success?: boolean; error?: { message?: string } };
+    if (body?.error) return { ok: false, detalhe: body.error.message ?? "erro na Graph API" };
+    return { ok: resp.ok && body.success !== false };
+  } catch (e) {
+    return { ok: false, detalhe: e instanceof Error ? e.message : "falha de rede na Graph API" };
+  }
+}
+
 interface TemplateGraph {
   name: string;
   language: string;
@@ -87,40 +101,94 @@ interface TemplateGraph {
   category?: string;
 }
 
-// Descobre a WABA do número: o nó do telefone não expõe a conta, então parte-se
-// do dono do token (system user ou usuário) e procura-se a WABA que lista este
-// phone_number_id.
+interface Lista {
+  data?: Array<{ id: string; name?: string }>;
+}
+
+// Candidatas a WABA do número: o nó do telefone não expõe a conta, e o caminho
+// só funciona para o tipo de dono do token. Tenta os três: system user
+// (assigned_*), portfólio de negócio (owned_*/client_*) e, por último, a WABA
+// informada na query.
+async function candidatasWaba(
+  token: string,
+  graphVersion: string,
+  wabaInformada: string,
+): Promise<{ ids: string[]; caminhos: Record<string, unknown> }> {
+  const caminhos: Record<string, unknown> = {};
+  const ids = new Set<string>();
+  if (wabaInformada) ids.add(wabaInformada);
+
+  const eu = await graph<{ id?: string; name?: string }>(
+    `https://graph.facebook.com/${graphVersion}/me?fields=id,name`,
+    token,
+  );
+  caminhos.dono = falhou(eu) ? { erro: eu.erro } : { id: mascarar(eu.id ?? ""), nome: eu.name };
+  const donoId = falhou(eu) ? "" : (eu.id ?? "");
+
+  if (donoId) {
+    const atribuidas = await graph<Lista>(
+      `https://graph.facebook.com/${graphVersion}/${donoId}/assigned_whatsapp_business_accounts?fields=id,name&limit=50`,
+      token,
+    );
+    caminhos.assigned = falhou(atribuidas)
+      ? { erro: atribuidas.erro }
+      : (atribuidas.data ?? []).map((w) => ({ id: mascarar(w.id), nome: w.name ?? null }));
+    if (!falhou(atribuidas)) for (const w of atribuidas.data ?? []) ids.add(w.id);
+  }
+
+  const negocios = await graph<Lista>(
+    `https://graph.facebook.com/${graphVersion}/me/businesses?fields=id,name&limit=50`,
+    token,
+  );
+  caminhos.negocios = falhou(negocios)
+    ? { erro: negocios.erro }
+    : (negocios.data ?? []).map((b) => ({ id: mascarar(b.id), nome: b.name ?? null }));
+
+  if (!falhou(negocios)) {
+    for (const b of negocios.data ?? []) {
+      for (const edge of [
+        "owned_whatsapp_business_accounts",
+        "client_whatsapp_business_accounts",
+      ]) {
+        const lista = await graph<Lista>(
+          `https://graph.facebook.com/${graphVersion}/${b.id}/${edge}?fields=id,name&limit=50`,
+          token,
+        );
+        caminhos[`${edge}:${mascarar(b.id)}`] = falhou(lista)
+          ? { erro: lista.erro }
+          : (lista.data ?? []).map((w) => ({ id: mascarar(w.id), nome: w.name ?? null }));
+        if (!falhou(lista)) for (const w of lista.data ?? []) ids.add(w.id);
+      }
+    }
+  }
+
+  return { ids: [...ids], caminhos };
+}
+
 async function acharWaba(
   phoneNumberId: string,
   token: string,
   graphVersion: string,
-): Promise<{ wabaId: string } | GraphErro> {
-  const explicita = (process.env.WHATSAPP_WABA_ID_BELVEDERE ?? "").trim();
-  if (explicita) return { wabaId: explicita };
+  wabaInformada: string,
+): Promise<
+  | { wabaId: string; caminhos: Record<string, unknown> }
+  | (GraphErro & { caminhos: Record<string, unknown> })
+> {
+  const { ids, caminhos } = await candidatasWaba(token, graphVersion, wabaInformada);
 
-  const eu = await graph<{ id?: string }>(
-    `https://graph.facebook.com/${graphVersion}/me?fields=id`,
-    token,
-  );
-  if (falhou(eu)) return eu;
-  if (!eu.id) return { erro: "token não devolveu o dono (me.id)" };
-
-  const wabas = await graph<{ data?: Array<{ id: string }> }>(
-    `https://graph.facebook.com/${graphVersion}/${eu.id}/assigned_whatsapp_business_accounts?fields=id&limit=50`,
-    token,
-  );
-  if (falhou(wabas)) return wabas;
-
-  for (const waba of wabas.data ?? []) {
-    const numeros = await graph<{ data?: Array<{ id: string }> }>(
-      `https://graph.facebook.com/${graphVersion}/${waba.id}/phone_numbers?fields=id&limit=50`,
+  for (const wabaId of ids) {
+    const numeros = await graph<Lista>(
+      `https://graph.facebook.com/${graphVersion}/${wabaId}/phone_numbers?fields=id&limit=50`,
       token,
     );
     if (falhou(numeros)) continue;
-    if ((numeros.data ?? []).some((n) => n.id === phoneNumberId)) return { wabaId: waba.id };
+    if ((numeros.data ?? []).some((n) => n.id === phoneNumberId)) return { wabaId, caminhos };
   }
 
-  return { erro: "nenhuma WABA visível para este token contém o phone_number_id configurado" };
+  return {
+    erro: "nenhuma WABA visível para este token contém o phone_number_id configurado",
+    caminhos,
+  };
 }
 
 async function diagnosticarNumero(
@@ -128,6 +196,8 @@ async function diagnosticarNumero(
   phoneNumberId: string,
   token: string,
   graphVersion: string,
+  wabaInformada: string,
+  inscrever: boolean,
 ) {
   const numero = await graph<{
     display_phone_number?: string;
@@ -149,7 +219,7 @@ async function diagnosticarNumero(
     return { ...base, erro: numero.erro };
   }
 
-  const waba = await acharWaba(phoneNumberId, token, graphVersion);
+  const waba = await acharWaba(phoneNumberId, token, graphVersion, wabaInformada);
   const numeroInfo = {
     ...base,
     numero: numero.display_phone_number ?? null,
@@ -159,13 +229,21 @@ async function diagnosticarNumero(
   };
 
   if (falhou(waba)) {
-    return { ...numeroInfo, waba: { erro: waba.erro } };
+    return { ...numeroInfo, waba: { erro: waba.erro, caminhos: waba.caminhos } };
   }
 
-  const inscritos = await graph<{ data?: Array<{ whatsapp_business_api_data?: { id?: string } }> }>(
-    `https://graph.facebook.com/${graphVersion}/${waba.wabaId}/subscribed_apps`,
-    token,
-  );
+  // Inscrição do app na WABA (?inscrever=<grupo>): sem app inscrito a Meta não
+  // entrega nada ao nosso webhook, e a inscrição é por WABA.
+  const inscricao = inscrever
+    ? await graphPost(
+        `https://graph.facebook.com/${graphVersion}/${waba.wabaId}/subscribed_apps`,
+        token,
+      )
+    : null;
+
+  const inscritos = await graph<{
+    data?: Array<{ whatsapp_business_api_data?: { id?: string; name?: string } }>;
+  }>(`https://graph.facebook.com/${graphVersion}/${waba.wabaId}/subscribed_apps`, token);
 
   const templates = await graph<{ data?: TemplateGraph[] }>(
     `https://graph.facebook.com/${graphVersion}/${waba.wabaId}/message_templates?fields=name,language,status,category&limit=200`,
@@ -190,8 +268,12 @@ async function diagnosticarNumero(
     ...numeroInfo,
     waba: {
       id: mascarar(waba.wabaId),
+      caminhos: waba.caminhos,
+      inscricao_solicitada: inscricao,
       // Sem app inscrito na WABA, a Meta não entrega nada ao nosso webhook.
-      apps_inscritos: falhou(inscritos) ? { erro: inscritos.erro } : (inscritos.data ?? []).length,
+      apps_inscritos: falhou(inscritos)
+        ? { erro: inscritos.erro }
+        : (inscritos.data ?? []).map((a) => a.whatsapp_business_api_data?.name ?? "(sem nome)"),
     },
     templates_cobranca: cobranca,
   };
@@ -241,9 +323,19 @@ export async function handleWhatsAppDiagnosticoApi(request: Request): Promise<Re
 
   const belvedereConfigurado = numeros.some((n) => n.grupo === "belvedere");
 
+  const wabaInformada = (url.searchParams.get("waba") ?? "").trim();
+  const inscreverGrupo = (url.searchParams.get("inscrever") ?? "").trim();
+
   const resultados = [];
   for (const n of numeros) {
-    const diagnostico = await diagnosticarNumero(n.grupo, n.phoneNumberId, n.token, graphVersion);
+    const diagnostico = await diagnosticarNumero(
+      n.grupo,
+      n.phoneNumberId,
+      n.token,
+      graphVersion,
+      n.grupo === "belvedere" ? wabaInformada : "",
+      inscreverGrupo === n.grupo,
+    );
     resultados.push({ ...diagnostico, webhook: await recebimentoNoBanco(n.phoneNumberId) });
   }
 
