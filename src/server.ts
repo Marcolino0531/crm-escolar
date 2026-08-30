@@ -13,6 +13,9 @@ import { handleMatriculasApi } from "./lib/matriculas.api";
 // TEMPORÁRIO: homologação das escritas da Rematrícula (Fase A). Sai daqui
 // depois da validação do teste.
 import { handleRematriculaHomologacaoApi } from "./lib/rematricula-homologacao.api";
+// TEMPORÁRIO: diagnóstico do segundo número da Cloud API (Belvedere/Vale do
+// Sereno). Sai daqui depois da validação.
+import { handleWhatsAppDiagnosticoApi } from "./lib/whatsapp-diagnostico.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -116,6 +119,9 @@ export default {
 
       const homologacaoResponse = await handleRematriculaHomologacaoApi(request);
       if (homologacaoResponse) return homologacaoResponse;
+
+      const diagnosticoWhatsAppResponse = await handleWhatsAppDiagnosticoApi(request);
+      if (diagnosticoWhatsAppResponse) return diagnosticoWhatsAppResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
