@@ -26,15 +26,19 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from "@/lib/colegios";
 import {
-  calcularParcelasTermo,
+  blocoVazio,
+  calcularParcelasBlocos,
   devedorDeResponsavel,
   devedorVazio,
   FORMA_PAGAMENTO_PADRAO,
   linhaAluno,
   montarTermoConfissao,
+  totalDosBlocos,
   totalParcelasTermo,
   validarTermoConfissao,
+  vencimentoSugeridoProximoBloco,
   type AlunoTermo,
+  type BlocoParcelamento,
   type DevedorTermo,
   type TermoConfissaoSnapshot,
   type TestemunhaTermo,
@@ -127,11 +131,12 @@ export function GerarTermoConfissao() {
   const [marcados, setMarcados] = useState<string[]>([]);
   const [manuais, setManuais] = useState<DevedorTermo[]>([]);
 
-  const [valorTexto, setValorTexto] = useState("");
   const [anoLetivo, setAnoLetivo] = useState<string>(String(new Date().getFullYear() - 1));
   const [formaPagamento, setFormaPagamento] = useState<string>(FORMA_PAGAMENTO_PADRAO);
-  const [qtdParcelas, setQtdParcelas] = useState<string>("1");
-  const [primeiroVencimento, setPrimeiroVencimento] = useState<string>("");
+  // Um bloco por padrão: o caso comum de parcelas iguais continua sendo dois
+  // campos e uma data.
+  const [blocos, setBlocos] = useState<BlocoParcelamento[]>([blocoVazio("bloco-1")]);
+  const [valoresTexto, setValoresTexto] = useState<Record<string, string>>({});
   const [dataDocumento, setDataDocumento] = useState<string>(hoje);
   const [testemunhas, setTestemunhas] = useState<TestemunhaTermo[]>([
     { nome: "", cpf: "" },
@@ -169,16 +174,17 @@ export function GerarTermoConfissao() {
     return [...doSponte, ...manuais].map((d, i) => ({ ...d, solidario: i > 0 }));
   }, [marcados, candidatos, manuais]);
 
-  const valorTotal = useMemo(() => {
-    const n = parseBRLNumber(valorTexto);
-    return Number.isFinite(n) ? n : 0;
-  }, [valorTexto]);
+  const valorTotal = useMemo(() => totalDosBlocos(blocos), [blocos]);
+  const parcelas = useMemo(() => calcularParcelasBlocos(blocos), [blocos]);
 
-  const quantidade = Math.max(0, Math.trunc(Number(qtdParcelas) || 0));
-  const parcelas = useMemo(
-    () => calcularParcelasTermo(valorTotal, quantidade, primeiroVencimento),
-    [valorTotal, quantidade, primeiroVencimento],
-  );
+  const atualizarBloco = (id: string, patch: Partial<BlocoParcelamento>) =>
+    setBlocos((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+
+  const adicionarBloco = () =>
+    setBlocos((prev) => [
+      ...prev,
+      blocoVazio(`bloco-${Date.now()}`, vencimentoSugeridoProximoBloco(prev)),
+    ]);
 
   const alunosTermo = useMemo(() => alunos.map((a) => a.aluno), [alunos]);
   const testemunhasPreenchidas = useMemo(
@@ -192,9 +198,7 @@ export function GerarTermoConfissao() {
     devedores,
     anoLetivo,
     formaPagamento,
-    valorTotal,
-    quantidadeParcelas: quantidade,
-    primeiroVencimento,
+    blocos,
     dataDocumento,
   });
 
@@ -612,25 +616,13 @@ export function GerarTermoConfissao() {
               <Scale className="h-4 w-4 text-primary" /> 3. Dívida confessada
             </h2>
             <p className="text-xs text-muted-foreground">
-              Valor único do termo, mesmo com mais de um aluno. Vencimento que cai em fim de semana
-              ou feriado nacional vai para o próximo dia útil.
+              Cada bloco de parcelamento tem sua própria quantidade de parcelas e valor de parcela,
+              para acordos com valores diferentes ao longo do tempo. Vencimento que cai em fim de
+              semana ou feriado nacional vai para o próximo dia útil.
             </p>
           </header>
           <div className="space-y-4 px-4 py-3">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="termo-valor" className="text-[11px] text-muted-foreground">
-                  Valor total da dívida
-                </Label>
-                <Input
-                  id="termo-valor"
-                  inputMode="decimal"
-                  value={valorTexto}
-                  placeholder="0,00"
-                  className="h-9"
-                  onChange={(e) => setValorTexto(e.target.value)}
-                />
-              </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="termo-ano" className="text-[11px] text-muted-foreground">
                   Ano letivo de referência
@@ -655,32 +647,6 @@ export function GerarTermoConfissao() {
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <Label htmlFor="termo-parcelas" className="text-[11px] text-muted-foreground">
-                  Número de parcelas
-                </Label>
-                <Input
-                  id="termo-parcelas"
-                  type="number"
-                  min={1}
-                  max={72}
-                  value={qtdParcelas}
-                  className="h-9"
-                  onChange={(e) => setQtdParcelas(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="termo-venc" className="text-[11px] text-muted-foreground">
-                  Vencimento da 1ª parcela
-                </Label>
-                <Input
-                  id="termo-venc"
-                  type="date"
-                  value={primeiroVencimento}
-                  className="h-9"
-                  onChange={(e) => setPrimeiroVencimento(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
                 <Label htmlFor="termo-data" className="text-[11px] text-muted-foreground">
                   Data que consta no documento
                 </Label>
@@ -694,11 +660,104 @@ export function GerarTermoConfissao() {
               </div>
             </div>
 
-            {valorTotal > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {formatarBRL(valorTotal)} ({valorPorExtenso(valorTotal)})
-              </p>
-            )}
+            <div className="space-y-3">
+              <Label className="text-[11px] text-muted-foreground">Blocos de parcelamento</Label>
+              {blocos.map((bloco, i) => (
+                <div
+                  key={bloco.id}
+                  className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2"
+                >
+                  <div className="flex flex-col gap-1">
+                    <Label
+                      htmlFor={`${bloco.id}-qtd`}
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Bloco {i + 1} — nº de parcelas
+                    </Label>
+                    <Input
+                      id={`${bloco.id}-qtd`}
+                      type="number"
+                      min={1}
+                      max={72}
+                      value={String(bloco.quantidade)}
+                      className="h-9 w-32"
+                      onChange={(e) =>
+                        atualizarBloco(bloco.id, {
+                          quantidade: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label
+                      htmlFor={`${bloco.id}-valor`}
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Valor de cada parcela
+                    </Label>
+                    <Input
+                      id={`${bloco.id}-valor`}
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valoresTexto[bloco.id] ?? ""}
+                      className="h-9 w-36"
+                      onChange={(e) => {
+                        const texto = e.target.value;
+                        setValoresTexto((prev) => ({ ...prev, [bloco.id]: texto }));
+                        const n = parseBRLNumber(texto);
+                        atualizarBloco(bloco.id, {
+                          valorParcela: Number.isFinite(n) && n > 0 ? n : 0,
+                        });
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label
+                      htmlFor={`${bloco.id}-venc`}
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Vencimento da 1ª parcela do bloco
+                    </Label>
+                    <Input
+                      id={`${bloco.id}-venc`}
+                      type="date"
+                      value={bloco.primeiroVencimento}
+                      className="h-9 w-44"
+                      onChange={(e) =>
+                        atualizarBloco(bloco.id, { primeiroVencimento: e.target.value })
+                      }
+                    />
+                  </div>
+                  {bloco.valorParcela > 0 && bloco.quantidade > 0 && (
+                    <div className="pb-2 text-xs text-muted-foreground">
+                      = {formatarBRL(bloco.quantidade * bloco.valorParcela)}
+                    </div>
+                  )}
+                  {blocos.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      className="h-9 gap-1 text-xs text-destructive"
+                      onClick={() => setBlocos((prev) => prev.filter((b) => b.id !== bloco.id))}
+                    >
+                      <Trash2 className="h-4 w-4" /> Remover
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button variant="outline" className="h-9 gap-1" onClick={adicionarBloco}>
+                <Plus className="h-4 w-4" /> Adicionar bloco de pagamento
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">
+                Valor total da dívida (calculado)
+              </Label>
+              <Input readOnly value={formatarBRL(valorTotal)} className="h-9 w-48 bg-muted" />
+              {valorTotal > 0 && (
+                <p className="text-xs text-muted-foreground">{valorPorExtenso(valorTotal)}</p>
+              )}
+            </div>
 
             {parcelas.length > 0 && (
               <div className="overflow-hidden rounded-lg border border-border">

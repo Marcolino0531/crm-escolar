@@ -118,8 +118,12 @@ function quadroParcelas(doc: Doc, termo: TermoConfissaoDocumento, y: number): nu
     return yAtual + ALTURA_LINHA;
   };
 
-  y = garantirEspaco(doc, y + 3, ALTURA_LINHA * 3);
-  y = cabecalho(y);
+  y = garantirEspaco(doc, y + 3, ALTURA_LINHA * 4);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("CRONOGRAMA DE PARCELAS", MARGEM, y + 4);
+  doc.setFont("helvetica", "normal");
+  y = cabecalho(y + 7);
   doc.setDrawColor(210);
   doc.setLineWidth(0.2);
   doc.setFontSize(9.5);
@@ -222,7 +226,7 @@ export async function gerarPdfTermoConfissao(
       y = paragrafoRico(doc, paragrafo, y);
       y += 3;
     }
-    // O quadro de vencimentos ilustra a forma de pagamento da cláusula 2.
+    // O cronograma completo ilustra a forma de pagamento da cláusula 2.
     if (secao.titulo.startsWith("2 –")) {
       y = quadroParcelas(doc, termo, y);
       doc.setFontSize(10);
