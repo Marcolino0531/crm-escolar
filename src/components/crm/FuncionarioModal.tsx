@@ -9,6 +9,7 @@ import {
   CategoriaFalta,
 } from "@/lib/crm/types";
 import { UNIDADES } from "@/lib/crm/constants";
+import { formatValorVt, parseValorVt, valorVtValido } from "@/lib/crm/vt-valor";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -135,17 +136,6 @@ const validarHora = (hora: string): boolean => {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 };
 
-// Valor monetário do VT: aceita vírgula ou ponto como separador decimal.
-const parseVt = (v: string): number => {
-  const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-};
-const vtValido = (v: string): boolean => {
-  if (!v.trim()) return false;
-  const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(n) && n >= 0;
-};
-
 const GENERO_OPCOES: { valor: Genero; label: string }[] = [
   { valor: "feminino", label: "Feminino" },
   { valor: "masculino", label: "Masculino" },
@@ -198,7 +188,9 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     horarioAlmocoFim: funcionarioExistente?.horarioAlmocoFim || "",
     recebeVt: funcionarioExistente?.recebeVt ?? true,
     valorDiarioVt:
-      funcionarioExistente?.valorDiarioVt != null ? String(funcionarioExistente.valorDiarioVt) : "",
+      funcionarioExistente?.valorDiarioVt != null
+        ? formatValorVt(funcionarioExistente.valorDiarioVt)
+        : "",
   });
 
   const [feriasForm, setFeriasForm] = useState({
@@ -552,7 +544,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       !form.dataInicio ||
       !validarHora(form.horarioTrabalhoInicio) ||
       !validarHora(form.horarioTrabalhoFim) ||
-      (form.recebeVt && !vtValido(form.valorDiarioVt))
+      (form.recebeVt && !valorVtValido(form.valorDiarioVt))
     ) {
       return;
     }
@@ -573,7 +565,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       horarioAlmocoInicio: form.horarioAlmocoInicio || undefined,
       horarioAlmocoFim: form.horarioAlmocoFim || undefined,
       recebeVt: form.recebeVt,
-      valorDiarioVt: form.recebeVt ? parseVt(form.valorDiarioVt) : 0,
+      valorDiarioVt: form.recebeVt ? parseValorVt(form.valorDiarioVt) : 0,
     });
   };
 
@@ -586,7 +578,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     form.dataInicio &&
     validarHora(form.horarioTrabalhoInicio) &&
     validarHora(form.horarioTrabalhoFim) &&
-    (!form.recebeVt || vtValido(form.valorDiarioVt));
+    (!form.recebeVt || valorVtValido(form.valorDiarioVt));
 
   const inputClass =
     "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm";
@@ -872,6 +864,13 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                     inputMode="decimal"
                     value={form.valorDiarioVt}
                     onChange={(e) => setForm({ ...form, valorDiarioVt: e.target.value })}
+                    onBlur={() => {
+                      if (valorVtValido(form.valorDiarioVt))
+                        setForm({
+                          ...form,
+                          valorDiarioVt: formatValorVt(parseValorVt(form.valorDiarioVt)),
+                        });
+                    }}
                     placeholder="0,00"
                     className={`${inputClass} pl-9`}
                   />

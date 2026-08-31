@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { usePermissions, useAuth, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { formatBRLInput, parseBRLNumber } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -155,8 +156,7 @@ const COLUNAS_REPASSE =
 
 // Aceita "1.200,00", "1200.00" e "1200".
 function parseValorBR(texto: string): number {
-  const limpo = texto.trim().replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  return Number(limpo);
+  return parseBRLNumber(texto);
 }
 
 function formatarHora(hora: string | null): string {
@@ -851,7 +851,7 @@ function ParceirosDaModalidade({
         id: p.id,
         nome: p.nome,
         percentual: p.percentual_parceiro === null ? "" : String(Number(p.percentual_parceiro)),
-        valorFixo: p.valor_fixo_mensal === null ? "" : String(Number(p.valor_fixo_mensal)),
+        valorFixo: p.valor_fixo_mensal === null ? "" : formatBRLInput(Number(p.valor_fixo_mensal)),
       })),
     );
     setEditando(true);
@@ -1359,7 +1359,7 @@ function LinhaRepasseParceiro({
                 <Input
                   value={ajuste}
                   onChange={(e) => setAjuste(e.target.value)}
-                  placeholder={String(calculo.valorPadrao)}
+                  placeholder={formatBRLInput(calculo.valorPadrao)}
                   className="h-8 w-28"
                 />
               </div>
@@ -1401,8 +1401,8 @@ function LinhaRepasseParceiro({
                   onClick={() => {
                     setAjuste(
                       repasse?.valor_ajustado !== null && repasse?.valor_ajustado !== undefined
-                        ? String(Number(repasse.valor_ajustado))
-                        : String(calculo.valorPadrao),
+                        ? formatBRLInput(Number(repasse.valor_ajustado))
+                        : formatBRLInput(calculo.valorPadrao),
                     );
                     setMotivo(repasse?.observacao ?? "");
                     setEditandoAjuste(true);
