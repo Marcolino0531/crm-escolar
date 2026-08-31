@@ -15,6 +15,7 @@ import {
   rotuloDiaSemana,
   turnosDaGradeNaData,
 } from "@/lib/crm/terceirizados-datas";
+import { formatBRLInput, parseBRLNumber } from "@/lib/currency";
 
 interface TerceirizadoModalProps {
   unidadeSelecionada: string;
@@ -52,7 +53,7 @@ const validarData = (dataBR: string): boolean => {
 };
 
 const parseValor = (v: string): number => {
-  const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
+  const n = parseBRLNumber(v);
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
@@ -84,7 +85,7 @@ const TerceirizadoModal: React.FC<TerceirizadoModalProps> = ({
     unidade: terceirizadoExistente?.unidade || unidadeSelecionada,
     valorTurno:
       terceirizadoExistente?.valorTurno != null && terceirizadoExistente.valorTurno > 0
-        ? String(terceirizadoExistente.valorTurno)
+        ? formatBRLInput(terceirizadoExistente.valorTurno)
         : "",
   });
   const [grade, setGrade] = useState<GradeTurnos>(terceirizadoExistente?.grade ?? gradeVazia());
