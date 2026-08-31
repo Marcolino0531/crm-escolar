@@ -341,6 +341,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                         Admissão
                       </th>
+                      {abaStatus === "desligados" && (
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Rescisão
+                        </th>
+                      )}
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                         Horário
                       </th>
@@ -358,7 +363,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                     {funcionariosFiltrados.length === 0 && (
                       <tr>
                         <td
-                          colSpan={isAdmin ? 7 : 6}
+                          colSpan={(isAdmin ? 7 : 6) + (abaStatus === "desligados" ? 1 : 0)}
                           className="px-4 py-10 text-center text-sm text-gray-400"
                         >
                           {abaStatus === "ativos"
@@ -390,6 +395,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {converterParaBR(func.dataAdmissao || "")}
                         </td>
+                        {abaStatus === "desligados" && (
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {converterParaBR(func.dataRescisao || "") || "—"}
+                          </td>
+                        )}
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
                         </td>
