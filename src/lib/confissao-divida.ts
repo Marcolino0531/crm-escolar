@@ -63,7 +63,23 @@ export interface ParcelaTermo {
   vencimento: string; // YYYY-MM-DD, já ajustado para dia útil
 }
 
+/**
+ * Faixa do acordo com parcelas iguais entre si: um mesmo termo pode ter várias
+ * (4x 726,20, depois 2x 2.300,00, depois 1x 138,00). O valor da parcela é o que
+ * o usuário digitou — não existe divisão de um total.
+ */
+export interface BlocoParcelamento {
+  id: string;
+  quantidade: number;
+  valorParcela: number;
+  primeiroVencimento: string; // YYYY-MM-DD
+}
+
 export const FORMA_PAGAMENTO_PADRAO = "via boletos bancários enviados por email";
+
+export function blocoVazio(id: string, primeiroVencimento = ""): BlocoParcelamento {
+  return { id, quantidade: 1, valorParcela: 0, primeiroVencimento };
+}
 
 export function devedorVazio(id: string): DevedorTermo {
   return {
@@ -105,34 +121,61 @@ export function addMesesYMD(ymd: string, meses: number): string {
   return `${ano}-${pad2(mes + 1)}-${pad2(Math.min(d, ultimoDia))}`;
 }
 
-/**
- * Parcelas do acordo: valor total dividido pela quantidade EM CENTAVOS, com a
- * diferença da divisão inexata jogada na última parcela (a soma das parcelas é
- * sempre exatamente o total confessado). O vencimento é o mesmo dia da primeira
- * parcela em cada mês seguinte e, caindo em sábado, domingo ou feriado
- * nacional, rola para o próximo dia útil — inclusive o da primeira parcela.
- */
-export function calcularParcelasTermo(
-  total: number,
-  quantidade: number,
-  primeiroVencimento: string,
-): ParcelaTermo[] {
-  const totalCentavos = Math.round((Number.isFinite(total) ? total : 0) * 100);
-  const qtd = Math.max(0, Math.trunc(quantidade));
-  if (totalCentavos <= 0 || qtd === 0) return [];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(primeiroVencimento)) return [];
+function blocoValido(b: BlocoParcelamento): boolean {
+  return (
+    Math.trunc(b.quantidade) >= 1 &&
+    Math.round((Number.isFinite(b.valorParcela) ? b.valorParcela : 0) * 100) > 0 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(b.primeiroVencimento)
+  );
+}
 
-  const base = Math.floor(totalCentavos / qtd);
+/**
+ * Cronograma completo do acordo: as parcelas de todos os blocos em ordem, com
+ * numeração contínua. Dentro de um bloco o vencimento mantém o dia da primeira
+ * parcela e avança um mês por parcela; caindo em sábado, domingo ou feriado
+ * nacional, rola para o próximo dia útil — o ajuste é por parcela e não arrasta
+ * o dia-base do bloco.
+ */
+export function calcularParcelasBlocos(blocos: readonly BlocoParcelamento[]): ParcelaTermo[] {
   const parcelas: ParcelaTermo[] = [];
-  for (let i = 0; i < qtd; i++) {
-    const centavos = i === qtd - 1 ? totalCentavos - base * (qtd - 1) : base;
-    parcelas.push({
-      numero: i + 1,
-      valor: centavos / 100,
-      vencimento: proximoDiaUtil(addMesesYMD(primeiroVencimento, i)),
-    });
+  for (const bloco of blocos) {
+    if (!blocoValido(bloco)) continue;
+    const qtd = Math.trunc(bloco.quantidade);
+    for (let i = 0; i < qtd; i++) {
+      parcelas.push({
+        numero: parcelas.length + 1,
+        valor: bloco.valorParcela,
+        vencimento: proximoDiaUtil(addMesesYMD(bloco.primeiroVencimento, i)),
+      });
+    }
   }
   return parcelas;
+}
+
+/** Total confessado = soma de (nº de parcelas × valor da parcela) de cada bloco. */
+export function totalDosBlocos(blocos: readonly BlocoParcelamento[]): number {
+  const centavos = blocos.reduce((acc, b) => {
+    const qtd = Math.max(0, Math.trunc(b.quantidade));
+    const valor = Number.isFinite(b.valorParcela) ? b.valorParcela : 0;
+    return acc + qtd * Math.round(valor * 100);
+  }, 0);
+  return centavos / 100;
+}
+
+/**
+ * Vencimento sugerido para o próximo bloco: um mês depois da última parcela do
+ * bloco anterior, contado sobre o dia-base (sem o ajuste de dia útil, que é
+ * aplicado depois em cada parcela). Fica editável na tela — o intervalo entre
+ * blocos pode ser outro.
+ */
+export function vencimentoSugeridoProximoBloco(blocos: readonly BlocoParcelamento[]): string {
+  for (let i = blocos.length - 1; i >= 0; i--) {
+    const b = blocos[i];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(b.primeiroVencimento)) continue;
+    const qtd = Math.max(1, Math.trunc(b.quantidade));
+    return addMesesYMD(b.primeiroVencimento, qtd);
+  }
+  return "";
 }
 
 /** Soma das parcelas, em centavos, para conferir com o total confessado. */
@@ -308,7 +351,7 @@ function secoes(input: MontarTermoInput, g: Genero, valorComExtenso: string): Se
             qtd > 0
               ? `, em ${qtd} (${qtd === 1 ? "uma" : String(qtd)}) parcela${
                   qtd === 1 ? "" : "s"
-                }, conforme o quadro de vencimentos abaixo`
+                }, nos valores e datas do cronograma de parcelas abaixo`
               : ""
           }.`,
       ],
@@ -478,9 +521,7 @@ export function validarTermoConfissao(input: {
   devedores: readonly DevedorTermo[];
   anoLetivo: string;
   formaPagamento: string;
-  valorTotal: number;
-  quantidadeParcelas: number;
-  primeiroVencimento: string;
+  blocos: readonly BlocoParcelamento[];
   dataDocumento: string;
 }): string[] {
   const erros: string[] = [];
@@ -507,10 +548,17 @@ export function validarTermoConfissao(input: {
     erros.push("Informe o ano letivo de referência do débito (ex.: 2025).");
   }
   if (!input.formaPagamento.trim()) erros.push("Informe a forma de pagamento.");
-  if (Math.round(input.valorTotal * 100) <= 0) erros.push("Informe o valor total da dívida.");
-  if (input.quantidadeParcelas < 1) erros.push("Informe o número de parcelas.");
-  if (!formatarDataBR(input.primeiroVencimento)) {
-    erros.push("Informe a data de vencimento da 1ª parcela.");
+  if (input.blocos.length === 0) erros.push("Informe ao menos um bloco de parcelamento.");
+  for (const b of input.blocos) {
+    if (Math.trunc(b.quantidade) < 1) {
+      erros.push("Informe o número de parcelas de cada bloco de parcelamento.");
+    }
+    if (Math.round((Number.isFinite(b.valorParcela) ? b.valorParcela : 0) * 100) <= 0) {
+      erros.push("Informe o valor da parcela de cada bloco de parcelamento.");
+    }
+    if (!formatarDataBR(b.primeiroVencimento)) {
+      erros.push("Informe o vencimento da 1ª parcela de cada bloco de parcelamento.");
+    }
   }
   if (!formatarDataBR(input.dataDocumento)) erros.push("Informe a data do documento.");
   return [...new Set(erros)];
