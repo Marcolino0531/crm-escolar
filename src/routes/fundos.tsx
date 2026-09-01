@@ -14,6 +14,8 @@ import {
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useSchool, usePermissions } from "@/lib/app-context";
+import { escolaAtivaId, unidadeAtiva } from "@/lib/unidade-global";
+import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -535,12 +537,13 @@ function CreateFundDialog({
 }) {
   const [name, setName] = useState("");
   const [destination, setDestination] = useState("");
-  const [selSchool, setSelSchool] = useState(schoolId === "all" ? "" : schoolId);
+  // Colégio do fundo: sempre o do seletor global do topo.
+  const escolaId = escolaAtivaId(schoolId, schools) ?? "";
+  const escolaNome = unidadeAtiva(schoolId, schools) ?? "";
 
   const reset = () => {
     setName("");
     setDestination("");
-    setSelSchool(schoolId === "all" ? "" : schoolId);
   };
 
   return (
@@ -557,41 +560,34 @@ function CreateFundDialog({
         <DialogHeader>
           <DialogTitle>Novo Fundo</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label>Nome do Fundo</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Reserva Estratégica"
-            />
-          </div>
-          <div>
-            <Label>Destino do Investimento</Label>
-            <Input
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              placeholder="Ex.: 13º Salário, Férias"
-            />
-          </div>
-          {schoolId === "all" && (
+        {!escolaId ? (
+          <SelecioneUnidade acao="A criação de um novo fundo" />
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <Label>Nome do Fundo</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: Reserva Estratégica"
+              />
+            </div>
+            <div>
+              <Label>Destino do Investimento</Label>
+              <Input
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+                placeholder="Ex.: 13º Salário, Férias"
+              />
+            </div>
             <div>
               <Label>Colégio</Label>
-              <select
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                value={selSchool}
-                onChange={(e) => setSelSchool(e.target.value)}
-              >
-                <option value="">Selecione…</option>
-                {schools.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {escolaNome}
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         <DialogFooter>
           <Button
             variant="outline"
@@ -603,17 +599,12 @@ function CreateFundDialog({
             Cancelar
           </Button>
           <Button
-            disabled={
-              saving ||
-              !name.trim() ||
-              !destination.trim() ||
-              !(schoolId !== "all" ? schoolId : selSchool)
-            }
+            disabled={saving || !name.trim() || !destination.trim() || !escolaId}
             onClick={() => {
               onSave({
                 name: name.trim(),
                 destination: destination.trim(),
-                school_id: schoolId !== "all" ? schoolId : selSchool,
+                school_id: escolaId,
               });
               reset();
             }}
