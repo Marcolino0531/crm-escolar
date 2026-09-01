@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { camposAluno } from "./matriculas.sponte";
 import {
+  ESTADO_CIVIL_MATRICULA,
+  NACIONALIDADE_MATRICULA,
   MAX_SUBMISSOES_POR_IP,
   MATRICULA_FORM_VAZIO,
   cepCompletoValido,
@@ -35,6 +38,7 @@ function formCompleto(over: Partial<MatriculaForm> = {}): MatriculaForm {
       nome: "Ryan Kleber Braga de Morais",
       cpf: CPF_ALUNO,
       dataNascimento: "2015-04-10",
+      genero: "Masculino",
       naturalidade: "Belo Horizonte",
     },
     endereco: {
@@ -152,13 +156,16 @@ describe("validarMatriculaForm", () => {
 
   it("aponta os campos obrigatórios do aluno", () => {
     const erros = validarMatriculaForm(
-      formCompleto({ aluno: { nome: "Jo", cpf: "", dataNascimento: "", naturalidade: "" } }),
+      formCompleto({
+        aluno: { nome: "Jo", cpf: "", dataNascimento: "", genero: "", naturalidade: "" },
+      }),
       HOJE,
       UNIDADES,
     );
     expect(Object.keys(erros).sort()).toEqual([
       "aluno.cpf",
       "aluno.dataNascimento",
+      "aluno.genero",
       "aluno.naturalidade",
       "aluno.nome",
     ]);
@@ -254,6 +261,63 @@ describe("montarPayloadMatricula", () => {
       },
     });
     expect(payload.responsaveis).toHaveLength(2);
+  });
+
+  it("envia estado civil e nacionalidade fixos, sem campo no formulário", () => {
+    const payload = montarPayloadMatricula(formCompleto(), "site-123");
+    expect(payload.aluno.estadoCivil).toBe("Solteiro");
+    expect(payload.aluno.nacionalidade).toBe("Brasileiro(a)");
+    expect(ESTADO_CIVIL_MATRICULA).toBe("Solteiro");
+    expect(NACIONALIDADE_MATRICULA).toBe("Brasileiro(a)");
+  });
+
+  it.each(["Feminino", "Masculino"] as const)("envia o gênero escolhido (%s)", (genero) => {
+    const form = formCompleto();
+    const payload = montarPayloadMatricula(
+      { ...form, aluno: { ...form.aluno, genero } },
+      "site-123",
+    );
+    expect(payload.aluno.sexo).toBe(genero);
+  });
+
+  it("leva gênero, estado civil e nacionalidade para os parâmetros do Sponte", () => {
+    const form = formCompleto();
+    const payload = montarPayloadMatricula(
+      { ...form, aluno: { ...form.aluno, genero: "Feminino" } },
+      "site-123",
+    );
+    const campos = camposAluno(
+      payload.aluno,
+      {
+        cep: payload.endereco.cep,
+        logradouro: payload.endereco.logradouro ?? "",
+        numero: payload.endereco.numero,
+        complemento: payload.endereco.complemento ?? "",
+        bairro: payload.endereco.bairro ?? "",
+        cidade: payload.endereco.cidade ?? "",
+      },
+      "2015-04-10T00:00:00",
+    );
+    expect(campos.sSexo).toBe("Feminino");
+    expect(campos.sObservacao).toContain("Nacionalidade: Brasileiro(a)");
+    expect(campos.sObservacao).toContain("Estado civil: Solteiro");
+  });
+
+  it("preenche os fixos também em payload antigo, sem nacionalidade/estado civil", () => {
+    const campos = camposAluno(
+      { nome: "Aluno Antigo", dataNascimento: "2015-04-10" },
+      {
+        cep: "30320000",
+        logradouro: "Rua Teste",
+        numero: "100",
+        complemento: "",
+        bairro: "Belvedere",
+        cidade: "Belo Horizonte",
+      },
+      "2015-04-10T00:00:00",
+    );
+    expect(campos.sObservacao).toContain("Nacionalidade: Brasileiro(a)");
+    expect(campos.sObservacao).toContain("Estado civil: Solteiro");
   });
 
   it("envia uma mídia que existe no cadastro do Sponte", () => {

@@ -36,6 +36,7 @@ import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
+  GENEROS_MATRICULA,
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
   SAUDE_FORM_VAZIO,
@@ -51,6 +52,7 @@ import {
   validarRotinaForm,
   type EnderecoForm,
   type ErrosForm,
+  type GeneroMatricula,
   type MatriculaForm,
   type ParentescoForm,
   type DocumentosForm,
@@ -573,6 +575,28 @@ function MatriculaPublicaPage() {
                         Série correspondente: <strong>{serie}</strong>
                       </p>
                     )}
+                  </Campo>
+                  <Campo id="aluno-genero" label="Gênero" erro={erros["aluno.genero"]}>
+                    <Select
+                      value={form.aluno.genero}
+                      onValueChange={(v) =>
+                        setForm({
+                          ...form,
+                          aluno: { ...form.aluno, genero: v as GeneroMatricula },
+                        })
+                      }
+                    >
+                      <SelectTrigger id="aluno-genero">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GENEROS_MATRICULA.map((g) => (
+                          <SelectItem key={g} value={g}>
+                            {g}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </Campo>
                   <Campo
                     id="aluno-naturalidade"

@@ -34,6 +34,7 @@ export const MatriculaSchema = z.object({
     sexo: opcional,
     naturalidade: opcional,
     nacionalidade: opcional,
+    estadoCivil: opcional,
     email: opcional,
     telefone: opcional,
     celular: opcional,
