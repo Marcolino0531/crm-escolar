@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ import { parseCSV, parseExcel, extractTransactions, type ParsedTx } from "@/lib/
 import { autoReconcileSubcategorized, autoBaixaForecastsPorExtrato } from "@/lib/auto-reconcile";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import { useSchool, usePermissions } from "@/lib/app-context";
+import { escolaAtivaId } from "@/lib/unidade-global";
+import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { AccessDenied } from "@/components/AccessDenied";
 import { CategoryManagerDialog } from "@/components/CategoryManagerDialog";
 
@@ -53,13 +55,20 @@ function UploadPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
-  const [schoolId, setSchoolId] = useState<string>(() => (selected !== "all" ? selected : ""));
+  // Colégio do extrato: sempre o do seletor global do topo.
+  const schoolId = escolaAtivaId(selected, schools) ?? "";
   if (roleLoading) return null;
   if (!canView("financeiro_upload"))
     return <AccessDenied message="Você não tem permissão para Importar Extrato." />;
   const [rows, setRows] = useState<Pending[]>([]);
   const [saving, setSaving] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+
+  // Troca de unidade no topo descarta a prévia lida para o colégio anterior.
+  useEffect(() => {
+    setRows([]);
+    setFileName(null);
+  }, [schoolId]);
 
   const { data: refs } = useQuery({
     queryKey: ["refs"],
@@ -134,7 +143,7 @@ function UploadPage() {
 
   async function handleFile(file: File) {
     if (!schoolId) {
-      toast.error("Selecione o colégio antes de importar o extrato.");
+      toast.error("Selecione uma unidade específica no seletor do topo para importar o extrato.");
       return;
     }
     setFileName(file.name);
@@ -223,7 +232,7 @@ function UploadPage() {
   }
 
   async function save() {
-    if (!schoolId) { toast.error("Selecione o colégio."); return; }
+    if (!schoolId) { toast.error("Selecione uma unidade específica no seletor do topo."); return; }
     const blockedDup = rows.filter(r => r.duplicate && !r.dismissedDup);
     if (blockedDup.length > 0) {
       toast.error(`${blockedDup.length} possível(eis) duplicata(s). Confirme "Manter" ou exclua a linha.`);
@@ -307,26 +316,21 @@ function UploadPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Importar Extrato</h1>
-        <p className="text-sm text-muted-foreground">Selecione o colégio, envie o CSV e revise a categorização.</p>
+        <p className="text-sm text-muted-foreground">O extrato entra no colégio selecionado no topo da tela; envie o CSV e revise a categorização.</p>
       </div>
 
       <Card>
         <CardContent className="space-y-5 p-6">
           <div className="max-w-md space-y-1.5">
             <Label className="flex items-center gap-1.5 text-sm">
-              <Building2 className="h-4 w-4" /> Colégio (obrigatório)
+              <Building2 className="h-4 w-4" /> Colégio
             </Label>
-            <Select value={schoolId} onValueChange={setSchoolId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o colégio deste extrato…" />
-              </SelectTrigger>
-              <SelectContent>
-                {schools.map(s => (
-                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-10 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+              {schools.find(s => s.id === schoolId)?.name ?? "Selecione no topo da tela"}
+            </div>
           </div>
+
+          {!schoolId && <SelecioneUnidade acao="A importação do extrato bancário" />}
 
           {podeEditar && (
             <label className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-secondary/40 px-6 py-12 text-center transition-colors ${schoolId ? "cursor-pointer hover:bg-secondary" : "cursor-not-allowed opacity-60"}`}>
@@ -336,7 +340,7 @@ function UploadPage() {
               <div>
                 <div className="font-medium">{fileName ?? "Clique para selecionar um arquivo CSV ou Excel"}</div>
                 <div className="text-xs text-muted-foreground">
-                  {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Extratos da Caixa e do Itaú são detectados automaticamente pelas colunas" : "Selecione um colégio primeiro"}
+                  {schoolId ? "Formatos aceitos: .csv, .xlsx, .xls — Extratos da Caixa e do Itaú são detectados automaticamente pelas colunas" : "Selecione uma unidade específica no topo primeiro"}
                 </div>
               </div>
               <input

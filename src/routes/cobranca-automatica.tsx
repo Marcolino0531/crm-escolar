@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -30,13 +30,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -58,6 +51,7 @@ import { alertaExecucaoCron } from "@/lib/billing-cron-runs";
 import { rotuloMesReferencia } from "@/lib/billing-exceptions";
 import { useAuth } from "@/lib/app-context";
 import { PausasPorComprovante } from "@/components/cobranca/PausaComprovante";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca-automatica")({
@@ -108,8 +102,6 @@ function MensagensAutomaticasPage() {
     </div>
   );
 }
-
-const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 type BillingStatus = "sucesso" | "erro" | "pendente" | "enviado" | "entregue" | "lido" | "falha";
 
@@ -739,7 +731,8 @@ function KillSwitch({ podeEditar }: { podeEditar: boolean }) {
 
 function AmbienteDeTeste({ onEnviado }: { onEnviado: () => void }) {
   const enviarFn = useServerFn(enviarCobrancaTeste);
-  const [unidade, setUnidade] = useState<string>("");
+  // Unidade do seletor global do topo: o disparo de teste sai sempre por ela.
+  const unidade = useUnidadeAtiva() ?? "";
   const [alunoId, setAlunoId] = useState<string>("");
 
   const enviar = useMutation({
@@ -767,42 +760,39 @@ function AmbienteDeTeste({ onEnviado }: { onEnviado: () => void }) {
         Dispara o fluxo de cobrança para um AlunoID específico do Sponte, validando a integração
         ponta a ponta antes de habilitar o cron em lote. O disparo é registrado no histórico abaixo.
       </p>
-      <div className="mt-3 flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label className="text-[11px] text-muted-foreground">Unidade</Label>
-          <Select value={unidade} onValueChange={setUnidade}>
-            <SelectTrigger className="h-9 w-56">
-              <SelectValue placeholder="Selecione a unidade" />
-            </SelectTrigger>
-            <SelectContent>
-              {UNIDADES_SPONTE.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {!unidade ? (
+        <div className="mt-3">
+          <SelecioneUnidade acao="O disparo de cobrança de teste" />
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="teste-aluno" className="text-[11px] text-muted-foreground">
-            ID do Aluno (Sponte)
-          </Label>
-          <Input
-            id="teste-aluno"
-            value={alunoId}
-            onChange={(e) => setAlunoId(e.target.value)}
-            placeholder="ex.: 399"
-            className="h-9 w-40"
-          />
+      ) : (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <Label className="text-[11px] text-muted-foreground">Unidade</Label>
+            <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+              {unidade}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="teste-aluno" className="text-[11px] text-muted-foreground">
+              ID do Aluno (Sponte)
+            </Label>
+            <Input
+              id="teste-aluno"
+              value={alunoId}
+              onChange={(e) => setAlunoId(e.target.value)}
+              placeholder="ex.: 399"
+              className="h-9 w-40"
+            />
+          </div>
+          <Button
+            className="h-9 gap-1"
+            disabled={!valid || enviar.isPending}
+            onClick={() => enviar.mutate()}
+          >
+            <Send className="h-4 w-4" /> {enviar.isPending ? "Enviando…" : "Disparar teste"}
+          </Button>
         </div>
-        <Button
-          className="h-9 gap-1"
-          disabled={!valid || enviar.isPending}
-          onClick={() => enviar.mutate()}
-        >
-          <Send className="h-4 w-4" /> {enviar.isPending ? "Enviando…" : "Disparar teste"}
-        </Button>
-      </div>
+      )}
 
       {res && (
         <div
@@ -846,7 +836,8 @@ function AlunosComAcordo({ podeEditar }: { podeEditar: boolean }) {
   const { session } = useAuth();
   const buscar = useServerFn(buscarAlunosSponte);
 
-  const [unidade, setUnidade] = useState<string>("");
+  // Unidade do seletor global do topo: a exceção é cadastrada sempre nela.
+  const unidade = useUnidadeAtiva() ?? "";
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [erroBusca, setErroBusca] = useState<string | null>(null);
@@ -928,6 +919,12 @@ function AlunosComAcordo({ podeEditar }: { podeEditar: boolean }) {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover a exceção."),
   });
 
+  useEffect(() => {
+    setResultados(null);
+    setSelecionado(null);
+    setErroBusca(null);
+  }, [unidade]);
+
   // Nome precisa de 3 letras; AlunoID (só dígitos) vale a partir de 1 caractere.
   const t = termo.trim();
   const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
@@ -951,30 +948,20 @@ function AlunosComAcordo({ podeEditar }: { podeEditar: boolean }) {
         Futuro e nas demais telas.
       </p>
 
-      {podeEditar && (
+      {podeEditar && !unidade && (
+        <div className="border-b border-border px-4 py-3">
+          <SelecioneUnidade acao="O cadastro de exceção de acordo" />
+        </div>
+      )}
+
+      {podeEditar && unidade && (
         <div className="space-y-3 border-b border-border px-4 py-3">
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label className="text-[11px] text-muted-foreground">Unidade</Label>
-              <Select
-                value={unidade}
-                onValueChange={(v) => {
-                  setUnidade(v);
-                  setResultados(null);
-                  setSelecionado(null);
-                }}
-              >
-                <SelectTrigger className="h-9 w-56">
-                  <SelectValue placeholder="Selecione a unidade" />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES_SPONTE.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="acordo-busca" className="text-[11px] text-muted-foreground">

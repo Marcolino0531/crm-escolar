@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acaoDeUnidadeLiberada,
   escolaAtivaId,
   exigeUnidadeEspecifica,
   filtrarPorUnidade,
+  MENSAGEM_UNIDADE_ESPECIFICA,
   rotuloUnidadeAtiva,
   unidadeAtiva,
 } from "./unidade-global";
@@ -84,5 +86,32 @@ describe("rotuloUnidadeAtiva", () => {
   it("mostra a unidade ou o consolidado", () => {
     expect(rotuloUnidadeAtiva("u1", schools)).toBe("CEC");
     expect(rotuloUnidadeAtiva("all", schools)).toBe("Todas as Unidades");
+  });
+});
+
+describe("acaoDeUnidadeLiberada", () => {
+  it("libera a escrita quando o topo tem uma unidade específica", () => {
+    expect(acaoDeUnidadeLiberada("u1", schools)).toBe(true);
+  });
+
+  it("bloqueia a escrita no consolidado", () => {
+    expect(acaoDeUnidadeLiberada("all", schools)).toBe(false);
+  });
+
+  it("bloqueia a escrita quando a seleção não é visível ao usuário", () => {
+    expect(acaoDeUnidadeLiberada("u9", schools)).toBe(false);
+  });
+
+  it("é o destino das ações de escrita: colégio, cobrança de teste, exceção, extrato e fundo", () => {
+    // Mesmo dado derivado do topo para todas elas: nome (colégio, unidade
+    // Sponte) ou id (school_id do extrato e do fundo).
+    expect(unidadeAtiva("u2", schools)).toBe("CEC Baby");
+    expect(escolaAtivaId("u2", schools)).toBe("u2");
+    expect(unidadeAtiva("all", schools)).toBeNull();
+    expect(escolaAtivaId("all", schools)).toBeNull();
+  });
+
+  it("usa uma mensagem de bloqueio única", () => {
+    expect(MENSAGEM_UNIDADE_ESPECIFICA).toBe("Selecione uma unidade específica no seletor do topo");
   });
 });

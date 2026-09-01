@@ -53,3 +53,13 @@ export function filtrarPorUnidade<T>(
 export function rotuloUnidadeAtiva(selected: string, schools: readonly EscolaGlobal[]): string {
   return unidadeAtiva(selected, schools) ?? "Todas as Unidades";
 }
+
+// Mensagem única de bloqueio das ações que exigem uma unidade específica.
+export const MENSAGEM_UNIDADE_ESPECIFICA = "Selecione uma unidade específica no seletor do topo";
+
+// Ações de escrita (editar dados do colégio, disparar cobrança de teste,
+// cadastrar exceção de acordo, importar extrato, criar fundo) só rodam com uma
+// unidade específica no topo — "Todas as Unidades" não é destino válido.
+export function acaoDeUnidadeLiberada(selected: string, schools: readonly EscolaGlobal[]): boolean {
+  return !exigeUnidadeEspecifica(selected, schools);
+}

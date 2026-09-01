@@ -6,51 +6,31 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
-import {
-  COLEGIO_CAMPOS,
-  DOCUMENTOS_BUCKET,
-  UNIDADES,
-  useColegios,
-  type ColegioRow,
-} from "@/lib/colegios";
+import { COLEGIO_CAMPOS, DOCUMENTOS_BUCKET, useColegios, type ColegioRow } from "@/lib/colegios";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { formatarDataBR } from "@/lib/recibos";
 
 // Cadastro das unidades (dados usados nos documentos oficiais). Vive em
 // Configurações → Dados dos Colégios; o módulo Documentos apenas consome.
 export function DadosColegios({ podeEditar }: { podeEditar: boolean }) {
   const { data: colegios = [], isLoading } = useColegios();
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a aba edita sempre o colégio do topo.
+  const unidade = useUnidadeAtiva();
+
+  if (!unidade) return <SelecioneUnidade acao="A edição dos dados do colégio" />;
 
   const atual = colegios.find((c) => c.unidade === unidade);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-          <Select value={unidade} onValueChange={setUnidade}>
-            <SelectTrigger className="h-9 w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {UNIDADES.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="flex flex-col gap-1">
+        <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+        <div className="flex h-9 w-64 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+          {unidade}
         </div>
       </div>
 
