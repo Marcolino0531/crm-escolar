@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DESVIO_MIN_MINUTOS,
   agregarDias,
+  agregarPontoPorFuncionario,
+  detectarHorarioDesatualizado,
+  diasParaGravar,
+  horariosParaAtualizar,
   avaliarDia,
   competenciaDoPdf,
   conferirFolha,
@@ -17,6 +22,7 @@ import {
   resumosProcessados,
   revincularPagina,
   type DiaPonto,
+  type DiaPontoGravado,
   type FuncionarioPonto,
   type ResumoFuncionario,
 } from "./ponto";
@@ -154,12 +160,21 @@ describe("avaliarDia", () => {
     expect(r.atrasoMin).toBe(0);
   });
 
-  it("aplica a tolerância configurada em minutos", () => {
+  it("conta a partir do limiar de 5 minutos, inclusive", () => {
     const d = dia("01/07", ["08:05", "17:55"]);
-    expect(avaliarDia(d, HORARIO, 0).atrasoMin).toBe(5);
-    expect(avaliarDia(d, HORARIO, 5).atrasoMin).toBe(0);
-    expect(avaliarDia(d, HORARIO, 5).antecipacaoMin).toBe(0);
-    expect(avaliarDia(dia("01/07", ["08:11", "18:00"]), HORARIO, 10).atrasoMin).toBe(11);
+    expect(avaliarDia(d, HORARIO).atrasoMin).toBe(5);
+    expect(avaliarDia(d, HORARIO).antecipacaoMin).toBe(5);
+  });
+
+  it("ignora diferença abaixo do limiar", () => {
+    const d = dia("01/07", ["08:04", "17:56"]);
+    expect(avaliarDia(d, HORARIO).atrasoMin).toBe(0);
+    expect(avaliarDia(d, HORARIO).antecipacaoMin).toBe(0);
+  });
+
+  it("aplica o limiar configurado em minutos", () => {
+    expect(avaliarDia(dia("01/07", ["08:09", "18:00"]), HORARIO, 10).atrasoMin).toBe(0);
+    expect(avaliarDia(dia("01/07", ["08:10", "18:00"]), HORARIO, 10).atrasoMin).toBe(10);
   });
 
   it("acusa horário esperado inválido em vez de calcular errado", () => {
@@ -512,5 +527,109 @@ describe("conferirFolha", () => {
     const soltas = revincularPagina(conferidas, paginas, 1, null);
     expect(soltas[0].status).toBe("sem_correspondencia");
     expect(resumosProcessados(soltas)).toEqual([]);
+  });
+});
+
+describe("detectarHorarioDesatualizado", () => {
+  // Cadastro 07:00–16:00, batidas reais sempre ~08:00–17:00.
+  const cadastro = { entrada: "07:00", saida: "16:00" };
+  const consistente = [
+    dia("01/07", ["08:02", "17:01"]),
+    dia("02/07", ["07:58", "16:59"]),
+    dia("03/07", ["08:01", "17:03"]),
+    dia("04/07", ["08:00", "16:58"]),
+    dia("07/07", ["07:59", "17:00"]),
+    dia("08/07", ["08:03", "17:02"]),
+  ];
+
+  it("sinaliza desvio grande e consistente e sugere o horário real", () => {
+    const desvio = detectarHorarioDesatualizado(consistente, cadastro);
+    expect(desvio).not.toBeNull();
+    expect(desvio!.entradaSugerida).toBe("08:00");
+    expect(desvio!.saidaSugerida).toBe("17:00");
+    expect(desvio!.diferencaEntradaMin).toBeGreaterThanOrEqual(DESVIO_MIN_MINUTOS);
+    expect(desvio!.diasConsistentes).toBe(desvio!.diasBase);
+  });
+
+  it("não sinaliza quando a diferença grande é ocasional", () => {
+    // Bate no horário do cadastro; só dois dias chegou muito tarde.
+    const ocasional = [
+      dia("01/07", ["07:00", "16:00"]),
+      dia("02/07", ["08:40", "16:02"]),
+      dia("03/07", ["07:01", "16:00"]),
+      dia("04/07", ["06:58", "15:59"]),
+      dia("07/07", ["08:35", "16:01"]),
+      dia("08/07", ["07:02", "16:00"]),
+    ];
+    expect(detectarHorarioDesatualizado(ocasional, cadastro)).toBeNull();
+  });
+
+  it("não sinaliza desvio pequeno, mesmo repetido todo dia", () => {
+    const pequeno = consistente.map((d, i) => dia(d.data, [`07:0${i % 5}`, `16:0${i % 5}`]));
+    expect(detectarHorarioDesatualizado(pequeno, cadastro)).toBeNull();
+  });
+
+  it("exige amostra mínima de dias", () => {
+    expect(detectarHorarioDesatualizado(consistente.slice(0, 3), cadastro)).toBeNull();
+  });
+
+  it("tira o funcionário do ranking e o lista para atualização cadastral", () => {
+    const paginas = [
+      {
+        pagina: 1,
+        nome: "PESSOA UM",
+        cpf: "11111111111",
+        matricula: "",
+        layout: "iponto" as const,
+        competencia: "2026-07",
+        dias: consistente,
+      },
+    ];
+    const conferidas = conferirFolha(paginas, [
+      funcionario({ cpf: "11111111111", horarioInicio: "07:00", horarioFim: "16:00" }),
+    ]);
+    expect(conferidas[0].status).toBe("horario_desatualizado");
+    expect(resumosProcessados(conferidas)).toHaveLength(0);
+    expect(rankingAtrasos(resumosProcessados(conferidas))).toHaveLength(0);
+
+    const [pendente] = horariosParaAtualizar(conferidas);
+    expect(pendente.sugerido).toEqual({ entrada: "08:00", saida: "17:00" });
+    expect(pendente.cadastrado).toEqual({ entrada: "07:00", saida: "16:00" });
+
+    // As batidas continuam gravadas, mas sem atraso: o cadastro é que está errado.
+    const gravar = diasParaGravar(conferidas, "2026-07");
+    expect(gravar).toHaveLength(consistente.length);
+    expect(gravar.every((d) => d.atrasoMin === 0 && d.antecipacaoMin === 0)).toBe(true);
+    expect(gravar[0].data).toBe("2026-07-01");
+    expect(gravar[0].entrada).toBe("08:02");
+  });
+});
+
+describe("agregarPontoPorFuncionario", () => {
+  const gravado = (
+    funcionarioId: string,
+    atrasoMin: number,
+    antecipacaoMin: number,
+  ): DiaPontoGravado => ({ funcionarioId, nome: funcionarioId, atrasoMin, antecipacaoMin });
+
+  it("soma dias e minutos por funcionário, contando o dia uma vez", () => {
+    const ranking = agregarPontoPorFuncionario([
+      gravado("a", 10, 0),
+      gravado("a", 8, 12), // atraso e saída antecipada no mesmo dia
+      gravado("a", 0, 0),
+      gravado("b", 0, 6),
+    ]);
+    expect(ranking.map((r) => r.funcionarioId)).toEqual(["a", "b"]);
+    expect(ranking[0]).toMatchObject({
+      dias: 2,
+      diasAtraso: 2,
+      diasAntecipacao: 1,
+      totalMinutos: 30,
+    });
+    expect(ranking[1]).toMatchObject({ dias: 1, diasAtraso: 0, diasAntecipacao: 1 });
+  });
+
+  it("ignora dias sem ocorrência", () => {
+    expect(agregarPontoPorFuncionario([gravado("a", 0, 0)])).toEqual([]);
   });
 });

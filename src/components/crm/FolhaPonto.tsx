@@ -19,16 +19,21 @@ import {
 import { ErroLeituraPdf } from "@/lib/contracheques.pdf";
 import {
   LABEL_STATUS_PONTO,
+  LIMIAR_PADRAO_MIN,
   competenciaAnterior,
   competenciaFutura,
   conferirFolha,
+  diasParaGravar,
   formatarMinutos,
+  horariosParaAtualizar,
   rankingAtrasos,
   rankingSaidasAntecipadas,
   resumirFolha,
   resumosProcessados,
   revincularPagina,
   type FuncionarioPonto,
+  type HorarioEsperado,
+  type HorarioParaAtualizar,
   type LinhaRanking,
   type PaginaConferida,
   type PaginaPonto,
@@ -72,6 +77,7 @@ const CORES_STATUS: Record<PaginaConferida["status"], string> = {
   sem_correspondencia: "bg-red-50 text-red-700 border-red-200",
   sem_horario: "bg-amber-50 text-amber-700 border-amber-200",
   sem_dias: "bg-amber-50 text-amber-700 border-amber-200",
+  horario_desatualizado: "bg-indigo-50 text-indigo-700 border-indigo-200",
 };
 
 function paraPonto(f: Funcionario): FuncionarioPonto {
@@ -122,15 +128,16 @@ const Ranking: React.FC<{ titulo: string; vazio: string; linhas: LinhaRanking[] 
   </div>
 );
 
-const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = ({
-  funcionarios,
-  isAdmin,
-}) => {
+const FolhaPonto: React.FC<{
+  funcionarios: Funcionario[];
+  isAdmin: boolean;
+  onAtualizarHorario: (id: string, inicio: string, fim: string) => Promise<unknown>;
+}> = ({ funcionarios, isAdmin, onAtualizarHorario }) => {
   const qc = useQueryClient();
   const salvarFn = useServerFn(salvarFolhaPonto);
 
   const [competencia, setCompetencia] = useState(competenciaAnterior());
-  const [tolerancia, setTolerancia] = useState(0);
+  const [tolerancia, setTolerancia] = useState(LIMIAR_PADRAO_MIN);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [paginasPdf, setPaginasPdf] = useState<PaginaPonto[]>([]);
   const [conferidas, setConferidas] = useState<PaginaConferida[] | null>(null);
@@ -142,14 +149,28 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
   const [falha, setFalha] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<number | null>(null);
   const [folhaHistorico, setFolhaHistorico] = useState<string | null>(null);
+  // Jornadas já corrigidas nesta tela: a lista do hook demora um ciclo para
+  // refletir a gravação e a conferência precisa recalcular na hora.
+  const [horariosCorrigidos, setHorariosCorrigidos] = useState<
+    Record<string, HorarioEsperado | undefined>
+  >({});
+  const [corrigindo, setCorrigindo] = useState<string | null>(null);
 
-  const elenco = useMemo(() => funcionarios.map(paraPonto), [funcionarios]);
+  const elenco = useMemo(
+    () =>
+      funcionarios.map(paraPonto).map((f) => {
+        const novo = horariosCorrigidos[f.id];
+        return novo ? { ...f, horarioInicio: novo.entrada, horarioFim: novo.saida } : f;
+      }),
+    [funcionarios, horariosCorrigidos],
+  );
   const porId = useMemo(() => new Map(elenco.map((f) => [f.id, f])), [elenco]);
 
   const resumo = conferidas ? resumirFolha(conferidas) : null;
   const resumos = conferidas ? resumosProcessados(conferidas) : [];
   const atrasos = rankingAtrasos(resumos);
   const antecipadas = rankingSaidasAntecipadas(resumos);
+  const desatualizados = conferidas ? horariosParaAtualizar(conferidas) : [];
 
   const folhas = useQuery({
     queryKey: ["hr-timesheets"],
@@ -267,6 +288,29 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
     if (paginasPdf.length > 0) setConferidas(conferirFolha(paginasPdf, elenco, minutos));
   };
 
+  const corrigirHorario = async (h: HorarioParaAtualizar) => {
+    setCorrigindo(h.funcionarioId);
+    try {
+      await onAtualizarHorario(h.funcionarioId, h.sugerido.entrada, h.sugerido.saida);
+      const corrigidos = { ...horariosCorrigidos, [h.funcionarioId]: h.sugerido };
+      setHorariosCorrigidos(corrigidos);
+      if (paginasPdf.length > 0) {
+        const atualizado = funcionarios.map(paraPonto).map((f) => {
+          const novo = corrigidos[f.id];
+          return novo ? { ...f, horarioInicio: novo.entrada, horarioFim: novo.saida } : f;
+        });
+        setConferidas(conferirFolha(paginasPdf, atualizado, tolerancia));
+      }
+      toast.success(
+        `Horário de ${h.nome} atualizado para ${h.sugerido.entrada} às ${h.sugerido.saida}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Não foi possível atualizar o horário.");
+    } finally {
+      setCorrigindo(null);
+    }
+  };
+
   const limpar = () => {
     setArquivo(null);
     setPaginasPdf([]);
@@ -280,8 +324,15 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
 
   const salvar = async () => {
     if (!conferidas || !layout || !resumo) return;
+    // Grava também as páginas de horário desatualizado: elas ficam com contagem
+    // zerada, mas as batidas do mês são o insumo para reconferir depois.
     const linhas = conferidas
-      .filter((c) => c.status === "processada" && c.funcionarioId && c.esperado)
+      .filter(
+        (c) =>
+          (c.status === "processada" || c.status === "horario_desatualizado") &&
+          c.funcionarioId &&
+          c.esperado,
+      )
       .map((c) => ({
         employeeId: c.funcionarioId as string,
         horarioEntrada: c.esperado?.entrada ?? "",
@@ -292,6 +343,9 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
         minutosSaidaAntecipada: c.resumo.minutosAntecipacao,
         diasAvaliados: c.resumo.diasAvaliados,
         diasInconsistentes: c.resumo.diasInconsistentes,
+        horarioDesatualizado: Boolean(c.desvio),
+        entradaSugerida: c.desvio?.entradaSugerida ?? "",
+        saidaSugerida: c.desvio?.saidaSugerida ?? "",
       }));
     if (linhas.length === 0) {
       toast.error("Nenhuma página foi vinculada a um funcionário com horário cadastrado.");
@@ -309,6 +363,15 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
           totalPaginas: resumo.paginas,
           paginasSemCorrespondencia: resumo.semCorrespondencia,
           linhas,
+          dias: diasParaGravar(conferidas, competencia).map((d) => ({
+            employeeId: d.funcionarioId,
+            data: d.data,
+            entrada: d.entrada ?? "",
+            saida: d.saida ?? "",
+            atrasoMin: d.atrasoMin,
+            antecipacaoMin: d.antecipacaoMin,
+            situacao: d.situacao,
+          })),
         },
       });
       if (!res.ok) {
@@ -374,9 +437,7 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Tolerância (minutos)
-            </label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Limite (minutos)</label>
             <input
               type="number"
               min={0}
@@ -455,19 +516,70 @@ const FolhaPonto: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = 
                 <p className="text-sm text-gray-500 mt-1">
                   {resumo.paginas} página(s) · {resumo.processadas} processada(s) ·{" "}
                   {resumo.semCorrespondencia} sem correspondência · {resumo.semHorario} sem horário
-                  cadastrado · {resumo.diasInconsistentes} dia(s) com marcação incompleta
+                  cadastrado · {resumo.horariosDesatualizados} com horário desatualizado ·{" "}
+                  {resumo.diasInconsistentes} dia(s) com marcação incompleta
                   {layout ? ` · formato ${LAYOUTS[layout] ?? layout}` : ""}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => void salvar()}
-                disabled={!isAdmin || salvando || resumo.processadas === 0}
+                disabled={
+                  !isAdmin || salvando || resumo.processadas + resumo.horariosDesatualizados === 0
+                }
                 className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-medium shadow-md disabled:opacity-50"
               >
                 {salvando ? "Salvando…" : `Salvar folha de ${competenciaExtenso(competencia)}`}
               </button>
             </div>
+
+            {desatualizados.length > 0 && (
+              <div className="mt-4 border border-indigo-200 bg-indigo-50/60 rounded-xl p-4">
+                <h4 className="text-sm font-semibold text-indigo-900">Horários desatualizados</h4>
+                <p className="text-xs text-indigo-800 mt-1">
+                  As batidas destes funcionários divergem do horário do cadastro de forma
+                  consistente no período, então eles ficam fora do ranking de atraso: seria
+                  ocorrência falsa. Atualize o cadastro para voltarem a ser avaliados.
+                </p>
+                <table className="min-w-full text-sm mt-3">
+                  <thead>
+                    <tr className="text-left text-xs uppercase text-indigo-700/80">
+                      <th className="py-1 pr-3">Funcionário</th>
+                      <th className="py-1 pr-3">Cadastro</th>
+                      <th className="py-1 pr-3">Batidas (mediana)</th>
+                      <th className="py-1 pr-3">Consistência</th>
+                      <th className="py-1 pr-3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {desatualizados.map((h) => (
+                      <tr key={h.funcionarioId} className="border-t border-indigo-100">
+                        <td className="py-2 pr-3 text-gray-800">{h.nome}</td>
+                        <td className="py-2 pr-3 text-gray-600 whitespace-nowrap">
+                          {h.cadastrado.entrada} às {h.cadastrado.saida}
+                        </td>
+                        <td className="py-2 pr-3 font-medium text-indigo-900 whitespace-nowrap">
+                          {h.sugerido.entrada} às {h.sugerido.saida}
+                        </td>
+                        <td className="py-2 pr-3 text-gray-600 whitespace-nowrap">
+                          {h.desvio.diasConsistentes} de {h.desvio.diasBase} dia(s)
+                        </td>
+                        <td className="py-2 pr-3 text-right">
+                          <button
+                            type="button"
+                            disabled={!isAdmin || salvando || corrigindo !== null}
+                            onClick={() => void corrigirHorario(h)}
+                            className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-lg disabled:opacity-50"
+                          >
+                            {corrigindo === h.funcionarioId ? "Atualizando…" : "Atualizar cadastro"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {resumo.horarioDivergente > 0 && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-4">

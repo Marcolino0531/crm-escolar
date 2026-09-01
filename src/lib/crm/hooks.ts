@@ -368,6 +368,18 @@ export function useFuncionarios() {
       if (error) throw error;
     });
 
+  // Atualiza somente a jornada, sem passar pelo formulário inteiro: usado pelo
+  // um-clique da lista de horários desatualizados da folha de ponto. Devolve a
+  // promessa para a tela só confirmar depois da gravação.
+  const atualizarHorarioTrabalho = (id: string, inicio: string, fim: string) =>
+    m.mutateAsync(async () => {
+      const { error } = await supabase
+        .from("funcionarios")
+        .update({ horario_trabalho_inicio: inicio, horario_trabalho_fim: fim })
+        .eq("id", id);
+      if (error) throw error;
+    });
+
   const adicionarFerias = (funcionarioId: string, dataInicio: string, dataFim: string) =>
     run(async () => {
       const atual = funcionarios.find((f) => f.id === funcionarioId);
@@ -483,6 +495,7 @@ export function useFuncionarios() {
     adicionarFuncionario,
     editarFuncionario,
     removerFuncionario,
+    atualizarHorarioTrabalho,
     adicionarFerias,
     removerFerias,
     adicionarFalta,

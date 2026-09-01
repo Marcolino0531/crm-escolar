@@ -1,8 +1,10 @@
 import React from "react";
 import { Funcionario, CategoriaFalta } from "@/lib/crm/types";
+import { PeriodoRh, dentroDoPeriodo, rotuloPeriodo } from "@/lib/rh-periodo";
 
 interface RankingFaltasProps {
   funcionarios: Funcionario[];
+  periodo: PeriodoRh;
 }
 
 interface RankingItem {
@@ -31,11 +33,12 @@ const formatarDuracao = (minutos: number): string => {
 const construirRanking = (
   funcionarios: Funcionario[],
   categorias: CategoriaFalta[],
+  periodo: PeriodoRh,
 ): RankingItem[] =>
   funcionarios
     .map((f) => {
-      const ocorrencias = (f.faltas ?? []).filter((fa) =>
-        categorias.includes(categoriaDe(fa.categoria)),
+      const ocorrencias = (f.faltas ?? []).filter(
+        (fa) => categorias.includes(categoriaDe(fa.categoria)) && dentroDoPeriodo(fa.data, periodo),
       );
       return {
         id: f.id,
@@ -144,23 +147,24 @@ const RankingCard: React.FC<RankingCardProps> = ({
   );
 };
 
-const RankingFaltas: React.FC<RankingFaltasProps> = ({ funcionarios }) => {
-  const rankingFaltas = construirRanking(funcionarios, ["integral"]);
-  const rankingParciais = construirRanking(funcionarios, ["atraso", "saida_antecipada"]);
+const RankingFaltas: React.FC<RankingFaltasProps> = ({ funcionarios, periodo }) => {
+  const rankingFaltas = construirRanking(funcionarios, ["integral"], periodo);
+  const rankingParciais = construirRanking(funcionarios, ["atraso", "saida_antecipada"], periodo);
+  const rotulo = rotuloPeriodo(periodo);
 
   return (
     <div className="space-y-4">
       <RankingCard
         titulo="Ranking de Faltas"
         icone="🏆"
-        vazio="Nenhuma falta integral registrada."
+        vazio={`Nenhuma falta integral registrada em ${rotulo}.`}
         ranking={rankingFaltas}
         unidadeLabel={(t) => (t === 1 ? "falta" : "faltas")}
       />
       <RankingCard
-        titulo="Ranking de Atrasos e Saídas"
+        titulo="Ranking de Atrasos e Saídas (lançamento manual)"
         icone="⏰"
-        vazio="Nenhum atraso ou saída antecipada registrado."
+        vazio={`Nenhum atraso ou saída antecipada registrado em ${rotulo}.`}
         ranking={rankingParciais}
         unidadeLabel={(t) => (t === 1 ? "ocorrência" : "ocorrências")}
         mostrarTempo

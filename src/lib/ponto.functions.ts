@@ -63,6 +63,19 @@ const LinhaSchema = z.object({
   minutosSaidaAntecipada: z.number().int().min(0),
   diasAvaliados: z.number().int().min(0),
   diasInconsistentes: z.number().int().min(0),
+  horarioDesatualizado: z.boolean().default(false),
+  entradaSugerida: z.string().max(10).default(""),
+  saidaSugerida: z.string().max(10).default(""),
+});
+
+const DiaSchema = z.object({
+  employeeId: z.string().uuid(),
+  data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida."),
+  entrada: z.string().max(10).default(""),
+  saida: z.string().max(10).default(""),
+  atrasoMin: z.number().int().min(0),
+  antecipacaoMin: z.number().int().min(0),
+  situacao: z.enum(["avaliado", "ignorado", "inconsistente"]),
 });
 
 const SalvarSchema = z.object({
@@ -73,6 +86,9 @@ const SalvarSchema = z.object({
   totalPaginas: z.number().int().min(0),
   paginasSemCorrespondencia: z.number().int().min(0),
   linhas: z.array(LinhaSchema).min(1).max(500),
+  // Batidas dia a dia das páginas identificadas (até ~500 funcionários × 31
+  // dias). Ficam guardadas para reconferir o período sem reimportar o PDF.
+  dias: z.array(DiaSchema).max(20000).default([]),
 });
 
 export interface SalvarFolhaPontoResult {
@@ -171,9 +187,29 @@ export const salvarFolhaPonto = createServerFn({ method: "POST" })
         minutos_saida_antecipada: l.minutosSaidaAntecipada,
         dias_avaliados: l.diasAvaliados,
         dias_inconsistentes: l.diasInconsistentes,
+        horario_desatualizado: l.horarioDesatualizado,
+        entrada_sugerida: l.entradaSugerida,
+        saida_sugerida: l.saidaSugerida,
       })) as never,
     );
     if (linhasErr) return { ok: false, error: linhasErr.message };
+
+    const diasValidos = data.dias.filter((d) => porId.has(d.employeeId));
+    for (let i = 0; i < diasValidos.length; i += 1000) {
+      const { error: diasErr } = await supabaseAdmin.from("hr_timesheet_days" as never).insert(
+        diasValidos.slice(i, i + 1000).map((d) => ({
+          timesheet_id: timesheetId,
+          employee_id: d.employeeId,
+          dia: d.data,
+          entrada: d.entrada,
+          saida: d.saida,
+          atraso_min: d.atrasoMin,
+          antecipacao_min: d.antecipacaoMin,
+          situacao: d.situacao,
+        })) as never,
+      );
+      if (diasErr) return { ok: false, error: diasErr.message };
+    }
 
     return { ok: true, timesheetId, substituiu: Boolean(anteriorId) };
   });

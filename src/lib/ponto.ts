@@ -22,6 +22,11 @@ export type LinhaPonto = { y: number; itens: ItemPonto[]; texto: string };
 
 export type LayoutPonto = "cartao_ponto" | "iponto";
 
+// Limiar em minutos a partir do qual a diferença conta: entrada 5 minutos ou
+// mais depois do horário é atraso; saída 5 minutos ou mais antes é saída
+// antecipada. Chegar cedo e sair depois nunca contam.
+export const LIMIAR_PADRAO_MIN = 5;
+
 export type DiaPonto = {
   data: string; // DD/MM
   marcacoes: string[]; // batidas do dia, em ordem cronológica
@@ -153,9 +158,15 @@ const RE_DIA_A = /^(\d{2})\/(\d{2})\/(\d{4})\s*-\s*[A-ZÇ]{3}$/;
 const RE_MARCACAO_A = /\b(\d{1,2}:\d{2})\s*\([A-Z]\)/g;
 const RE_PREVISTO = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
 
+// O nome pode terminar na própria linha, no campo seguinte ou colado no
+// cabeçalho da grade de horários ("… ENT. 1 SAÍ. 1 ENT. 2 SAÍ. 2"), porque os
+// dois blocos são impressos na mesma altura da página.
+const RE_NOME_A =
+  /NOME DO FUNCION[ÁA]RIO:\s*(.+?)(?=\s+(?:CPF DO FUNCION|PIS DO FUNCION|DATA DE ADMISS|ENT\.|SA[ÍI]\.|HOR[ÁA]RIO DE TRABALHO)|\n|$)/i;
+
 function parseCartaoPonto(pagina: number, linhas: readonly LinhaPonto[]): PaginaPonto | null {
   const texto = textoDaPagina(linhas);
-  const nome = /NOME DO FUNCION[ÁA]RIO:\s*(.+?)\s+CPF DO FUNCION/i.exec(texto);
+  const nome = RE_NOME_A.exec(texto);
   const cpf = /CPF DO FUNCION[ÁA]RIO:\s*([\d.-]+)/i.exec(texto);
 
   const dias: DiaPonto[] = [];
@@ -231,15 +242,17 @@ function previstoDoCabecalho(linhas: readonly LinhaPonto[]): Map<string, Horario
   };
   const mapa = new Map<string, HorarioEsperado>();
   for (const linha of linhas) {
-    const ultimo = linha.itens[linha.itens.length - 1];
-    if (!ultimo) continue;
-    const dow = dias[ultimo.texto];
-    if (!dow) continue;
-    const horas = linha.itens
-      .slice(0, -1)
-      .map((i) => i.texto)
-      .filter((t) => RE_HORA.test(t));
-    if (horas.length >= 2) {
+    const indice = linha.itens.findIndex((i) => dias[i.texto] !== undefined);
+    if (indice < 0) continue;
+    const dow = dias[linha.itens[indice].texto];
+    // O nome do dia da semana aparece antes das horas em parte das amostras e
+    // depois delas em outras; o lado sem horas é de outro bloco impresso na
+    // mesma altura ("Admissão:", "Registro:"…).
+    const horasDe = (itens: readonly ItemPonto[]) =>
+      itens.flatMap((i) => i.texto.split(/\s+/)).filter((t) => RE_HORA.test(t));
+    const depois = horasDe(linha.itens.slice(indice + 1));
+    const horas = depois.length >= 2 ? depois : horasDe(linha.itens.slice(0, indice));
+    if (horas.length >= 2 && !mapa.has(dow)) {
       mapa.set(dow, { entrada: horas[0], saida: horas[horas.length - 1] });
     }
   }
@@ -367,7 +380,7 @@ export type ResultadoDia = {
 export function avaliarDia(
   dia: DiaPonto,
   esperado: HorarioEsperado,
-  toleranciaMin: number = 0,
+  limiarMin: number = LIMIAR_PADRAO_MIN,
 ): ResultadoDia {
   const base: ResultadoDia = {
     data: dia.data,
@@ -405,7 +418,7 @@ export function avaliarDia(
     return { ...base, situacao: "inconsistente", motivo: "horário esperado inválido" };
   }
 
-  const tolerancia = Math.max(0, Math.round(toleranciaMin));
+  const limiar = Math.max(1, Math.round(limiarMin));
   const atraso = entradaMin - esperadoEntrada;
   const antecipacao = esperadoSaida - saidaMin;
 
@@ -413,10 +426,112 @@ export function avaliarDia(
     data: dia.data,
     entrada,
     saida,
-    atrasoMin: atraso > tolerancia ? atraso : 0,
-    antecipacaoMin: antecipacao > tolerancia ? antecipacao : 0,
+    atrasoMin: atraso >= limiar ? atraso : 0,
+    antecipacaoMin: antecipacao >= limiar ? antecipacao : 0,
     situacao: "avaliado",
     motivo: "",
+  };
+}
+
+// ---------- Horário desatualizado ----------
+//
+// Quando o cadastro está velho (ficha diz 07:00, o funcionário bate 08:00 todo
+// dia), contar isso como atraso diário produziria um ranking inteiro de
+// ocorrências que não existem. A assinatura desse caso é uma diferença GRANDE e
+// CONSISTENTE: aqui, mediana das batidas afastada do cadastro além de
+// `DESVIO_MIN_MINUTOS` e repetida na maioria dos dias avaliados. Diferença
+// ocasional (chegou tarde em alguns dias) não entra: é atraso de verdade.
+
+export const DESVIO_MIN_MINUTOS = 15;
+export const DESVIO_PROPORCAO_MINIMA = 0.8;
+// Dispersão aceita em torno da mediana para o dia contar como "mesmo desvio".
+export const DESVIO_JANELA_MINUTOS = 10;
+// Abaixo disso não há amostra suficiente para afirmar que o cadastro está
+// errado — a folha do mês pode ter só dois dias trabalhados.
+export const DESVIO_DIAS_MINIMOS = 5;
+
+export type DesvioHorario = {
+  entradaSugerida: string;
+  saidaSugerida: string;
+  // Diferença (em minutos) da mediana real contra o cadastro. Positivo = mais
+  // tarde que o cadastrado.
+  diferencaEntradaMin: number;
+  diferencaSaidaMin: number;
+  diasBase: number;
+  diasConsistentes: number;
+};
+
+function mediana(valores: readonly number[]): number {
+  const ordenados = [...valores].sort((a, b) => a - b);
+  const meio = Math.floor(ordenados.length / 2);
+  return ordenados.length % 2 === 1
+    ? ordenados[meio]
+    : Math.round((ordenados[meio - 1] + ordenados[meio]) / 2);
+}
+
+function paraHorario(minutos: number): string {
+  const total = ((Math.round(minutos) % 1440) + 1440) % 1440;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Arredonda a sugestão para o múltiplo de 5 minutos mais próximo: horário de
+// cadastro é sempre redondo, e a mediana das batidas nunca é.
+function arredondar5(minutos: number): number {
+  return Math.round(minutos / 5) * 5;
+}
+
+export function detectarHorarioDesatualizado(
+  dias: readonly DiaPonto[],
+  esperado: HorarioEsperado,
+): DesvioHorario | null {
+  const esperadoEntrada = minutosDoHorario(esperado.entrada);
+  const esperadoSaida = minutosDoHorario(esperado.saida);
+  if (esperadoEntrada === null || esperadoSaida === null) return null;
+
+  const avaliados = dias
+    .map((d) => avaliarDia(d, esperado))
+    .filter((d) => d.situacao === "avaliado" && d.entrada && d.saida);
+  if (avaliados.length < DESVIO_DIAS_MINIMOS) return null;
+
+  const entradas: number[] = [];
+  const saidas: number[] = [];
+  for (const d of avaliados) {
+    const e = minutosDoHorario(d.entrada ?? "");
+    const s = minutosDoHorario(d.saida ?? "");
+    if (e === null || s === null) continue;
+    entradas.push(e);
+    saidas.push(s);
+  }
+  if (entradas.length < DESVIO_DIAS_MINIMOS) return null;
+
+  const medianaEntrada = mediana(entradas);
+  const medianaSaida = mediana(saidas);
+  const difEntrada = medianaEntrada - esperadoEntrada;
+  const difSaida = medianaSaida - esperadoSaida;
+
+  const entradaDesviada = Math.abs(difEntrada) >= DESVIO_MIN_MINUTOS;
+  const saidaDesviada = Math.abs(difSaida) >= DESVIO_MIN_MINUTOS;
+  if (!entradaDesviada && !saidaDesviada) return null;
+
+  // Consistência: só conta o dia que repete o desvio nos campos desviados.
+  let consistentes = 0;
+  for (let i = 0; i < entradas.length; i++) {
+    const okEntrada =
+      !entradaDesviada || Math.abs(entradas[i] - medianaEntrada) <= DESVIO_JANELA_MINUTOS;
+    const okSaida = !saidaDesviada || Math.abs(saidas[i] - medianaSaida) <= DESVIO_JANELA_MINUTOS;
+    if (okEntrada && okSaida) consistentes += 1;
+  }
+  if (consistentes / entradas.length < DESVIO_PROPORCAO_MINIMA) return null;
+
+  return {
+    entradaSugerida: paraHorario(arredondar5(medianaEntrada)),
+    saidaSugerida: paraHorario(arredondar5(medianaSaida)),
+    diferencaEntradaMin: difEntrada,
+    diferencaSaidaMin: difSaida,
+    diasBase: entradas.length,
+    diasConsistentes: consistentes,
   };
 }
 
@@ -436,7 +551,7 @@ export type ResumoFuncionario = {
 export function agregarDias(
   dias: readonly DiaPonto[],
   esperado: HorarioEsperado,
-  toleranciaMin: number = 0,
+  toleranciaMin: number = LIMIAR_PADRAO_MIN,
 ): Omit<ResumoFuncionario, "funcionarioId" | "nome" | "pagina"> {
   const avaliados = dias.map((d) => avaliarDia(d, esperado, toleranciaMin));
   return {
@@ -495,7 +610,12 @@ export function rankingSaidasAntecipadas(resumos: readonly ResumoFuncionario[]):
 
 // ---------- Conferência da folha ----------
 
-export type StatusPaginaPonto = "processada" | "sem_correspondencia" | "sem_horario" | "sem_dias";
+export type StatusPaginaPonto =
+  | "processada"
+  | "sem_correspondencia"
+  | "sem_horario"
+  | "sem_dias"
+  | "horario_desatualizado";
 
 export type PaginaConferida = {
   pagina: number;
@@ -509,6 +629,9 @@ export type PaginaConferida = {
   // Horário impresso no PDF, quando diverge do cadastro: o cálculo usa o
   // cadastro, mas a divergência precisa ficar visível na conferência.
   previstoNoPdf: HorarioEsperado | null;
+  // Desvio consistente entre as batidas e o cadastro. Quando presente, a página
+  // sai dos rankings e entra na lista de horários a atualizar.
+  desvio: DesvioHorario | null;
   resumo: ResumoFuncionario;
 };
 
@@ -517,6 +640,7 @@ export const LABEL_STATUS_PONTO: Record<StatusPaginaPonto, string> = {
   sem_correspondencia: "Funcionário não localizado no RH",
   sem_horario: "Funcionário sem horário cadastrado",
   sem_dias: "Nenhum dia interpretável na página",
+  horario_desatualizado: "Horário do cadastro desatualizado",
 };
 
 function previstoPredominante(dias: readonly DiaPonto[]): HorarioEsperado | null {
@@ -539,7 +663,7 @@ export function conferirComFuncionario(
   pagina: PaginaPonto,
   funcionario: FuncionarioPonto | null,
   origem: OrigemVinculoPonto | null,
-  toleranciaMin: number = 0,
+  toleranciaMin: number = LIMIAR_PADRAO_MIN,
 ): PaginaConferida {
   const previstoNoPdf = previstoPredominante(pagina.dias);
 
@@ -566,18 +690,38 @@ export function conferirComFuncionario(
     dias: [],
   };
 
+  const desvio =
+    funcionario && esperadoValido
+      ? detectarHorarioDesatualizado(pagina.dias, esperadoValido)
+      : null;
+
   let status: StatusPaginaPonto = "processada";
   if (!funcionario) status = "sem_correspondencia";
   else if (!esperadoValido) status = "sem_horario";
   else if (pagina.dias.length === 0) status = "sem_dias";
+  else if (desvio) status = "horario_desatualizado";
 
-  const resumo =
-    funcionario && esperadoValido
-      ? {
-          ...vazio,
-          ...agregarDias(pagina.dias, esperadoValido, toleranciaMin),
-        }
-      : vazio;
+  // Os dias continuam calculados (a tela mostra as batidas e o histórico grava
+  // dia a dia), mas a contagem de atraso e de saída antecipada zera enquanto o
+  // cadastro estiver desatualizado: comparar contra o horário errado só geraria
+  // ocorrência falsa.
+  const calculado =
+    funcionario && esperadoValido ? agregarDias(pagina.dias, esperadoValido, toleranciaMin) : null;
+
+  const resumo = calculado
+    ? {
+        ...vazio,
+        ...calculado,
+        ...(desvio
+          ? {
+              diasAtraso: 0,
+              minutosAtraso: 0,
+              diasAntecipacao: 0,
+              minutosAntecipacao: 0,
+            }
+          : {}),
+      }
+    : vazio;
 
   return {
     pagina: pagina.pagina,
@@ -589,6 +733,7 @@ export function conferirComFuncionario(
     status,
     esperado: esperadoValido,
     previstoNoPdf,
+    desvio,
     resumo,
   };
 }
@@ -596,7 +741,7 @@ export function conferirComFuncionario(
 export function conferirPagina(
   pagina: PaginaPonto,
   funcionarios: readonly FuncionarioPonto[],
-  toleranciaMin: number = 0,
+  toleranciaMin: number = LIMIAR_PADRAO_MIN,
 ): PaginaConferida {
   const achado = identificarFuncionarioPonto(pagina, funcionarios);
   return conferirComFuncionario(
@@ -610,7 +755,7 @@ export function conferirPagina(
 export function conferirFolha(
   paginas: readonly PaginaPonto[],
   funcionarios: readonly FuncionarioPonto[],
-  toleranciaMin: number = 0,
+  toleranciaMin: number = LIMIAR_PADRAO_MIN,
 ): PaginaConferida[] {
   return paginas.map((p) => conferirPagina(p, funcionarios, toleranciaMin));
 }
@@ -620,7 +765,7 @@ export function revincularPagina(
   paginas: readonly PaginaPonto[],
   pagina: number,
   funcionario: FuncionarioPonto | null,
-  toleranciaMin: number = 0,
+  toleranciaMin: number = LIMIAR_PADRAO_MIN,
 ): PaginaConferida[] {
   return conferidas.map((c) => {
     if (c.pagina !== pagina) return c;
@@ -634,12 +779,42 @@ export function resumosProcessados(conferidas: readonly PaginaConferida[]): Resu
   return conferidas.filter((c) => c.status === "processada").map((c) => c.resumo);
 }
 
+export type HorarioParaAtualizar = {
+  funcionarioId: string;
+  nome: string;
+  pagina: number;
+  cadastrado: HorarioEsperado;
+  sugerido: HorarioEsperado;
+  desvio: DesvioHorario;
+};
+
+// Lista da tela "Horários desatualizados": um item por funcionário cujo cadastro
+// não corresponde às batidas do mês, com o horário sugerido para o um-clique.
+export function horariosParaAtualizar(
+  conferidas: readonly PaginaConferida[],
+): HorarioParaAtualizar[] {
+  const itens: HorarioParaAtualizar[] = [];
+  for (const c of conferidas) {
+    if (!c.desvio || !c.esperado || !c.funcionarioId) continue;
+    itens.push({
+      funcionarioId: c.funcionarioId,
+      nome: c.funcionarioNome || c.nomeNoPdf,
+      pagina: c.pagina,
+      cadastrado: c.esperado,
+      sugerido: { entrada: c.desvio.entradaSugerida, saida: c.desvio.saidaSugerida },
+      desvio: c.desvio,
+    });
+  }
+  return itens.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
 export type ResumoFolha = {
   paginas: number;
   processadas: number;
   semCorrespondencia: number;
   semHorario: number;
   semDias: number;
+  horariosDesatualizados: number;
   diasInconsistentes: number;
   horarioDivergente: number;
 };
@@ -651,6 +826,7 @@ export function resumirFolha(conferidas: readonly PaginaConferida[]): ResumoFolh
     semCorrespondencia: conferidas.filter((c) => c.status === "sem_correspondencia").length,
     semHorario: conferidas.filter((c) => c.status === "sem_horario").length,
     semDias: conferidas.filter((c) => c.status === "sem_dias").length,
+    horariosDesatualizados: conferidas.filter((c) => c.status === "horario_desatualizado").length,
     diasInconsistentes: conferidas.reduce((s, c) => s + c.resumo.diasInconsistentes, 0),
     horarioDivergente: conferidas.filter(
       (c) =>
@@ -660,6 +836,59 @@ export function resumirFolha(conferidas: readonly PaginaConferida[]): ResumoFolh
           c.esperado.saida !== c.previstoNoPdf.saida),
     ).length,
   };
+}
+
+// ---------- Persistência dia a dia ----------
+
+export type DiaParaGravar = {
+  funcionarioId: string;
+  data: string; // ISO (YYYY-MM-DD)
+  entrada: string | null;
+  saida: string | null;
+  atrasoMin: number;
+  antecipacaoMin: number;
+  situacao: SituacaoDia;
+};
+
+// O PDF traz o dia como "DD/MM" e o ano vem da competência. Uma folha de janeiro
+// pode conter dias de dezembro (fechamento a cavalo do mês), então o ano recua
+// quando o mês do dia é maior que o da competência.
+export function dataIsoDoDia(competencia: string, diaMes: string): string | null {
+  const comp = /^(\d{4})-(\d{2})$/.exec(competencia);
+  const dia = /^(\d{2})\/(\d{2})$/.exec(diaMes);
+  if (!comp || !dia) return null;
+  const mes = Number(dia[2]);
+  const d = Number(dia[1]);
+  if (mes < 1 || mes > 12 || d < 1 || d > 31) return null;
+  const ano = mes > Number(comp[2]) ? Number(comp[1]) - 1 : Number(comp[1]);
+  return `${ano}-${dia[2]}-${dia[1]}`;
+}
+
+// Dias de todas as páginas com funcionário identificado — inclusive as de
+// horário desatualizado, que ficam fora do ranking mas cujas batidas são o
+// insumo para reconferir o período depois sem reimportar o PDF.
+export function diasParaGravar(
+  conferidas: readonly PaginaConferida[],
+  competencia: string,
+): DiaParaGravar[] {
+  const linhas: DiaParaGravar[] = [];
+  for (const c of conferidas) {
+    if (!c.funcionarioId) continue;
+    for (const d of c.resumo.dias) {
+      const data = dataIsoDoDia(competencia, d.data);
+      if (!data) continue;
+      linhas.push({
+        funcionarioId: c.funcionarioId,
+        data,
+        entrada: d.entrada,
+        saida: d.saida,
+        atrasoMin: c.desvio ? 0 : d.atrasoMin,
+        antecipacaoMin: c.desvio ? 0 : d.antecipacaoMin,
+        situacao: d.situacao,
+      });
+    }
+  }
+  return linhas;
 }
 
 // ---------- Competência ----------
@@ -672,4 +901,54 @@ export function competenciaAnterior(hoje: Date = new Date()): string {
 export function competenciaFutura(competencia: string, hoje: Date = new Date()): boolean {
   const atual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
   return competencia > atual;
+}
+
+// ---------- Ranking a partir das batidas já gravadas ----------
+
+// Linha lida de `hr_timesheet_days`: um dia de um funcionário. Dias de quem
+// estava com horário desatualizado chegam aqui já zerados na gravação, então
+// não geram ocorrência.
+export type DiaPontoGravado = {
+  funcionarioId: string;
+  nome: string;
+  atrasoMin: number;
+  antecipacaoMin: number;
+};
+
+export type LinhaRankingPonto = {
+  funcionarioId: string;
+  nome: string;
+  // Dias com pelo menos uma ocorrência (atraso e saída antecipada no mesmo dia
+  // contam como um dia só).
+  dias: number;
+  diasAtraso: number;
+  diasAntecipacao: number;
+  totalMinutos: number;
+};
+
+// Soma as ocorrências do período por funcionário. Ordena pelo total de minutos
+// e, no empate, por dias com ocorrência.
+export function agregarPontoPorFuncionario(dias: readonly DiaPontoGravado[]): LinhaRankingPonto[] {
+  const porFuncionario = new Map<string, LinhaRankingPonto>();
+  for (const d of dias) {
+    const atraso = Math.max(0, d.atrasoMin);
+    const antecipacao = Math.max(0, d.antecipacaoMin);
+    if (atraso === 0 && antecipacao === 0) continue;
+    const atual = porFuncionario.get(d.funcionarioId) ?? {
+      funcionarioId: d.funcionarioId,
+      nome: d.nome,
+      dias: 0,
+      diasAtraso: 0,
+      diasAntecipacao: 0,
+      totalMinutos: 0,
+    };
+    atual.dias += 1;
+    if (atraso > 0) atual.diasAtraso += 1;
+    if (antecipacao > 0) atual.diasAntecipacao += 1;
+    atual.totalMinutos += atraso + antecipacao;
+    porFuncionario.set(d.funcionarioId, atual);
+  }
+  return [...porFuncionario.values()].sort(
+    (a, b) => b.totalMinutos - a.totalMinutos || b.dias - a.dias,
+  );
 }
