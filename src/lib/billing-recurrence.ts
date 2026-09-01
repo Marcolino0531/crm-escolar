@@ -79,6 +79,9 @@ export interface ParcelaCobranca extends ParcelaAberta {
   // cobrança daquela parcela imediatamente.
   dataPagamento?: string;
   linhaDigitavel?: string;
+  // Categorias das composições do boleto (Mensalidade, Material, Acordo...).
+  // Usadas pela política de cobrança da unidade (ver billing-unidades).
+  categorias?: string[];
 }
 
 // Parcela quitada: data de pagamento preenchida no Sponte ou saldo zerado.
@@ -86,12 +89,13 @@ export function parcelaQuitada(p: ParcelaCobranca): boolean {
   return Boolean(p.dataPagamento && p.dataPagamento.trim()) || p.saldo <= 0;
 }
 
-// Parcelas que autorizam disparo HOJE: em aberto, vencidas, fora da tolerância e
-// com vencimento a partir da data base da automação.
+// Parcelas que autorizam disparo HOJE: em aberto, vencidas e fora da tolerância.
+// `dataBase` restringe a um vencimento mínimo; omitida, não restringe nada — a
+// data base passou a ser POR UNIDADE (ver billing-unidades), aplicada antes.
 export function parcelasCobraveis(
   parcelas: ParcelaCobranca[],
   hojeYMD: string,
-  dataBase: string,
+  dataBase = "",
   tolerancia = TOLERANCIA_DIAS_UTEIS,
 ): ParcelaCobranca[] {
   return parcelas.filter(
