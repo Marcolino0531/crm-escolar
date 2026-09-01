@@ -34,7 +34,7 @@ export const REGRAS_COBRANCA: Record<NumeroGrupo, RegraCobrancaGrupo> = {
 // Grupos com ENVIO REAL liberado. A simulação (dry-run) avalia qualquer grupo
 // configurado; o envio de verdade só acontece para os grupos desta lista, para a
 // entrada de um número novo em operação ser uma decisão explícita e revisável.
-export const GRUPOS_ENVIO_LIBERADO: readonly NumeroGrupo[] = ["cec"];
+export const GRUPOS_ENVIO_LIBERADO: readonly NumeroGrupo[] = ["cec", "belvedere"];
 
 export function envioLiberado(grupo: NumeroGrupo): boolean {
   return GRUPOS_ENVIO_LIBERADO.includes(grupo);

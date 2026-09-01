@@ -176,9 +176,9 @@ describe("escopo de unidades e liberação de envio", () => {
     expect(unidadeAtendida("CEC Baby", ["belvedere"])).toBe(false);
   });
 
-  it("mantém o envio real de Belvedere bloqueado até a liberação explícita", () => {
+  it("libera o envio real dos dois números em operação", () => {
     expect(envioLiberado("cec")).toBe(true);
-    expect(envioLiberado("belvedere")).toBe(false);
+    expect(envioLiberado("belvedere")).toBe(true);
   });
 
   it("usa a data base mais antiga entre os grupos avaliados", () => {
