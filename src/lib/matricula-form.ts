@@ -582,7 +582,7 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
 
 // ─── Questionário de saúde ──────────────────────────────────────────────────
 
-export const OPCOES_SAUDE = ["Sim", "Não", "Outro"] as const;
+export const OPCOES_SAUDE = ["Sim", "Não"] as const;
 export type OpcaoSaude = (typeof OPCOES_SAUDE)[number];
 
 // Exigência do INEP nº 152/2014.
@@ -602,27 +602,74 @@ export interface RespostaSaude {
 
 export const RESPOSTA_SAUDE_VAZIA: RespostaSaude = { opcao: "", detalhe: "" };
 
+export interface ContatoEmergencia {
+  nome: string;
+  telefone: string;
+  parentesco: string;
+}
+
+export interface PessoaAutorizada extends ContatoEmergencia {
+  cpf: string;
+}
+
+export const CONTATO_EMERGENCIA_VAZIO: ContatoEmergencia = {
+  nome: "",
+  telefone: "",
+  parentesco: "",
+};
+
+export const PESSOA_AUTORIZADA_VAZIA: PessoaAutorizada = { ...CONTATO_EMERGENCIA_VAZIO, cpf: "" };
+
 export interface SaudeForm {
-  contatoEmergencia: string;
+  contatosEmergencia: ContatoEmergencia[];
   alergia: RespostaSaude;
   problemaSaude: RespostaSaude;
   medicamentoContinuo: RespostaSaude;
   planoSaude: RespostaSaude;
-  pessoasAutorizadas: string;
+  pessoasAutorizadas: PessoaAutorizada[];
   corRaca: string;
   outrasInformacoes: string;
 }
 
 export const SAUDE_FORM_VAZIO: SaudeForm = {
-  contatoEmergencia: "",
+  contatosEmergencia: [],
   alergia: RESPOSTA_SAUDE_VAZIA,
   problemaSaude: RESPOSTA_SAUDE_VAZIA,
   medicamentoContinuo: RESPOSTA_SAUDE_VAZIA,
   planoSaude: RESPOSTA_SAUDE_VAZIA,
-  pessoasAutorizadas: "",
+  pessoasAutorizadas: [],
   corRaca: "",
   outrasInformacoes: "",
 };
+
+/**
+ * As duas listas repetíveis são gravadas como texto (uma pessoa por linha), no
+ * mesmo campo que o painel interno já exibe. Linha em branco é descartada: a
+ * família pode adicionar e desistir de preencher sem bloquear o envio.
+ */
+export function textoContatosEmergencia(contatos: readonly ContatoEmergencia[]): string {
+  return contatos
+    .map((c) =>
+      [c.nome, c.parentesco, c.telefone]
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .join(" — "),
+    )
+    .filter((linha) => linha !== "")
+    .join("\n");
+}
+
+export function textoPessoasAutorizadas(pessoas: readonly PessoaAutorizada[]): string {
+  return pessoas
+    .map((p) =>
+      [p.nome, p.parentesco, p.telefone, p.cpf]
+        .map((parte) => parte.trim())
+        .filter(Boolean)
+        .join(" — "),
+    )
+    .filter((linha) => linha !== "")
+    .join("\n");
+}
 
 export const PERGUNTAS_SAUDE: readonly {
   campo: "alergia" | "problemaSaude" | "medicamentoContinuo" | "planoSaude";
@@ -637,22 +684,17 @@ export const PERGUNTAS_SAUDE: readonly {
 export function validarSaudeForm(saude: SaudeForm): ErrosForm {
   const erros: ErrosForm = {};
 
-  if (saude.contatoEmergencia.trim() === "")
-    erros["saude.contatoEmergencia"] = "Informe um contato de emergência.";
-
+  // As duas listas (contatos de emergência e autorizados a buscar) são
+  // opcionais: podem ficar vazias sem bloquear o envio.
   for (const { campo } of PERGUNTAS_SAUDE) {
     const resposta = saude[campo];
     if (resposta.opcao === "") {
       erros[`saude.${campo}`] = "Escolha uma opção.";
       continue;
     }
-    if (resposta.opcao === "Outro" && resposta.detalhe.trim() === "")
+    if (resposta.opcao === "Sim" && resposta.detalhe.trim() === "")
       erros[`saude.${campo}.detalhe`] = "Explique brevemente.";
   }
-
-  if (saude.pessoasAutorizadas.trim() === "")
-    erros["saude.pessoasAutorizadas"] =
-      "Informe quem está autorizado a buscar a criança na escola.";
 
   if (!CORES_RACAS.includes(saude.corRaca as (typeof CORES_RACAS)[number]))
     erros["saude.corRaca"] = "Escolha uma opção.";
@@ -810,12 +852,20 @@ function respostaPadronizada(resposta: RespostaSaude): RespostaSaude {
 export function padronizarSaudeForm(saude: SaudeForm): SaudeForm {
   return {
     ...saude,
-    contatoEmergencia: toTitleCase(saude.contatoEmergencia),
+    contatosEmergencia: saude.contatosEmergencia.map((c) => ({
+      ...c,
+      nome: toTitleCase(c.nome),
+      parentesco: toTitleCase(c.parentesco),
+    })),
     alergia: respostaPadronizada(saude.alergia),
     problemaSaude: respostaPadronizada(saude.problemaSaude),
     medicamentoContinuo: respostaPadronizada(saude.medicamentoContinuo),
     planoSaude: respostaPadronizada(saude.planoSaude),
-    pessoasAutorizadas: toTitleCase(saude.pessoasAutorizadas),
+    pessoasAutorizadas: saude.pessoasAutorizadas.map((p) => ({
+      ...p,
+      nome: toTitleCase(p.nome),
+      parentesco: toTitleCase(p.parentesco),
+    })),
     outrasInformacoes: toTitleCase(saude.outrasInformacoes),
   };
 }
