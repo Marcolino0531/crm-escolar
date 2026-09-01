@@ -8,7 +8,7 @@
 // no histórico); o disparo é sequencial, com pausa entre emails, e o email de
 // destino é resolvido no servidor — o cliente não escolhe destinatário.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -32,7 +32,8 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
-import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from "@/lib/colegios";
+import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { gerarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
 import { pdfParaBase64 } from "@/lib/documento-pdf";
 import {
@@ -99,7 +100,8 @@ export function EnvioLoteDeclaracaoIR() {
   const enviarEmail = useServerFn(enviarDeclaracaoIREmail);
 
   const hoje = hojeYMD();
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a tela não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
   const [anoIR, setAnoIR] = useState<number>(anoIRPadrao(hoje));
   const [alunos, setAlunos] = useState<AlunoLoteIR[] | null>(null);
   const [progresso, setProgresso] = useState<{ feitos: number; total: number } | null>(null);
@@ -121,6 +123,14 @@ export function EnvioLoteDeclaracaoIR() {
     setEmitidos({});
     setProgresso(null);
   };
+
+  // Trocar a unidade no topo descarta a prévia montada para a anterior.
+  useEffect(() => {
+    setAlunos(null);
+    setResultados(null);
+    setEmitidos({});
+    setProgresso(null);
+  }, [unidade]);
 
   const carregarPrevia = useMutation({
     mutationFn: async (): Promise<AlunoLoteIR[]> => {
@@ -358,6 +368,8 @@ export function EnvioLoteDeclaracaoIR() {
     );
   }
 
+  if (!unidade) return <SelecioneUnidade acao="O envio em lote da declaração de IR" />;
+
   return (
     <div className="space-y-4">
       {/* Passo 1 — filtros */}
@@ -374,25 +386,9 @@ export function EnvioLoteDeclaracaoIR() {
         <div className="flex flex-wrap items-end gap-3 px-4 py-3">
           <div className="flex flex-col gap-1">
             <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-            <Select
-              value={unidade}
-              onValueChange={(v) => {
-                setUnidade(v);
-                limpar();
-              }}
-              disabled={ocupado}
-            >
-              <SelectTrigger className="h-9 w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {UNIDADES.map((u) => (
-                  <SelectItem key={u} value={u}>
-                    {u}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+              {unidade}
+            </div>
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-[11px] text-muted-foreground">Ano do Imposto de Renda</Label>

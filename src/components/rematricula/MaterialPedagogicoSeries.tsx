@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
@@ -7,13 +7,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -23,7 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UNIDADES } from "@/lib/colegios";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { parseBRLNumber } from "@/lib/currency";
 import { formatarBRL, opcoesParcelamentoMaterial, rotuloParcelamento } from "@/lib/rematricula";
 import {
@@ -110,7 +104,9 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
   const excluir = useServerFn(excluirMaterialSerie);
 
   const [editando, setEditando] = useState<MaterialSerieRegistro | null>(null);
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a tela não tem seletor próprio, e o
+  // cadastro grava sempre na unidade que está no topo.
+  const unidade = useUnidadeAtiva();
   const [serie, setSerie] = useState("");
   const [valor, setValor] = useState("");
 
@@ -125,12 +121,19 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
     setValor("");
   }
 
+  // Trocar a unidade no topo cancela a edição de um registro da unidade anterior.
+  useEffect(() => {
+    setEditando(null);
+    setSerie("");
+    setValor("");
+  }, [unidade]);
+
   const gravar = useMutation({
     mutationFn: async () =>
       salvar({
         data: {
           id: editando?.id ?? null,
-          unidade,
+          unidade: unidade ?? "",
           serie: serie.trim(),
           valorAnual: parseBRLNumber(valor),
         },
@@ -153,13 +156,15 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
   });
 
   const valorNumero = parseBRLNumber(valor);
-  const formOk = serie.trim().length > 0 && valorNumero > 0;
+  const formOk = !!unidade && serie.trim().length > 0 && valorNumero > 0;
   const previa = formOk ? opcoesParcelamentoMaterial(valorNumero) : [];
+  const linhas = filtrarPorUnidade(registros.data ?? [], unidade, (r) => r.unidade);
 
   return (
     <div className="space-y-6">
       <AnoLetivoReferencia podeEditar={podeEditar} />
-      {podeEditar && (
+      {podeEditar && !unidade && <SelecioneUnidade acao="O cadastro do material pedagógico" />}
+      {podeEditar && unidade && (
         <div className="rounded-lg border p-4">
           <h3 className="mb-3 text-sm font-semibold">
             {editando ? "Editar valor do material" : "Novo valor do material"}
@@ -167,18 +172,9 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">Unidade</Label>
-              <Select value={unidade} onValueChange={setUnidade}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">Série</Label>
@@ -237,7 +233,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(registros.data ?? []).length === 0 && (
+            {linhas.length === 0 && (
               <TableRow>
                 <TableCell colSpan={podeEditar ? 5 : 4} className="text-sm text-muted-foreground">
                   Nenhum valor cadastrado. Sem cadastro, o portal de Rematrícula não oferece o
@@ -245,7 +241,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
                 </TableCell>
               </TableRow>
             )}
-            {(registros.data ?? []).map((r) => (
+            {linhas.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>{r.unidade}</TableCell>
                 <TableCell>{r.serie}</TableCell>
@@ -258,7 +254,6 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
                       size="icon"
                       onClick={() => {
                         setEditando(r);
-                        setUnidade(r.unidade);
                         setSerie(r.serie);
                         setValor(r.valorAnual.toFixed(2).replace(".", ","));
                       }}

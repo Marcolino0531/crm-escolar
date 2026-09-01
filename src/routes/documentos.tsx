@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -14,6 +14,8 @@ import {
   User,
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
 import { Button } from "@/components/ui/button";
@@ -46,7 +48,7 @@ import {
   type ResponsavelCadastroSponte,
 } from "@/lib/sponte.functions";
 import { parseBRLNumber } from "@/lib/currency";
-import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from "@/lib/colegios";
+import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import { baixarPdfRecibo, type LogoRecibo } from "@/lib/recibo-pdf";
 import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
 import { baixarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
@@ -225,7 +227,8 @@ function GerarRecibo() {
   const buscar = useServerFn(buscarAlunosSponte);
   const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
 
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a aba não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
@@ -233,6 +236,15 @@ function GerarRecibo() {
   const [responsavelId, setResponsavelId] = useState<string>("");
   const [valores, setValores] = useState<Record<string, string>>({});
   const [dataRecibo, setDataRecibo] = useState<string>(hojeYMD());
+
+  // Trocar a unidade no topo invalida a busca e o aluno da unidade anterior.
+  useEffect(() => {
+    setResultados(null);
+    setAluno(null);
+    setResponsaveis([]);
+    setResponsavelId("");
+    setValores({});
+  }, [unidade]);
 
   const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
 
@@ -375,6 +387,8 @@ function GerarRecibo() {
     );
   }
 
+  if (!unidade) return <SelecioneUnidade acao="A emissão de recibo" />;
+
   return (
     <div className="space-y-4">
       {/* Passo 1 — aluno */}
@@ -388,25 +402,9 @@ function GerarRecibo() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-              <Select
-                value={unidade}
-                onValueChange={(v) => {
-                  setUnidade(v);
-                  setResultados(null);
-                  limparAluno();
-                }}
-              >
-                <SelectTrigger className="h-9 w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="doc-busca" className="text-[11px] text-muted-foreground">
@@ -652,7 +650,8 @@ function GerarDeclaracaoDebitos() {
   const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
   const buscarTitulos = useServerFn(fetchTitulosAlunoSponte);
 
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a aba não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
@@ -660,6 +659,15 @@ function GerarDeclaracaoDebitos() {
   const [dataDocumento, setDataDocumento] = useState<string>(hojeYMD());
   const [pendencias, setPendencias] = useState<PendenciasAluno | null>(null);
   const [confirmado, setConfirmado] = useState(false);
+
+  // Trocar a unidade no topo invalida a busca e o aluno da unidade anterior.
+  useEffect(() => {
+    setResultados(null);
+    setAluno(null);
+    setResponsaveis([]);
+    setPendencias(null);
+    setConfirmado(false);
+  }, [unidade]);
 
   const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
   const colegioDeclaracao = colegio ? paraColegioRecibo(colegio) : null;
@@ -807,6 +815,8 @@ function GerarDeclaracaoDebitos() {
     );
   }
 
+  if (!unidade) return <SelecioneUnidade acao="A declaração de inexistência de débitos" />;
+
   return (
     <div className="space-y-4">
       {/* Passo 1 — aluno */}
@@ -823,25 +833,9 @@ function GerarDeclaracaoDebitos() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-              <Select
-                value={unidade}
-                onValueChange={(v) => {
-                  setUnidade(v);
-                  setResultados(null);
-                  limparAluno();
-                }}
-              >
-                <SelectTrigger className="h-9 w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="decl-busca" className="text-[11px] text-muted-foreground">
@@ -1051,12 +1045,21 @@ function GerarDeclaracaoIR() {
   const buscarTitulos = useServerFn(fetchTitulosAlunoSponte);
 
   const hoje = hojeYMD();
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a aba não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
   const [responsavel, setResponsavel] = useState<ResponsavelCadastroSponte | null>(null);
   const [parcelas, setParcelas] = useState<ParcelaIR[]>([]);
+
+  // Trocar a unidade no topo invalida a busca e o aluno da unidade anterior.
+  useEffect(() => {
+    setResultados(null);
+    setAluno(null);
+    setResponsavel(null);
+    setParcelas([]);
+  }, [unidade]);
   const [anoIR, setAnoIR] = useState<number>(anoIRPadrao(hoje));
   const [dataDocumento, setDataDocumento] = useState<string>(hoje);
 
@@ -1200,6 +1203,8 @@ function GerarDeclaracaoIR() {
     );
   }
 
+  if (!unidade) return <SelecioneUnidade acao="A declaração de Imposto de Renda" />;
+
   return (
     <div className="space-y-4">
       {/* Passo 1 — aluno */}
@@ -1216,25 +1221,9 @@ function GerarDeclaracaoIR() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-              <Select
-                value={unidade}
-                onValueChange={(v) => {
-                  setUnidade(v);
-                  setResultados(null);
-                  limparAluno();
-                }}
-              >
-                <SelectTrigger className="h-9 w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="ir-busca" className="text-[11px] text-muted-foreground">
@@ -1434,7 +1423,8 @@ function GerarDeclaracaoIR() {
 // ─── Histórico ──────────────────────────────────────────────────────────────
 function HistoricoDocumentos() {
   const { data: colegios = [] } = useColegios();
-  const [unidade, setUnidade] = useState<string>("todas");
+  // Escopo do histórico: unidade do topo (ou consolidado em Todas as Unidades).
+  const unidade = useUnidadeAtiva();
   const [busca, setBusca] = useState("");
   const [baixando, setBaixando] = useState<string | null>(null);
 
@@ -1455,14 +1445,13 @@ function HistoricoDocumentos() {
 
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    return recibos.filter(
+    return filtrarPorUnidade(recibos, unidade, (r) => r.unidade).filter(
       (r) =>
-        (unidade === "todas" || r.unidade === unidade) &&
-        (!termo ||
-          r.aluno_nome.toLowerCase().includes(termo) ||
-          r.aluno_id.includes(termo) ||
-          r.responsavel_nome.toLowerCase().includes(termo) ||
-          String(r.numero).includes(termo)),
+        !termo ||
+        r.aluno_nome.toLowerCase().includes(termo) ||
+        r.aluno_id.includes(termo) ||
+        r.responsavel_nome.toLowerCase().includes(termo) ||
+        String(r.numero).includes(termo),
     );
   }, [recibos, unidade, busca]);
 
@@ -1541,19 +1530,9 @@ function HistoricoDocumentos() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-            <Select value={unidade} onValueChange={setUnidade}>
-              <SelectTrigger className="h-9 w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todos os colégios</SelectItem>
-                {UNIDADES.map((u) => (
-                  <SelectItem key={u} value={u}>
-                    {u}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 w-48 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+              {unidade ?? "Todas as Unidades"}
+            </div>
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="hist-busca" className="text-[11px] text-muted-foreground">

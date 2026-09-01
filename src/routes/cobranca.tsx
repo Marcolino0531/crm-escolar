@@ -19,6 +19,7 @@ import {
   Inbox,
 } from "lucide-react";
 import { useSchool, usePermissions, useAuth } from "@/lib/app-context";
+import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -883,7 +884,8 @@ function formatDataHora(iso: string): string {
 }
 
 function HistoricoEnvios() {
-  const [unidade, setUnidade] = useState<string>("todas");
+  // Escopo do histórico: unidade do topo (consolidado em "Todas as Unidades").
+  const unidade = useUnidadeAtiva();
   const [status, setStatus] = useState<string>("todos");
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
@@ -899,6 +901,9 @@ function HistoricoEnvios() {
     return () => clearTimeout(t);
   }, [busca]);
 
+  // Trocar a unidade no topo recomeça a paginação.
+  useEffect(() => setPage(1), [unidade]);
+
   const { data, isFetching, isError, error } = useQuery({
     queryKey: ["cobranca-whatsapp-logs", unidade, status, dateStart, dateEnd, buscaDebounced, page],
     queryFn: async (): Promise<LogsResponse> => {
@@ -907,7 +912,7 @@ function HistoricoEnvios() {
       if (!token) throw new Error("Sessão inválida — faça login novamente.");
 
       const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
-      if (unidade !== "todas") params.set("unidade", unidade);
+      if (unidade) params.set("unidade", unidade);
       if (status !== "todos") params.set("status", status);
       if (dateStart) params.set("date_start", dateStart);
       if (dateEnd) params.set("date_end", dateEnd);
@@ -960,19 +965,9 @@ function HistoricoEnvios() {
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-muted-foreground">Unidade</label>
-          <Select value={unidade} onValueChange={(v) => resetFilter(setUnidade, v)}>
-            <SelectTrigger className="h-9 w-52">
-              <SelectValue placeholder="Unidade" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todas">Todas as unidades</SelectItem>
-              {UNIDADES_SPONTE.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex h-9 w-52 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+            {unidade ?? "Todas as Unidades"}
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-muted-foreground">Status</label>
@@ -1025,12 +1020,11 @@ function HistoricoEnvios() {
             className="h-9 min-w-48 rounded-md border border-input bg-background px-3 text-sm"
           />
         </div>
-        {(unidade !== "todas" || status !== "todos" || dateStart || dateEnd || busca) && (
+        {(status !== "todos" || dateStart || dateEnd || busca) && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
-              setUnidade("todas");
               setStatus("todos");
               setDateStart("");
               setDateEnd("");

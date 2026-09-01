@@ -19,6 +19,8 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
 import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
+import { SelecioneUnidade } from "@/components/SelecioneUnidade";
+import { escolaAtivaId, unidadeAtiva } from "@/lib/unidade-global";
 import { ConciliarPorAlunoDialog, type ItemConciliacaoAluno } from "@/components/conciliacao/ConciliarPorAlunoDialog";
 import type { AlunoBuscaSponte } from "@/lib/sponte.functions";
 
@@ -242,7 +244,6 @@ function ConciliacaoPage() {
   const { schools, selected } = useSchool();
   const fetchConciliacao = useServerFn(fetchSponteConciliacao);
   const fetchPix = useServerFn(fetchSpontePix);
-  const [schoolId, setSchoolId] = useState(() => (selected !== "all" ? selected : ""));
   const [autoTxId, setAutoTxId] = useState<string | null>(null);
   const [pixRunning, setPixRunning] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -259,7 +260,9 @@ function ConciliacaoPage() {
   const [colorDraft, setColorDraft] = useState<Record<string, string>>({});
   const [colorsSaving, setColorsSaving] = useState(false);
 
-  const schoolName = schools.find((s) => s.id === schoolId)?.name ?? "";
+  // Unidade do seletor global: a tela não tem seletor próprio de colégio.
+  const schoolId = escolaAtivaId(selected, schools) ?? "";
+  const schoolName = unidadeAtiva(selected, schools) ?? "";
   const sponteAtiva = UNIDADES_SPONTE.includes(schoolName);
 
   const { data: revRefs } = useQuery({
@@ -870,12 +873,9 @@ function ConciliacaoPage() {
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div>
             <Label>Colégio</Label>
-            <Select value={schoolId} onValueChange={setSchoolId}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {schools.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+              {schoolName || "Selecione no topo da tela"}
+            </div>
           </div>
           <MonthYearPicker
             className="md:col-span-2"
@@ -983,7 +983,7 @@ function ConciliacaoPage() {
           </CardHeader>
           <CardContent>
             {!schoolId ? (
-              <p className="text-sm text-muted-foreground">Selecione um colégio para listar as receitas.</p>
+              <SelecioneUnidade acao="A conciliação de faturamento" />
             ) : txLoading ? (
               <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Carregando…</p>
             ) : revenueTxs.length === 0 ? (
