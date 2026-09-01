@@ -40,6 +40,11 @@ export const MIDIAS_SPONTE = [
 
 export const MIDIA_MATRICULA_SITE = "Internet";
 
+// Gênero no Sponte é lista fechada e `sSexo` só aceita a descrição por extenso:
+// dos 626 alunos do cadastro, 623 têm exatamente "Feminino" ou "Masculino"
+// (GetAlunos), e abreviações como "F"/"M" não casam com nenhuma opção.
+export const SEXOS_SPONTE = ["Feminino", "Masculino"] as const;
+
 export function soDigitos(v: string): string {
   return v.replace(/\D/g, "");
 }
@@ -153,9 +158,7 @@ export const RESPONSAVEL_VAZIO: ResponsavelForm = {
 
 export type ParentescoForm = "pai" | "mae";
 
-// Valores aceitos pelo campo Sexo do Sponte (conferidos na base: a leitura só
-// devolve "Feminino" ou "Masculino").
-export const GENEROS_MATRICULA = ["Feminino", "Masculino"] as const;
+export const GENEROS_MATRICULA = SEXOS_SPONTE;
 
 export type GeneroMatricula = (typeof GENEROS_MATRICULA)[number];
 
