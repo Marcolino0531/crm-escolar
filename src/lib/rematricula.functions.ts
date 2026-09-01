@@ -35,13 +35,13 @@ import {
   expiracaoSessao,
   inicioJanelaLinks,
   mascararEmail,
-  mensagemLinkEnviadoPara,
   mensalidadeVigente,
   observacaoMaterialSponte,
   opcoesParcelamentoMaterialPrimeira,
   parcelamentoMaterialPrimeira,
   parcelasMaterialValida,
   primeiraMensalidadeDoAnoLetivo,
+  resultadoEnvioLink,
   serieDaTurma,
   urlLinkRematricula,
   validarLinkMagico,
@@ -466,6 +466,7 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
       url: urlLinkRematricula(BASE_URL_PORTAL, token),
       emailMascarado,
     });
+    let aceito = false;
     try {
       await sendEmail(cfg, {
         to: [responsavel.email],
@@ -473,12 +474,19 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
         html: corpo.html,
         text: corpo.text,
       });
+      aceito = true;
     } catch (e) {
       console.error(
         `${LOG_TAG} falha ao enviar o link para o aluno ${aluno.alunoId}: ${
           e instanceof Error ? e.message : "erro desconhecido"
         }`,
       );
+      // O link gravado não chegou a ninguém: apagá-lo evita deixar um token
+      // válido pendurado no banco por 15 minutos.
+      await supabaseAdmin
+        .from("rematricula_links" as never)
+        .delete()
+        .eq("token_hash", hashLink(token));
     }
 
     // Faxina oportunista dos links vencidos e dos pedidos fora da janela.
@@ -493,7 +501,7 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
 
     // Único ponto em que a resposta deixa de ser genérica: o pai precisa saber
     // para qual caixa olhar. Só a versão mascarada sai do servidor.
-    return { ok: true, mensagem: mensagemLinkEnviadoPara(emailMascarado) };
+    return resultadoEnvioLink(aceito, emailMascarado);
   });
 
 const ValidarLinkSchema = z.object({ token: z.string().min(16) });

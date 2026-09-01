@@ -13,6 +13,8 @@ import {
   MENSAGEM_LINK_ENVIADO,
   mascararEmail,
   mensagemLinkEnviadoPara,
+  resultadoEnvioLink,
+  MENSAGEM_FALHA_ENVIO_LINK,
   chaveSerie,
   concentrarDiferenca,
   excedeuLimiteLinks,
@@ -192,6 +194,17 @@ describe("email mascarado do destino", () => {
     expect(mensagemLinkEnviadoPara("j***@g****.com")).toContain("j***@g****.com");
     expect(mensagemLinkEnviadoPara("j***@g****.com")).toContain("15 minutos");
     expect(mensagemLinkEnviadoPara("")).toBe(MENSAGEM_LINK_ENVIADO);
+  });
+
+  it("só anuncia envio quando o email foi aceito", () => {
+    expect(resultadoEnvioLink(true, "j***@g****.com")).toEqual({
+      ok: true,
+      mensagem: mensagemLinkEnviadoPara("j***@g****.com"),
+    });
+    expect(resultadoEnvioLink(false, "j***@g****.com")).toEqual({
+      ok: false,
+      mensagem: MENSAGEM_FALHA_ENVIO_LINK,
+    });
   });
 });
 
