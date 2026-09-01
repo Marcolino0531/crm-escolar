@@ -11,6 +11,7 @@ import {
   formatarCpf,
   formValido,
   inicioJanelaLimite,
+  MIDIAS_SPONTE,
   montarPayloadMatricula,
   responsavelPreenchido,
   telefoneValido,
@@ -253,6 +254,11 @@ describe("montarPayloadMatricula", () => {
       },
     });
     expect(payload.responsaveis).toHaveLength(2);
+  });
+
+  it("envia uma mídia que existe no cadastro do Sponte", () => {
+    const payload = montarPayloadMatricula(formCompleto(), "site-123");
+    expect(MIDIAS_SPONTE).toContain(payload.aluno.midia);
   });
 
   it("envia CPF e telefone apenas em dígitos", () => {
