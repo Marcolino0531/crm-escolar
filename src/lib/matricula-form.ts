@@ -376,6 +376,8 @@ export interface RotinaForm {
   // escolhidos manualmente.
   frequenciaParcial: boolean;
   diasSelecionados: Weekday[];
+  // Escolha única: manhã, tarde ou horário estendido — nunca dois ao mesmo
+  // tempo. Use `selecionarPeriodo` para trocar a opção.
   periodoManha: boolean;
   periodoTarde: boolean;
   // Sai antes da manhã ou fica além da tarde: aí, e só aí, os horários são
@@ -401,6 +403,26 @@ export const ROTINA_FORM_VAZIA: RotinaForm = {
   semRefeicoes: false,
   refeicoes: refeicoesVazias(),
 };
+
+export type PeriodoRotina = "manha" | "tarde" | "estendido";
+
+/** Período escolhido, ou `null` enquanto nenhum foi marcado. */
+export function periodoSelecionado(rotina: RotinaForm): PeriodoRotina | null {
+  if (rotina.horarioEstendido) return "estendido";
+  if (rotina.periodoManha) return "manha";
+  if (rotina.periodoTarde) return "tarde";
+  return null;
+}
+
+/** Marca um período e desmarca os demais. */
+export function selecionarPeriodo(rotina: RotinaForm, periodo: PeriodoRotina): RotinaForm {
+  return {
+    ...rotina,
+    periodoManha: periodo === "manha",
+    periodoTarde: periodo === "tarde",
+    horarioEstendido: periodo === "estendido",
+  };
+}
 
 /** Dias que aparecem na tabela de horários: os cinco úteis ou só os escolhidos. */
 export function diasAtivosRotina(rotina: RotinaForm): Weekday[] {
@@ -441,9 +463,8 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
   }
 
   const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
-  const entrada = rotina.periodoManha ? padrao.manha.entrada : padrao.tarde.entrada;
-  const saida = rotina.periodoTarde ? padrao.tarde.saida : padrao.manha.saida;
   if (!rotina.periodoManha && !rotina.periodoTarde) return resultado;
+  const { entrada, saida } = rotina.periodoManha ? padrao.manha : padrao.tarde;
   for (const dia of ativos) resultado[dia] = { entrada, saida };
   return resultado;
 }
@@ -461,8 +482,11 @@ export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm 
   if (ativos.length === 0)
     erros["rotina.dias"] = "Escolha ao menos um dia da semana que o aluno frequenta.";
 
-  if (!rotina.periodoManha && !rotina.periodoTarde && !rotina.horarioEstendido)
-    erros["rotina.periodos"] = "Marque a manhã, a tarde ou o horário estendido.";
+  const marcados = [rotina.periodoManha, rotina.periodoTarde, rotina.horarioEstendido].filter(
+    Boolean,
+  ).length;
+  if (marcados !== 1)
+    erros["rotina.periodos"] = "Escolha um período: manhã, tarde ou horário estendido.";
 
   if (rotina.horarioEstendido) {
     for (const dia of ativos) {
@@ -537,8 +561,9 @@ export interface PlanoRotinaExistente {
 /**
  * Converte um plano já cadastrado no formulário da etapa de rotina, usado como
  * sugestão inicial na Rematrícula. Horário que bate exatamente com o quadro
- * fixo da série vira checkbox de período; qualquer outro cai no horário
- * estendido, com os horários reais dia a dia.
+ * fixo da série vira a opção de período correspondente; qualquer outro caso,
+ * inclusive o integral, cai no horário estendido, com os horários reais dia a
+ * dia (a escolha é única).
  */
 export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: string): RotinaForm {
   const dias = DIAS_UTEIS.filter((d) => plano.horarios.some((h) => h.weekday === d));
@@ -557,8 +582,7 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
   const tarde = saida === padrao.tarde.saida;
   const soManha = manha && saida === padrao.manha.saida;
   const soTarde = tarde && entrada === padrao.tarde.entrada;
-  const integral = manha && tarde;
-  const padronizado = dias.length > 0 && (soManha || soTarde || integral);
+  const padronizado = dias.length > 0 && (soManha || soTarde);
 
   const refeicoes = refeicoesVazias();
   for (const r of plano.refeicoes) {
@@ -571,8 +595,8 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
     dataInicio: plano.dataInicio ?? "",
     frequenciaParcial: dias.length > 0 && dias.length < DIAS_UTEIS.length,
     diasSelecionados: dias.length > 0 ? dias : [...DIAS_UTEIS],
-    periodoManha: padronizado && (soManha || integral),
-    periodoTarde: padronizado && (soTarde || integral),
+    periodoManha: padronizado && soManha,
+    periodoTarde: padronizado && soTarde,
     horarioEstendido: dias.length > 0 && !padronizado,
     horarios,
     semRefeicoes: dias.length > 0 && plano.refeicoes.length === 0,

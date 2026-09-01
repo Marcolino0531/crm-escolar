@@ -9,6 +9,7 @@ import {
   montarRotinaPersistida,
   refeicoesVazias,
   rotinaDoPlanoExistente,
+  selecionarPeriodo,
   validarRotinaForm,
   type MatriculaForm,
   type RotinaForm,
@@ -74,6 +75,14 @@ describe("validarRotinaForm", () => {
   it("exige marcar manhã, tarde ou horário estendido", () => {
     const erros = validarRotinaForm(
       rotinaCompleta({ horarioEstendido: false, horarios: {} }),
+      INFANTIL,
+    );
+    expect(erros["rotina.periodos"]).toBeDefined();
+  });
+
+  it("recusa mais de um período marcado (a escolha é única)", () => {
+    const erros = validarRotinaForm(
+      rotinaCompleta({ horarioEstendido: false, periodoManha: true, periodoTarde: true }),
       INFANTIL,
     );
     expect(erros["rotina.periodos"]).toBeDefined();
@@ -181,7 +190,7 @@ describe("montarRotinaPersistida", () => {
     expect(salvo.refeicoes).toEqual(refeicoesVazias());
   });
 
-  it("usa o horário fixo do segmento quando o período é marcado nos checkboxes", () => {
+  it("usa o horário fixo do segmento quando o período escolhido é manhã ou tarde", () => {
     const base = rotinaCompleta({ horarioEstendido: false, horarios: {} });
 
     const infantilManha = montarRotinaPersistida({ ...base, periodoManha: true }, INFANTIL);
@@ -190,11 +199,38 @@ describe("montarRotinaPersistida", () => {
     const fundamentalTarde = montarRotinaPersistida({ ...base, periodoTarde: true }, FUNDAMENTAL);
     expect(fundamentalTarde.horarios[0]).toEqual({ weekday: 1, entrada: "13:00", saida: "18:20" });
 
-    const integral = montarRotinaPersistida(
-      { ...base, periodoManha: true, periodoTarde: true },
-      FUNDAMENTAL,
-    );
-    expect(integral.horarios[0]).toEqual({ weekday: 1, entrada: "07:20", saida: "18:20" });
+    const fundamentalManha = montarRotinaPersistida({ ...base, periodoManha: true }, FUNDAMENTAL);
+    expect(fundamentalManha.horarios[0]).toEqual({ weekday: 1, entrada: "07:20", saida: "12:40" });
+  });
+});
+
+describe("selecionarPeriodo", () => {
+  it("marcar um período desmarca os outros dois", () => {
+    const manha = selecionarPeriodo(rotinaCompleta(), "manha");
+    expect([manha.periodoManha, manha.periodoTarde, manha.horarioEstendido]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+
+    const tarde = selecionarPeriodo(manha, "tarde");
+    expect([tarde.periodoManha, tarde.periodoTarde, tarde.horarioEstendido]).toEqual([
+      false,
+      true,
+      false,
+    ]);
+
+    const estendido = selecionarPeriodo(tarde, "estendido");
+    expect([estendido.periodoManha, estendido.periodoTarde, estendido.horarioEstendido]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it("a escolha resultante sempre passa na validação de períodos", () => {
+    const rotina = selecionarPeriodo(rotinaCompleta(), "tarde");
+    expect(validarRotinaForm(rotina, INFANTIL)["rotina.periodos"]).toBeUndefined();
   });
 });
 
@@ -271,7 +307,7 @@ describe("sugestão de rotina a partir de um plano já cadastrado", () => {
     expect(rotina.semRefeicoes).toBe(true);
   });
 
-  it("integral do Fundamental marca manhã e tarde", () => {
+  it("integral do Fundamental cai no horário estendido, com os horários reais", () => {
     const rotina = rotinaDoPlanoExistente(
       {
         horarios: [1, 2, 3, 4, 5].map((weekday) => ({
@@ -284,9 +320,10 @@ describe("sugestão de rotina a partir de um plano já cadastrado", () => {
       FUNDAMENTAL,
     );
 
-    expect(rotina.periodoManha).toBe(true);
-    expect(rotina.periodoTarde).toBe(true);
-    expect(rotina.horarioEstendido).toBe(false);
+    expect(rotina.periodoManha).toBe(false);
+    expect(rotina.periodoTarde).toBe(false);
+    expect(rotina.horarioEstendido).toBe(true);
+    expect(rotina.horarios[1]).toEqual({ entrada: "07:20", saida: "18:20" });
   });
 
   it("sem plano nenhum, devolve a etapa em branco (sem estendido nem parcial)", () => {
