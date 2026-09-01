@@ -13,9 +13,20 @@ import {
   type ParcelamentoPrimeira,
 } from "@/lib/rematricula";
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
+import { buscarEnderecoPorCep } from "@/lib/viacep";
+import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
+import {
+  ROTINA_FORM_VAZIA,
+  formValido,
+  validarRotinaForm,
+  type ErrosForm,
+  type RotinaForm,
+} from "@/lib/matricula-form";
 import {
   dadosRematricula,
+  rotinaRematricula,
   salvarEscolhaMaterialRematricula,
+  salvarRotinaRematricula,
   sincronizarCadastroRematricula,
   solicitarLinkRematricula,
   type DadosRematricula,
@@ -84,6 +95,8 @@ const CAMPOS_CONTATO: { chave: keyof EdicaoContato; label: string }[] = [
   { chave: "cidade", label: "Cidade" },
 ];
 
+// Ao completar os oito dígitos do CEP, o ViaCEP preenche rua, bairro e cidade;
+// os campos continuam editáveis para o caso de a consulta vir incompleta.
 function CamposContato({
   edicao,
   onChange,
@@ -91,12 +104,35 @@ function CamposContato({
   edicao: EdicaoContato;
   onChange: (chave: keyof EdicaoContato, valor: string) => void;
 }) {
+  const [buscandoCep, setBuscandoCep] = useState(false);
+
+  const aoMudarCep = async (valor: string) => {
+    onChange("cep", valor);
+    if (valor.replace(/\D/g, "").length !== 8) return;
+    setBuscandoCep(true);
+    const achado = await buscarEnderecoPorCep(valor);
+    setBuscandoCep(false);
+    if (!achado) return;
+    onChange("endereco", achado.logradouro);
+    onChange("bairro", achado.bairro);
+    onChange("cidade", achado.cidade);
+  };
+
   return (
     <>
       {CAMPOS_CONTATO.map(({ chave, label }) => (
         <div key={chave} className="space-y-1">
-          <Label className="text-xs text-muted-foreground">{label}</Label>
-          <Input value={edicao[chave]} onChange={(e) => onChange(chave, e.target.value)} />
+          <Label className="text-xs text-muted-foreground">
+            {label}
+            {chave === "cep" && buscandoCep && " — buscando endereço…"}
+          </Label>
+          <Input
+            value={edicao[chave]}
+            onChange={(e) => {
+              if (chave === "cep") void aoMudarCep(e.target.value);
+              else onChange(chave, e.target.value);
+            }}
+          />
         </div>
       ))}
     </>
@@ -156,6 +192,8 @@ function RematriculaPage() {
   const carregar = useServerFn(dadosRematricula);
   const salvar = useServerFn(salvarEscolhaMaterialRematricula);
   const sincronizar = useServerFn(sincronizarCadastroRematricula);
+  const carregarRotina = useServerFn(rotinaRematricula);
+  const guardarRotina = useServerFn(salvarRotinaRematricula);
 
   const [etapa, setEtapa] = useState<Etapa>("cpf");
   const [cpf, setCpf] = useState("");
@@ -169,6 +207,10 @@ function RematriculaPage() {
   const [contatoAluno, setContatoAluno] = useState<EdicaoContato | null>(null);
   const [contatoResp, setContatoResp] = useState<Record<string, EdicaoContato>>({});
   const [cadastroSalvo, setCadastroSalvo] = useState("");
+  const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
+  const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
+  const [rotinaSalva, setRotinaSalva] = useState("");
+  const [rotinaSugerida, setRotinaSugerida] = useState(false);
 
   const solicitar = useMutation({
     mutationFn: async () => pedirLink({ data: { cpf } }),
@@ -234,6 +276,42 @@ function RematriculaPage() {
       ativo = false;
     };
   }, [carregar]);
+
+  // Sugestão inicial da rotina: envio anterior do próprio aluno ou o plano do
+  // Diário do Aluno. Sem nada cadastrado, a etapa abre em branco.
+  useEffect(() => {
+    if (token === "") return;
+    let ativo = true;
+    void (async () => {
+      try {
+        const res = await carregarRotina({ data: { token } });
+        if (!ativo || !res.ok || !res.rotina) return;
+        setRotina(res.rotina);
+        setRotinaSugerida(res.origem !== "");
+      } catch {
+        /* etapa segue em branco; o responsável preenche à mão */
+      }
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [token, carregarRotina]);
+
+  const enviarRotina = useMutation({
+    mutationFn: async () => guardarRotina({ data: { token, rotina } }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        setErrosRotina(res.erros ?? {});
+        setRotinaSalva("");
+        setErro(res.erro ?? "Não foi possível salvar a rotina.");
+        return;
+      }
+      setErro("");
+      setErrosRotina({});
+      setRotinaSalva("Rotina do próximo ano letivo registrada.");
+    },
+    onError: () => setErro("Não foi possível salvar a rotina agora. Tente novamente."),
+  });
 
   const confirmar = useMutation({
     mutationFn: async () => salvar({ data: { token, parcelas: parcelas ?? 0 } }),
@@ -443,6 +521,47 @@ function RematriculaPage() {
                 <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
                   <CheckCircle2 className="h-4 w-4" />
                   {cadastroSalvo}
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <RotinaEscolar
+                rotina={rotina}
+                erros={errosRotina}
+                serie={aluno.serie}
+                titulo="Atualização da Rotina Escolar"
+                descricao={
+                  rotinaSugerida
+                    ? "Confira a rotina que está cadastrada hoje e ajuste o que mudar no próximo ano letivo."
+                    : "Informe os horários e as refeições contratadas para o próximo ano letivo."
+                }
+                onChange={(nova) => {
+                  setRotina(nova);
+                  setRotinaSalva("");
+                }}
+              />
+              <Button
+                className="mt-4 w-full"
+                variant="secondary"
+                disabled={enviarRotina.isPending}
+                onClick={() => {
+                  const encontrados = validarRotinaForm(rotina, aluno.serie);
+                  setErrosRotina(encontrados);
+                  if (!formValido(encontrados)) {
+                    setErro("Confira os campos destacados da rotina.");
+                    return;
+                  }
+                  enviarRotina.mutate();
+                }}
+              >
+                {enviarRotina.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar rotina escolar
+              </Button>
+              {rotinaSalva && (
+                <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {rotinaSalva}
                 </p>
               )}
             </div>

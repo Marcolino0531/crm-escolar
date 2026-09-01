@@ -156,16 +156,17 @@ describe("validarMatriculaForm", () => {
       UNIDADES,
     );
     expect(Object.keys(erros).sort()).toEqual([
+      "aluno.cpf",
       "aluno.dataNascimento",
       "aluno.naturalidade",
       "aluno.nome",
     ]);
   });
 
-  it("aceita aluno sem CPF, mas recusa CPF inválido", () => {
+  it("exige o CPF do aluno e recusa CPF inválido", () => {
     const semCpf = formCompleto();
     semCpf.aluno = { ...semCpf.aluno, cpf: "" };
-    expect(validarMatriculaForm(semCpf, HOJE, UNIDADES)["aluno.cpf"]).toBeUndefined();
+    expect(validarMatriculaForm(semCpf, HOJE, UNIDADES)["aluno.cpf"]).toBeDefined();
 
     const cpfErrado = formCompleto();
     cpfErrado.aluno = { ...cpfErrado.aluno, cpf: "529.982.247-24" };

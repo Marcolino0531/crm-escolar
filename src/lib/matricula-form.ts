@@ -8,8 +8,10 @@
 // A página é pública, então há também o limite de submissões por IP: a contagem
 // vem do banco e a decisão de recusar é tomada aqui.
 
+import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
 import type { MatriculaPayload, ResponsavelMatricula } from "@/lib/matriculas.sponte";
+import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
 export const JANELA_LIMITE_MINUTOS = 60;
@@ -201,8 +203,8 @@ export function validarMatriculaForm(
   if (!unidadesValidas.includes(form.unidade)) erros.unidade = "Escolha o colégio.";
 
   if (form.aluno.nome.trim().length < 3) erros["aluno.nome"] = "Informe o nome completo do aluno.";
-  // CPF do aluno é opcional no Sponte, mas se vier precisa ser válido.
-  if (form.aluno.cpf.trim() !== "" && !cpfCompletoValido(form.aluno.cpf))
+  if (form.aluno.cpf.trim() === "") erros["aluno.cpf"] = "Informe o CPF do aluno.";
+  else if (!cpfCompletoValido(form.aluno.cpf))
     erros["aluno.cpf"] = "CPF inválido — confira os dígitos.";
   if (!dataNascimentoValida(form.aluno.dataNascimento, hojeYMD))
     erros["aluno.dataNascimento"] = "Informe uma data de nascimento válida.";
@@ -330,13 +332,39 @@ export function inicioJanelaLimite(agoraISO: string): string {
 export const DIAS_UTEIS: readonly Weekday[] = WEEKDAYS.map((d) => d.value);
 export const REFEICOES_ROTINA: readonly MealKey[] = MEALS.map((m) => m.key);
 
-export const MEIO_PERIODO_MANHA = { entrada: "07:20", saida: "11:50" } as const;
-export const MEIO_PERIODO_TARDE = { entrada: "13:00", saida: "17:30" } as const;
-
 export interface HorarioDia {
   entrada: string;
   saida: string;
 }
+
+// ─── Série calculada e horários fixos por segmento ──────────────────────────
+
+export type SegmentoSerie = "infantil" | "fundamental";
+
+/** Série calculada pela data de nascimento, com a MESMA regra de corte (31/03)
+ * usada na admissão interna. Ano de referência opcional para testes. */
+export function serieCalculada(dataNascimento: string, anoReferencia?: number): string {
+  if (!dataValida(dataNascimento)) return "";
+  return calcularIdadeEscolar(dataNascimento.trim(), anoReferencia).turma;
+}
+
+export function segmentoDaSerie(serie: string): SegmentoSerie {
+  const indice = TURMAS_POR_IDADE.indexOf(serie.trim());
+  return indice >= INDICE_PRIMEIRO_ANO ? "fundamental" : "infantil";
+}
+
+// Horários padrão praticados pelo colégio; o responsável marca o período, não
+// digita o horário (só o Horário Estendido é preenchido dia a dia).
+export const HORARIOS_PADRAO: Record<SegmentoSerie, { manha: HorarioDia; tarde: HorarioDia }> = {
+  infantil: {
+    manha: { entrada: "07:20", saida: "11:50" },
+    tarde: { entrada: "13:00", saida: "17:30" },
+  },
+  fundamental: {
+    manha: { entrada: "07:20", saida: "12:40" },
+    tarde: { entrada: "13:00", saida: "18:20" },
+  },
+};
 
 // Chave numérica do dia da semana (1=segunda … 5=sexta), como no Diário.
 export type HorariosRotina = Partial<Record<Weekday, HorarioDia>>;
@@ -348,6 +376,11 @@ export interface RotinaForm {
   // escolhidos manualmente.
   frequenciaParcial: boolean;
   diasSelecionados: Weekday[];
+  periodoManha: boolean;
+  periodoTarde: boolean;
+  // Sai antes da manhã ou fica além da tarde: aí, e só aí, os horários são
+  // digitados dia a dia.
+  horarioEstendido: boolean;
   horarios: HorariosRotina;
   semRefeicoes: boolean;
   refeicoes: RefeicoesRotina;
@@ -361,6 +394,9 @@ export const ROTINA_FORM_VAZIA: RotinaForm = {
   dataInicio: "",
   frequenciaParcial: false,
   diasSelecionados: [...DIAS_UTEIS],
+  periodoManha: false,
+  periodoTarde: false,
+  horarioEstendido: false,
   horarios: {},
   semRefeicoes: false,
   refeicoes: refeicoesVazias(),
@@ -388,10 +424,35 @@ export function algumaRefeicaoMarcada(rotina: RotinaForm): boolean {
 }
 
 /**
+ * Horário de cada dia ativo. Sem horário estendido ele é DERIVADO dos períodos
+ * marcados (entrada do primeiro período, saída do último), de modo que o que o
+ * responsável vê no quadro fixo é exatamente o que fica gravado.
+ */
+export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRotina {
+  const ativos = diasAtivosRotina(rotina);
+  const resultado: HorariosRotina = {};
+
+  if (rotina.horarioEstendido) {
+    for (const dia of ativos) {
+      const h = rotina.horarios[dia];
+      if (h) resultado[dia] = { entrada: h.entrada.trim(), saida: h.saida.trim() };
+    }
+    return resultado;
+  }
+
+  const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  const entrada = rotina.periodoManha ? padrao.manha.entrada : padrao.tarde.entrada;
+  const saida = rotina.periodoTarde ? padrao.tarde.saida : padrao.manha.saida;
+  if (!rotina.periodoManha && !rotina.periodoTarde) return resultado;
+  for (const dia of ativos) resultado[dia] = { entrada, saida };
+  return resultado;
+}
+
+/**
  * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
  * ("rotina.horario.1"), para a tela destacar campo a campo.
  */
-export function validarRotinaForm(rotina: RotinaForm): ErrosForm {
+export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm {
   const erros: ErrosForm = {};
 
   if (!dataValida(rotina.dataInicio)) erros["rotina.dataInicio"] = "Informe a data de início.";
@@ -400,14 +461,19 @@ export function validarRotinaForm(rotina: RotinaForm): ErrosForm {
   if (ativos.length === 0)
     erros["rotina.dias"] = "Escolha ao menos um dia da semana que o aluno frequenta.";
 
-  for (const dia of ativos) {
-    const h = rotina.horarios[dia];
-    if (!h || !horarioValido(h.entrada) || !horarioValido(h.saida)) {
-      erros[`rotina.horario.${dia}`] = "Informe os horários de entrada e saída.";
-      continue;
+  if (!rotina.periodoManha && !rotina.periodoTarde && !rotina.horarioEstendido)
+    erros["rotina.periodos"] = "Marque a manhã, a tarde ou o horário estendido.";
+
+  if (rotina.horarioEstendido) {
+    for (const dia of ativos) {
+      const h = rotina.horarios[dia];
+      if (!h || !horarioValido(h.entrada) || !horarioValido(h.saida)) {
+        erros[`rotina.horario.${dia}`] = "Informe os horários de entrada e saída.";
+        continue;
+      }
+      if (minutos(h.saida) <= minutos(h.entrada))
+        erros[`rotina.horario.${dia}`] = "A saída precisa ser depois da entrada.";
     }
-    if (minutos(h.saida) <= minutos(h.entrada))
-      erros[`rotina.horario.${dia}`] = "A saída precisa ser depois da entrada.";
   }
 
   if (!rotina.semRefeicoes && !algumaRefeicaoMarcada(rotina))
@@ -420,6 +486,9 @@ export function validarRotinaForm(rotina: RotinaForm): ErrosForm {
 export interface RotinaPersistida {
   dataInicio: string;
   diasAtivos: Weekday[];
+  periodoManha: boolean;
+  periodoTarde: boolean;
+  horarioEstendido: boolean;
   // Um item por dia ativo, sempre com entrada e saída preenchidas.
   horarios: { weekday: Weekday; entrada: string; saida: string }[];
   semRefeicoes: boolean;
@@ -430,7 +499,7 @@ export interface RotinaPersistida {
  * Normaliza a rotina para persistência: só dias ativos entram, e o checkbox de
  * "nenhuma refeição" zera a grade (a marcação da tela não sobrevive ao envio).
  */
-export function montarRotinaPersistida(rotina: RotinaForm): RotinaPersistida {
+export function montarRotinaPersistida(rotina: RotinaForm, serie: string): RotinaPersistida {
   const ativos = diasAtivosRotina(rotina);
   const refeicoes = refeicoesVazias();
   if (!rotina.semRefeicoes) {
@@ -440,15 +509,313 @@ export function montarRotinaPersistida(rotina: RotinaForm): RotinaPersistida {
       );
   }
 
+  const horarios = horariosEfetivos(rotina, serie);
+
   return {
     dataInicio: rotina.dataInicio.trim(),
     diasAtivos: ativos,
+    periodoManha: rotina.periodoManha,
+    periodoTarde: rotina.periodoTarde,
+    horarioEstendido: rotina.horarioEstendido,
     horarios: ativos.map((d) => ({
       weekday: d,
-      entrada: rotina.horarios[d]?.entrada.trim() ?? "",
-      saida: rotina.horarios[d]?.saida.trim() ?? "",
+      entrada: horarios[d]?.entrada ?? "",
+      saida: horarios[d]?.saida ?? "",
     })),
     semRefeicoes: rotina.semRefeicoes,
     refeicoes,
+  };
+}
+
+/** Rotina já cadastrada (Diário do Aluno ou envio anterior), como vem do banco. */
+export interface PlanoRotinaExistente {
+  dataInicio?: string;
+  horarios: { weekday: Weekday; entrada: string; saida: string }[];
+  refeicoes: { meal: MealKey; weekday: Weekday }[];
+}
+
+/**
+ * Converte um plano já cadastrado no formulário da etapa de rotina, usado como
+ * sugestão inicial na Rematrícula. Horário que bate exatamente com o quadro
+ * fixo da série vira checkbox de período; qualquer outro cai no horário
+ * estendido, com os horários reais dia a dia.
+ */
+export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: string): RotinaForm {
+  const dias = DIAS_UTEIS.filter((d) => plano.horarios.some((h) => h.weekday === d));
+  const horarios: HorariosRotina = {};
+  for (const h of plano.horarios) {
+    if (!DIAS_UTEIS.includes(h.weekday)) continue;
+    horarios[h.weekday] = { entrada: h.entrada, saida: h.saida };
+  }
+
+  const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  const entradas = new Set(dias.map((d) => horarios[d]?.entrada ?? ""));
+  const saidas = new Set(dias.map((d) => horarios[d]?.saida ?? ""));
+  const entrada = entradas.size === 1 ? [...entradas][0] : "";
+  const saida = saidas.size === 1 ? [...saidas][0] : "";
+  const manha = entrada === padrao.manha.entrada;
+  const tarde = saida === padrao.tarde.saida;
+  const soManha = manha && saida === padrao.manha.saida;
+  const soTarde = tarde && entrada === padrao.tarde.entrada;
+  const integral = manha && tarde;
+  const padronizado = dias.length > 0 && (soManha || soTarde || integral);
+
+  const refeicoes = refeicoesVazias();
+  for (const r of plano.refeicoes) {
+    if (!DIAS_UTEIS.includes(r.weekday)) continue;
+    if (!refeicoes[r.meal].includes(r.weekday)) refeicoes[r.meal].push(r.weekday);
+  }
+  for (const chave of REFEICOES_ROTINA) refeicoes[chave].sort((a, b) => a - b);
+
+  return {
+    dataInicio: plano.dataInicio ?? "",
+    frequenciaParcial: dias.length > 0 && dias.length < DIAS_UTEIS.length,
+    diasSelecionados: dias.length > 0 ? dias : [...DIAS_UTEIS],
+    periodoManha: padronizado && (soManha || integral),
+    periodoTarde: padronizado && (soTarde || integral),
+    horarioEstendido: dias.length > 0 && !padronizado,
+    horarios,
+    semRefeicoes: dias.length > 0 && plano.refeicoes.length === 0,
+    refeicoes,
+  };
+}
+
+// ─── Questionário de saúde ──────────────────────────────────────────────────
+
+export const OPCOES_SAUDE = ["Sim", "Não", "Outro"] as const;
+export type OpcaoSaude = (typeof OPCOES_SAUDE)[number];
+
+// Exigência do INEP nº 152/2014.
+export const CORES_RACAS = [
+  "Preta",
+  "Amarela",
+  "Branca",
+  "Indígena",
+  "Parda",
+  "Não declarada",
+] as const;
+
+export interface RespostaSaude {
+  opcao: OpcaoSaude | "";
+  detalhe: string;
+}
+
+export const RESPOSTA_SAUDE_VAZIA: RespostaSaude = { opcao: "", detalhe: "" };
+
+export interface SaudeForm {
+  contatoEmergencia: string;
+  alergia: RespostaSaude;
+  problemaSaude: RespostaSaude;
+  medicamentoContinuo: RespostaSaude;
+  planoSaude: RespostaSaude;
+  pessoasAutorizadas: string;
+  corRaca: string;
+  outrasInformacoes: string;
+}
+
+export const SAUDE_FORM_VAZIO: SaudeForm = {
+  contatoEmergencia: "",
+  alergia: RESPOSTA_SAUDE_VAZIA,
+  problemaSaude: RESPOSTA_SAUDE_VAZIA,
+  medicamentoContinuo: RESPOSTA_SAUDE_VAZIA,
+  planoSaude: RESPOSTA_SAUDE_VAZIA,
+  pessoasAutorizadas: "",
+  corRaca: "",
+  outrasInformacoes: "",
+};
+
+export const PERGUNTAS_SAUDE: readonly {
+  campo: "alergia" | "problemaSaude" | "medicamentoContinuo" | "planoSaude";
+  pergunta: string;
+}[] = [
+  { campo: "alergia", pergunta: "Apresenta alguma alergia?" },
+  { campo: "problemaSaude", pergunta: "Possui algum problema de saúde?" },
+  { campo: "medicamentoContinuo", pergunta: "Usa algum medicamento de uso contínuo?" },
+  { campo: "planoSaude", pergunta: "Possui plano de saúde?" },
+];
+
+export function validarSaudeForm(saude: SaudeForm): ErrosForm {
+  const erros: ErrosForm = {};
+
+  if (saude.contatoEmergencia.trim() === "")
+    erros["saude.contatoEmergencia"] = "Informe um contato de emergência.";
+
+  for (const { campo } of PERGUNTAS_SAUDE) {
+    const resposta = saude[campo];
+    if (resposta.opcao === "") {
+      erros[`saude.${campo}`] = "Escolha uma opção.";
+      continue;
+    }
+    if (resposta.opcao === "Outro" && resposta.detalhe.trim() === "")
+      erros[`saude.${campo}.detalhe`] = "Explique brevemente.";
+  }
+
+  if (saude.pessoasAutorizadas.trim() === "")
+    erros["saude.pessoasAutorizadas"] =
+      "Informe quem está autorizado a buscar a criança na escola.";
+
+  if (!CORES_RACAS.includes(saude.corRaca as (typeof CORES_RACAS)[number]))
+    erros["saude.corRaca"] = "Escolha uma opção.";
+
+  return erros;
+}
+
+// ─── Documentos ─────────────────────────────────────────────────────────────
+
+export type DocumentoChave =
+  | "certidao_ou_rg"
+  | "identidade_responsavel"
+  | "comprovante_residencia"
+  | "carteira_vacinacao"
+  | "declaracao_escolaridade"
+  | "declaracao_transferencia"
+  | "quitacao_escola_anterior";
+
+export interface DocumentoMatricula {
+  chave: DocumentoChave;
+  rotulo: string;
+  dica?: string;
+  // Quando true, a falta bloqueia o envio em qualquer série.
+  bloqueiaSempre: boolean;
+  // Quando true, a falta bloqueia apenas do 1º Ano em diante.
+  bloqueiaDoPrimeiroAno?: boolean;
+}
+
+export const DOCUMENTOS_MATRICULA: readonly DocumentoMatricula[] = [
+  {
+    chave: "certidao_ou_rg",
+    rotulo: "Certidão de Nascimento ou RG do aluno(a)",
+    bloqueiaSempre: true,
+  },
+  {
+    chave: "identidade_responsavel",
+    rotulo: "Documento de identidade do responsável financeiro",
+    bloqueiaSempre: true,
+  },
+  {
+    chave: "comprovante_residencia",
+    rotulo: "Comprovante de residência do responsável financeiro",
+    dica: "Emitido nos últimos 3 meses.",
+    bloqueiaSempre: true,
+  },
+  {
+    chave: "carteira_vacinacao",
+    rotulo: "Carteira de vacinação do aluno(a)",
+    dica: "Solicitada para alunos até 10 anos.",
+    bloqueiaSempre: false,
+  },
+  {
+    chave: "declaracao_escolaridade",
+    rotulo: "Declaração de escolaridade",
+    dica: "Se o aluno vem transferido de outra escola.",
+    bloqueiaSempre: false,
+  },
+  {
+    chave: "declaracao_transferencia",
+    rotulo: "Declaração de transferência",
+    dica: "Se o aluno vem transferido de outra escola.",
+    bloqueiaSempre: false,
+  },
+  {
+    chave: "quitacao_escola_anterior",
+    rotulo: "Declaração de quitação de mensalidades da escola anterior",
+    dica: "Se seu filho(a) vem de escola pública, anexe aqui a Declaração de Escolaridade no lugar.",
+    bloqueiaSempre: false,
+    bloqueiaDoPrimeiroAno: true,
+  },
+];
+
+export interface ArquivoDocumento {
+  // Caminho dentro do bucket privado (nunca uma URL pública).
+  path: string;
+  nome: string;
+  tipo: string;
+  tamanho: number;
+}
+
+export type DocumentosForm = Partial<Record<DocumentoChave, ArquivoDocumento>>;
+
+export const TIPOS_DOCUMENTO_ACEITOS: readonly string[] = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "application/pdf",
+];
+
+export const TAMANHO_MAX_DOCUMENTO = 10 * 1024 * 1024;
+
+// Bucket PRIVADO: os arquivos só são abertos por link assinado, gerado para
+// quem tem permissão de leitura do módulo Admissões.
+export const BUCKET_DOCUMENTOS_MATRICULA = "matricula-documentos";
+
+/** Regra interna de bloqueio (a tela pública não mostra "obrigatório"). */
+export function documentoBloqueia(documento: DocumentoMatricula, serie: string): boolean {
+  if (documento.bloqueiaSempre) return true;
+  if (!documento.bloqueiaDoPrimeiroAno) return false;
+  return segmentoDaSerie(serie) === "fundamental";
+}
+
+export function validarDocumentosForm(documentos: DocumentosForm, serie: string): ErrosForm {
+  const erros: ErrosForm = {};
+  for (const documento of DOCUMENTOS_MATRICULA) {
+    if (!documentoBloqueia(documento, serie)) continue;
+    if (!documentos[documento.chave])
+      erros[`documentos.${documento.chave}`] = "Anexe este documento para concluir a matrícula.";
+  }
+  return erros;
+}
+
+// ─── Padronização de capitalização ──────────────────────────────────────────
+//
+// Só texto livre entra aqui: e-mail, CPF, telefone, CEP, datas e horários ficam
+// exatamente como foram digitados.
+
+function enderecoPadronizado(endereco: EnderecoForm): EnderecoForm {
+  return {
+    ...endereco,
+    logradouro: toTitleCase(endereco.logradouro),
+    complemento: toTitleCase(endereco.complemento),
+    bairro: toTitleCase(endereco.bairro),
+    cidade: toTitleCase(endereco.cidade),
+  };
+}
+
+function responsavelPadronizado(responsavel: ResponsavelForm): ResponsavelForm {
+  return {
+    ...responsavel,
+    nome: toTitleCase(responsavel.nome),
+    endereco: enderecoPadronizado(responsavel.endereco),
+  };
+}
+
+export function padronizarMatriculaForm(form: MatriculaForm): MatriculaForm {
+  return {
+    ...form,
+    aluno: {
+      ...form.aluno,
+      nome: toTitleCase(form.aluno.nome),
+      naturalidade: toTitleCase(form.aluno.naturalidade),
+    },
+    endereco: enderecoPadronizado(form.endereco),
+    pai: responsavelPadronizado(form.pai),
+    mae: responsavelPadronizado(form.mae),
+  };
+}
+
+function respostaPadronizada(resposta: RespostaSaude): RespostaSaude {
+  return { ...resposta, detalhe: toTitleCase(resposta.detalhe) };
+}
+
+export function padronizarSaudeForm(saude: SaudeForm): SaudeForm {
+  return {
+    ...saude,
+    contatoEmergencia: toTitleCase(saude.contatoEmergencia),
+    alergia: respostaPadronizada(saude.alergia),
+    problemaSaude: respostaPadronizada(saude.problemaSaude),
+    medicamentoContinuo: respostaPadronizada(saude.medicamentoContinuo),
+    planoSaude: respostaPadronizada(saude.planoSaude),
+    pessoasAutorizadas: toTitleCase(saude.pessoasAutorizadas),
+    outrasInformacoes: toTitleCase(saude.outrasInformacoes),
   };
 }

@@ -58,6 +58,16 @@ import {
   type EscolhaAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
 import {
+  REFEICOES_ROTINA,
+  ROTINA_FORM_VAZIA,
+  montarRotinaPersistida,
+  rotinaDoPlanoExistente,
+  validarRotinaForm,
+  type PlanoRotinaExistente,
+  type RotinaForm,
+} from "@/lib/matricula-form";
+import type { MealKey, Weekday } from "@/lib/diario";
+import {
   CAMPOS_EDITAVEIS_ALUNO,
   aplicarEdicao,
   camposAlterados,
@@ -811,6 +821,218 @@ export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" 
       return { ok: false, erro: "Não foi possível salvar sua escolha. Tente novamente." };
     }
     return { ok: true, parcelas: parcelamento.parcelas };
+  });
+
+// ─── Atualização da rotina escolar (portal público) ─────────────────────────
+//
+// A rotina é dado LOCAL (o Sponte não tem campo para ela). A sugestão inicial
+// vem da rotina já enviada pelo aluno ou, na falta dela, do plano cadastrado no
+// Diário do Aluno — sempre da unidade da sessão, nunca de outra.
+
+export interface RotinaRematriculaResult {
+  ok: boolean;
+  erro?: string;
+  serie?: string;
+  // De onde veio a sugestão: "rematricula"/"matricula" (envio anterior),
+  // "diario" (plano do Diário) ou "" (etapa em branco).
+  origem?: string;
+  rotina?: RotinaForm;
+}
+
+interface LinhaRotinaSalva {
+  data_inicio: string;
+  horarios: { weekday: number; entrada: string; saida: string }[];
+  refeicoes: Record<string, number[]>;
+  origem: string;
+}
+
+function planoDaRotinaSalva(linha: LinhaRotinaSalva): PlanoRotinaExistente {
+  const refeicoes: { meal: MealKey; weekday: Weekday }[] = [];
+  for (const meal of REFEICOES_ROTINA) {
+    for (const dia of linha.refeicoes[meal] ?? []) {
+      refeicoes.push({ meal, weekday: dia as Weekday });
+    }
+  }
+  return {
+    dataInicio: linha.data_inicio,
+    horarios: linha.horarios.map((h) => ({
+      weekday: h.weekday as Weekday,
+      entrada: h.entrada,
+      saida: h.saida,
+    })),
+    refeicoes,
+  };
+}
+
+// Plano do Diário do Aluno da mesma unidade (o par school_id + sponte_aluno_id
+// é único, então não há risco de pegar homônimo de outra escola).
+async function planoDoDiario(
+  unidade: string,
+  alunoId: string,
+): Promise<PlanoRotinaExistente | null> {
+  const { data: escola } = await supabaseAdmin
+    .from("schools")
+    .select("id")
+    .eq("name", unidade)
+    .maybeSingle<{ id: string }>();
+  if (!escola) return null;
+
+  const { data: aluno } = await supabaseAdmin
+    .from("diario_students" as never)
+    .select("id")
+    .eq("school_id", escola.id)
+    .eq("sponte_aluno_id", alunoId)
+    .maybeSingle<{ id: string }>();
+  if (!aluno) return null;
+
+  const [horarios, refeicoes] = await Promise.all([
+    supabaseAdmin
+      .from("diario_schedules" as never)
+      .select("weekday, entry, exit")
+      .eq("student_id", aluno.id),
+    supabaseAdmin
+      .from("diario_meal_plans" as never)
+      .select("meal, weekday")
+      .eq("student_id", aluno.id),
+  ]);
+
+  const linhasHorario = (horarios.data ?? []) as { weekday: number; entry: string; exit: string }[];
+  const linhasRefeicao = (refeicoes.data ?? []) as { meal: MealKey; weekday: number }[];
+  if (linhasHorario.length === 0 && linhasRefeicao.length === 0) return null;
+
+  return {
+    horarios: linhasHorario.map((h) => ({
+      weekday: h.weekday as Weekday,
+      entrada: h.entry,
+      saida: h.exit,
+    })),
+    refeicoes: linhasRefeicao.map((r) => ({ meal: r.meal, weekday: r.weekday as Weekday })),
+  };
+}
+
+// Uma linha de rotina por aluno/ano letivo na rematrícula (reenvio atualiza).
+function submissionIdRotinaRematricula(
+  unidade: string,
+  alunoId: string,
+  ano: number | null,
+): string {
+  return `rematricula:${unidade}:${alunoId}:${ano ?? "sem-ano"}`;
+}
+
+export const rotinaRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => TokenSchema.parse(input))
+  .handler(async ({ data }): Promise<RotinaRematriculaResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
+    if (!aluno) return { ok: false, erro: "Não conseguimos ler os dados do aluno agora." };
+    const serie = aluno.serie;
+
+    const { data: salva } = await supabaseAdmin
+      .from("student_routine" as never)
+      .select("data_inicio, horarios, refeicoes, origem")
+      .eq("unidade", sessao.unidade)
+      .eq("sponte_aluno_id", Number(sessao.alunoId))
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<LinhaRotinaSalva>();
+
+    if (salva) {
+      return {
+        ok: true,
+        serie,
+        origem: salva.origem,
+        rotina: rotinaDoPlanoExistente(planoDaRotinaSalva(salva), serie),
+      };
+    }
+
+    const plano = await planoDoDiario(sessao.unidade, sessao.alunoId);
+    if (plano) {
+      return { ok: true, serie, origem: "diario", rotina: rotinaDoPlanoExistente(plano, serie) };
+    }
+
+    return { ok: true, serie, origem: "", rotina: { ...ROTINA_FORM_VAZIA } };
+  });
+
+const DiaRotinaSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+]);
+const HorarioRotinaSchema = z.object({ entrada: z.string().max(5), saida: z.string().max(5) });
+
+const SalvarRotinaSchema = z.object({
+  token: z.string().min(16),
+  rotina: z.object({
+    dataInicio: z.string().max(10),
+    frequenciaParcial: z.boolean(),
+    diasSelecionados: z.array(DiaRotinaSchema),
+    periodoManha: z.boolean(),
+    periodoTarde: z.boolean(),
+    horarioEstendido: z.boolean(),
+    horarios: z.record(z.string(), HorarioRotinaSchema),
+    semRefeicoes: z.boolean(),
+    refeicoes: z.object({
+      breakfast: z.array(DiaRotinaSchema),
+      lunch: z.array(DiaRotinaSchema),
+      snack: z.array(DiaRotinaSchema),
+      dinner: z.array(DiaRotinaSchema),
+    }),
+  }),
+});
+
+export interface SalvarRotinaRematriculaResult {
+  ok: boolean;
+  erro?: string;
+  erros?: Record<string, string>;
+}
+
+export const salvarRotinaRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => SalvarRotinaSchema.parse(input))
+  .handler(async ({ data }): Promise<SalvarRotinaRematriculaResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
+    if (!aluno) return { ok: false, erro: "Não conseguimos confirmar os dados do aluno." };
+
+    // A série vem do Sponte, não da tela: é ela que define o horário fixo gravado.
+    const rotina = data.rotina as RotinaForm;
+    const erros = validarRotinaForm(rotina, aluno.serie);
+    if (Object.keys(erros).length > 0) {
+      return { ok: false, erros, erro: "Confira os campos destacados." };
+    }
+
+    const anoLetivo = await anoLetivoConfigurado();
+    const dados = montarRotinaPersistida(rotina, aluno.serie);
+    const { error } = await supabaseAdmin.from("student_routine" as never).upsert(
+      {
+        submission_id: submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
+        unidade: sessao.unidade,
+        sponte_aluno_id: Number(sessao.alunoId),
+        aluno_nome: aluno.nome,
+        serie: aluno.serie,
+        origem: "rematricula",
+        ano_letivo: anoLetivo,
+        data_inicio: dados.dataInicio,
+        dias_ativos: dados.diasAtivos,
+        horarios: dados.horarios,
+        periodo_manha: dados.periodoManha,
+        periodo_tarde: dados.periodoTarde,
+        horario_estendido: dados.horarioEstendido,
+        sem_refeicoes: dados.semRefeicoes,
+        refeicoes: dados.refeicoes,
+      } as never,
+      { onConflict: "submission_id" },
+    );
+    if (error) {
+      console.error(`${LOG_TAG} falha ao salvar a rotina: ${error.message}`);
+      return { ok: false, erro: "Não foi possível salvar a rotina. Tente novamente." };
+    }
+    return { ok: true };
   });
 
 // ─── Sincronização cadastral (portal público → Sponte) ──────────────────────

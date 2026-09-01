@@ -9,10 +9,14 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   ClipboardList,
   Copy,
   CopyCheck,
+  ExternalLink,
+  FileText,
+  HeartPulse,
   Inbox,
   RefreshCw,
   RotateCw,
@@ -40,8 +44,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
-import { reprocessarMatricula } from "@/lib/matriculas.functions";
+import {
+  detalheMatricula,
+  reprocessarMatricula,
+  type DocumentoSubmissao,
+  type RotinaSubmissao,
+  type SaudeSubmissao,
+} from "@/lib/matriculas.functions";
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
+import { MEALS, WEEKDAYS } from "@/lib/diario";
+import { DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
 
 export const Route = createFileRoute("/matriculas")({
   head: () => ({ meta: [{ title: "Matrículas — School Hub" }] }),
@@ -537,6 +549,8 @@ function DetalheSubmissao({
                 </section>
               )}
 
+              <RespostasLocais submissionId={submissao.submission_id} />
+
               <BlocoJson titulo="Payload recebido do Google Forms" valor={submissao.payload} />
               <BlocoJson titulo="Resposta do Sponte" valor={submissao.resultado} />
             </div>
@@ -561,6 +575,191 @@ function DetalheSubmissao({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+// Rotina, saúde e documentos ficam fora do payload do Sponte: são tabelas
+// locais, lidas sob demanda quando o painel de detalhe abre.
+function RespostasLocais({ submissionId }: { submissionId: string | null }) {
+  const carregar = useServerFn(detalheMatricula);
+  const { data, isFetching, isError } = useQuery({
+    queryKey: ["matricula-detalhe", submissionId],
+    enabled: submissionId !== null,
+    queryFn: async () => carregar({ data: { submissionId: submissionId ?? "" } }),
+    // O link do documento é assinado e expira: não vale reaproveitar cache velho.
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  if (submissionId === null) return null;
+  if (isFetching) return <Skeleton className="h-24 w-full" />;
+  if (isError || !data?.ok)
+    return (
+      <p className="text-xs text-muted-foreground">
+        Não foi possível carregar rotina, saúde e documentos desta submissão.
+      </p>
+    );
+
+  const semRespostas = !data.rotina && !data.saude && (data.documentos ?? []).length === 0;
+  if (semRespostas)
+    return (
+      <p className="text-xs text-muted-foreground">
+        Esta submissão não tem rotina, questionário de saúde nem documentos anexados.
+      </p>
+    );
+
+  return (
+    <>
+      {data.rotina && <BlocoRotina rotina={data.rotina} />}
+      {data.saude && <BlocoSaude saude={data.saude} />}
+      {(data.documentos ?? []).length > 0 && <BlocoDocumentos documentos={data.documentos ?? []} />}
+    </>
+  );
+}
+
+function diasEmTexto(dias: number[]): string {
+  const nomes = WEEKDAYS.filter((d) => dias.includes(d.value)).map((d) => d.short);
+  return nomes.length > 0 ? nomes.join(", ") : "—";
+}
+
+function BlocoRotina({ rotina }: { rotina: RotinaSubmissao }) {
+  const periodos = [
+    rotina.periodoManha ? "Manhã" : "",
+    rotina.periodoTarde ? "Tarde" : "",
+    rotina.horarioEstendido ? "Horário estendido" : "",
+  ].filter((p) => p !== "");
+
+  return (
+    <section className="space-y-2">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <CalendarClock className="h-3.5 w-3.5" /> Rotina escolar
+      </h3>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg border border-border p-3 text-sm">
+        <Campo rotulo="Série" valor={rotina.serie} />
+        <Campo rotulo="Origem" valor={rotina.origem} />
+        <Campo
+          rotulo="Ano letivo"
+          valor={rotina.anoLetivo === null ? null : String(rotina.anoLetivo)}
+        />
+        <Campo rotulo="Início" valor={rotina.dataInicio} />
+        <Campo rotulo="Períodos" valor={periodos.join(" · ") || null} />
+        <Campo rotulo="Dias" valor={diasEmTexto(rotina.diasAtivos)} />
+      </dl>
+
+      <div className="rounded-lg border border-border p-3 text-sm">
+        <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Horários</p>
+        {rotina.horarios.length === 0 ? (
+          <p className="text-sm">—</p>
+        ) : (
+          <ul className="space-y-0.5 text-sm">
+            {rotina.horarios.map((h) => (
+              <li key={h.weekday}>
+                {WEEKDAYS.find((d) => d.value === h.weekday)?.long ?? h.weekday}: {h.entrada} às{" "}
+                {h.saida}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-border p-3 text-sm">
+        <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Refeições</p>
+        {rotina.semRefeicoes ? (
+          <p className="text-sm">Nenhuma refeição contratada.</p>
+        ) : (
+          <ul className="space-y-0.5 text-sm">
+            {MEALS.map((m) => (
+              <li key={m.key}>
+                {m.label}: {diasEmTexto(rotina.refeicoes[m.key] ?? [])}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function respostaSaude(opcao: string, detalhe: string): string {
+  return detalhe.trim() === "" ? opcao : `${opcao} — ${detalhe}`;
+}
+
+function BlocoSaude({ saude }: { saude: SaudeSubmissao }) {
+  const respostas: Record<string, string> = {
+    alergia: respostaSaude(saude.alergia, saude.alergiaDetalhe),
+    problemaSaude: respostaSaude(saude.problemaSaude, saude.problemaSaudeDetalhe),
+    medicamentoContinuo: respostaSaude(saude.medicamentoContinuo, saude.medicamentoContinuoDetalhe),
+    planoSaude: respostaSaude(saude.planoSaude, saude.planoSaudeDetalhe),
+  };
+
+  return (
+    <section className="space-y-2">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <HeartPulse className="h-3.5 w-3.5" /> Questionário de saúde
+      </h3>
+      <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
+        <Resposta pergunta="Contato de emergência" valor={saude.contatoEmergencia} />
+        {PERGUNTAS_SAUDE.map((p) => (
+          <Resposta key={p.campo} pergunta={p.pergunta} valor={respostas[p.campo]} />
+        ))}
+        <Resposta pergunta="Pessoas autorizadas a buscar" valor={saude.pessoasAutorizadas} />
+        <Resposta pergunta="Cor/raça" valor={saude.corRaca} />
+        <Resposta pergunta="Outras informações" valor={saude.outrasInformacoes} />
+      </div>
+    </section>
+  );
+}
+
+function Resposta({ pergunta, valor }: { pergunta: string; valor: string }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{pergunta}</p>
+      <p className="whitespace-pre-wrap text-sm">{valor.trim() === "" ? "—" : valor}</p>
+    </div>
+  );
+}
+
+function tamanhoLegivel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function BlocoDocumentos({ documentos }: { documentos: DocumentoSubmissao[] }) {
+  return (
+    <section className="space-y-2">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <FileText className="h-3.5 w-3.5" /> Documentos anexados
+      </h3>
+      {documentos.map((doc) => {
+        const rotulo =
+          DOCUMENTOS_MATRICULA.find((d) => d.chave === doc.documento)?.rotulo ?? doc.documento;
+        return (
+          <div
+            key={doc.documento}
+            className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{rotulo}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {doc.nomeArquivo} · {tamanhoLegivel(doc.tamanhoBytes)}
+              </p>
+            </div>
+            {doc.url ? (
+              <Button asChild variant="outline" size="sm">
+                <a href={doc.url} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-3.5 w-3.5" /> Abrir
+                </a>
+              </Button>
+            ) : (
+              <span className="whitespace-nowrap text-xs text-muted-foreground">
+                Arquivo indisponível
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </section>
   );
 }
 

@@ -16,12 +16,21 @@ const TURMA_MAP: Record<number, string> = {
   14: "9º Ano",
 };
 
-export function calcularIdadeEscolar(dataNascimento: string): {
+// Séries na ordem etária do TURMA_MAP: da mais nova (Berçário) à mais velha.
+export const TURMAS_POR_IDADE: readonly string[] = Object.values(TURMA_MAP);
+
+// Índice da primeira série do Ensino Fundamental ("1º Ano").
+export const INDICE_PRIMEIRO_ANO = TURMAS_POR_IDADE.indexOf("1º Ano");
+
+export function calcularIdadeEscolar(
+  dataNascimento: string,
+  anoReferencia?: number,
+): {
   idade: number;
   turma: string;
 } {
   const nascimento = new Date(dataNascimento + "T00:00:00");
-  const anoAtual = new Date().getFullYear();
+  const anoAtual = anoReferencia ?? new Date().getFullYear();
   const dataCorte = new Date(anoAtual, 2, 31); // 31 de Março do ano atual
 
   let idade = dataCorte.getFullYear() - nascimento.getFullYear();
