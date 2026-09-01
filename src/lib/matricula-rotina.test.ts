@@ -44,6 +44,7 @@ function formMatricula(): MatriculaForm {
       nome: "Ryan Kleber Braga de Morais",
       cpf: "390.533.447-05",
       dataNascimento: "2019-04-10",
+      genero: "Masculino",
       naturalidade: "Belo Horizonte",
     },
     endereco: {

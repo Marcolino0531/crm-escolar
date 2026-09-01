@@ -16,8 +16,11 @@
 //                         responsável) e parentesco/financeiro/didático valem
 //                         POR VÍNCULO, não para o responsável inteiro.
 //
-// A API NÃO tem campo de nacionalidade na inserção (só na leitura), então ela é
-// registrada na observação do aluno. Naturalidade vai em sCidadeNatal.
+// A API NÃO tem campo de nacionalidade nem de estado civil do aluno em nenhuma
+// operação de escrita (InsertAlunos/UpdateAlunos, todas as versões) — só a
+// leitura do GetAlunos devolve Nacionalidade. Os dois vão na observação do
+// aluno. Naturalidade vai em sCidadeNatal e o gênero em sSexo
+// ("Feminino"/"Masculino", os únicos valores usados na base).
 
 import {
   callSponte,
@@ -166,6 +169,11 @@ export async function resolverEndereco(entrada: {
   }
 }
 
+// Fixos para toda matrícula: nenhuma operação de escrita do Sponte aceita esses
+// dois campos, então eles são gravados na observação do aluno.
+export const ESTADO_CIVIL_MATRICULA = "Solteiro";
+export const NACIONALIDADE_MATRICULA = "Brasileiro(a)";
+
 export interface AlunoMatricula {
   nome: string;
   dataNascimento: string;
@@ -174,6 +182,7 @@ export interface AlunoMatricula {
   sexo?: string;
   naturalidade?: string;
   nacionalidade?: string;
+  estadoCivil?: string;
   email?: string;
   telefone?: string;
   celular?: string;
@@ -470,13 +479,18 @@ async function vincularResponsavelExistente(
 
 function observacaoAluno(aluno: AlunoMatricula): string {
   const partes = [aluno.observacao?.trim() ?? ""];
-  // A inserção do Sponte não tem campo de nacionalidade (só a leitura tem).
-  if (aluno.nacionalidade?.trim()) partes.push(`Nacionalidade: ${aluno.nacionalidade.trim()}`);
+  // A escrita do Sponte não tem campo de nacionalidade nem de estado civil.
+  partes.push(`Nacionalidade: ${aluno.nacionalidade?.trim() || NACIONALIDADE_MATRICULA}`);
+  partes.push(`Estado civil: ${aluno.estadoCivil?.trim() || ESTADO_CIVIL_MATRICULA}`);
   partes.push("Matrícula criada pelo formulário de matrícula (School Hub).");
   return partes.filter(Boolean).join(" | ");
 }
 
-function camposAluno(aluno: AlunoMatricula, endereco: EnderecoResolvido, nascimento: string) {
+export function camposAluno(
+  aluno: AlunoMatricula,
+  endereco: EnderecoResolvido,
+  nascimento: string,
+) {
   return {
     sNome: aluno.nome.trim(),
     sMidia: aluno.midia?.trim() ?? "",

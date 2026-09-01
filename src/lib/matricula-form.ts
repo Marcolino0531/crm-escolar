@@ -10,7 +10,12 @@
 
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
-import type { MatriculaPayload, ResponsavelMatricula } from "@/lib/matriculas.sponte";
+import {
+  ESTADO_CIVIL_MATRICULA,
+  NACIONALIDADE_MATRICULA,
+  type MatriculaPayload,
+  type ResponsavelMatricula,
+} from "@/lib/matriculas.sponte";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -148,12 +153,21 @@ export const RESPONSAVEL_VAZIO: ResponsavelForm = {
 
 export type ParentescoForm = "pai" | "mae";
 
+// Valores aceitos pelo campo Sexo do Sponte (conferidos na base: a leitura só
+// devolve "Feminino" ou "Masculino").
+export const GENEROS_MATRICULA = ["Feminino", "Masculino"] as const;
+
+export type GeneroMatricula = (typeof GENEROS_MATRICULA)[number];
+
+export { ESTADO_CIVIL_MATRICULA, NACIONALIDADE_MATRICULA };
+
 export interface MatriculaForm {
   unidade: string;
   aluno: {
     nome: string;
     cpf: string;
     dataNascimento: string;
+    genero: GeneroMatricula | "";
     naturalidade: string;
   };
   endereco: EnderecoForm;
@@ -165,7 +179,7 @@ export interface MatriculaForm {
 
 export const MATRICULA_FORM_VAZIO: MatriculaForm = {
   unidade: "",
-  aluno: { nome: "", cpf: "", dataNascimento: "", naturalidade: "" },
+  aluno: { nome: "", cpf: "", dataNascimento: "", genero: "", naturalidade: "" },
   endereco: ENDERECO_VAZIO,
   pai: RESPONSAVEL_VAZIO,
   mae: RESPONSAVEL_VAZIO,
@@ -224,6 +238,7 @@ export function validarMatriculaForm(
     erros["aluno.cpf"] = "CPF inválido — confira os dígitos.";
   if (!dataNascimentoValida(form.aluno.dataNascimento, hojeYMD))
     erros["aluno.dataNascimento"] = "Informe uma data de nascimento válida.";
+  if (form.aluno.genero === "") erros["aluno.genero"] = "Selecione o gênero do aluno.";
   if (form.aluno.naturalidade.trim() === "")
     erros["aluno.naturalidade"] = "Informe a naturalidade (cidade de nascimento).";
 
@@ -311,6 +326,9 @@ export function montarPayloadMatricula(
       nome: form.aluno.nome.trim(),
       dataNascimento: form.aluno.dataNascimento.trim(),
       cpf: soDigitos(form.aluno.cpf),
+      sexo: form.aluno.genero,
+      estadoCivil: ESTADO_CIVIL_MATRICULA,
+      nacionalidade: NACIONALIDADE_MATRICULA,
       naturalidade: form.aluno.naturalidade.trim(),
       // Contato do aluno = do responsável financeiro (o formulário não coleta
       // telefone/e-mail do aluno).
