@@ -182,7 +182,7 @@ export function QuestionarioSaude({
       })}
 
       <Lista
-        titulo="Pessoas autorizadas a buscar a criança na escola"
+        titulo="Pessoas autorizadas a buscar o(a) aluno(a) na escola"
         rotuloAdicionar="Adicionar pessoa"
         itens={saude.pessoasAutorizadas}
         vazio={PESSOA_AUTORIZADA_VAZIA}

@@ -81,7 +81,7 @@ export function RotinaEscolar({
             checked={rotina.frequenciaParcial}
             onCheckedChange={(v) => onChange({ ...rotina, frequenciaParcial: v === true })}
           />
-          Meu filho não frequenta todos os dias úteis (segunda a sexta)
+          O(A) aluno(a) não frequenta todos os dias úteis (segunda a sexta)
         </label>
 
         {rotina.frequenciaParcial && (
