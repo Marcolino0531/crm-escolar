@@ -53,6 +53,18 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
   };
 }
 
+// Config de TEMPLATE do número que atende um grupo de unidades. Os templates
+// (nome e idioma) são os mesmos nos dois números — foram aprovados com o mesmo
+// nome em cada WABA; o que muda é o par token + phone_number_id do remetente.
+// Retorna null quando o grupo não tem número configurado, para o cron falhar de
+// forma segura em vez de disparar pelo número da outra escola.
+export function getWhatsAppConfigDoGrupo(grupo: NumeroGrupo): WhatsAppConfig | null {
+  const base = getWhatsAppConfig();
+  const numero = getNumerosWhatsApp().find((n) => n.grupo === grupo);
+  if (!base || !numero) return null;
+  return { ...base, token: numero.token, phoneNumberId: numero.phoneNumberId };
+}
+
 // Config mínima para ENVIAR mensagens de texto livre (chat de atendimento):
 // não depende de template aprovado, apenas do token + Phone Number ID.
 export interface WhatsAppSendConfig {

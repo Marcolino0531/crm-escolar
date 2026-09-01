@@ -35,7 +35,14 @@ import {
   type BoletoAberto,
 } from "@/lib/sponte.functions";
 import {
+  cobrancaPermitida,
+  envioLiberado,
+  menorDataBaseCobranca,
+  unidadesAtendidas,
+} from "@/lib/billing-unidades";
+import {
   getWhatsAppConfig,
+  getWhatsAppConfigDoGrupo,
   getWhatsAppSendConfig,
   getWhatsAppSendConfigDoGrupo,
   getNumerosPublicos,
@@ -81,7 +88,7 @@ import {
   type ParcelaLembrete,
 } from "@/lib/billing-reminders";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
-import { grupoDoPhoneNumberId, type NumeroGrupo } from "@/lib/whatsapp-numeros";
+import { grupoDaUnidade, grupoDoPhoneNumberId, type NumeroGrupo } from "@/lib/whatsapp-numeros";
 import { parseReacao } from "@/lib/whatsapp-reacoes";
 import { slotDaRota, slotLembreteDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
 import {
@@ -161,14 +168,24 @@ function formatVencBR(ymd: string): string {
   return `${d}/${m}/${y}`;
 }
 
-// Unidades atendidas pela cobrança automática. O número/token de WhatsApp de
-// produção é exclusivo de CEC e CEC Baby; Núcleo Belvedere e Núcleo Vale do
-// Sereno terão um número próprio no futuro e NÃO recebem este disparo.
-const UNIDADES_COBRANCA_AUTOMATICA = new Set(["CEC", "CEC Baby"]);
+// Grupos de unidade com número da Cloud API configurado no ambiente.
+function gruposConfigurados(): NumeroGrupo[] {
+  return [...new Set(getNumerosPublicos().map((n) => n.grupo))];
+}
 
-// Data base da cobrança automática: só cobra vencimentos a partir deste dia,
-// para não gerar spam de pendências antigas ao ligar a automação.
-const DATA_BASE_COBRANCA = "2026-08-01";
+// Grupos que disparam de verdade hoje: número configurado E envio liberado (ver
+// billing-unidades). A simulação avalia qualquer grupo configurado.
+function gruposEmOperacao(): NumeroGrupo[] {
+  return gruposConfigurados().filter(envioLiberado);
+}
+
+// Opções das rotinas diárias. `grupos` restringe as unidades avaliadas e
+// `simular` executa toda a seleção SEM chamar a Cloud API e sem gravar log de
+// disparo — é o dry-run usado para conferir o volume antes de ligar um número.
+interface OpcoesRotina {
+  grupos?: NumeroGrupo[];
+  simular?: boolean;
+}
 
 // Janela do histórico de disparos usada para reavaliar quem continua devendo.
 // Cobre com folga o ciclo de uma dívida sem varrer o histórico inteiro.
@@ -222,6 +239,26 @@ async function inserirBillingLog(row: Record<string, unknown>): Promise<void> {
   }
 }
 
+// Autorização da simulação: o segredo do cron (chamada automatizada) ou uma
+// sessão de ADMINISTRADOR do School Hub. A rota é somente leitura, mas expõe
+// volume de cobrança — não fica aberta.
+async function autorizadoParaSimular(request: Request): Promise<boolean> {
+  const token = bearer(request);
+  if (!token) return false;
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && token === cronSecret) return true;
+
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  const userId = data?.user?.id;
+  if (error || !userId) return false;
+  const { data: roles, error: erroRoles } = await supabaseAdmin
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId);
+  if (erroRoles) return false;
+  return (roles ?? []).some((r) => (r as { role?: string }).role === "admin");
+}
+
 // Kill switch: envio do dia bloqueado quando `paused_date` == hoje (fuso SP).
 async function envioPausadoHoje(hojeYMD: string): Promise<boolean> {
   const { data } = await supabaseAdmin
@@ -255,6 +292,26 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
       return json({ ok: false, error: "não autorizado" }, 401);
     }
     return await runCronRegistrado(slotLembrete, runCronLembretes);
+  }
+
+  // Simulação (dry-run) das duas réguas: roda toda a seleção do dia e devolve só
+  // contagens por template e unidade, sem chamar a Cloud API e sem gravar
+  // disparo. Serve para conferir o volume antes de liberar um número novo.
+  if (pathname === "/api/whatsapp/simulacao" && request.method === "GET") {
+    if (!(await autorizadoParaSimular(request))) {
+      return json({ ok: false, error: "não autorizado" }, 401);
+    }
+    const pedido = url.searchParams.get("grupo");
+    const grupos = pedido ? gruposConfigurados().filter((g) => g === pedido) : gruposConfigurados();
+    if (grupos.length === 0) {
+      return json({ ok: false, error: "nenhum número configurado para o grupo pedido" }, 400);
+    }
+    const hoje = diaYMD(0);
+    const [cobranca, lembretes] = await Promise.all([
+      runCron(hoje, { grupos, simular: true }),
+      runCronLembretes(hoje, { grupos, simular: true }),
+    ]);
+    return json({ ok: true, hoje, grupos, cobranca, lembretes });
   }
 
   if (pathname === "/api/whatsapp/webhook" && request.method === "GET") {
@@ -293,12 +350,17 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
 //      aberto, vencidas e fora da tolerância.
 //   4. As parcelas são agrupadas por RESPONSÁVEL: uma única mensagem por dia,
 //      mesmo com várias parcelas e/ou vários alunos.
-async function runCron(hoje: string): Promise<ResultadoCron> {
-  const cfg = getWhatsAppConfig();
-  if (!cfg) {
+async function runCron(hoje: string, opcoes: OpcoesRotina = {}): Promise<ResultadoCron> {
+  if (!getWhatsAppConfig()) {
     throw new Error(
       "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
     );
+  }
+
+  const gruposAlvo = opcoes.grupos ?? gruposEmOperacao();
+  const unidades = unidadesAtendidas(gruposAlvo);
+  if (unidades.size === 0) {
+    return { status: "sem_envio", motivo: "nenhuma unidade com envio automático ativo" };
   }
 
   // Não dispara aos sábados, domingos e feriados nacionais (ver billing-schedule).
@@ -311,7 +373,7 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
     return { status: "pausado", motivo: "envios pausados para hoje (kill switch)" };
   }
 
-  const candidatos = await coletarCandidatos(hoje);
+  const candidatos = await coletarCandidatos(hoje, gruposAlvo);
   if (candidatos.length === 0) {
     return { status: "sem_envio", motivo: "nenhum aluno em cobrança" };
   }
@@ -358,11 +420,21 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
           `[whatsapp] aluno ${c.alunoId}: responsável financeiro sem telefone no Sponte — sem disparo hoje.`,
         );
       }
+      // Só entram no total anunciado (e no disparo) os boletos que a regra da
+      // unidade permite cobrar — no Belvedere/Vale do Sereno, mensalidade a
+      // partir de setembro/2026.
+      const permitidos = divida.boletos.filter((b) =>
+        cobrancaPermitida({
+          unidade: c.unidade,
+          vencimento: b.vencimento,
+          categorias: b.categorias,
+        }),
+      );
       vencidasPorAluno.set(
         c.alunoId,
-        filtrarPorAcordoDoAluno(c.alunoId, parcelasVencidas(divida.boletos, hoje), excecoes),
+        filtrarPorAcordoDoAluno(c.alunoId, parcelasVencidas(permitidos, hoje), excecoes),
       );
-      for (const b of divida.boletos) {
+      for (const b of permitidos) {
         cobraveis.push({
           alunoId: c.alunoId,
           alunoNome: c.alunoNome,
@@ -372,6 +444,7 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
           vencimento: b.vencimento,
           saldo: b.saldo,
           dataPagamento: b.dataPagamento,
+          categorias: b.categorias,
         });
       }
     }
@@ -398,36 +471,70 @@ async function runCron(hoje: string): Promise<ResultadoCron> {
     });
   }
 
-  const grupos = agruparPorResponsavel(
-    filtrarPorPausa(
-      parcelasCobraveis(filtrarPorAcordo(cobraveis, excecoes), hoje, DATA_BASE_COBRANCA),
-      pausas,
-      new Date(),
-    ),
-    hoje,
-    vencidasPorAluno,
+  const elegiveis = filtrarPorPausa(
+    parcelasCobraveis(filtrarPorAcordo(cobraveis, excecoes), hoje),
+    pausas,
+    new Date(),
   );
+  // O agrupamento por responsável acontece DENTRO de cada número: um responsável
+  // com filhos nas duas escolas recebe uma mensagem por número, e nenhuma delas
+  // mistura parcelas da outra.
+  const grupos: GrupoCobranca[] = [];
+  for (const g of gruposAlvo) {
+    const doGrupo = elegiveis.filter((p) => grupoDaUnidade(p.unidade) === g);
+    if (doGrupo.length > 0) {
+      grupos.push(...agruparPorResponsavel(doGrupo, hoje, vencidasPorAluno));
+    }
+  }
   if (grupos.length === 0) {
     return {
       status: "sem_envio",
       motivo: "nenhuma parcela cobrável hoje",
       alunos: candidatos.length,
+      ...(opcoes.simular ? { simulacao: contarSimulacao([]) } : {}),
     };
   }
 
   // Idempotência do dia: telefones que já receberam disparo hoje (cron reexecutado).
-  const telefonesHoje = await telefonesComDisparoHoje(hoje, "cobranca");
+  const telefonesHoje = await telefonesPorGrupoComDisparoHoje(hoje, "cobranca");
+
+  if (opcoes.simular) {
+    const simulados: { template: string; unidade: string; telefone: string }[] = [];
+    let puladosSim = 0;
+    for (const grupo of grupos) {
+      const jaAtendidos = telefonesDoGrupo(telefonesHoje, grupo.unidade);
+      if (jaCobradoHoje(jaAtendidos, grupo.telefone)) {
+        puladosSim++;
+        continue;
+      }
+      jaAtendidos.push(grupo.telefone);
+      simulados.push({
+        template: grupo.multipla ? "aviso_cobranca_multipla" : "aviso_cobranca",
+        unidade: grupo.unidade,
+        telefone: grupo.telefone,
+      });
+    }
+    return {
+      status: "sem_envio",
+      motivo: "simulação (dry-run): nenhuma mensagem enviada",
+      responsaveis: grupos.length,
+      alunos: candidatos.length,
+      pulados: puladosSim,
+      simulacao: contarSimulacao(simulados),
+    };
+  }
 
   let enviados = 0;
   let falhas = 0;
   let pulados = 0;
   for (const grupo of grupos) {
-    if (jaCobradoHoje(telefonesHoje, grupo.telefone)) {
+    const jaAtendidos = telefonesDoGrupo(telefonesHoje, grupo.unidade);
+    if (jaCobradoHoje(jaAtendidos, grupo.telefone)) {
       pulados++;
       continue;
     }
-    telefonesHoje.push(grupo.telefone);
-    const r = await dispararGrupo(cfg, grupo, hoje, linhaPorAluno);
+    jaAtendidos.push(grupo.telefone);
+    const r = await dispararGrupo(grupo, hoje, linhaPorAluno);
     enviados += r.enviado ? 1 : 0;
     falhas += r.enviado ? 0 : 1;
   }
@@ -454,6 +561,32 @@ interface ResultadoCron {
   enviados?: number;
   falhas?: number;
   pulados?: number;
+  // Preenchido só no dry-run: quantas mensagens sairiam, por template e por
+  // unidade. Nenhum dado pessoal — apenas contagens.
+  simulacao?: {
+    porTemplate: Record<string, number>;
+    porUnidade: Record<string, number>;
+    semTelefone: number;
+  };
+}
+
+// Contagem do dry-run: uma entrada por mensagem que sairia, agrupada por
+// template e unidade.
+function contarSimulacao(
+  itens: { template: string; unidade: string; telefone: string }[],
+): NonNullable<ResultadoCron["simulacao"]> {
+  const porTemplate: Record<string, number> = {};
+  const porUnidade: Record<string, number> = {};
+  let semTelefone = 0;
+  for (const i of itens) {
+    if (!i.telefone || i.telefone === "-") {
+      semTelefone++;
+      continue;
+    }
+    porTemplate[i.template] = (porTemplate[i.template] ?? 0) + 1;
+    porUnidade[i.unidade || "(sem unidade)"] = (porUnidade[i.unidade || "(sem unidade)"] ?? 0) + 1;
+  }
+  return { porTemplate, porUnidade, semTelefone };
 }
 
 // Executa a tentativa do dia registrando-a em `whatsapp_cron_runs`.
@@ -560,23 +693,33 @@ async function carregarPausasComprovante(): Promise<PausaComprovante[]> {
 
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que
 // já vinham sendo cobrados (histórico de disparos). Deduplicados por AlunoID.
-async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
+async function coletarCandidatos(
+  hoje: string,
+  grupos: readonly NumeroGrupo[],
+): Promise<CandidatoCobranca[]> {
+  const unidades = unidadesAtendidas(grupos);
   const mapa = new Map<string, CandidatoCobranca>();
 
   // Já em cobrança primeiro; os dados frescos do Sponte (abaixo) prevalecem. O
   // contato de qualquer candidato é reconsultado no Sponte na hora do disparo.
-  for (const c of await candidatosDoHistorico(hoje)) mapa.set(c.alunoId, c);
+  for (const c of await candidatosDoHistorico(hoje, unidades)) mapa.set(c.alunoId, c);
 
-  const novos = vencimentosEntrandoEmCobranca(hoje).filter((v) => v >= DATA_BASE_COBRANCA);
+  const dataBaseMinima = menorDataBaseCobranca(grupos);
+  const novos = vencimentosEntrandoEmCobranca(hoje).filter((v) => v >= dataBaseMinima);
   for (const vencimento of novos) {
-    const pendencias = (await coletarPendenciasPorVencimento(vencimento)).filter((p) =>
-      UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
+    const pendencias = (await coletarPendenciasPorVencimento(vencimento, [...unidades])).filter(
+      (p) =>
+        cobrancaPermitida({
+          unidade: p.unidade ?? "",
+          vencimento: p.vencimento || vencimento,
+          categorias: p.categorias,
+        }),
     );
     for (const p of pendencias) {
       mapa.set(p.alunoId, {
         alunoId: p.alunoId,
         alunoNome: p.nomeAluno || "",
-        unidade: p.unidade || "CEC",
+        unidade: p.unidade ?? "",
         telefone: p.telefone || "",
         responsavelNome: p.nomeResponsavel || "",
       });
@@ -593,7 +736,10 @@ async function coletarCandidatos(hoje: string): Promise<CandidatoCobranca[]> {
 // O histórico serve para descobrir QUEM avaliar, não para saber a quem enviar: o
 // responsável/telefone daqui são só um fallback, sobrescritos pelo cadastro atual
 // do Sponte antes do disparo.
-async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]> {
+async function candidatosDoHistorico(
+  hoje: string,
+  unidades: Set<string>,
+): Promise<CandidatoCobranca[]> {
   const desde = addDaysYMD(hoje, -JANELA_RECORRENCIA_DIAS);
   const consulta = () =>
     supabaseAdmin
@@ -635,34 +781,98 @@ async function candidatosDoHistorico(hoje: string): Promise<CandidatoCobranca[]>
       });
     }
   }
-  return [...mapa.values()].filter((c) => UNIDADES_COBRANCA_AUTOMATICA.has(c.unidade));
+  return [...mapa.values()].filter((c) => unidades.has(c.unidade));
 }
 
 // Telefones com disparo bem-sucedido hoje na régua indicada (janela do dia no
 // fuso de São Paulo). É a idempotência do dia de cada régua: um lembrete
 // preventivo não impede a cobrança do vencido, e vice-versa — a exclusão entre
 // as duas é decidida por `filtrarPorPrioridadeCobranca`, não aqui.
-async function telefonesComDisparoHoje(hoje: string, tipo: TipoDisparo): Promise<string[]> {
+async function disparosDeHoje(
+  hoje: string,
+  tipo: TipoDisparo,
+): Promise<{ telefone: string; unidade: string }[]> {
   const consulta = () =>
     supabaseAdmin
       .from("whatsapp_billing_logs" as never)
-      .select("telefone")
+      .select("telefone, unidade")
       .gte("data_envio", `${hoje}T00:00:00-03:00`)
       .lte("data_envio", `${hoje}T23:59:59-03:00`)
       .in("status", STATUS_ENVIADO);
 
   const comTipo = await consulta().eq("tipo", tipo);
   const { data } = erroColunaInexistente(comTipo.error) ? await consulta() : comTipo;
-  return ((data ?? []) as unknown as { telefone: string | null }[]).map((r) => r.telefone ?? "");
+  return ((data ?? []) as unknown as { telefone: string | null; unidade: string | null }[]).map(
+    (r) => ({ telefone: r.telefone ?? "", unidade: r.unidade ?? "" }),
+  );
+}
+
+async function telefonesComDisparoHoje(hoje: string, tipo: TipoDisparo): Promise<string[]> {
+  return (await disparosDeHoje(hoje, tipo)).map((d) => d.telefone);
+}
+
+// Idempotência do dia POR NÚMERO: cada grupo de unidades tem a sua lista de
+// telefones já atendidos hoje, para um responsável com filhos nas duas escolas
+// receber a mensagem de cada uma pelo número certo, em vez de a segunda ser
+// engolida pela primeira.
+async function telefonesPorGrupoComDisparoHoje(
+  hoje: string,
+  tipo: TipoDisparo,
+): Promise<Map<NumeroGrupo, string[]>> {
+  const mapa = new Map<NumeroGrupo, string[]>();
+  for (const d of await disparosDeHoje(hoje, tipo)) {
+    const grupo = grupoDaUnidade(d.unidade);
+    if (!grupo) continue;
+    const atual = mapa.get(grupo);
+    if (atual) atual.push(d.telefone);
+    else mapa.set(grupo, [d.telefone]);
+  }
+  return mapa;
+}
+
+function telefonesDoGrupo(mapa: Map<NumeroGrupo, string[]>, unidade: string): string[] {
+  const grupo = grupoDaUnidade(unidade);
+  if (!grupo) return [];
+  const atual = mapa.get(grupo);
+  if (atual) return atual;
+  const nova: string[] = [];
+  mapa.set(grupo, nova);
+  return nova;
+}
+
+// Config de template do número que atende a unidade. Sem número configurado para
+// o grupo dela, o disparo falha de forma explícita — mandar pelo número da outra
+// escola seria pior do que não mandar.
+function configDaUnidade(unidade: string): WhatsAppConfig | null {
+  const grupo = grupoDaUnidade(unidade);
+  return grupo ? getWhatsAppConfigDoGrupo(grupo) : null;
 }
 
 // Dispara (e registra) a mensagem diária de UM responsável.
 async function dispararGrupo(
-  cfg: NonNullable<ReturnType<typeof getWhatsAppConfig>>,
   grupo: GrupoCobranca,
   hoje: string,
   linhaPorAluno: Map<string, ItemBoletoLinha>,
 ): Promise<{ enviado: boolean }> {
+  const cfg = configDaUnidade(grupo.unidade);
+  if (!cfg) {
+    await inserirBillingLog({
+      responsavel_name: grupo.responsavelNome || "",
+      aluno_name: grupo.alunosLabel || "",
+      telefone: grupo.telefone || "",
+      unidade: grupo.unidade || "",
+      valor: grupo.totalAtualizado,
+      vencimento: grupo.vencimentoMaisAntigo,
+      template_name: "",
+      fatura_id: grupo.alunoIds[0] ?? null,
+      message_body: "",
+      tipo: "cobranca",
+      data_ref: hoje,
+      status: "falha",
+      erro_mensagem: `Sem número de WhatsApp configurado para a unidade "${grupo.unidade}".`,
+    });
+    return { enviado: false };
+  }
   // Um boleto por aluno do grupo: com irmãos, a mensagem leva a linha digitável
   // de CADA um (identificada por aluno e valor), não só a do primeiro.
   // Boletos ainda não gerados não têm linha digitável no Sponte: nesse caso a
@@ -766,12 +976,17 @@ async function dispararGrupo(
 //      pelo prazo mais urgente.
 //   3. Quem já é cobrado hoje por algo vencido fica de fora: cobrança tem
 //      prioridade sobre o lembrete preventivo.
-async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
-  const cfg = getWhatsAppConfig();
-  if (!cfg) {
+async function runCronLembretes(hoje: string, opcoes: OpcoesRotina = {}): Promise<ResultadoCron> {
+  if (!getWhatsAppConfig()) {
     throw new Error(
       "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
     );
+  }
+
+  const gruposAlvo = opcoes.grupos ?? gruposEmOperacao();
+  const unidades = unidadesAtendidas(gruposAlvo);
+  if (unidades.size === 0) {
+    return { status: "sem_envio", motivo: "nenhuma unidade com envio automático ativo" };
   }
 
   if (!isDiaUtil(hoje)) {
@@ -781,16 +996,16 @@ async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
     return { status: "pausado", motivo: "envios pausados para hoje (kill switch)" };
   }
 
+  // A régua preventiva NÃO tem data base por unidade: ela só fala de parcela a
+  // vencer, então nada nela é retroativo (ver billing-unidades).
   const parcelas: ParcelaLembrete[] = [];
   for (const { venc } of vencimentosLembreteHoje(hoje)) {
-    const pendencias = (await coletarPendenciasPorVencimento(venc)).filter((p) =>
-      UNIDADES_COBRANCA_AUTOMATICA.has(p.unidade ?? ""),
-    );
+    const pendencias = await coletarPendenciasPorVencimento(venc, [...unidades]);
     for (const p of pendencias) {
       parcelas.push({
         alunoId: p.alunoId,
         alunoNome: p.nomeAluno || "",
-        unidade: p.unidade || "CEC",
+        unidade: p.unidade ?? "",
         telefone: p.telefone || "",
         responsavelNome: p.nomeResponsavel || "",
         // Vencimento da consulta, não o do boleto agrupado: a busca é por um dia
@@ -805,28 +1020,63 @@ async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
   const alunos = new Set(parcelas.map((p) => p.alunoId)).size;
   const comCobrancaHoje = await telefonesComDisparoHoje(hoje, "cobranca");
   const pausas = await carregarPausasComprovante();
-  const grupos = filtrarPorPrioridadeCobranca(
-    agruparLembretesPorResponsavel(filtrarPorPausa(parcelas, pausas, new Date()), hoje),
-    comCobrancaHoje,
-  );
+  const semPausa = filtrarPorPausa(parcelas, pausas, new Date());
+  const grupos: GrupoLembrete[] = [];
+  for (const g of gruposAlvo) {
+    const doGrupo = semPausa.filter((p) => grupoDaUnidade(p.unidade) === g);
+    if (doGrupo.length === 0) continue;
+    grupos.push(
+      ...filtrarPorPrioridadeCobranca(
+        agruparLembretesPorResponsavel(doGrupo, hoje),
+        comCobrancaHoje,
+      ),
+    );
+  }
   if (grupos.length === 0) {
     return { status: "sem_envio", motivo: "nenhum lembrete a enviar hoje", alunos };
   }
 
   // Idempotência do dia: quem já recebeu lembrete hoje não recebe de novo, mesmo
   // que a rotina rode outra vez (segunda tentativa, reexecução manual).
-  const lembradosHoje = await telefonesComDisparoHoje(hoje, "lembrete");
+  const lembradosHoje = await telefonesPorGrupoComDisparoHoje(hoje, "lembrete");
+
+  if (opcoes.simular) {
+    const simulados: { template: string; unidade: string; telefone: string }[] = [];
+    let puladosSim = 0;
+    for (const grupo of grupos) {
+      const jaAtendidos = telefonesDoGrupo(lembradosHoje, grupo.unidade);
+      if (jaCobradoHoje(jaAtendidos, grupo.telefone)) {
+        puladosSim++;
+        continue;
+      }
+      jaAtendidos.push(grupo.telefone);
+      simulados.push({
+        template: "lembrete_vencimento_boleto",
+        unidade: grupo.unidade,
+        telefone: grupo.telefone,
+      });
+    }
+    return {
+      status: "sem_envio",
+      motivo: "simulação (dry-run): nenhuma mensagem enviada",
+      responsaveis: grupos.length,
+      alunos,
+      pulados: puladosSim,
+      simulacao: contarSimulacao(simulados),
+    };
+  }
 
   let enviados = 0;
   let falhas = 0;
   let pulados = 0;
   for (const grupo of grupos) {
-    if (jaCobradoHoje(lembradosHoje, grupo.telefone)) {
+    const jaAtendidos = telefonesDoGrupo(lembradosHoje, grupo.unidade);
+    if (jaCobradoHoje(jaAtendidos, grupo.telefone)) {
       pulados++;
       continue;
     }
-    lembradosHoje.push(grupo.telefone);
-    const r = await dispararLembrete(cfg, grupo, hoje);
+    jaAtendidos.push(grupo.telefone);
+    const r = await dispararLembrete(grupo, hoje);
     enviados += r.enviado ? 1 : 0;
     falhas += r.enviado ? 0 : 1;
   }
@@ -846,11 +1096,28 @@ async function runCronLembretes(hoje: string): Promise<ResultadoCron> {
 }
 
 // Dispara (e registra) o lembrete preventivo de UM responsável.
-async function dispararLembrete(
-  cfg: WhatsAppConfig,
-  grupo: GrupoLembrete,
-  hoje: string,
-): Promise<{ enviado: boolean }> {
+async function dispararLembrete(grupo: GrupoLembrete, hoje: string): Promise<{ enviado: boolean }> {
+  const cfg = configDaUnidade(grupo.unidade);
+  if (!cfg) {
+    await inserirBillingLog({
+      responsavel_name: grupo.responsavelNome || "",
+      aluno_name: grupo.alunosLabel || "",
+      telefone: grupo.telefone || "",
+      unidade: grupo.unidade || "",
+      valor: grupo.valorTotal,
+      vencimento: grupo.vencimento,
+      template_name: "",
+      fatura_id: grupo.alunoIds[0] ?? null,
+      message_body: "",
+      tipo: "lembrete",
+      prazo_lembrete: etiquetaPrazo(grupo.prazo),
+      data_ref: hoje,
+      status: "falha",
+      erro_mensagem: `Sem número de WhatsApp configurado para a unidade "${grupo.unidade}".`,
+    });
+    return { enviado: false };
+  }
+
   const linhaDigitavel = grupo.linhaDigitavel.trim()
     ? grupo.linhaDigitavel
     : "Entre em contato com a secretaria da escola";

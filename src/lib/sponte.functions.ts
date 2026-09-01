@@ -3,10 +3,11 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
-  getWhatsAppConfig,
+  getWhatsAppConfigDoGrupo,
   renderBillingMessage,
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
+import { grupoDaUnidade } from "@/lib/whatsapp-numeros";
 import { registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 import {
   contaCaixaBate,
@@ -1775,30 +1776,49 @@ async function enriquecerLinhaDigitavel(
 
 // ─── Cron de Cobrança por WhatsApp ──────────────────────────────────────────
 // Coleta as pendências cujo VENCIMENTO cai em UM dia específico (ex.: "vencidas
-// há exatamente 2 dias"), restrita a CEC e CEC Baby (ver regra abaixo). Sem RBAC:
-// roda no cron do servidor (sistema), não numa sessão de usuário. Reutiliza a
-// mesma coleta da tela de Cobrança e atribui a unidade a cada pendência.
+// há exatamente 2 dias"). Sem RBAC: roda no cron do servidor (sistema), não numa
+// sessão de usuário. Reutiliza a mesma coleta da tela de Cobrança e atribui a
+// unidade a cada pendência.
 //
-// REGRA DE NEGÓCIO: o número/token de WhatsApp de produção é EXCLUSIVO de CEC e
-// CEC Baby. A cobrança automática só coleta essas duas unidades (o token de CEC
-// atende ambas via alunoUnidadeMap). Núcleo Belvedere e Núcleo Vale do Sereno
-// ficam de fora — terão um número de WhatsApp próprio no futuro.
-export async function coletarPendenciasPorVencimento(diaYMD: string): Promise<PendenciaAgrupada[]> {
-  const cecCreds = resolverCredenciais("CEC");
-  if (!cecCreds) return [];
+// As unidades vêm do chamador (cron), porque quem decide quais estão em operação
+// é a configuração dos números da Cloud API — não esta camada. O token do CEC
+// atende CEC e CEC Baby e a unidade sai do `alunoUnidadeMap` (série); Belvedere e
+// Vale do Sereno têm credenciais próprias, então tudo o que a credencial devolve
+// pertence àquela unidade.
+export async function coletarPendenciasPorVencimento(
+  diaYMD: string,
+  unidades: readonly string[] = ["CEC", "CEC Baby"],
+): Promise<PendenciaAgrupada[]> {
+  const alvo = new Set(unidades);
+  const resultado: PendenciaAgrupada[] = [];
 
-  const cecRes = await coletarPendencias(cecCreds.codigoCliente, cecCreds.token, diaYMD, diaYMD);
+  // Credenciais distintas usadas pelas unidades pedidas, sem repetir a consulta
+  // quando duas unidades compartilham o mesmo token (CEC e CEC Baby).
+  const porToken = new Map<string, { creds: SponteCreds; unidadePadrao: string }>();
+  for (const unidade of alvo) {
+    const creds = resolverCredenciais(unidade);
+    if (!creds) continue;
+    const chave = `${creds.codigoCliente}|${creds.token}`;
+    if (!porToken.has(chave)) porToken.set(chave, { creds, unidadePadrao: unidade });
+  }
 
-  // Enriquece cada pendência com a Linha Digitável do boleto (necessário para
-  // o GetLinhaDigitavelBoletos).
-  const cecLinhas = await enriquecerLinhaDigitavel(cecCreds, cecRes.pendencias);
+  for (const { creds, unidadePadrao } of porToken.values()) {
+    const res = await coletarPendencias(creds.codigoCliente, creds.token, diaYMD, diaYMD);
 
-  return cecLinhas
-    .map((p) => ({
-      ...p,
-      unidade: cecRes.alunoUnidadeMap[p.alunoId] ?? "CEC",
-    }))
-    .filter((p) => p.unidade === "CEC" || p.unidade === "CEC Baby");
+    // Enriquece cada pendência com a Linha Digitável do boleto (necessário para
+    // o GetLinhaDigitavelBoletos).
+    const comLinha = await enriquecerLinhaDigitavel(creds, res.pendencias);
+
+    for (const p of comLinha) {
+      const unidade = creds.segmentaPorTurma
+        ? (res.alunoUnidadeMap[p.alunoId] ?? unidadePadrao)
+        : unidadePadrao;
+      if (!unidade || !alvo.has(unidade)) continue;
+      resultado.push({ ...p, unidade });
+    }
+  }
+
+  return resultado;
 }
 
 // ─── Histórico de dívida em aberto de UM aluno (bifurcação do cron) ──────────
@@ -1821,6 +1841,9 @@ export interface BoletoAberto {
   // Data de pagamento (YYYY-MM-DD) quando o Sponte já registrou a quitação.
   // Preenchida encerra a cobrança recorrente daquela parcela no mesmo dia.
   dataPagamento: string;
+  // Categorias das composições do boleto (Mensalidade, Material, Acordo...).
+  // Usadas pelas unidades cuja cobrança automática só vale para mensalidade.
+  categorias: string[];
 }
 
 export interface DividaAbertaAluno {
@@ -1863,10 +1886,12 @@ export async function coletarDividaAbertaAluno(
     const dataPagamento = paraYMD(primeiroValor(node, TAGS_DATA_PAGAMENTO)) ?? "";
     const key =
       numeroBoleto && numeroBoleto !== "0" ? `bol_${numeroBoleto}|${vencimento}` : vencimento;
+    const categoria = parseXmlValue(node, "Categoria");
     const cur = grupos.get(key);
     if (cur) {
       cur.saldo += saldo;
       if (!cur.dataPagamento) cur.dataPagamento = dataPagamento;
+      if (categoria && !cur.categorias.includes(categoria)) cur.categorias.push(categoria);
     } else {
       grupos.set(key, {
         vencimento,
@@ -1875,6 +1900,7 @@ export async function coletarDividaAbertaAluno(
         contaReceberID: parseXmlValue(node, "ContaReceberID"),
         numeroParcela: parseXmlValue(node, "NumeroParcela"),
         dataPagamento,
+        categorias: categoria ? [categoria] : [],
       });
     }
   }
@@ -1980,12 +2006,12 @@ export const enviarCobrancaTeste = createServerFn({ method: "POST" })
     const creds = resolverCredenciais(unidade);
     if (!creds) return { ok: false, error: "Unidade sem integração Sponte." };
 
-    const cfg = getWhatsAppConfig();
+    const grupo = grupoDaUnidade(unidade);
+    const cfg = grupo ? getWhatsAppConfigDoGrupo(grupo) : null;
     if (!cfg) {
       return {
         ok: false,
-        error:
-          "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
+        error: `Sem número de WhatsApp configurado para a unidade "${unidade}".`,
       };
     }
 
