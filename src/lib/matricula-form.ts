@@ -749,19 +749,19 @@ export const DOCUMENTOS_MATRICULA: readonly DocumentoMatricula[] = [
   {
     chave: "declaracao_escolaridade",
     rotulo: "Declaração de escolaridade",
-    dica: "Se o aluno vem transferido de outra escola.",
+    dica: "Se o(a) aluno(a) vem transferido de outra escola.",
     bloqueiaSempre: false,
   },
   {
     chave: "declaracao_transferencia",
     rotulo: "Declaração de transferência",
-    dica: "Se o aluno vem transferido de outra escola.",
+    dica: "Se o(a) aluno(a) vem transferido de outra escola.",
     bloqueiaSempre: false,
   },
   {
     chave: "quitacao_escola_anterior",
     rotulo: "Declaração de quitação de mensalidades da escola anterior",
-    dica: "Se seu filho(a) vem de escola pública, anexe aqui a Declaração de Escolaridade no lugar.",
+    dica: "Se o(a) aluno(a) vem de escola pública, anexe aqui a Declaração de Escolaridade no lugar.",
     bloqueiaSempre: false,
     bloqueiaDoPrimeiroAno: true,
   },
