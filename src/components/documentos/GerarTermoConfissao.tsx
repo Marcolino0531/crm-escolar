@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -7,13 +7,6 @@ import { Download, Loader2, Plus, Scale, Search, Trash2, User, Users } from "luc
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,7 +17,8 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
-import { carregarLogoDoColegio, paraColegioRecibo, UNIDADES, useColegios } from "@/lib/colegios";
+import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import {
   blocoVazio,
   calcularParcelasBlocos,
@@ -120,7 +114,8 @@ export function GerarTermoConfissao() {
   const buscarCadastro = useServerFn(buscarDadosCadastraisAluno);
 
   const hoje = hojeYMD();
-  const [unidade, setUnidade] = useState<string>(UNIDADES[0]);
+  // Unidade do seletor global do topo: a tela não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
   const [busca, setBusca] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   // `alvo` diz o que fazer com o aluno escolhido na busca: entrar no termo como
@@ -142,6 +137,14 @@ export function GerarTermoConfissao() {
     { nome: "", cpf: "" },
     { nome: "", cpf: "" },
   ]);
+
+  // Trocar a unidade no topo invalida os alunos e devedores da anterior.
+  useEffect(() => {
+    setResultados(null);
+    setAlunos([]);
+    setExtras([]);
+    setMarcados([]);
+  }, [unidade]);
 
   const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
   const colegioTermo = colegio ? paraColegioRecibo(colegio) : null;
@@ -321,6 +324,8 @@ export function GerarTermoConfissao() {
     );
   }
 
+  if (!unidade) return <SelecioneUnidade acao="O termo de confissão de dívida" />;
+
   return (
     <div className="space-y-4">
       {/* Passo 1 — alunos do termo */}
@@ -338,27 +343,9 @@ export function GerarTermoConfissao() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label className="text-[11px] text-muted-foreground">Colégio</Label>
-              <Select
-                value={unidade}
-                onValueChange={(v) => {
-                  setUnidade(v);
-                  setResultados(null);
-                  setAlunos([]);
-                  setExtras([]);
-                  setMarcados([]);
-                }}
-              >
-                <SelectTrigger className="h-9 w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {UNIDADES.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="termo-busca" className="text-[11px] text-muted-foreground">

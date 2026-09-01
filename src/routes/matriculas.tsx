@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -54,8 +55,6 @@ function MatriculasGate() {
     return <AccessDenied message="Você não tem permissão para acessar as Matrículas." />;
   return <MatriculasPage />;
 }
-
-const UNIDADES = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 const PER_PAGE = 20;
 
@@ -185,7 +184,8 @@ function MatriculasPage() {
   const queryClient = useQueryClient();
   const reprocessarFn = useServerFn(reprocessarMatricula);
 
-  const [unidade, setUnidade] = useState("todas");
+  // Escopo da listagem: unidade do topo (consolidado em "Todas as Unidades").
+  const unidade = useUnidadeAtiva();
   const [status, setStatus] = useState("todos");
   const [busca, setBusca] = useState("");
   const [buscaDebounced, setBuscaDebounced] = useState("");
@@ -200,6 +200,9 @@ function MatriculasPage() {
     return () => clearTimeout(t);
   }, [busca]);
 
+  // Trocar a unidade no topo recomeça a paginação.
+  useEffect(() => setPage(1), [unidade]);
+
   const queryKey = ["matriculas-submissoes", unidade, status, buscaDebounced, page];
 
   const { data, isFetching, isError, error, refetch } = useQuery({
@@ -211,7 +214,7 @@ function MatriculasPage() {
         .order("created_at", { ascending: false })
         .range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
 
-      if (unidade !== "todas") q = q.eq("unidade", unidade);
+      if (unidade) q = q.eq("unidade", unidade);
       if (status === "erros") q = q.in("status", STATUS_ERRO as unknown as string[]);
       else if (status !== "todos") q = q.eq("status", status);
       if (buscaDebounced) {
@@ -249,7 +252,7 @@ function MatriculasPage() {
       toast.error(e instanceof Error ? e.message : "Falha ao reprocessar a matrícula."),
   });
 
-  const filtrosAtivos = unidade !== "todas" || status !== "todos" || busca !== "";
+  const filtrosAtivos = status !== "todos" || busca !== "";
 
   return (
     <div className="space-y-4">
@@ -271,25 +274,9 @@ function MatriculasPage() {
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-muted-foreground">Unidade</label>
-          <Select
-            value={unidade}
-            onValueChange={(v) => {
-              setUnidade(v);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-9 w-52">
-              <SelectValue placeholder="Unidade" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todas">Todas as unidades</SelectItem>
-              {UNIDADES.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex h-9 w-52 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+            {unidade ?? "Todas as Unidades"}
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-muted-foreground">Status</label>
@@ -329,7 +316,6 @@ function MatriculasPage() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              setUnidade("todas");
               setStatus("todos");
               setBusca("");
               setPage(1);

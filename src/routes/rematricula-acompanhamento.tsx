@@ -228,7 +228,6 @@ function RematriculaAcompanhamentoPage() {
   const carregar = useServerFn(acompanhamentoRematricula);
 
   const [busca, setBusca] = useState("");
-  const [filtroUnidade, setFiltroUnidade] = useState<string>("todas");
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusAcompanhamento>("todos");
   const [filtroTurma, setFiltroTurma] = useState<string>("todas");
   const [revisando, setRevisando] = useState<LinhaAcompanhamento | null>(null);
@@ -272,10 +271,10 @@ function RematriculaAcompanhamentoPage() {
   const daUnidade = useMemo(
     () =>
       filtrarAcompanhamento(linhas, {
-        unidade: filtroUnidade === "todas" ? unidadeAtiva : filtroUnidade,
+        unidade: unidadeAtiva,
         unidadesPermitidas: schools.map((s) => s.name),
       }),
-    [linhas, filtroUnidade, unidadeAtiva, schools],
+    [linhas, unidadeAtiva, schools],
   );
   const turmas = useMemo(() => turmasAcompanhamento(daUnidade), [daUnidade]);
   const turmaAtiva = filtroTurma !== "todas" && turmas.includes(filtroTurma) ? filtroTurma : null;
@@ -344,19 +343,6 @@ function RematriculaAcompanhamentoPage() {
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
             />
-            <Select value={filtroUnidade} onValueChange={setFiltroUnidade}>
-              <SelectTrigger className="w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todas as unidades</SelectItem>
-                {unidades.map((u) => (
-                  <SelectItem key={u} value={u}>
-                    {u}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select value={turmaAtiva ?? "todas"} onValueChange={setFiltroTurma}>
               <SelectTrigger className="w-64">
                 <SelectValue />
