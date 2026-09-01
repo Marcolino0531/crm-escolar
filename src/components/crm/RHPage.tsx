@@ -5,6 +5,8 @@ import { usePermissions, useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
+import RankingPonto from "./RankingPonto";
+import { MESES_PT, PeriodoRh, anosDisponiveis, periodoAtual } from "@/lib/rh-periodo";
 import FechamentoVT from "./FechamentoVT";
 import FolhasPagamentoVT from "./FolhasPagamentoVT";
 import Terceirizados from "./Terceirizados";
@@ -136,6 +138,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     adicionarFaltasPeriodo,
     editarFalta,
     removerFalta,
+    atualizarHorarioTrabalho,
   } = rhHook;
   const [modalAberto, setModalAberto] = useState(false);
   const [funcionarioSelecionadoId, setFuncionarioSelecionadoId] = useState<string | null>(null);
@@ -146,6 +149,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     "funcionarios" | "terceirizados" | "folhas" | "contracheques" | "ponto"
   >("funcionarios");
   const [folhasRefresh, setFolhasRefresh] = useState(0);
+  // Período compartilhado pelos rankings da lateral (faltas manuais e ponto
+  // eletrônico). Começa no mês atual.
+  const [periodo, setPeriodo] = useState<PeriodoRh>(() => periodoAtual());
 
   const isAtivo = (f: Funcionario) => !f.dataRescisao;
   const funcionariosFiltrados = funcionarios.filter((f) =>
@@ -278,7 +284,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
       </div>
 
       {abaRh === "ponto" ? (
-        <FolhaPonto funcionarios={funcionarios} isAdmin={isAdmin} />
+        <FolhaPonto
+          funcionarios={funcionarios}
+          isAdmin={isAdmin}
+          onAtualizarHorario={atualizarHorarioTrabalho}
+        />
       ) : abaRh === "contracheques" ? (
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} />
       ) : abaRh === "folhas" ? (
@@ -425,8 +435,47 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                 </table>
               </div>
             </div>
-            <div className="w-full lg:w-80 lg:flex-shrink-0">
-              <RankingFaltas funcionarios={funcionarios.filter(isAtivo)} />
+            <div className="w-full lg:w-80 lg:flex-shrink-0 space-y-4">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3">
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Período dos rankings
+                </label>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={periodo.modo === "ano" ? "ano" : String(periodo.mes)}
+                    onChange={(e) =>
+                      setPeriodo((p) =>
+                        e.target.value === "ano"
+                          ? { ...p, modo: "ano" }
+                          : { ...p, modo: "mes", mes: Number(e.target.value) },
+                      )
+                    }
+                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                  >
+                    {MESES_PT.map((m, i) => (
+                      <option key={m} value={i + 1}>
+                        {m}
+                      </option>
+                    ))}
+                    <option value="ano">Ano inteiro</option>
+                  </select>
+                  <select
+                    value={periodo.ano}
+                    onChange={(e) => setPeriodo((p) => ({ ...p, ano: Number(e.target.value) }))}
+                    className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                  >
+                    {anosDisponiveis(
+                      funcionarios.flatMap((f) => (f.faltas ?? []).map((fa) => fa.data)),
+                    ).map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <RankingFaltas funcionarios={funcionarios.filter(isAtivo)} periodo={periodo} />
+              <RankingPonto funcionarios={funcionarios.filter(isAtivo)} periodo={periodo} />
             </div>
           </div>
         </>
