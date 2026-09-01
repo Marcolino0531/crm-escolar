@@ -19,6 +19,22 @@ export const JANELA_LIMITE_MINUTOS = 60;
 export const ORIGEM_SITE = "site";
 export const ORIGEM_GOOGLE_FORMS = "google_forms";
 
+// Mídias do Sponte são um cadastro fechado (GetMidias devolve ID + descrição) e
+// a inserção só aceita uma descrição existente: um nome desconhecido faz a API
+// tentar converter o ID vazio e falhar com
+// `Conversion from string "" to type 'Double' is not valid.`
+export const MIDIAS_SPONTE = [
+  "Anúncios",
+  "Campanhas",
+  "Folder",
+  "Facebook",
+  "Indicação",
+  "Internet",
+  "WhatsApp",
+] as const;
+
+export const MIDIA_MATRICULA_SITE = "Internet";
+
 export function soDigitos(v: string): string {
   return v.replace(/\D/g, "");
 }
@@ -300,7 +316,7 @@ export function montarPayloadMatricula(
       // telefone/e-mail do aluno).
       email: financeiro?.email ?? "",
       celular: financeiro?.celular ?? "",
-      midia: "Site — Formulário de matrícula",
+      midia: MIDIA_MATRICULA_SITE,
     },
     endereco: enderecoPayload(form.endereco),
     responsaveis,
