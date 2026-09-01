@@ -22,16 +22,27 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
 import {
+  BUCKET_DOCUMENTOS_MATRICULA,
+  DOCUMENTOS_MATRICULA,
   MAX_SUBMISSOES_POR_IP,
   ORIGEM_SITE,
+  TIPOS_DOCUMENTO_ACEITOS,
   excedeuLimitePorIp,
   inicioJanelaLimite,
   montarPayloadMatricula,
   montarRotinaPersistida,
+  padronizarMatriculaForm,
+  padronizarSaudeForm,
+  serieCalculada,
+  validarDocumentosForm,
   validarMatriculaForm,
   validarRotinaForm,
+  validarSaudeForm,
+  type DocumentoChave,
+  type DocumentosForm,
   type MatriculaForm,
   type RotinaForm,
+  type SaudeForm,
 } from "@/lib/matricula-form";
 import { receberMatricula } from "@/lib/matriculas.receber";
 
@@ -134,6 +145,9 @@ const RotinaInput = z.object({
   dataInicio: z.string(),
   frequenciaParcial: z.boolean(),
   diasSelecionados: z.array(DiaInput),
+  periodoManha: z.boolean(),
+  periodoTarde: z.boolean(),
+  horarioEstendido: z.boolean(),
   horarios: z.record(z.string(), HorarioInput),
   semRefeicoes: z.boolean(),
   refeicoes: z.object({
@@ -144,9 +158,40 @@ const RotinaInput = z.object({
   }),
 });
 
+const RespostaSaudeInput = z.object({
+  opcao: z.enum(["Sim", "Não", "Outro", ""]),
+  detalhe: z.string(),
+});
+
+const SaudeInput = z.object({
+  contatoEmergencia: z.string(),
+  alergia: RespostaSaudeInput,
+  problemaSaude: RespostaSaudeInput,
+  medicamentoContinuo: RespostaSaudeInput,
+  planoSaude: RespostaSaudeInput,
+  pessoasAutorizadas: z.string(),
+  corRaca: z.string(),
+  outrasInformacoes: z.string(),
+});
+
+const CHAVES_DOCUMENTO = DOCUMENTOS_MATRICULA.map((d) => d.chave);
+
+const DocumentoChaveInput = z.enum(CHAVES_DOCUMENTO as [DocumentoChave, ...DocumentoChave[]]);
+
+const ArquivoInput = z.object({
+  path: z.string(),
+  nome: z.string(),
+  tipo: z.string(),
+  tamanho: z.number(),
+});
+
+const DocumentosMatriculaInput = z.record(DocumentoChaveInput, ArquivoInput);
+
 const EnviarInput = z.object({
   captchaToken: z.string(),
   rotina: RotinaInput,
+  saude: SaudeInput,
+  documentos: DocumentosMatriculaInput,
   form: z.object({
     unidade: z.string(),
     aluno: z.object({
@@ -174,23 +219,175 @@ function hojeSaoPaulo(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 }
 
+// ─── URL de upload dos documentos ───────────────────────────────────────────
+//
+// A página é pública, então o servidor não entrega acesso ao bucket: ele emite
+// uma URL ASSINADA de uso único para um caminho aleatório. O bucket é privado e
+// limita tamanho e tipo de arquivo, e o pedido é contado por IP (hash) para o
+// endpoint não virar depósito de arquivos.
+
+const MAX_UPLOADS_POR_IP = 40;
+
+export interface UrlUploadDocumento {
+  ok: boolean;
+  path?: string;
+  token?: string;
+  erro?: string;
+}
+
+const UploadInput = z.object({ documento: DocumentoChaveInput, tipo: z.string() });
+
+async function uploadsRecentes(ipHash: string, agoraISO: string): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from("matricula_upload_pedidos" as never)
+    .select("id", { count: "exact", head: true })
+    .eq("ip_hash", ipHash)
+    .gte("created_at", inicioJanelaLimite(agoraISO));
+  if (error) {
+    console.error("[matrículas] falha ao contar uploads do IP:", error.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
+export const urlUploadDocumentoMatricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => UploadInput.parse(input))
+  .handler(async ({ data }): Promise<UrlUploadDocumento> => {
+    if (!TIPOS_DOCUMENTO_ACEITOS.includes(data.tipo))
+      return { ok: false, erro: "Envie uma imagem (JPG/PNG) ou um PDF." };
+
+    const ip = getRequestIP({ xForwardedFor: true }) ?? null;
+    const ipHash = ip ? hashIp(ip) : null;
+    const agoraISO = new Date().toISOString();
+
+    if (ipHash) {
+      if ((await uploadsRecentes(ipHash, agoraISO)) >= MAX_UPLOADS_POR_IP)
+        return {
+          ok: false,
+          erro: "Muitos envios de arquivo em pouco tempo. Tente novamente mais tarde.",
+        };
+      await supabaseAdmin
+        .from("matricula_upload_pedidos" as never)
+        .insert({ ip_hash: ipHash, documento: data.documento } as never);
+    }
+
+    const path = `pendentes/${randomUUID()}/${data.documento}`;
+    const { data: assinado, error } = await supabaseAdmin.storage
+      .from(BUCKET_DOCUMENTOS_MATRICULA)
+      .createSignedUploadUrl(path);
+
+    if (error || !assinado) {
+      console.error("[matrículas] falha ao assinar upload de documento:", error?.message);
+      return { ok: false, erro: "Não foi possível enviar o arquivo agora. Tente novamente." };
+    }
+
+    return { ok: true, path: assinado.path, token: assinado.token };
+  });
+
+// Os documentos entram na submissão só pelo caminho; conferimos que o arquivo
+// existe mesmo no bucket antes de gravar a metadata.
+async function arquivoExiste(path: string): Promise<boolean> {
+  const barra = path.lastIndexOf("/");
+  const pasta = barra === -1 ? "" : path.slice(0, barra);
+  const nome = path.slice(barra + 1);
+  const { data, error } = await supabaseAdmin.storage
+    .from(BUCKET_DOCUMENTOS_MATRICULA)
+    .list(pasta, { search: nome });
+  if (error) {
+    console.error("[matrículas] falha ao conferir documento no bucket:", error.message);
+    return false;
+  }
+  return (data ?? []).some((item) => item.name === nome);
+}
+
+async function salvarSaude(
+  form: MatriculaForm,
+  saude: SaudeForm,
+  serie: string,
+  submissionId: string,
+  alunoId: number | null,
+): Promise<void> {
+  const { error } = await supabaseAdmin.from("matricula_saude" as never).upsert(
+    {
+      submission_id: submissionId,
+      unidade: form.unidade,
+      sponte_aluno_id: alunoId,
+      aluno_nome: form.aluno.nome.trim(),
+      serie,
+      contato_emergencia: saude.contatoEmergencia.trim(),
+      alergia: saude.alergia.opcao,
+      alergia_detalhe: saude.alergia.detalhe.trim(),
+      problema_saude: saude.problemaSaude.opcao,
+      problema_saude_detalhe: saude.problemaSaude.detalhe.trim(),
+      medicamento_continuo: saude.medicamentoContinuo.opcao,
+      medicamento_continuo_detalhe: saude.medicamentoContinuo.detalhe.trim(),
+      plano_saude: saude.planoSaude.opcao,
+      plano_saude_detalhe: saude.planoSaude.detalhe.trim(),
+      pessoas_autorizadas: saude.pessoasAutorizadas.trim(),
+      cor_raca: saude.corRaca,
+      outras_informacoes: saude.outrasInformacoes.trim(),
+    } as never,
+    { onConflict: "submission_id" } as never,
+  );
+  if (error) console.error("[matrículas] falha ao gravar o questionário de saúde:", error.message);
+}
+
+async function salvarDocumentos(
+  form: MatriculaForm,
+  documentos: DocumentosForm,
+  submissionId: string,
+  alunoId: number | null,
+): Promise<void> {
+  const linhas: Record<string, unknown>[] = [];
+
+  for (const documento of DOCUMENTOS_MATRICULA) {
+    const arquivo = documentos[documento.chave];
+    if (!arquivo) continue;
+    if (!arquivo.path.startsWith("pendentes/")) continue;
+    if (!(await arquivoExiste(arquivo.path))) continue;
+    linhas.push({
+      submission_id: submissionId,
+      unidade: form.unidade,
+      sponte_aluno_id: alunoId,
+      documento: documento.chave,
+      storage_path: arquivo.path,
+      nome_arquivo: arquivo.nome.slice(0, 200),
+      tipo_arquivo: arquivo.tipo,
+      tamanho_bytes: arquivo.tamanho,
+    });
+  }
+
+  if (linhas.length === 0) return;
+
+  const { error } = await supabaseAdmin
+    .from("matricula_documentos" as never)
+    .upsert(linhas as never, { onConflict: "submission_id,documento" } as never);
+  if (error) console.error("[matrículas] falha ao gravar os documentos:", error.message);
+}
+
 // A rotina é gravada DEPOIS da matrícula, já com o AlunoID do Sponte. O upsert
 // por submission_id mantém o reenvio idempotente, igual à matrícula em si.
 async function salvarRotina(
   form: MatriculaForm,
   rotina: RotinaForm,
+  serie: string,
   submissionId: string,
   alunoId: number | null,
 ): Promise<void> {
-  const dados = montarRotinaPersistida(rotina);
+  const dados = montarRotinaPersistida(rotina, serie);
   const { error } = await supabaseAdmin.from("student_routine" as never).upsert(
     {
       submission_id: submissionId,
       unidade: form.unidade,
       sponte_aluno_id: alunoId,
       aluno_nome: form.aluno.nome.trim(),
+      serie,
+      origem: "matricula",
       data_inicio: dados.dataInicio,
       dias_ativos: dados.diasAtivos,
+      periodo_manha: dados.periodoManha,
+      periodo_tarde: dados.periodoTarde,
+      horario_estendido: dados.horarioEstendido,
       horarios: dados.horarios,
       sem_refeicoes: dados.semRefeicoes,
       refeicoes: dados.refeicoes,
@@ -233,11 +430,16 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
 
     // Mesma validação da tela, agora do lado do servidor (a tela pode ser
     // burlada; o Sponte não pode receber lixo).
-    const form = data.form as MatriculaForm;
+    const form = padronizarMatriculaForm(data.form as MatriculaForm);
     const rotina = data.rotina as RotinaForm;
+    const saude = padronizarSaudeForm(data.saude as SaudeForm);
+    const documentos = data.documentos as DocumentosForm;
+    const serie = serieCalculada(form.aluno.dataNascimento);
     const erros = {
       ...validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE),
-      ...validarRotinaForm(rotina),
+      ...validarRotinaForm(rotina, serie),
+      ...validarSaudeForm(saude),
+      ...validarDocumentosForm(documentos, serie),
     };
     if (Object.keys(erros).length > 0) {
       return { ok: false, erros, erro: "Confira os campos destacados." };
@@ -249,7 +451,10 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     const saida = await receberMatricula(payload, { origem: ORIGEM_SITE, ipHash });
 
     if (saida.ok) {
-      await salvarRotina(form, rotina, submissionId, saida.alunoId ?? null);
+      const alunoId = saida.alunoId ?? null;
+      await salvarRotina(form, rotina, serie, submissionId, alunoId);
+      await salvarSaude(form, saude, serie, submissionId, alunoId);
+      await salvarDocumentos(form, documentos, submissionId, alunoId);
       return { ok: true, protocolo: submissionId };
     }
 

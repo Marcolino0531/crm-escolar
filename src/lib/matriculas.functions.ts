@@ -45,6 +45,15 @@ async function assertCanEditAdmissoes(userId: string) {
   if (!data) throw new Error("Você não tem permissão para reprocessar matrículas.");
 }
 
+async function assertCanViewAdmissoes(userId: string) {
+  const { data, error } = await supabaseAdmin.rpc(
+    "can_view_module" as never,
+    { _user_id: userId, _module: "admissoes" } as never,
+  );
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Você não tem permissão para ver as matrículas.");
+}
+
 const ReprocessarInputSchema = z.object({ id: z.string().uuid() });
 
 export const reprocessarMatricula = createServerFn({ method: "POST" })
@@ -124,5 +133,162 @@ export const reprocessarMatricula = createServerFn({ method: "POST" })
       status,
       alunoId: resultado?.alunoId ?? submissao.sponte_aluno_id,
       error: erro ?? undefined,
+    };
+  });
+
+// ─── Detalhe completo da submissão (rotina, saúde e documentos) ─────────────
+//
+// São dados locais do School Hub, fora do payload enviado ao Sponte. Os
+// arquivos ficam num bucket privado: o link é assinado aqui, depois de checar
+// a permissão de Admissões, e expira em poucos minutos.
+
+const VALIDADE_LINK_DOCUMENTO = 300;
+
+export interface RotinaSubmissao {
+  serie: string | null;
+  origem: string;
+  anoLetivo: number | null;
+  dataInicio: string;
+  diasAtivos: number[];
+  periodoManha: boolean;
+  periodoTarde: boolean;
+  horarioEstendido: boolean;
+  horarios: { weekday: number; entrada: string; saida: string }[];
+  semRefeicoes: boolean;
+  refeicoes: Record<string, number[]>;
+}
+
+export interface SaudeSubmissao {
+  contatoEmergencia: string;
+  alergia: string;
+  alergiaDetalhe: string;
+  problemaSaude: string;
+  problemaSaudeDetalhe: string;
+  medicamentoContinuo: string;
+  medicamentoContinuoDetalhe: string;
+  planoSaude: string;
+  planoSaudeDetalhe: string;
+  pessoasAutorizadas: string;
+  corRaca: string;
+  outrasInformacoes: string;
+}
+
+export interface DocumentoSubmissao {
+  documento: string;
+  nomeArquivo: string;
+  tipoArquivo: string;
+  tamanhoBytes: number;
+  // Assinado agora, de curta duração; null se o arquivo sumiu do bucket.
+  url: string | null;
+}
+
+export interface DetalheMatriculaResult {
+  ok: boolean;
+  error?: string;
+  rotina?: RotinaSubmissao | null;
+  saude?: SaudeSubmissao | null;
+  documentos?: DocumentoSubmissao[];
+}
+
+const DetalheInputSchema = z.object({ submissionId: z.string().min(1).max(200) });
+
+export const detalheMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DetalheInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DetalheMatriculaResult> => {
+    await assertCanViewAdmissoes(context.userId);
+
+    const [rotinaRes, saudeRes, docsRes] = await Promise.all([
+      supabaseAdmin
+        .from("student_routine" as never)
+        .select(
+          "serie, origem, ano_letivo, data_inicio, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, sem_refeicoes, refeicoes",
+        )
+        .eq("submission_id", data.submissionId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("matricula_saude" as never)
+        .select("*")
+        .eq("submission_id", data.submissionId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("matricula_documentos" as never)
+        .select("documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes")
+        .eq("submission_id", data.submissionId)
+        .order("documento"),
+    ]);
+
+    const linhaRotina = rotinaRes.data as unknown as {
+      serie: string | null;
+      origem: string;
+      ano_letivo: number | null;
+      data_inicio: string;
+      dias_ativos: number[];
+      horarios: { weekday: number; entrada: string; saida: string }[];
+      periodo_manha: boolean;
+      periodo_tarde: boolean;
+      horario_estendido: boolean;
+      sem_refeicoes: boolean;
+      refeicoes: Record<string, number[]>;
+    } | null;
+
+    const linhaSaude = saudeRes.data as unknown as Record<string, string> | null;
+
+    const linhasDoc = (docsRes.data ?? []) as unknown as {
+      documento: string;
+      storage_path: string;
+      nome_arquivo: string;
+      tipo_arquivo: string;
+      tamanho_bytes: number;
+    }[];
+
+    const documentos: DocumentoSubmissao[] = [];
+    for (const doc of linhasDoc) {
+      const { data: assinado } = await supabaseAdmin.storage
+        .from("matricula-documentos")
+        .createSignedUrl(doc.storage_path, VALIDADE_LINK_DOCUMENTO);
+      documentos.push({
+        documento: doc.documento,
+        nomeArquivo: doc.nome_arquivo,
+        tipoArquivo: doc.tipo_arquivo,
+        tamanhoBytes: doc.tamanho_bytes,
+        url: assinado?.signedUrl ?? null,
+      });
+    }
+
+    return {
+      ok: true,
+      rotina: linhaRotina
+        ? {
+            serie: linhaRotina.serie,
+            origem: linhaRotina.origem,
+            anoLetivo: linhaRotina.ano_letivo,
+            dataInicio: linhaRotina.data_inicio,
+            diasAtivos: linhaRotina.dias_ativos ?? [],
+            periodoManha: linhaRotina.periodo_manha,
+            periodoTarde: linhaRotina.periodo_tarde,
+            horarioEstendido: linhaRotina.horario_estendido,
+            horarios: linhaRotina.horarios ?? [],
+            semRefeicoes: linhaRotina.sem_refeicoes,
+            refeicoes: linhaRotina.refeicoes ?? {},
+          }
+        : null,
+      saude: linhaSaude
+        ? {
+            contatoEmergencia: linhaSaude.contato_emergencia,
+            alergia: linhaSaude.alergia,
+            alergiaDetalhe: linhaSaude.alergia_detalhe,
+            problemaSaude: linhaSaude.problema_saude,
+            problemaSaudeDetalhe: linhaSaude.problema_saude_detalhe,
+            medicamentoContinuo: linhaSaude.medicamento_continuo,
+            medicamentoContinuoDetalhe: linhaSaude.medicamento_continuo_detalhe,
+            planoSaude: linhaSaude.plano_saude,
+            planoSaudeDetalhe: linhaSaude.plano_saude_detalhe,
+            pessoasAutorizadas: linhaSaude.pessoas_autorizadas,
+            corRaca: linhaSaude.cor_raca,
+            outrasInformacoes: linhaSaude.outras_informacoes,
+          }
+        : null,
+      documentos,
     };
   });

@@ -30,11 +30,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatPhoneBR } from "@/lib/phone";
+import { buscarEnderecoPorCep } from "@/lib/viacep";
+import { DocumentosMatricula } from "@/components/matricula/DocumentosMatricula";
+import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
+  SAUDE_FORM_VAZIO,
+  serieCalculada,
+  validarDocumentosForm,
+  validarSaudeForm,
   cepCompletoValido,
   formatarCep,
   formatarCpf,
@@ -46,8 +53,10 @@ import {
   type ErrosForm,
   type MatriculaForm,
   type ParentescoForm,
+  type DocumentosForm,
   type ResponsavelForm,
   type RotinaForm,
+  type SaudeForm,
 } from "@/lib/matricula-form";
 import { configMatriculaPublica, enviarMatriculaPublica } from "@/lib/matricula-publica.functions";
 
@@ -147,6 +156,13 @@ function CaptchaTurnstile({
   return <div ref={caixa} className="min-h-[65px]" />;
 }
 
+const DESCRICAO_ETAPA: Record<1 | 2 | 3 | 4, string> = {
+  1: "Etapa 1 de 4 — dados do aluno e dos responsáveis.",
+  2: "Etapa 2 de 4 — rotina escolar (início, horários e refeições).",
+  3: "Etapa 3 de 4 — questionário de saúde.",
+  4: "Etapa 4 de 4 — documentos do aluno e do responsável financeiro.",
+};
+
 // ─── Campos ─────────────────────────────────────────────────────────────────
 
 function Campo({
@@ -172,33 +188,6 @@ function Campo({
   );
 }
 
-interface ViaCep {
-  logradouro?: string;
-  bairro?: string;
-  localidade?: string;
-  erro?: boolean | string;
-}
-
-// Busca rua/bairro/cidade pelo CEP; o responsável só digita número e
-// complemento. Falha de rede não bloqueia (os campos ficam editáveis).
-async function buscarCep(cep: string): Promise<Partial<EnderecoForm>> {
-  const d = soDigitos(cep);
-  if (d.length !== 8) return {};
-  try {
-    const resposta = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!resposta.ok) return {};
-    const dados = (await resposta.json()) as ViaCep;
-    if (dados.erro) return {};
-    return {
-      logradouro: dados.logradouro ?? "",
-      bairro: dados.bairro ?? "",
-      cidade: dados.localidade ?? "",
-    };
-  } catch {
-    return {};
-  }
-}
-
 function BlocoEndereco({
   prefixo,
   endereco,
@@ -217,9 +206,9 @@ function BlocoEndereco({
     onChange({ ...endereco, cep });
     if (!cepCompletoValido(cep)) return;
     setBuscando(true);
-    const achado = await buscarCep(cep);
+    const achado = await buscarEnderecoPorCep(cep);
     setBuscando(false);
-    if (Object.keys(achado).length > 0) onChange({ ...endereco, cep, ...achado });
+    if (achado) onChange({ ...endereco, cep, ...achado });
   };
 
   return (
@@ -388,14 +377,18 @@ function MatriculaPublicaPage() {
     endereco: ENDERECO_VAZIO,
   });
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
-  // Etapa 1 = aluno/responsáveis; etapa 2 = Rotina Escolar.
-  const [etapa, setEtapa] = useState<1 | 2>(1);
+  const [saude, setSaude] = useState<SaudeForm>({ ...SAUDE_FORM_VAZIO });
+  const [documentos, setDocumentos] = useState<DocumentosForm>({});
+  // 1 = aluno/responsáveis · 2 = rotina · 3 = saúde · 4 = documentos.
+  const [etapa, setEtapa] = useState<1 | 2 | 3 | 4>(1);
   const [erros, setErros] = useState<ErrosForm>({});
   const [erroGeral, setErroGeral] = useState("");
   const [captchaToken, setCaptchaToken] = useState("");
   const [enviado, setEnviado] = useState(false);
 
   const unidades = config.data?.unidades ?? [];
+  // Mesma regra de corte (31/03) da admissão interna.
+  const serie = serieCalculada(form.aluno.dataNascimento);
 
   // Unidade vinda do link (?colegio=CEC) — só quando ela existe de fato.
   useEffect(() => {
@@ -405,7 +398,7 @@ function MatriculaPublicaPage() {
   }, [colegio, unidades, form.unidade]);
 
   const enviar = useMutation({
-    mutationFn: async () => enviarFn({ data: { captchaToken, form, rotina } }),
+    mutationFn: async () => enviarFn({ data: { captchaToken, form, rotina, saude, documentos } }),
     onSuccess: (res) => {
       if (res.ok) {
         setEnviado(true);
@@ -418,22 +411,37 @@ function MatriculaPublicaPage() {
       setErroGeral("Não foi possível enviar o formulário agora. Tente novamente em instantes."),
   });
 
+  const errosDaEtapa = (numero: 1 | 2 | 3 | 4): ErrosForm => {
+    if (numero === 1) return validarMatriculaForm(form, hojeLocal(), unidades);
+    if (numero === 2) return validarRotinaForm(rotina, serie);
+    if (numero === 3) return validarSaudeForm(saude);
+    return validarDocumentosForm(documentos, serie);
+  };
+
   const avancar = () => {
-    const encontrados = validarMatriculaForm(form, hojeLocal(), unidades);
+    const encontrados = errosDaEtapa(etapa);
     setErros(encontrados);
     if (!formValido(encontrados)) {
       setErroGeral("Confira os campos destacados antes de continuar.");
       return;
     }
     setErroGeral("");
-    setEtapa(2);
+    setEtapa((atual) => (atual === 4 ? 4 : ((atual + 1) as 2 | 3 | 4)));
+    window.scrollTo({ top: 0 });
+  };
+
+  const voltar = () => {
+    setErroGeral("");
+    setEtapa((atual) => (atual === 1 ? 1 : ((atual - 1) as 1 | 2 | 3)));
     window.scrollTo({ top: 0 });
   };
 
   const submeter = () => {
     const encontrados = {
       ...validarMatriculaForm(form, hojeLocal(), unidades),
-      ...validarRotinaForm(rotina),
+      ...validarRotinaForm(rotina, serie),
+      ...validarSaudeForm(saude),
+      ...validarDocumentosForm(documentos, serie),
     };
     setErros(encontrados);
     if (!formValido(encontrados)) {
@@ -470,11 +478,7 @@ function MatriculaPublicaPage() {
           <GraduationCap className="mt-1 h-6 w-6 shrink-0 text-primary" />
           <div>
             <h1 className="text-lg font-semibold">Formulário de matrícula</h1>
-            <p className="text-sm text-muted-foreground">
-              {etapa === 1
-                ? "Etapa 1 de 2 — dados do aluno e dos responsáveis."
-                : "Etapa 2 de 2 — rotina escolar (início, horários e refeições)."}
-            </p>
+            <p className="text-sm text-muted-foreground">{DESCRICAO_ETAPA[etapa]}</p>
           </div>
         </header>
 
@@ -499,8 +503,8 @@ function MatriculaPublicaPage() {
             className="space-y-6"
             onSubmit={(e) => {
               e.preventDefault();
-              if (etapa === 1) avancar();
-              else submeter();
+              if (etapa === 4) submeter();
+              else avancar();
             }}
           >
             <div className={etapa === 1 ? "space-y-6" : "hidden"}>
@@ -534,12 +538,7 @@ function MatriculaPublicaPage() {
                       }
                     />
                   </Campo>
-                  <Campo
-                    id="aluno-cpf"
-                    label="CPF (opcional)"
-                    erro={erros["aluno.cpf"]}
-                    dica="Se o aluno já tiver CPF, informe."
-                  >
+                  <Campo id="aluno-cpf" label="CPF do aluno" erro={erros["aluno.cpf"]}>
                     <Input
                       id="aluno-cpf"
                       inputMode="numeric"
@@ -569,6 +568,11 @@ function MatriculaPublicaPage() {
                         })
                       }
                     />
+                    {serie !== "" && (
+                      <p className="text-xs text-muted-foreground">
+                        Série correspondente: <strong>{serie}</strong>
+                      </p>
+                    )}
                   </Campo>
                   <Campo
                     id="aluno-naturalidade"
@@ -643,8 +647,18 @@ function MatriculaPublicaPage() {
             </div>
 
             {etapa === 2 && (
+              <RotinaEscolar rotina={rotina} erros={erros} serie={serie} onChange={setRotina} />
+            )}
+
+            {etapa === 3 && <QuestionarioSaude saude={saude} erros={erros} onChange={setSaude} />}
+
+            {etapa === 4 && (
               <>
-                <RotinaEscolar rotina={rotina} erros={erros} onChange={setRotina} />
+                <DocumentosMatricula
+                  documentos={documentos}
+                  erros={erros}
+                  onChange={setDocumentos}
+                />
 
                 <CaptchaTurnstile
                   siteKey={config.data.turnstileSiteKey}
@@ -671,25 +685,30 @@ function MatriculaPublicaPage() {
                   className="w-full gap-2 sm:flex-1"
                   disabled={enviar.isPending}
                 >
-                  {enviar.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                  {etapa === 4 ? (
+                    <>
+                      {enviar.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Enviar matrícula
+                    </>
                   ) : (
-                    <Send className="h-4 w-4" />
+                    <>
+                      Continuar
+                      <ArrowRight className="h-4 w-4" />
+                    </>
                   )}
-                  Enviar matrícula
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   className="w-full gap-2 sm:w-auto"
-                  onClick={() => {
-                    setErroGeral("");
-                    setEtapa(1);
-                    window.scrollTo({ top: 0 });
-                  }}
+                  onClick={voltar}
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  Voltar e corrigir
+                  Voltar
                 </Button>
               </div>
             )}
