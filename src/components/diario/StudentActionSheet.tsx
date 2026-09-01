@@ -24,10 +24,12 @@ import {
   UserCircle2,
   QrCode,
   Loader2,
+  Camera,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
 import { PlanEditor } from "@/components/diario/PlanEditor";
+import { StudentPhotoDialog } from "@/components/diario/StudentPhotoDialog";
 import {
   MEALS,
   isCoveredToday,
@@ -58,6 +60,7 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
   const userId = session?.user?.id;
   const [pending, setPending] = useState<Pending | null>(null);
   const [editingPlan, setEditingPlan] = useState(false);
+  const [editingPhoto, setEditingPhoto] = useState(false);
   const [downloadingKey, setDownloadingKey] = useState(false);
 
   const handleKeychain = async () => {
@@ -143,23 +146,46 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
         >
           <SheetHeader className="px-5 pb-2 pt-5">
             <div className="flex items-center gap-3">
-              {student.photo ? (
-                <img
-                  src={student.photo}
-                  alt={student.name}
-                  width={48}
-                  height={48}
-                  className="h-12 w-12 rounded-full object-cover ring-2 ring-primary/20"
-                />
-              ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary ring-2 ring-primary/20">
-                  <UserCircle2 className="h-7 w-7 text-muted-foreground" />
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => canEdit && setEditingPhoto(true)}
+                disabled={!canEdit}
+                aria-label={canEdit ? "Editar foto do aluno" : undefined}
+                className="group relative h-12 w-12 shrink-0 rounded-full disabled:cursor-default"
+              >
+                {student.photo ? (
+                  <img
+                    src={student.photo}
+                    alt={student.name}
+                    width={48}
+                    height={48}
+                    className="h-12 w-12 rounded-full object-cover ring-2 ring-primary/20"
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary ring-2 ring-primary/20">
+                    <UserCircle2 className="h-7 w-7 text-muted-foreground" />
+                  </div>
+                )}
+                {canEdit && (
+                  <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 opacity-0 transition group-hover:opacity-100">
+                    <Camera className="h-5 w-5 text-white" />
+                  </span>
+                )}
+              </button>
               <div className="flex-1 text-left">
                 <SheetTitle className="text-lg leading-tight">{student.name}</SheetTitle>
                 <p className="text-sm text-muted-foreground">{student.className || "Sem turma"}</p>
               </div>
+              {canEdit && (
+                <button
+                  onClick={() => setEditingPhoto(true)}
+                  className="flex h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-medium text-foreground transition hover:border-primary/40"
+                  aria-label="Editar foto"
+                >
+                  <Camera className="h-4 w-4" />
+                  Foto
+                </button>
+              )}
               {canEdit && (
                 <button
                   onClick={() => setEditingPlan(true)}
@@ -282,6 +308,9 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
       </AlertDialog>
 
       {canEdit && <PlanEditor student={student} open={editingPlan} onOpenChange={setEditingPlan} />}
+      {canEdit && (
+        <StudentPhotoDialog student={student} open={editingPhoto} onOpenChange={setEditingPhoto} />
+      )}
     </>
   );
 }
