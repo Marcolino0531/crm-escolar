@@ -32,6 +32,7 @@ import {
   buscarResponsavelFinanceiroAluno,
   coletarDividaAbertaAluno,
   coletarPendenciasPorVencimento,
+  paraYMD,
   type BoletoAberto,
 } from "@/lib/sponte.functions";
 import {
@@ -715,7 +716,9 @@ async function coletarCandidatos(
       (p) =>
         cobrancaPermitida({
           unidade: p.unidade ?? "",
-          vencimento: p.vencimento || vencimento,
+          // O vencimento agrupado vem no formato do Sponte (DD/MM/AAAA); a regra
+          // por unidade compara datas em YYYY-MM-DD.
+          vencimento: paraYMD(p.vencimento) || vencimento,
           categorias: p.categorias,
         }),
     );

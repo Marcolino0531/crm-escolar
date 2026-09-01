@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   cobrancaPermitida,
@@ -183,5 +184,20 @@ describe("escopo de unidades e liberação de envio", () => {
   it("usa a data base mais antiga entre os grupos avaliados", () => {
     expect(menorDataBaseCobranca(["belvedere"])).toBe("2026-09-01");
     expect(menorDataBaseCobranca(["cec", "belvedere"])).toBe("2026-08-01");
+  });
+});
+
+describe("data do Sponte na regra de cobrança", () => {
+  it("rejeita a comparação com o vencimento no formato brasileiro", () => {
+    // "07/09/2026" comparado como string com "2026-09-01" é sempre menor, o que
+    // bloqueava silenciosamente toda a cobrança do Belvedere.
+    const item = { unidade: "Núcleo Belvedere", categorias: ["Mensalidade"] };
+    expect(cobrancaPermitida({ ...item, vencimento: "07/09/2026" })).toBe(false);
+    expect(cobrancaPermitida({ ...item, vencimento: "2026-09-07" })).toBe(true);
+  });
+
+  it("converte o vencimento agrupado do Sponte antes de aplicar a regra", () => {
+    const src = readFileSync(new URL("./whatsapp.api.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/vencimento: paraYMD\(p\.vencimento\) \|\| vencimento/);
   });
 });
