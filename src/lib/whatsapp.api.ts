@@ -306,7 +306,11 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
     if (grupos.length === 0) {
       return json({ ok: false, error: "nenhum número configurado para o grupo pedido" }, 400);
     }
-    const hoje = diaYMD(0);
+    const dia = url.searchParams.get("dia");
+    if (dia && !/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+      return json({ ok: false, error: "dia inválido (use YYYY-MM-DD)" }, 400);
+    }
+    const hoje = dia || diaYMD(0);
     const [cobranca, lembretes] = await Promise.all([
       runCron(hoje, { grupos, simular: true }),
       runCronLembretes(hoje, { grupos, simular: true }),
