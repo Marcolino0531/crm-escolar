@@ -40,6 +40,9 @@ export const MENSAGEM_LINK_INVALIDO =
 export const MENSAGEM_LIMITE_LINKS =
   "Já enviamos 3 links de acesso na última hora. Confira sua caixa de entrada (e o spam) ou tente novamente mais tarde.";
 
+export const MENSAGEM_FALHA_ENVIO_LINK =
+  "Não conseguimos enviar o link de acesso agora. Tente novamente em alguns minutos ou fale com a secretaria do colégio.";
+
 export const MENSAGEM_SESSAO_EXPIRADA =
   "Sua sessão expirou. Informe o CPF novamente para receber um novo link de acesso.";
 
@@ -134,6 +137,18 @@ export function mensagemLinkEnviadoPara(emailMascarado: string): string {
   return emailMascarado
     ? `Enviamos um link de acesso para ${emailMascarado}. O link vale por ${LINK_VALIDADE_MINUTOS} minutos — confira também a caixa de spam.`
     : MENSAGEM_LINK_ENVIADO;
+}
+
+// Resultado que o portal mostra depois de tentar enviar o link. O sucesso só é
+// anunciado quando o Resend aceitou o email; recusa devolve falha explícita em
+// vez da mensagem genérica de "enviamos".
+export function resultadoEnvioLink(
+  aceito: boolean,
+  emailMascarado: string,
+): { ok: boolean; mensagem: string } {
+  return aceito
+    ? { ok: true, mensagem: mensagemLinkEnviadoPara(emailMascarado) }
+    : { ok: false, mensagem: MENSAGEM_FALHA_ENVIO_LINK };
 }
 
 export function assuntoEmailRematricula(nomeColegio: string): string {
