@@ -170,7 +170,10 @@ export async function resolverEndereco(entrada: {
 }
 
 // Fixos para toda matrícula: nenhuma operação de escrita do Sponte aceita esses
-// dois campos, então eles são gravados na observação do aluno.
+// dois campos (nenhum parâmetro de estado civil ou nacionalidade em
+// InsertAlunos/2/3, UpdateAlunos/2/3, InsertMatricula ou UpdateMatricula, e o
+// WSDL não expõe nenhuma consulta dessas listas), então eles são gravados na
+// observação do aluno.
 export const ESTADO_CIVIL_MATRICULA = "Solteiro";
 export const NACIONALIDADE_MATRICULA = "Brasileiro(a)";
 

@@ -13,8 +13,10 @@ import {
   formatarCep,
   formatarCpf,
   formValido,
+  GENEROS_MATRICULA,
   inicioJanelaLimite,
   MIDIAS_SPONTE,
+  SEXOS_SPONTE,
   montarPayloadMatricula,
   responsavelPreenchido,
   telefoneValido,
@@ -301,6 +303,31 @@ describe("montarPayloadMatricula", () => {
     expect(campos.sSexo).toBe("Feminino");
     expect(campos.sObservacao).toContain("Nacionalidade: Brasileiro(a)");
     expect(campos.sObservacao).toContain("Estado civil: Solteiro");
+  });
+
+  it("usa a grafia exata da lista fechada de gênero do Sponte", () => {
+    expect([...GENEROS_MATRICULA]).toEqual([...SEXOS_SPONTE]);
+    for (const genero of GENEROS_MATRICULA) {
+      const form = formCompleto();
+      const payload = montarPayloadMatricula(
+        { ...form, aluno: { ...form.aluno, genero } },
+        "site-123",
+      );
+      const campos = camposAluno(
+        payload.aluno,
+        {
+          cep: payload.endereco.cep,
+          logradouro: payload.endereco.logradouro ?? "",
+          numero: payload.endereco.numero,
+          complemento: payload.endereco.complemento ?? "",
+          bairro: payload.endereco.bairro ?? "",
+          cidade: payload.endereco.cidade ?? "",
+        },
+        "2015-04-10T00:00:00",
+      );
+      expect(SEXOS_SPONTE).toContain(campos.sSexo);
+      expect(campos.sSexo).toBe(genero);
+    }
   });
 
   it("preenche os fixos também em payload antigo, sem nacionalidade/estado civil", () => {
