@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { camposAluno } from "./matriculas.sponte";
 import {
-  ESTADO_CIVIL_MATRICULA,
-  NACIONALIDADE_MATRICULA,
   MAX_SUBMISSOES_POR_IP,
   MATRICULA_FORM_VAZIO,
   cepCompletoValido,
@@ -265,14 +263,6 @@ describe("montarPayloadMatricula", () => {
     expect(payload.responsaveis).toHaveLength(2);
   });
 
-  it("envia estado civil e nacionalidade fixos, sem campo no formulário", () => {
-    const payload = montarPayloadMatricula(formCompleto(), "site-123");
-    expect(payload.aluno.estadoCivil).toBe("Solteiro");
-    expect(payload.aluno.nacionalidade).toBe("Brasileiro(a)");
-    expect(ESTADO_CIVIL_MATRICULA).toBe("Solteiro");
-    expect(NACIONALIDADE_MATRICULA).toBe("Brasileiro(a)");
-  });
-
   it.each(["Feminino", "Masculino"] as const)("envia o gênero escolhido (%s)", (genero) => {
     const form = formCompleto();
     const payload = montarPayloadMatricula(
@@ -282,7 +272,7 @@ describe("montarPayloadMatricula", () => {
     expect(payload.aluno.sexo).toBe(genero);
   });
 
-  it("leva gênero, estado civil e nacionalidade para os parâmetros do Sponte", () => {
+  it("não manda estado civil nem nacionalidade ao Sponte (a API ignora)", () => {
     const form = formCompleto();
     const payload = montarPayloadMatricula(
       { ...form, aluno: { ...form.aluno, genero: "Feminino" } },
@@ -301,8 +291,9 @@ describe("montarPayloadMatricula", () => {
       "2015-04-10T00:00:00",
     );
     expect(campos.sSexo).toBe("Feminino");
-    expect(campos.sObservacao).toContain("Nacionalidade: Brasileiro(a)");
-    expect(campos.sObservacao).toContain("Estado civil: Solteiro");
+    expect(Object.keys(campos)).not.toContain("sEstadoCivil");
+    expect(Object.keys(campos)).not.toContain("sNacionalidade");
+    expect(campos.sObservacao).not.toMatch(/Nacionalidade|Estado civil/i);
   });
 
   it("usa a grafia exata da lista fechada de gênero do Sponte", () => {
@@ -328,23 +319,6 @@ describe("montarPayloadMatricula", () => {
       expect(SEXOS_SPONTE).toContain(campos.sSexo);
       expect(campos.sSexo).toBe(genero);
     }
-  });
-
-  it("preenche os fixos também em payload antigo, sem nacionalidade/estado civil", () => {
-    const campos = camposAluno(
-      { nome: "Aluno Antigo", dataNascimento: "2015-04-10" },
-      {
-        cep: "30320000",
-        logradouro: "Rua Teste",
-        numero: "100",
-        complemento: "",
-        bairro: "Belvedere",
-        cidade: "Belo Horizonte",
-      },
-      "2015-04-10T00:00:00",
-    );
-    expect(campos.sObservacao).toContain("Nacionalidade: Brasileiro(a)");
-    expect(campos.sObservacao).toContain("Estado civil: Solteiro");
   });
 
   it("envia uma mídia que existe no cadastro do Sponte", () => {

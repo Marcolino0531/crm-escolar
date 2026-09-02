@@ -16,11 +16,10 @@
 //                         responsável) e parentesco/financeiro/didático valem
 //                         POR VÍNCULO, não para o responsável inteiro.
 //
-// A API NÃO tem campo de nacionalidade nem de estado civil do aluno em nenhuma
-// operação de escrita (InsertAlunos/UpdateAlunos, todas as versões) — só a
-// leitura do GetAlunos devolve Nacionalidade. Os dois vão na observação do
-// aluno. Naturalidade vai em sCidadeNatal e o gênero em sSexo
-// ("Feminino"/"Masculino", os únicos valores usados na base).
+// Nacionalidade e estado civil do aluno não são enviados: nenhuma das 138
+// operações do WSDL aceita esses campos (só a tela nativa do Sponte grava), e a
+// secretaria os preenche manualmente lá. Naturalidade vai em sCidadeNatal e o
+// gênero em sSexo ("Feminino"/"Masculino", os únicos valores usados na base).
 
 import {
   callSponte,
@@ -169,14 +168,6 @@ export async function resolverEndereco(entrada: {
   }
 }
 
-// Fixos para toda matrícula: nenhuma operação de escrita do Sponte aceita esses
-// dois campos (nenhum parâmetro de estado civil ou nacionalidade em
-// InsertAlunos/2/3, UpdateAlunos/2/3, InsertMatricula ou UpdateMatricula, e o
-// WSDL não expõe nenhuma consulta dessas listas), então eles são gravados na
-// observação do aluno.
-export const ESTADO_CIVIL_MATRICULA = "Solteiro";
-export const NACIONALIDADE_MATRICULA = "Brasileiro(a)";
-
 export interface AlunoMatricula {
   nome: string;
   dataNascimento: string;
@@ -184,8 +175,6 @@ export interface AlunoMatricula {
   rg?: string;
   sexo?: string;
   naturalidade?: string;
-  nacionalidade?: string;
-  estadoCivil?: string;
   email?: string;
   telefone?: string;
   celular?: string;
@@ -482,9 +471,6 @@ async function vincularResponsavelExistente(
 
 function observacaoAluno(aluno: AlunoMatricula): string {
   const partes = [aluno.observacao?.trim() ?? ""];
-  // A escrita do Sponte não tem campo de nacionalidade nem de estado civil.
-  partes.push(`Nacionalidade: ${aluno.nacionalidade?.trim() || NACIONALIDADE_MATRICULA}`);
-  partes.push(`Estado civil: ${aluno.estadoCivil?.trim() || ESTADO_CIVIL_MATRICULA}`);
   partes.push("Matrícula criada pelo formulário de matrícula (School Hub).");
   return partes.filter(Boolean).join(" | ");
 }
