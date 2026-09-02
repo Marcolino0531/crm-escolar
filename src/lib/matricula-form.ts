@@ -10,12 +10,7 @@
 
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
-import {
-  ESTADO_CIVIL_MATRICULA,
-  NACIONALIDADE_MATRICULA,
-  type MatriculaPayload,
-  type ResponsavelMatricula,
-} from "@/lib/matriculas.sponte";
+import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -161,8 +156,6 @@ export type ParentescoForm = "pai" | "mae";
 export const GENEROS_MATRICULA = SEXOS_SPONTE;
 
 export type GeneroMatricula = (typeof GENEROS_MATRICULA)[number];
-
-export { ESTADO_CIVIL_MATRICULA, NACIONALIDADE_MATRICULA };
 
 export interface MatriculaForm {
   unidade: string;
@@ -330,8 +323,6 @@ export function montarPayloadMatricula(
       dataNascimento: form.aluno.dataNascimento.trim(),
       cpf: soDigitos(form.aluno.cpf),
       sexo: form.aluno.genero,
-      estadoCivil: ESTADO_CIVIL_MATRICULA,
-      nacionalidade: NACIONALIDADE_MATRICULA,
       naturalidade: form.aluno.naturalidade.trim(),
       // Contato do aluno = do responsável financeiro (o formulário não coleta
       // telefone/e-mail do aluno).
