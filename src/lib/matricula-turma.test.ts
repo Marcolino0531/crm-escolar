@@ -85,6 +85,10 @@ describe("turno da turma", () => {
     expect(turnoDaTurma({ nome: "sem turno", horario: "Fundamental 1/2 T" })).toBe("T");
   });
 
+  it("o marcador do nome vence o Horario livre que contradiz a turma", () => {
+    expect(turnoDaTurma({ nome: "06 - 2º Período M / Prof. Sheila", horario: "Tarde" })).toBe("M");
+  });
+
   it("devolve null quando nome e horário não dizem o turno", () => {
     expect(turnoDaTurma({ nome: "07 - 1º Ano", horario: "" })).toBeNull();
   });
@@ -103,9 +107,21 @@ describe("curso da série", () => {
     expect(cursoIdDaSerie("Maternal II", cursos)).toBe(12);
   });
 
+  it("casa com indicador ordinal diferente e prefixo de código na série", () => {
+    const belvedere: CursoSponte[] = [
+      { cursoId: 3, nome: "06 - 2° Período", serie: "06 - 2º Período" },
+      { cursoId: 4, nome: "12 - 2° Ano", serie: "12 - 2º Ano" },
+    ];
+    expect(cursoIdDaSerie("2º Período", belvedere)).toBe(3);
+    expect(cursoIdDaSerie("2º Ano", belvedere)).toBe(4);
+  });
+
   it("não casa série inexistente nem vazia", () => {
     expect(cursoIdDaSerie("2º Ano", cursos)).toBeNull();
     expect(cursoIdDaSerie("", cursos)).toBeNull();
+    expect(
+      cursoIdDaSerie("1º Período", [{ cursoId: 3, nome: "06 - 2° Período", serie: "" }]),
+    ).toBeNull();
   });
 });
 
