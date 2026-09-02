@@ -53,11 +53,16 @@ export function rowToLead(r: Tables<"leads">): Lead {
 
 // ---------- Onboarding ----------
 export function rowToOnboarding(r: Tables<"onboarding">): OnboardingAluno {
-  const tarefas = { ...TAREFAS_INICIAIS, ...(r.tarefas as Record<TarefaOnboardingId, boolean>) };
+  // Só as tarefas do checklist atual entram: registros antigos guardam chaves de
+  // itens que não existem mais e travariam o "concluído".
+  const salvas = (r.tarefas ?? {}) as Partial<Record<TarefaOnboardingId, boolean>>;
+  const tarefas = { ...TAREFAS_INICIAIS };
+  for (const id of Object.keys(tarefas) as TarefaOnboardingId[]) tarefas[id] = salvas[id] === true;
   return {
     id: r.id,
     schoolId: r.school_id,
     leadId: r.lead_id,
+    submissionId: r.submission_id ?? null,
     nomeAluno: r.nome_aluno,
     turma: r.turma ?? "",
     nomePaiMae: r.nome_pai_mae ?? "",

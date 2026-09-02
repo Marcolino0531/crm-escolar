@@ -51,30 +51,25 @@ export const COLUNAS: ColunaConfig[] = [
   },
 ];
 
+// O registro só nasce depois de a matrícula estar formalizada (aluno criado no
+// Sponte e matriculado na turma), então o checklist trata apenas do que vem
+// DEPOIS disso.
 export const TAREFAS_ONBOARDING: TarefaOnboardingConfig[] = [
-  { id: "envio-ficha-matricula", titulo: "Envio da Ficha de Matrícula", icone: "📋" },
-  { id: "ficha-matricula-respondida", titulo: "Ficha de Matrícula Respondida", icone: "✅" },
-  { id: "cadastro-erp", titulo: "Cadastro no Sistema ERP", icone: "💻" },
-  { id: "envio-contrato", titulo: "Envio do Contrato", icone: "📤" },
-  { id: "assinatura-contrato", titulo: "Assinatura do Contrato", icone: "✍️" },
-  { id: "boas-vindas", titulo: "Boas-vindas e Informações Básicas", icone: "👋" },
-  { id: "grupo-whatsapp", titulo: "Inclusão no Grupo de WhatsApp", icone: "💬" },
-  {
-    id: "bernoulli-login",
-    titulo: "Inclusão no Sistema Bernoulli e Envio de Login e Senha para os pais",
-    icone: "🔑",
-  },
+  { id: "genero-sponte", titulo: "Atualização do gênero no Sponte", icone: "🧾" },
+  { id: "conferencia-turma", titulo: "Conferência da turma matriculada", icone: "🏫" },
+  { id: "boas-vindas", titulo: "Boas-vindas e informações básicas", icone: "👋" },
+  { id: "grupo-whatsapp", titulo: "Inclusão no grupo de WhatsApp da turma", icone: "💬" },
+  { id: "assinatura-contrato", titulo: "Assinatura do contrato", icone: "✍️" },
+  { id: "entrega-materiais", titulo: "Entrega dos materiais pedagógicos", icone: "📚" },
 ];
 
 export const TAREFAS_INICIAIS: Record<TarefaOnboardingId, boolean> = {
-  "envio-ficha-matricula": false,
-  "ficha-matricula-respondida": false,
-  "cadastro-erp": false,
-  "envio-contrato": false,
-  "assinatura-contrato": false,
+  "genero-sponte": false,
+  "conferencia-turma": false,
   "boas-vindas": false,
   "grupo-whatsapp": false,
-  "bernoulli-login": false,
+  "assinatura-contrato": false,
+  "entrega-materiais": false,
 };
 
 // Known Schooler Hub units (must match the names seeded in the `schools` table).

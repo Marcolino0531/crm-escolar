@@ -34,6 +34,7 @@ function formCompleto(over: Partial<MatriculaForm> = {}): MatriculaForm {
   return {
     ...MATRICULA_FORM_VAZIO,
     unidade: "CEC",
+    anoLetivo: 2026,
     aluno: {
       nome: "Ryan Kleber Braga de Morais",
       cpf: CPF_ALUNO,
@@ -147,6 +148,21 @@ describe("outras validações de formato", () => {
 describe("validarMatriculaForm", () => {
   it("aprova o formulário completo", () => {
     expect(formValido(validarMatriculaForm(formCompleto(), HOJE, UNIDADES))).toBe(true);
+  });
+
+  it("aceita só o ano vigente e o seguinte, contados pela data do servidor", () => {
+    expect(
+      formValido(validarMatriculaForm(formCompleto({ anoLetivo: 2027 }), HOJE, UNIDADES)),
+    ).toBe(true);
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 2025 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 2028 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 0 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
   });
 
   it("exige colégio válido", () => {

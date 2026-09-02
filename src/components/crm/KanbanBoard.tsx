@@ -11,7 +11,7 @@ import MatriculaModal from "./MatriculaModal";
 interface KanbanBoardProps {
   leadsHook: ReturnType<typeof useLeads>;
   onMatriculaConfirmada?: (leadId: string, itensMatricula: ItemMatricula[]) => void;
-  onAvancarParaOnboarding?: (leadId: string, nomeAluno: string) => void;
+  onArquivarLead?: (leadId: string, nomeAluno: string) => void;
   onEditar: (lead: Lead) => void;
   isAdmin?: boolean;
   consolidado?: boolean;
@@ -32,7 +32,7 @@ interface PendingAction {
 const KanbanBoard: React.FC<KanbanBoardProps> = ({
   leadsHook,
   onMatriculaConfirmada,
-  onAvancarParaOnboarding,
+  onArquivarLead,
   onEditar,
   isAdmin = false,
   consolidado = false,
@@ -169,7 +169,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 onSolicitarVisita={handleSolicitarVisita}
                 onSolicitarNaoMatricula={handleSolicitarNaoMatricula}
                 onSolicitarMatricula={handleSolicitarMatricula}
-                onAvancarParaOnboarding={onAvancarParaOnboarding}
+                onArquivarLead={onArquivarLead}
                 onEditar={onEditar}
                 isAdmin={isAdmin}
                 consolidado={consolidado}

@@ -422,6 +422,7 @@ export type Database = {
           nome_aluno: string;
           nome_pai_mae: string | null;
           school_id: string;
+          submission_id: string | null;
           tarefas: Json;
           telefone: string | null;
           turma: string | null;
@@ -435,6 +436,7 @@ export type Database = {
           nome_aluno: string;
           nome_pai_mae?: string | null;
           school_id: string;
+          submission_id?: string | null;
           tarefas?: Json;
           telefone?: string | null;
           turma?: string | null;
@@ -448,6 +450,7 @@ export type Database = {
           nome_aluno?: string;
           nome_pai_mae?: string | null;
           school_id?: string;
+          submission_id?: string | null;
           tarefas?: Json;
           telefone?: string | null;
           turma?: string | null;

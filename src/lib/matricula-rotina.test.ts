@@ -7,8 +7,10 @@ import {
   ROTINA_FORM_VAZIA,
   montarPayloadMatricula,
   montarRotinaPersistida,
+  periodoSelecionado,
   refeicoesVazias,
   rotinaDoPlanoExistente,
+  selecionarPeriodo,
   validarRotinaForm,
   type MatriculaForm,
   type RotinaForm,
@@ -88,6 +90,68 @@ describe("validarRotinaForm", () => {
     expect(erros).toEqual({});
   });
 
+  it("escolher um período desmarca os outros dois", () => {
+    const estendido = rotinaCompleta({ horarioCurricular: "T" });
+
+    const manha = selecionarPeriodo(estendido, "manha");
+    expect([manha.periodoManha, manha.periodoTarde, manha.horarioEstendido]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // Sair do estendido também descarta a resposta do horário curricular.
+    expect(manha.horarioCurricular).toBe("");
+
+    const tarde = selecionarPeriodo(manha, "tarde");
+    expect([tarde.periodoManha, tarde.periodoTarde, tarde.horarioEstendido]).toEqual([
+      false,
+      true,
+      false,
+    ]);
+
+    const volta = selecionarPeriodo(tarde, "estendido");
+    expect([volta.periodoManha, volta.periodoTarde, volta.horarioEstendido]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it("reconhece qual período está escolhido e recusa combinação", () => {
+    expect(periodoSelecionado(rotinaCompleta())).toBe("estendido");
+    expect(
+      periodoSelecionado(rotinaCompleta({ horarioEstendido: false, periodoManha: true })),
+    ).toBe("manha");
+    expect(periodoSelecionado(rotinaCompleta({ horarioEstendido: false }))).toBeNull();
+    expect(
+      periodoSelecionado(rotinaCompleta({ periodoManha: true, periodoTarde: true })),
+    ).toBeNull();
+  });
+
+  it("no estendido, exige o turno curricular na matrícula nova", () => {
+    const semTurno = rotinaCompleta();
+    expect(
+      validarRotinaForm(semTurno, INFANTIL, { exigirHorarioCurricular: true })[
+        "rotina.horarioCurricular"
+      ],
+    ).toBeDefined();
+    expect(
+      validarRotinaForm(rotinaCompleta({ horarioCurricular: "M" }), INFANTIL, {
+        exigirHorarioCurricular: true,
+      }),
+    ).toEqual({});
+    // Fora do estendido a pergunta não existe.
+    expect(
+      validarRotinaForm(
+        rotinaCompleta({ horarioEstendido: false, periodoManha: true, horarios: {} }),
+        INFANTIL,
+        { exigirHorarioCurricular: true },
+      ),
+    ).toEqual({});
+    // Rematrícula (pré-preenchimento) não cobra a resposta nova.
+    expect(validarRotinaForm(semTurno, INFANTIL)).toEqual({});
+  });
+
   it("exige data de início válida", () => {
     expect(
       validarRotinaForm(rotinaCompleta({ dataInicio: "" }), INFANTIL)["rotina.dataInicio"],
@@ -150,6 +214,7 @@ describe("montarRotinaPersistida", () => {
       periodoManha: false,
       periodoTarde: false,
       horarioEstendido: true,
+      horarioCurricular: "",
       horarios: [
         { weekday: 1, entrada: "07:20", saida: "11:50" },
         { weekday: 2, entrada: "08:00", saida: "17:30" },
@@ -272,7 +337,7 @@ describe("sugestão de rotina a partir de um plano já cadastrado", () => {
     expect(rotina.semRefeicoes).toBe(true);
   });
 
-  it("integral do Fundamental marca manhã e tarde", () => {
+  it("integral do Fundamental cai no horário estendido (períodos são escolha única)", () => {
     const rotina = rotinaDoPlanoExistente(
       {
         horarios: [1, 2, 3, 4, 5].map((weekday) => ({
@@ -285,9 +350,11 @@ describe("sugestão de rotina a partir de um plano já cadastrado", () => {
       FUNDAMENTAL,
     );
 
-    expect(rotina.periodoManha).toBe(true);
-    expect(rotina.periodoTarde).toBe(true);
-    expect(rotina.horarioEstendido).toBe(false);
+    expect(rotina.periodoManha).toBe(false);
+    expect(rotina.periodoTarde).toBe(false);
+    expect(rotina.horarioEstendido).toBe(true);
+    expect(rotina.horarioCurricular).toBe("");
+    expect(rotina.horarios[1]).toEqual({ entrada: "07:20", saida: "18:20" });
   });
 
   it("sem plano nenhum, devolve a etapa em branco (sem estendido nem parcial)", () => {
