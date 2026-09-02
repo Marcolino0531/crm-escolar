@@ -68,12 +68,13 @@ function turnoDeTexto(texto: string): TurnoTurma | null {
 }
 
 /**
- * Turno de uma turma do Sponte. O `Horario` é a fonte preferida (vem sempre no
- * formato "Fundamental 1/2 M"); no nome só o trecho ANTES da primeira barra é
+ * Turno de uma turma do Sponte. O marcador do nome ("06 - 2º Período M") é a
+ * fonte preferida, porque o `Horario` é um rótulo livre e chega contradizendo o
+ * nome em parte das turmas; no nome só o trecho ANTES da primeira barra é
  * considerado, para a inicial de um professor não ser lida como turno.
  */
 export function turnoDaTurma(turma: { nome: string; horario: string }): TurnoTurma | null {
-  return turnoDeTexto(turma.horario) ?? turnoDeTexto(turma.nome.split("/")[0]);
+  return turnoDeTexto(turma.nome.split("/")[0]) ?? turnoDeTexto(turma.horario);
 }
 
 export interface PeriodoRotinaTurma {
@@ -101,6 +102,16 @@ export function turnoDaRotina(rotina: PeriodoRotinaTurma): TurnoTurma | null {
 
 // ─── Curso (série) ──────────────────────────────────────────────────────────
 
+// O Sponte alterna os indicadores ordinais entre o nome e a série do mesmo
+// curso ("06 - 2° Período" e "06 - 2º Período"), então a comparação de série
+// ignora indicador ordinal e pontuação.
+function normalizarSerie(s: string): string {
+  return normalizar(s)
+    .replace(/[ºª°]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export interface CursoSponte {
   cursoId: number;
   nome: string;
@@ -114,22 +125,24 @@ export interface CursoSponte {
  * Ano" não pode casar com "11º Ano".
  */
 export function cursoIdDaSerie(serie: string, cursos: readonly CursoSponte[]): number | null {
-  const alvo = normalizar(serie);
+  const alvo = normalizarSerie(serie);
   if (alvo === "") return null;
 
-  const porSerie = cursos.find((c) => normalizar(c.serie) === alvo);
+  const porSerie = cursos.find((c) => normalizarSerie(c.serie) === alvo);
   if (porSerie) return porSerie.cursoId;
 
-  const porNome = cursos.find((c) => normalizar(c.nome) === alvo);
+  const porNome = cursos.find((c) => normalizarSerie(c.nome) === alvo);
   if (porNome) return porNome.cursoId;
 
-  // Nomes de curso costumam trazer um prefixo de código ("07 - 1º Ano").
-  const porSufixo = cursos.find((c) => {
-    const nome = normalizar(c.nome);
-    if (!nome.endsWith(alvo)) return false;
-    const antes = nome.slice(0, nome.length - alvo.length);
-    return antes === "" || /[^a-z0-9]$/.test(antes);
-  });
+  // Série e nome costumam trazer um prefixo de código ("07 - 1º Ano").
+  const porSufixo = cursos.find((c) =>
+    [c.serie, c.nome].some((campo) => {
+      const texto = normalizarSerie(campo);
+      if (!texto.endsWith(alvo)) return false;
+      const antes = texto.slice(0, texto.length - alvo.length);
+      return antes === "" || /[^a-z0-9]$/.test(antes);
+    }),
+  );
   return porSufixo?.cursoId ?? null;
 }
 
