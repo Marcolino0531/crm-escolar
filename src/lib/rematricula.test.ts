@@ -15,7 +15,12 @@ import {
   mensagemLinkEnviadoPara,
   resultadoEnvioLink,
   MENSAGEM_FALHA_ENVIO_LINK,
+  apresentacaoMaterial,
   chaveSerie,
+  formatarPercentual,
+  itensMaterialInclusos,
+  reajusteMaterial,
+  serieRematricula,
   concentrarDiferenca,
   excedeuLimiteLinks,
   expiracaoLink,
@@ -249,6 +254,93 @@ describe("série do aluno", () => {
     expect(serieDaTurma("1º Período B (Tarde)")).toBe("1º Período");
     expect(serieDaTurma("Maternal II")).toBe("Maternal II");
     expect(serieDaTurma("Berçário")).toBe("Berçário");
+  });
+
+  it("ignora o código numérico e o professor das turmas do Sponte (CEC)", () => {
+    expect(serieDaTurma("07 - 1º Ano M / Prof. Priscilla Miranda")).toBe("1º Ano");
+    expect(serieDaTurma("05 - 1º Período T / A / Prof. Kelly Declie")).toBe("1º Período");
+    expect(serieDaTurma("11 - 5º Ano / Prof. Claudia Santos")).toBe("5º Ano");
+    expect(serieDaTurma("12 - 6º Ano")).toBe("6º Ano");
+    expect(serieDaTurma("03 - Maternal 2 T / B / Prof. Karla")).toBe("Maternal 2");
+  });
+
+  it("série da rematrícula segue a data de corte do ano letivo de referência", () => {
+    // Nascido em 2020-05-10: 6 anos em 31/03/2027 → 1º Ano.
+    expect(serieRematricula({ dataNascimento: "2020-05-10", serie: "2º Período" }, 2027)).toBe(
+      "1º Ano",
+    );
+    // Sem data de nascimento: série seguinte à atual.
+    expect(serieRematricula({ dataNascimento: "", serie: "2º Período" }, 2027)).toBe("1º Ano");
+    expect(serieRematricula({ dataNascimento: "", serie: "desconhecida" }, 2027)).toBe(
+      "desconhecida",
+    );
+  });
+});
+
+describe("apresentação do material ao responsável (CEC 2027)", () => {
+  it("1º Ano: valor 2027 com reajuste NEGATIVO frente a 2026", () => {
+    const a = apresentacaoMaterial({
+      unidade: "CEC",
+      serie: "1º Ano",
+      anoLetivo: 2027,
+      valorAnual: 3427.48,
+    });
+    expect(a.reajuste).toEqual({ anoAnterior: 2026, valorAnterior: 3439.1, percentual: -0.34 });
+    expect(a.texto).toBe("Valor 2027: R$ 3.427,48 (reajuste de -0,34% em relação a 2026)");
+    expect(a.itens).toEqual([
+      "Coleção Principal (Bernoulli)",
+      "Coleção Eu no Mundo",
+      "Material de Arte",
+      "Cultura Inglesa",
+      "Material Coletivo",
+      "Robótica",
+    ]);
+  });
+
+  it("reajustes positivos batem com a tabela por série", () => {
+    const pct = (serie: string, valor: number) =>
+      reajusteMaterial("CEC", serie, 2027, valor)?.percentual;
+    expect(pct("1º Período", 2912.08)).toBe(0.64);
+    expect(pct("2º Período", 2912.08)).toBe(0.64);
+    expect(pct("2º Ano", 3545.88)).toBe(3.1);
+    expect(pct("3º Ano", 3545.74)).toBe(3.1);
+    expect(pct("4º Ano", 3545.88)).toBe(3.1);
+    expect(pct("5º Ano", 3545.88)).toBe(3.1);
+    expect(pct("6º Ano", 3496.84)).toBe(4.71);
+    expect(pct("9º Ano", 3496.84)).toBe(4.71);
+    expect(formatarPercentual(3.1)).toBe("+3,10%");
+    expect(formatarPercentual(-0.34)).toBe("-0,34%");
+  });
+
+  it("itens inclusos por faixa, e vazio para Maternal e outras unidades", () => {
+    expect(itensMaterialInclusos("CEC", "2º Período")).toEqual([
+      "Coleção Principal (Bernoulli)",
+      "Coleção Eu no Mundo",
+      "Cultura Inglesa",
+      "Material Coletivo",
+      "Robótica",
+    ]);
+    expect(itensMaterialInclusos("CEC", "9º Ano")).toEqual([
+      "Coleção Principal (Bernoulli)",
+      "Material de Arte",
+      "Cultura Inglesa",
+      "Material Coletivo",
+      "Robótica",
+    ]);
+    expect(itensMaterialInclusos("CEC", "Maternal 2")).toEqual([]);
+    expect(itensMaterialInclusos("Núcleo Belvedere", "2º Período")).toEqual([]);
+  });
+
+  it("sem histórico (outra unidade ou ano) mostra só o valor", () => {
+    const a = apresentacaoMaterial({
+      unidade: "Núcleo Belvedere",
+      serie: "2º Período",
+      anoLetivo: 2027,
+      valorAnual: 2209.5,
+    });
+    expect(a.reajuste).toBeNull();
+    expect(a.texto).toBe("Valor 2027: R$ 2.209,50");
+    expect(reajusteMaterial("CEC", "1º Ano", 2028, 3500)).toBeNull();
   });
 
   it("casa variações de acento e ordinal na mesma chave", () => {

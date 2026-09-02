@@ -570,8 +570,22 @@ function RematriculaPage() {
               <h2 className="mb-1 text-sm font-semibold">Material pedagógico</h2>
               {material?.configurado ? (
                 <>
-                  <p className="mb-3 text-sm text-muted-foreground">
-                    Série {material.serie} — valor anual de {formatarBRL(material.valorAnual)}.
+                  <p className="text-sm text-muted-foreground">
+                    Série {material.serie}
+                    {material.anoLetivo ? ` em ${material.anoLetivo}` : ""}.
+                  </p>
+                  <p className="mt-1 text-sm font-medium">{material.texto}</p>
+                  {material.itens.length > 0 && (
+                    <div className="mt-3 text-sm text-muted-foreground">
+                      <p className="mb-1">Itens inclusos:</p>
+                      <ul className="list-disc space-y-0.5 pl-5">
+                        {material.itens.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <p className="mb-3 mt-3 text-sm text-muted-foreground">
                     Escolha em quantas parcelas quer pagar.
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2">
