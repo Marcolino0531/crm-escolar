@@ -10,6 +10,7 @@
 
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
+import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { toTitleCase } from "@/lib/name-format";
 
@@ -159,6 +160,9 @@ export type GeneroMatricula = (typeof GENEROS_MATRICULA)[number];
 
 export interface MatriculaForm {
   unidade: string;
+  // Ano letivo da matrícula: define em qual ano a turma é procurada (Fase 2).
+  // 0 = ainda não escolhido.
+  anoLetivo: number;
   aluno: {
     nome: string;
     cpf: string;
@@ -175,6 +179,7 @@ export interface MatriculaForm {
 
 export const MATRICULA_FORM_VAZIO: MatriculaForm = {
   unidade: "",
+  anoLetivo: 0,
   aluno: { nome: "", cpf: "", dataNascimento: "", genero: "", naturalidade: "" },
   endereco: ENDERECO_VAZIO,
   pai: RESPONSAVEL_VAZIO,
@@ -227,6 +232,7 @@ export function validarMatriculaForm(
   const erros: ErrosForm = {};
 
   if (!unidadesValidas.includes(form.unidade)) erros.unidade = "Escolha o colégio.";
+  if (!anoLetivoValidoMatricula(form.anoLetivo, hojeYMD)) erros.anoLetivo = "Escolha o ano letivo.";
 
   if (form.aluno.nome.trim().length < 3) erros["aluno.nome"] = "Informe o nome completo do aluno.";
   if (form.aluno.cpf.trim() === "") erros["aluno.cpf"] = "Informe o CPF do aluno.";
@@ -409,6 +415,10 @@ export interface RotinaForm {
   // Sai antes da manhã ou fica além da tarde: aí, e só aí, os horários são
   // digitados dia a dia.
   horarioEstendido: boolean;
+  // Turno das aulas curriculares de quem fica em horário estendido — é o que
+  // define a turma da matrícula, já que o aluno está no colégio nos dois
+  // períodos. Vazio quando não se aplica.
+  horarioCurricular: TurnoTurma | "";
   horarios: HorariosRotina;
   semRefeicoes: boolean;
   refeicoes: RefeicoesRotina;
@@ -425,6 +435,7 @@ export const ROTINA_FORM_VAZIA: RotinaForm = {
   periodoManha: false,
   periodoTarde: false,
   horarioEstendido: false,
+  horarioCurricular: "",
   horarios: {},
   semRefeicoes: false,
   refeicoes: refeicoesVazias(),
@@ -480,7 +491,13 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
  * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
  * ("rotina.horario.1"), para a tela destacar campo a campo.
  */
-export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm {
+export function validarRotinaForm(
+  rotina: RotinaForm,
+  serie: string,
+  // O horário curricular só é cobrado na matrícula nova, que é quem precisa da
+  // turma; na Rematrícula o aluno já tem turma no Sponte.
+  opcoes: { exigirHorarioCurricular?: boolean } = {},
+): ErrosForm {
   const erros: ErrosForm = {};
 
   if (!dataValida(rotina.dataInicio)) erros["rotina.dataInicio"] = "Informe a data de início.";
@@ -489,8 +506,14 @@ export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm 
   if (ativos.length === 0)
     erros["rotina.dias"] = "Escolha ao menos um dia da semana que o aluno frequenta.";
 
-  if (!rotina.periodoManha && !rotina.periodoTarde && !rotina.horarioEstendido)
-    erros["rotina.periodos"] = "Marque a manhã, a tarde ou o horário estendido.";
+  if (periodoSelecionado(rotina) === null)
+    erros["rotina.periodos"] = "Escolha a manhã, a tarde ou o horário estendido.";
+
+  if (rotina.horarioEstendido && opcoes.exigirHorarioCurricular === true) {
+    if (rotina.horarioCurricular === "")
+      erros["rotina.horarioCurricular"] =
+        "Escolha o turno das aulas curriculares (manhã ou tarde).";
+  }
 
   if (rotina.horarioEstendido) {
     for (const dia of ativos) {
@@ -511,12 +534,35 @@ export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm 
   return erros;
 }
 
+export type PeriodoRotina = "manha" | "tarde" | "estendido";
+
+// O período é escolha única: mais de um marcado (dado legado ou payload
+// forjado) não define turno nem horário e conta como nenhum.
+export function periodoSelecionado(rotina: RotinaForm): PeriodoRotina | null {
+  const marcados: PeriodoRotina[] = [];
+  if (rotina.periodoManha) marcados.push("manha");
+  if (rotina.periodoTarde) marcados.push("tarde");
+  if (rotina.horarioEstendido) marcados.push("estendido");
+  return marcados.length === 1 ? marcados[0] : null;
+}
+
+export function selecionarPeriodo(rotina: RotinaForm, periodo: PeriodoRotina): RotinaForm {
+  return {
+    ...rotina,
+    periodoManha: periodo === "manha",
+    periodoTarde: periodo === "tarde",
+    horarioEstendido: periodo === "estendido",
+    horarioCurricular: periodo === "estendido" ? rotina.horarioCurricular : "",
+  };
+}
+
 export interface RotinaPersistida {
   dataInicio: string;
   diasAtivos: Weekday[];
   periodoManha: boolean;
   periodoTarde: boolean;
   horarioEstendido: boolean;
+  horarioCurricular: TurnoTurma | "";
   // Um item por dia ativo, sempre com entrada e saída preenchidas.
   horarios: { weekday: Weekday; entrada: string; saida: string }[];
   semRefeicoes: boolean;
@@ -545,6 +591,7 @@ export function montarRotinaPersistida(rotina: RotinaForm, serie: string): Rotin
     periodoManha: rotina.periodoManha,
     periodoTarde: rotina.periodoTarde,
     horarioEstendido: rotina.horarioEstendido,
+    horarioCurricular: rotina.horarioEstendido ? rotina.horarioCurricular : "",
     horarios: ativos.map((d) => ({
       weekday: d,
       entrada: horarios[d]?.entrada ?? "",
@@ -564,9 +611,10 @@ export interface PlanoRotinaExistente {
 
 /**
  * Converte um plano já cadastrado no formulário da etapa de rotina, usado como
- * sugestão inicial na Rematrícula. Horário que bate exatamente com o quadro
- * fixo da série vira checkbox de período; qualquer outro cai no horário
- * estendido, com os horários reais dia a dia.
+ * sugestão inicial na Rematrícula. Horário que bate exatamente com um dos
+ * turnos fixos da série vira aquele período; qualquer outro (inclusive o
+ * integral, que ocupa manhã e tarde) cai no horário estendido, com os horários
+ * reais dia a dia.
  */
 export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: string): RotinaForm {
   const dias = DIAS_UTEIS.filter((d) => plano.horarios.some((h) => h.weekday === d));
@@ -585,8 +633,7 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
   const tarde = saida === padrao.tarde.saida;
   const soManha = manha && saida === padrao.manha.saida;
   const soTarde = tarde && entrada === padrao.tarde.entrada;
-  const integral = manha && tarde;
-  const padronizado = dias.length > 0 && (soManha || soTarde || integral);
+  const padronizado = dias.length > 0 && (soManha || soTarde);
 
   const refeicoes = refeicoesVazias();
   for (const r of plano.refeicoes) {
@@ -599,9 +646,10 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
     dataInicio: plano.dataInicio ?? "",
     frequenciaParcial: dias.length > 0 && dias.length < DIAS_UTEIS.length,
     diasSelecionados: dias.length > 0 ? dias : [...DIAS_UTEIS],
-    periodoManha: padronizado && (soManha || integral),
-    periodoTarde: padronizado && (soTarde || integral),
+    periodoManha: padronizado && soManha,
+    periodoTarde: padronizado && soTarde,
     horarioEstendido: dias.length > 0 && !padronizado,
+    horarioCurricular: "",
     horarios,
     semRefeicoes: dias.length > 0 && plano.refeicoes.length === 0,
     refeicoes,

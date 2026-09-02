@@ -5,7 +5,7 @@ import KanbanBoard from "@/components/crm/KanbanBoard";
 import LeadForm from "@/components/crm/LeadForm";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { Button } from "@/components/ui/button";
-import { useLeads, useOnboarding } from "@/lib/crm/hooks";
+import { useLeads } from "@/lib/crm/hooks";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
@@ -22,7 +22,6 @@ function AdmissoesPage() {
   const podeVer = canView("admissoes");
   const podeEditar = canEdit("admissoes");
   const leadsHook = useLeads();
-  const onboardingHook = useOnboarding();
 
   const [formularioAberto, setFormularioAberto] = useState(false);
   const [leadEditando, setLeadEditando] = useState<Lead | null>(null);
@@ -38,32 +37,9 @@ function AdmissoesPage() {
   const now = new Date();
   const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 
-  // "Avançar": envia o(s) aluno(s) da matrícula para o Onboarding e arquiva o
-  // lead (some do funil, mas o registro é preservado no banco).
-  const handleAvancarParaOnboarding = (leadId: string) => {
-    const lead = leadsHook.leads.find((l) => l.id === leadId);
-    if (!lead) return;
-    const alunos =
-      lead.alunos.length > 0
-        ? lead.alunos
-        : [
-            {
-              nome: lead.nomeAluno,
-              dataNascimento: lead.dataNascimento,
-              idade: lead.idade,
-              turma: lead.turma,
-            },
-          ];
-    alunos.forEach((aluno) => {
-      onboardingHook.adicionarAluno({
-        schoolId: lead.schoolId,
-        leadId: lead.id,
-        nomeAluno: aluno.nome,
-        turma: aluno.turma,
-        nomePaiMae: lead.nomePaiMae,
-        telefone: lead.telefone,
-      });
-    });
+  // O cartão só sai do funil. O registro de Onboarding nasce da matrícula
+  // formalizada (aluno criado no Sponte e matriculado na turma).
+  const handleArquivarLead = (leadId: string) => {
     leadsHook.arquivarLead(leadId);
   };
 
@@ -134,7 +110,7 @@ function AdmissoesPage() {
 
       <KanbanBoard
         leadsHook={leadsHook}
-        onAvancarParaOnboarding={podeEditar ? handleAvancarParaOnboarding : undefined}
+        onArquivarLead={podeEditar ? handleArquivarLead : undefined}
         onEditar={(lead) => setLeadEditando(lead)}
         isAdmin={podeEditar}
         consolidado={consolidado}
