@@ -70,19 +70,20 @@ export interface TarefaOnboardingConfig {
 }
 
 export type TarefaOnboardingId =
-  | "envio-ficha-matricula"
-  | "ficha-matricula-respondida"
-  | "cadastro-erp"
-  | "envio-contrato"
-  | "assinatura-contrato"
+  | "genero-sponte"
+  | "conferencia-turma"
   | "boas-vindas"
   | "grupo-whatsapp"
-  | "bernoulli-login";
+  | "assinatura-contrato"
+  | "entrega-materiais";
 
 export interface OnboardingAluno {
   id: string;
   schoolId: string;
   leadId: string | null;
+  // Protocolo da submissão pública que formalizou a matrícula (null nos
+  // registros antigos, criados pelo funil Comercial).
+  submissionId: string | null;
   nomeAluno: string;
   turma: string;
   nomePaiMae: string;

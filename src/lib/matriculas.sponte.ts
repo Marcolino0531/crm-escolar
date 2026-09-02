@@ -16,8 +16,10 @@
 //                         responsável) e parentesco/financeiro/didático valem
 //                         POR VÍNCULO, não para o responsável inteiro.
 //
-// A API NÃO tem campo de nacionalidade na inserção (só na leitura), então ela é
-// registrada na observação do aluno. Naturalidade vai em sCidadeNatal.
+// Nacionalidade e estado civil do aluno não são enviados: nenhuma das 138
+// operações do WSDL aceita esses campos (só a tela nativa do Sponte grava), e a
+// secretaria os preenche manualmente lá. Naturalidade vai em sCidadeNatal e o
+// gênero em sSexo ("Feminino"/"Masculino", os únicos valores usados na base).
 
 import {
   callSponte,
@@ -173,7 +175,6 @@ export interface AlunoMatricula {
   rg?: string;
   sexo?: string;
   naturalidade?: string;
-  nacionalidade?: string;
   email?: string;
   telefone?: string;
   celular?: string;
@@ -470,13 +471,15 @@ async function vincularResponsavelExistente(
 
 function observacaoAluno(aluno: AlunoMatricula): string {
   const partes = [aluno.observacao?.trim() ?? ""];
-  // A inserção do Sponte não tem campo de nacionalidade (só a leitura tem).
-  if (aluno.nacionalidade?.trim()) partes.push(`Nacionalidade: ${aluno.nacionalidade.trim()}`);
   partes.push("Matrícula criada pelo formulário de matrícula (School Hub).");
   return partes.filter(Boolean).join(" | ");
 }
 
-function camposAluno(aluno: AlunoMatricula, endereco: EnderecoResolvido, nascimento: string) {
+export function camposAluno(
+  aluno: AlunoMatricula,
+  endereco: EnderecoResolvido,
+  nascimento: string,
+) {
   return {
     sNome: aluno.nome.trim(),
     sMidia: aluno.midia?.trim() ?? "",

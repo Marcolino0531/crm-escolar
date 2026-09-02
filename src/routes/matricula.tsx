@@ -6,7 +6,7 @@
 // /matriculas. O Forms continua funcionando em paralelo.
 
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -36,6 +36,7 @@ import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
+  GENEROS_MATRICULA,
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
   SAUDE_FORM_VAZIO,
@@ -51,6 +52,7 @@ import {
   validarRotinaForm,
   type EnderecoForm,
   type ErrosForm,
+  type GeneroMatricula,
   type MatriculaForm,
   type ParentescoForm,
   type DocumentosForm,
@@ -386,9 +388,13 @@ function MatriculaPublicaPage() {
   const [captchaToken, setCaptchaToken] = useState("");
   const [enviado, setEnviado] = useState(false);
 
-  const unidades = config.data?.unidades ?? [];
-  // Mesma regra de corte (31/03) da admissão interna.
-  const serie = serieCalculada(form.aluno.dataNascimento);
+  const unidades = useMemo(() => config.data?.unidades ?? [], [config.data?.unidades]);
+  const anosLetivos = useMemo(() => config.data?.anosLetivos ?? [], [config.data?.anosLetivos]);
+  // A data do servidor manda: a máquina do responsável pode estar com o relógio
+  // errado e reprovar o ano letivo que o envio aceita.
+  const hoje = config.data?.hoje ?? hojeLocal();
+  // Mesma regra de corte (31/03) da admissão interna, no ano letivo escolhido.
+  const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
 
   // Unidade vinda do link (?colegio=CEC) — só quando ela existe de fato.
   useEffect(() => {
@@ -396,6 +402,13 @@ function MatriculaPublicaPage() {
       setForm((atual) => ({ ...atual, unidade: colegio }));
     }
   }, [colegio, unidades, form.unidade]);
+
+  useEffect(() => {
+    const primeiro = anosLetivos[0];
+    if (form.anoLetivo === 0 && primeiro !== undefined) {
+      setForm((atual) => ({ ...atual, anoLetivo: primeiro }));
+    }
+  }, [anosLetivos, form.anoLetivo]);
 
   const enviar = useMutation({
     mutationFn: async () => enviarFn({ data: { captchaToken, form, rotina, saude, documentos } }),
@@ -412,8 +425,8 @@ function MatriculaPublicaPage() {
   });
 
   const errosDaEtapa = (numero: 1 | 2 | 3 | 4): ErrosForm => {
-    if (numero === 1) return validarMatriculaForm(form, hojeLocal(), unidades);
-    if (numero === 2) return validarRotinaForm(rotina, serie);
+    if (numero === 1) return validarMatriculaForm(form, hoje, unidades);
+    if (numero === 2) return validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true });
     if (numero === 3) return validarSaudeForm(saude);
     return validarDocumentosForm(documentos, serie);
   };
@@ -438,8 +451,8 @@ function MatriculaPublicaPage() {
 
   const submeter = () => {
     const encontrados = {
-      ...validarMatriculaForm(form, hojeLocal(), unidades),
-      ...validarRotinaForm(rotina, serie),
+      ...validarMatriculaForm(form, hoje, unidades),
+      ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
     };
@@ -526,6 +539,24 @@ function MatriculaPublicaPage() {
                 </Select>
               </Campo>
 
+              <Campo id="ano-letivo" label="Ano letivo" erro={erros.anoLetivo}>
+                <Select
+                  value={form.anoLetivo === 0 ? "" : String(form.anoLetivo)}
+                  onValueChange={(ano) => setForm({ ...form, anoLetivo: Number(ano) })}
+                >
+                  <SelectTrigger id="ano-letivo">
+                    <SelectValue placeholder="Escolha o ano letivo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {anosLetivos.map((ano) => (
+                      <SelectItem key={ano} value={String(ano)}>
+                        {ano}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Campo>
+
               <section className="space-y-4 rounded-lg border p-4">
                 <h2 className="font-medium">Dados do aluno</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -573,6 +604,28 @@ function MatriculaPublicaPage() {
                         Série correspondente: <strong>{serie}</strong>
                       </p>
                     )}
+                  </Campo>
+                  <Campo id="aluno-genero" label="Gênero" erro={erros["aluno.genero"]}>
+                    <Select
+                      value={form.aluno.genero}
+                      onValueChange={(v) =>
+                        setForm({
+                          ...form,
+                          aluno: { ...form.aluno, genero: v as GeneroMatricula },
+                        })
+                      }
+                    >
+                      <SelectTrigger id="aluno-genero">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GENEROS_MATRICULA.map((g) => (
+                          <SelectItem key={g} value={g}>
+                            {g}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </Campo>
                   <Campo
                     id="aluno-naturalidade"
@@ -647,7 +700,13 @@ function MatriculaPublicaPage() {
             </div>
 
             {etapa === 2 && (
-              <RotinaEscolar rotina={rotina} erros={erros} serie={serie} onChange={setRotina} />
+              <RotinaEscolar
+                rotina={rotina}
+                erros={erros}
+                serie={serie}
+                perguntarHorarioCurricular
+                onChange={setRotina}
+              />
             )}
 
             {etapa === 3 && <QuestionarioSaude saude={saude} erros={erros} onChange={setSaude} />}

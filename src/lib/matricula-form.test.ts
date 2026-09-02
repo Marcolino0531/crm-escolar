@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { camposAluno } from "./matriculas.sponte";
 import {
   MAX_SUBMISSOES_POR_IP,
   MATRICULA_FORM_VAZIO,
@@ -10,7 +11,10 @@ import {
   formatarCep,
   formatarCpf,
   formValido,
+  GENEROS_MATRICULA,
   inicioJanelaLimite,
+  MIDIAS_SPONTE,
+  SEXOS_SPONTE,
   montarPayloadMatricula,
   responsavelPreenchido,
   telefoneValido,
@@ -30,10 +34,12 @@ function formCompleto(over: Partial<MatriculaForm> = {}): MatriculaForm {
   return {
     ...MATRICULA_FORM_VAZIO,
     unidade: "CEC",
+    anoLetivo: 2026,
     aluno: {
       nome: "Ryan Kleber Braga de Morais",
       cpf: CPF_ALUNO,
       dataNascimento: "2015-04-10",
+      genero: "Masculino",
       naturalidade: "Belo Horizonte",
     },
     endereco: {
@@ -144,6 +150,21 @@ describe("validarMatriculaForm", () => {
     expect(formValido(validarMatriculaForm(formCompleto(), HOJE, UNIDADES))).toBe(true);
   });
 
+  it("aceita só o ano vigente e o seguinte, contados pela data do servidor", () => {
+    expect(
+      formValido(validarMatriculaForm(formCompleto({ anoLetivo: 2027 }), HOJE, UNIDADES)),
+    ).toBe(true);
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 2025 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 2028 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
+    expect(
+      validarMatriculaForm(formCompleto({ anoLetivo: 0 }), HOJE, UNIDADES).anoLetivo,
+    ).toBeDefined();
+  });
+
   it("exige colégio válido", () => {
     const erros = validarMatriculaForm(formCompleto({ unidade: "Outro" }), HOJE, UNIDADES);
     expect(erros.unidade).toBeDefined();
@@ -151,13 +172,16 @@ describe("validarMatriculaForm", () => {
 
   it("aponta os campos obrigatórios do aluno", () => {
     const erros = validarMatriculaForm(
-      formCompleto({ aluno: { nome: "Jo", cpf: "", dataNascimento: "", naturalidade: "" } }),
+      formCompleto({
+        aluno: { nome: "Jo", cpf: "", dataNascimento: "", genero: "", naturalidade: "" },
+      }),
       HOJE,
       UNIDADES,
     );
     expect(Object.keys(erros).sort()).toEqual([
       "aluno.cpf",
       "aluno.dataNascimento",
+      "aluno.genero",
       "aluno.naturalidade",
       "aluno.nome",
     ]);
@@ -253,6 +277,69 @@ describe("montarPayloadMatricula", () => {
       },
     });
     expect(payload.responsaveis).toHaveLength(2);
+  });
+
+  it.each(["Feminino", "Masculino"] as const)("envia o gênero escolhido (%s)", (genero) => {
+    const form = formCompleto();
+    const payload = montarPayloadMatricula(
+      { ...form, aluno: { ...form.aluno, genero } },
+      "site-123",
+    );
+    expect(payload.aluno.sexo).toBe(genero);
+  });
+
+  it("não manda estado civil nem nacionalidade ao Sponte (a API ignora)", () => {
+    const form = formCompleto();
+    const payload = montarPayloadMatricula(
+      { ...form, aluno: { ...form.aluno, genero: "Feminino" } },
+      "site-123",
+    );
+    const campos = camposAluno(
+      payload.aluno,
+      {
+        cep: payload.endereco.cep,
+        logradouro: payload.endereco.logradouro ?? "",
+        numero: payload.endereco.numero,
+        complemento: payload.endereco.complemento ?? "",
+        bairro: payload.endereco.bairro ?? "",
+        cidade: payload.endereco.cidade ?? "",
+      },
+      "2015-04-10T00:00:00",
+    );
+    expect(campos.sSexo).toBe("Feminino");
+    expect(Object.keys(campos)).not.toContain("sEstadoCivil");
+    expect(Object.keys(campos)).not.toContain("sNacionalidade");
+    expect(campos.sObservacao).not.toMatch(/Nacionalidade|Estado civil/i);
+  });
+
+  it("usa a grafia exata da lista fechada de gênero do Sponte", () => {
+    expect([...GENEROS_MATRICULA]).toEqual([...SEXOS_SPONTE]);
+    for (const genero of GENEROS_MATRICULA) {
+      const form = formCompleto();
+      const payload = montarPayloadMatricula(
+        { ...form, aluno: { ...form.aluno, genero } },
+        "site-123",
+      );
+      const campos = camposAluno(
+        payload.aluno,
+        {
+          cep: payload.endereco.cep,
+          logradouro: payload.endereco.logradouro ?? "",
+          numero: payload.endereco.numero,
+          complemento: payload.endereco.complemento ?? "",
+          bairro: payload.endereco.bairro ?? "",
+          cidade: payload.endereco.cidade ?? "",
+        },
+        "2015-04-10T00:00:00",
+      );
+      expect(SEXOS_SPONTE).toContain(campos.sSexo);
+      expect(campos.sSexo).toBe(genero);
+    }
+  });
+
+  it("envia uma mídia que existe no cadastro do Sponte", () => {
+    const payload = montarPayloadMatricula(formCompleto(), "site-123");
+    expect(MIDIAS_SPONTE).toContain(payload.aluno.midia);
   });
 
   it("envia CPF e telefone apenas em dígitos", () => {

@@ -7,20 +7,18 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
 import {
   DIAS_UTEIS,
   HORARIOS_PADRAO,
   diasAtivosRotina,
-  periodoSelecionado,
   segmentoDaSerie,
   selecionarPeriodo,
   type ErrosForm,
   type HorarioDia,
-  type PeriodoRotina,
   type RotinaForm,
 } from "@/lib/matricula-form";
+import { ROTULO_TURNO, TURNOS_TURMA, type TurnoTurma } from "@/lib/matricula-turma";
 
 function alternar<T>(lista: T[], valor: T): T[] {
   return lista.includes(valor) ? lista.filter((v) => v !== valor) : [...lista, valor];
@@ -32,6 +30,7 @@ export function RotinaEscolar({
   serie,
   titulo = "Rotina Escolar",
   descricao = "Quando o aluno começa, em que horários fica no colégio e quais refeições são contratadas.",
+  perguntarHorarioCurricular = false,
   onChange,
 }: {
   rotina: RotinaForm;
@@ -40,6 +39,8 @@ export function RotinaEscolar({
   serie: string;
   titulo?: string;
   descricao?: string;
+  // Só na matrícula nova: o turno curricular é o que define a turma do aluno.
+  perguntarHorarioCurricular?: boolean;
   onChange: (r: RotinaForm) => void;
 }) {
   const ativos = diasAtivosRotina(rotina);
@@ -85,7 +86,7 @@ export function RotinaEscolar({
             checked={rotina.frequenciaParcial}
             onCheckedChange={(v) => onChange({ ...rotina, frequenciaParcial: v === true })}
           />
-          Meu filho não frequenta todos os dias úteis (segunda a sexta)
+          O(A) aluno(a) não frequenta todos os dias úteis (segunda a sexta)
         </label>
 
         {rotina.frequenciaParcial && (
@@ -114,46 +115,84 @@ export function RotinaEscolar({
         )}
       </div>
 
-      {/* Escolha única entre manhã, tarde e horário estendido. Os dois
-          primeiros usam o horário fixo do colégio; o preenchimento manual por
-          dia existe apenas no Horário Estendido. */}
+      {/* Períodos com horário fixo do colégio; o preenchimento manual por dia
+          existe apenas no Horário Estendido. */}
       <div className="space-y-3">
         <p className="text-sm font-medium">Horários</p>
 
         <div className="space-y-2 rounded-md border p-3">
-          <RadioGroup
-            className="gap-2"
-            value={periodoSelecionado(rotina) ?? ""}
-            onValueChange={(valor) => onChange(selecionarPeriodo(rotina, valor as PeriodoRotina))}
-          >
-            <label className="flex items-center gap-2 text-sm">
-              <RadioGroupItem value="manha" id="rotina-periodo-manha" />
-              <span>
-                Manhã — <strong>{padrao.manha.entrada}</strong> às{" "}
-                <strong>{padrao.manha.saida}</strong>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="rotina-periodo"
+              className="size-4"
+              checked={rotina.periodoManha}
+              onChange={() => onChange(selecionarPeriodo(rotina, "manha"))}
+            />
+            <span>
+              Manhã — <strong>{padrao.manha.entrada}</strong> às{" "}
+              <strong>{padrao.manha.saida}</strong>
+            </span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="rotina-periodo"
+              className="size-4"
+              checked={rotina.periodoTarde}
+              onChange={() => onChange(selecionarPeriodo(rotina, "tarde"))}
+            />
+            <span>
+              Tarde — <strong>{padrao.tarde.entrada}</strong> às{" "}
+              <strong>{padrao.tarde.saida}</strong>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="rotina-periodo"
+              className="mt-0.5 size-4"
+              checked={rotina.horarioEstendido}
+              onChange={() => onChange(selecionarPeriodo(rotina, "estendido"))}
+            />
+            <span>
+              Horário Estendido — entra antes ou sai depois dos horários acima
+              <span className="block text-xs text-muted-foreground">
+                Informe os horários reais de cada dia.
               </span>
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <RadioGroupItem value="tarde" id="rotina-periodo-tarde" />
-              <span>
-                Tarde — <strong>{padrao.tarde.entrada}</strong> às{" "}
-                <strong>{padrao.tarde.saida}</strong>
-              </span>
-            </label>
-            <label className="flex items-start gap-2 text-sm">
-              <RadioGroupItem value="estendido" id="rotina-periodo-estendido" className="mt-0.5" />
-              <span>
-                Horário Estendido — entra antes ou sai depois dos horários acima
-                <span className="block text-xs text-muted-foreground">
-                  Informe os horários reais de cada dia.
-                </span>
-              </span>
-            </label>
-          </RadioGroup>
+            </span>
+          </label>
           {erros["rotina.periodos"] && (
             <p className="text-xs text-destructive">{erros["rotina.periodos"]}</p>
           )}
         </div>
+
+        {rotina.horarioEstendido && perguntarHorarioCurricular && (
+          <div className="space-y-2 rounded-md border p-3">
+            <p className="text-sm font-medium">Horário curricular</p>
+            <p className="text-xs text-muted-foreground">
+              Em qual turno o aluno assiste às aulas curriculares? É o turno da turma em que ele
+              será matriculado.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              {TURNOS_TURMA.map((turno: TurnoTurma) => (
+                <label key={turno} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="rotina-horario-curricular"
+                    className="size-4"
+                    checked={rotina.horarioCurricular === turno}
+                    onChange={() => onChange({ ...rotina, horarioCurricular: turno })}
+                  />
+                  {ROTULO_TURNO[turno]}
+                </label>
+              ))}
+            </div>
+            {erros["rotina.horarioCurricular"] && (
+              <p className="text-xs text-destructive">{erros["rotina.horarioCurricular"]}</p>
+            )}
+          </div>
+        )}
 
         {rotina.horarioEstendido &&
           ativos.map((dia) => {

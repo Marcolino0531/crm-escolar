@@ -34,6 +34,8 @@ import {
   padronizarMatriculaForm,
   padronizarSaudeForm,
   serieCalculada,
+  textoContatosEmergencia,
+  textoPessoasAutorizadas,
   validarDocumentosForm,
   validarMatriculaForm,
   validarRotinaForm,
@@ -44,12 +46,22 @@ import {
   type RotinaForm,
   type SaudeForm,
 } from "@/lib/matricula-form";
+import { anosLetivosDisponiveis, turnoDaRotina } from "@/lib/matricula-turma";
+import {
+  formalizarMatriculaTurma,
+  type ResultadoFormalizacao,
+} from "@/lib/matricula-turma.formalizar";
 import { receberMatricula } from "@/lib/matriculas.receber";
 
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 export interface ConfigMatriculaPublica {
   unidades: string[];
+  // Ano vigente e o seguinte, sempre pela data do servidor (a tela nunca
+  // decide isso sozinha, e a validação do envio repete a conta).
+  anosLetivos: number[];
+  // Data do servidor (YYYY-MM-DD) usada nas validações da tela.
+  hoje: string;
   // Site key do Turnstile servida em runtime (não é segredo) — assim trocar a
   // chave não exige rebuild do front.
   turnstileSiteKey: string;
@@ -62,8 +74,11 @@ export const configMatriculaPublica = createServerFn({ method: "GET" }).handler(
   async (): Promise<ConfigMatriculaPublica> => {
     const siteKey = process.env.TURNSTILE_SITE_KEY ?? "";
     const secret = process.env.TURNSTILE_SECRET_KEY ?? "";
+    const hoje = hojeSaoPaulo();
     return {
       unidades: UNIDADES_SPONTE,
+      anosLetivos: [...anosLetivosDisponiveis(hoje)],
+      hoje,
       turnstileSiteKey: siteKey,
       captchaConfigurado: siteKey !== "" && secret !== "",
     };
@@ -148,6 +163,7 @@ const RotinaInput = z.object({
   periodoManha: z.boolean(),
   periodoTarde: z.boolean(),
   horarioEstendido: z.boolean(),
+  horarioCurricular: z.enum(["M", "T", ""]),
   horarios: z.record(z.string(), HorarioInput),
   semRefeicoes: z.boolean(),
   refeicoes: z.object({
@@ -159,17 +175,25 @@ const RotinaInput = z.object({
 });
 
 const RespostaSaudeInput = z.object({
-  opcao: z.enum(["Sim", "Não", "Outro", ""]),
+  opcao: z.enum(["Sim", "Não", ""]),
   detalhe: z.string(),
 });
 
+const ContatoEmergenciaInput = z.object({
+  nome: z.string().max(120),
+  telefone: z.string().max(20),
+  parentesco: z.string().max(60),
+});
+
+const PessoaAutorizadaInput = ContatoEmergenciaInput.extend({ cpf: z.string().max(14) });
+
 const SaudeInput = z.object({
-  contatoEmergencia: z.string(),
+  contatosEmergencia: z.array(ContatoEmergenciaInput).max(10),
   alergia: RespostaSaudeInput,
   problemaSaude: RespostaSaudeInput,
   medicamentoContinuo: RespostaSaudeInput,
   planoSaude: RespostaSaudeInput,
-  pessoasAutorizadas: z.string(),
+  pessoasAutorizadas: z.array(PessoaAutorizadaInput).max(10),
   corRaca: z.string(),
   outrasInformacoes: z.string(),
 });
@@ -194,10 +218,14 @@ const EnviarInput = z.object({
   documentos: DocumentosMatriculaInput,
   form: z.object({
     unidade: z.string(),
+    anoLetivo: z.number(),
     aluno: z.object({
       nome: z.string(),
       cpf: z.string(),
       dataNascimento: z.string(),
+      // Sem isso o gênero era descartado no servidor e o envio inteiro caía na
+      // validação (o Sponte recebe a grafia por extenso em sSexo).
+      genero: z.enum(["Feminino", "Masculino", ""]),
       naturalidade: z.string(),
     }),
     endereco: EnderecoInput,
@@ -314,7 +342,7 @@ async function salvarSaude(
       sponte_aluno_id: alunoId,
       aluno_nome: form.aluno.nome.trim(),
       serie,
-      contato_emergencia: saude.contatoEmergencia.trim(),
+      contato_emergencia: textoContatosEmergencia(saude.contatosEmergencia),
       alergia: saude.alergia.opcao,
       alergia_detalhe: saude.alergia.detalhe.trim(),
       problema_saude: saude.problemaSaude.opcao,
@@ -323,7 +351,7 @@ async function salvarSaude(
       medicamento_continuo_detalhe: saude.medicamentoContinuo.detalhe.trim(),
       plano_saude: saude.planoSaude.opcao,
       plano_saude_detalhe: saude.planoSaude.detalhe.trim(),
-      pessoas_autorizadas: saude.pessoasAutorizadas.trim(),
+      pessoas_autorizadas: textoPessoasAutorizadas(saude.pessoasAutorizadas),
       cor_raca: saude.corRaca,
       outras_informacoes: saude.outrasInformacoes.trim(),
     } as never,
@@ -388,6 +416,7 @@ async function salvarRotina(
       periodo_manha: dados.periodoManha,
       periodo_tarde: dados.periodoTarde,
       horario_estendido: dados.horarioEstendido,
+      horario_curricular: dados.horarioCurricular,
       horarios: dados.horarios,
       sem_refeicoes: dados.semRefeicoes,
       refeicoes: dados.refeicoes,
@@ -397,6 +426,75 @@ async function salvarRotina(
   // A matrícula já está no Sponte: falhar aqui não pode desfazer nada nem
   // esconder o sucesso do responsável — fica o registro para a secretaria.
   if (error) console.error("[matrículas] falha ao gravar a rotina escolar:", error.message);
+}
+
+// Matrícula na turma + onboarding, depois do aluno já criado no Sponte. Nada
+// aqui pode desfazer o cadastro: o que falhar vira pendência na submissão para a
+// secretaria resolver na mão.
+async function formalizar(
+  form: MatriculaForm,
+  rotina: RotinaForm,
+  serie: string,
+  submissionId: string,
+  alunoId: number | null,
+): Promise<void> {
+  const turno = turnoDaRotina(rotina);
+  const registrar = async (campos: Record<string, unknown>): Promise<void> => {
+    const { error } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .update({
+        ano_letivo: form.anoLetivo,
+        turno,
+        ...campos,
+      } as never)
+      .eq("submission_id", submissionId);
+    if (error) console.error("[matrículas] falha ao gravar o resultado da turma:", error.message);
+  };
+
+  if (alunoId === null) {
+    await registrar({
+      turma_status: "sem_turma",
+      turma_pendencia: "Matrícula sem AlunoID do Sponte — matricule a turma manualmente.",
+    });
+    return;
+  }
+
+  let resultado: ResultadoFormalizacao;
+  try {
+    resultado = await formalizarMatriculaTurma({
+      submissionId,
+      unidade: form.unidade,
+      alunoId,
+      alunoNome: form.aluno.nome.trim(),
+      serie,
+      turno,
+      anoLetivo: form.anoLetivo,
+      dataMatricula: hojeSaoPaulo(),
+      responsavel: [form.mae, form.pai].map((r) => ({
+        nome: r.nome.trim(),
+        telefone: r.telefone.trim(),
+        email: r.email.trim(),
+      })),
+    });
+  } catch (e) {
+    const erro = e instanceof Error ? e.message : String(e);
+    console.error("[matrículas] falha ao matricular na turma:", erro);
+    await registrar({ turma_status: "erro", turma_pendencia: erro.slice(0, 500) });
+    return;
+  }
+
+  const { turma } = resultado;
+  await registrar({
+    turma_status: turma.status,
+    sponte_curso_id: turma.cursoId,
+    sponte_turma_id: turma.turmaId,
+    turma_nome: turma.turmaNome,
+    sponte_contrato_id: turma.contratoId,
+    turma_pendencia:
+      turma.status === "matriculado" ? null : (turma.erro ?? "").slice(0, 500) || null,
+    onboarding_id: resultado.onboardingId,
+    boas_vindas_status: resultado.boasVindas,
+  });
 }
 
 export const enviarMatriculaPublica = createServerFn({ method: "POST" })
@@ -434,10 +532,10 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     const rotina = data.rotina as RotinaForm;
     const saude = padronizarSaudeForm(data.saude as SaudeForm);
     const documentos = data.documentos as DocumentosForm;
-    const serie = serieCalculada(form.aluno.dataNascimento);
+    const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
     const erros = {
       ...validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE),
-      ...validarRotinaForm(rotina, serie),
+      ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
     };
@@ -455,6 +553,7 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
       await salvarRotina(form, rotina, serie, submissionId, alunoId);
       await salvarSaude(form, saude, serie, submissionId, alunoId);
       await salvarDocumentos(form, documentos, submissionId, alunoId);
+      await formalizar(form, rotina, serie, submissionId, alunoId);
       return { ok: true, protocolo: submissionId };
     }
 

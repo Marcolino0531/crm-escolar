@@ -10,7 +10,8 @@
 
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
-import type { MatriculaPayload, ResponsavelMatricula } from "@/lib/matriculas.sponte";
+import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
+import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -18,6 +19,27 @@ export const JANELA_LIMITE_MINUTOS = 60;
 
 export const ORIGEM_SITE = "site";
 export const ORIGEM_GOOGLE_FORMS = "google_forms";
+
+// Mídias do Sponte são um cadastro fechado (GetMidias devolve ID + descrição) e
+// a inserção só aceita uma descrição existente: um nome desconhecido faz a API
+// tentar converter o ID vazio e falhar com
+// `Conversion from string "" to type 'Double' is not valid.`
+export const MIDIAS_SPONTE = [
+  "Anúncios",
+  "Campanhas",
+  "Folder",
+  "Facebook",
+  "Indicação",
+  "Internet",
+  "WhatsApp",
+] as const;
+
+export const MIDIA_MATRICULA_SITE = "Internet";
+
+// Gênero no Sponte é lista fechada e `sSexo` só aceita a descrição por extenso:
+// dos 626 alunos do cadastro, 623 têm exatamente "Feminino" ou "Masculino"
+// (GetAlunos), e abreviações como "F"/"M" não casam com nenhuma opção.
+export const SEXOS_SPONTE = ["Feminino", "Masculino"] as const;
 
 export function soDigitos(v: string): string {
   return v.replace(/\D/g, "");
@@ -132,12 +154,20 @@ export const RESPONSAVEL_VAZIO: ResponsavelForm = {
 
 export type ParentescoForm = "pai" | "mae";
 
+export const GENEROS_MATRICULA = SEXOS_SPONTE;
+
+export type GeneroMatricula = (typeof GENEROS_MATRICULA)[number];
+
 export interface MatriculaForm {
   unidade: string;
+  // Ano letivo da matrícula: define em qual ano a turma é procurada (Fase 2).
+  // 0 = ainda não escolhido.
+  anoLetivo: number;
   aluno: {
     nome: string;
     cpf: string;
     dataNascimento: string;
+    genero: GeneroMatricula | "";
     naturalidade: string;
   };
   endereco: EnderecoForm;
@@ -149,7 +179,8 @@ export interface MatriculaForm {
 
 export const MATRICULA_FORM_VAZIO: MatriculaForm = {
   unidade: "",
-  aluno: { nome: "", cpf: "", dataNascimento: "", naturalidade: "" },
+  anoLetivo: 0,
+  aluno: { nome: "", cpf: "", dataNascimento: "", genero: "", naturalidade: "" },
   endereco: ENDERECO_VAZIO,
   pai: RESPONSAVEL_VAZIO,
   mae: RESPONSAVEL_VAZIO,
@@ -201,6 +232,7 @@ export function validarMatriculaForm(
   const erros: ErrosForm = {};
 
   if (!unidadesValidas.includes(form.unidade)) erros.unidade = "Escolha o colégio.";
+  if (!anoLetivoValidoMatricula(form.anoLetivo, hojeYMD)) erros.anoLetivo = "Escolha o ano letivo.";
 
   if (form.aluno.nome.trim().length < 3) erros["aluno.nome"] = "Informe o nome completo do aluno.";
   if (form.aluno.cpf.trim() === "") erros["aluno.cpf"] = "Informe o CPF do aluno.";
@@ -208,6 +240,7 @@ export function validarMatriculaForm(
     erros["aluno.cpf"] = "CPF inválido — confira os dígitos.";
   if (!dataNascimentoValida(form.aluno.dataNascimento, hojeYMD))
     erros["aluno.dataNascimento"] = "Informe uma data de nascimento válida.";
+  if (form.aluno.genero === "") erros["aluno.genero"] = "Selecione o gênero do aluno.";
   if (form.aluno.naturalidade.trim() === "")
     erros["aluno.naturalidade"] = "Informe a naturalidade (cidade de nascimento).";
 
@@ -295,12 +328,13 @@ export function montarPayloadMatricula(
       nome: form.aluno.nome.trim(),
       dataNascimento: form.aluno.dataNascimento.trim(),
       cpf: soDigitos(form.aluno.cpf),
+      sexo: form.aluno.genero,
       naturalidade: form.aluno.naturalidade.trim(),
       // Contato do aluno = do responsável financeiro (o formulário não coleta
       // telefone/e-mail do aluno).
       email: financeiro?.email ?? "",
       celular: financeiro?.celular ?? "",
-      midia: "Site — Formulário de matrícula",
+      midia: MIDIA_MATRICULA_SITE,
     },
     endereco: enderecoPayload(form.endereco),
     responsaveis,
@@ -376,13 +410,15 @@ export interface RotinaForm {
   // escolhidos manualmente.
   frequenciaParcial: boolean;
   diasSelecionados: Weekday[];
-  // Escolha única: manhã, tarde ou horário estendido — nunca dois ao mesmo
-  // tempo. Use `selecionarPeriodo` para trocar a opção.
   periodoManha: boolean;
   periodoTarde: boolean;
   // Sai antes da manhã ou fica além da tarde: aí, e só aí, os horários são
   // digitados dia a dia.
   horarioEstendido: boolean;
+  // Turno das aulas curriculares de quem fica em horário estendido — é o que
+  // define a turma da matrícula, já que o aluno está no colégio nos dois
+  // períodos. Vazio quando não se aplica.
+  horarioCurricular: TurnoTurma | "";
   horarios: HorariosRotina;
   semRefeicoes: boolean;
   refeicoes: RefeicoesRotina;
@@ -399,30 +435,11 @@ export const ROTINA_FORM_VAZIA: RotinaForm = {
   periodoManha: false,
   periodoTarde: false,
   horarioEstendido: false,
+  horarioCurricular: "",
   horarios: {},
   semRefeicoes: false,
   refeicoes: refeicoesVazias(),
 };
-
-export type PeriodoRotina = "manha" | "tarde" | "estendido";
-
-/** Período escolhido, ou `null` enquanto nenhum foi marcado. */
-export function periodoSelecionado(rotina: RotinaForm): PeriodoRotina | null {
-  if (rotina.horarioEstendido) return "estendido";
-  if (rotina.periodoManha) return "manha";
-  if (rotina.periodoTarde) return "tarde";
-  return null;
-}
-
-/** Marca um período e desmarca os demais. */
-export function selecionarPeriodo(rotina: RotinaForm, periodo: PeriodoRotina): RotinaForm {
-  return {
-    ...rotina,
-    periodoManha: periodo === "manha",
-    periodoTarde: periodo === "tarde",
-    horarioEstendido: periodo === "estendido",
-  };
-}
 
 /** Dias que aparecem na tabela de horários: os cinco úteis ou só os escolhidos. */
 export function diasAtivosRotina(rotina: RotinaForm): Weekday[] {
@@ -463,8 +480,9 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
   }
 
   const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  const entrada = rotina.periodoManha ? padrao.manha.entrada : padrao.tarde.entrada;
+  const saida = rotina.periodoTarde ? padrao.tarde.saida : padrao.manha.saida;
   if (!rotina.periodoManha && !rotina.periodoTarde) return resultado;
-  const { entrada, saida } = rotina.periodoManha ? padrao.manha : padrao.tarde;
   for (const dia of ativos) resultado[dia] = { entrada, saida };
   return resultado;
 }
@@ -473,7 +491,13 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
  * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
  * ("rotina.horario.1"), para a tela destacar campo a campo.
  */
-export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm {
+export function validarRotinaForm(
+  rotina: RotinaForm,
+  serie: string,
+  // O horário curricular só é cobrado na matrícula nova, que é quem precisa da
+  // turma; na Rematrícula o aluno já tem turma no Sponte.
+  opcoes: { exigirHorarioCurricular?: boolean } = {},
+): ErrosForm {
   const erros: ErrosForm = {};
 
   if (!dataValida(rotina.dataInicio)) erros["rotina.dataInicio"] = "Informe a data de início.";
@@ -482,11 +506,14 @@ export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm 
   if (ativos.length === 0)
     erros["rotina.dias"] = "Escolha ao menos um dia da semana que o aluno frequenta.";
 
-  const marcados = [rotina.periodoManha, rotina.periodoTarde, rotina.horarioEstendido].filter(
-    Boolean,
-  ).length;
-  if (marcados !== 1)
-    erros["rotina.periodos"] = "Escolha um período: manhã, tarde ou horário estendido.";
+  if (periodoSelecionado(rotina) === null)
+    erros["rotina.periodos"] = "Escolha a manhã, a tarde ou o horário estendido.";
+
+  if (rotina.horarioEstendido && opcoes.exigirHorarioCurricular === true) {
+    if (rotina.horarioCurricular === "")
+      erros["rotina.horarioCurricular"] =
+        "Escolha o turno das aulas curriculares (manhã ou tarde).";
+  }
 
   if (rotina.horarioEstendido) {
     for (const dia of ativos) {
@@ -507,12 +534,35 @@ export function validarRotinaForm(rotina: RotinaForm, serie: string): ErrosForm 
   return erros;
 }
 
+export type PeriodoRotina = "manha" | "tarde" | "estendido";
+
+// O período é escolha única: mais de um marcado (dado legado ou payload
+// forjado) não define turno nem horário e conta como nenhum.
+export function periodoSelecionado(rotina: RotinaForm): PeriodoRotina | null {
+  const marcados: PeriodoRotina[] = [];
+  if (rotina.periodoManha) marcados.push("manha");
+  if (rotina.periodoTarde) marcados.push("tarde");
+  if (rotina.horarioEstendido) marcados.push("estendido");
+  return marcados.length === 1 ? marcados[0] : null;
+}
+
+export function selecionarPeriodo(rotina: RotinaForm, periodo: PeriodoRotina): RotinaForm {
+  return {
+    ...rotina,
+    periodoManha: periodo === "manha",
+    periodoTarde: periodo === "tarde",
+    horarioEstendido: periodo === "estendido",
+    horarioCurricular: periodo === "estendido" ? rotina.horarioCurricular : "",
+  };
+}
+
 export interface RotinaPersistida {
   dataInicio: string;
   diasAtivos: Weekday[];
   periodoManha: boolean;
   periodoTarde: boolean;
   horarioEstendido: boolean;
+  horarioCurricular: TurnoTurma | "";
   // Um item por dia ativo, sempre com entrada e saída preenchidas.
   horarios: { weekday: Weekday; entrada: string; saida: string }[];
   semRefeicoes: boolean;
@@ -541,6 +591,7 @@ export function montarRotinaPersistida(rotina: RotinaForm, serie: string): Rotin
     periodoManha: rotina.periodoManha,
     periodoTarde: rotina.periodoTarde,
     horarioEstendido: rotina.horarioEstendido,
+    horarioCurricular: rotina.horarioEstendido ? rotina.horarioCurricular : "",
     horarios: ativos.map((d) => ({
       weekday: d,
       entrada: horarios[d]?.entrada ?? "",
@@ -560,10 +611,10 @@ export interface PlanoRotinaExistente {
 
 /**
  * Converte um plano já cadastrado no formulário da etapa de rotina, usado como
- * sugestão inicial na Rematrícula. Horário que bate exatamente com o quadro
- * fixo da série vira a opção de período correspondente; qualquer outro caso,
- * inclusive o integral, cai no horário estendido, com os horários reais dia a
- * dia (a escolha é única).
+ * sugestão inicial na Rematrícula. Horário que bate exatamente com um dos
+ * turnos fixos da série vira aquele período; qualquer outro (inclusive o
+ * integral, que ocupa manhã e tarde) cai no horário estendido, com os horários
+ * reais dia a dia.
  */
 export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: string): RotinaForm {
   const dias = DIAS_UTEIS.filter((d) => plano.horarios.some((h) => h.weekday === d));
@@ -598,6 +649,7 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
     periodoManha: padronizado && soManha,
     periodoTarde: padronizado && soTarde,
     horarioEstendido: dias.length > 0 && !padronizado,
+    horarioCurricular: "",
     horarios,
     semRefeicoes: dias.length > 0 && plano.refeicoes.length === 0,
     refeicoes,
@@ -606,7 +658,7 @@ export function rotinaDoPlanoExistente(plano: PlanoRotinaExistente, serie: strin
 
 // ─── Questionário de saúde ──────────────────────────────────────────────────
 
-export const OPCOES_SAUDE = ["Sim", "Não", "Outro"] as const;
+export const OPCOES_SAUDE = ["Sim", "Não"] as const;
 export type OpcaoSaude = (typeof OPCOES_SAUDE)[number];
 
 // Exigência do INEP nº 152/2014.
@@ -626,27 +678,74 @@ export interface RespostaSaude {
 
 export const RESPOSTA_SAUDE_VAZIA: RespostaSaude = { opcao: "", detalhe: "" };
 
+export interface ContatoEmergencia {
+  nome: string;
+  telefone: string;
+  parentesco: string;
+}
+
+export interface PessoaAutorizada extends ContatoEmergencia {
+  cpf: string;
+}
+
+export const CONTATO_EMERGENCIA_VAZIO: ContatoEmergencia = {
+  nome: "",
+  telefone: "",
+  parentesco: "",
+};
+
+export const PESSOA_AUTORIZADA_VAZIA: PessoaAutorizada = { ...CONTATO_EMERGENCIA_VAZIO, cpf: "" };
+
 export interface SaudeForm {
-  contatoEmergencia: string;
+  contatosEmergencia: ContatoEmergencia[];
   alergia: RespostaSaude;
   problemaSaude: RespostaSaude;
   medicamentoContinuo: RespostaSaude;
   planoSaude: RespostaSaude;
-  pessoasAutorizadas: string;
+  pessoasAutorizadas: PessoaAutorizada[];
   corRaca: string;
   outrasInformacoes: string;
 }
 
 export const SAUDE_FORM_VAZIO: SaudeForm = {
-  contatoEmergencia: "",
+  contatosEmergencia: [],
   alergia: RESPOSTA_SAUDE_VAZIA,
   problemaSaude: RESPOSTA_SAUDE_VAZIA,
   medicamentoContinuo: RESPOSTA_SAUDE_VAZIA,
   planoSaude: RESPOSTA_SAUDE_VAZIA,
-  pessoasAutorizadas: "",
+  pessoasAutorizadas: [],
   corRaca: "",
   outrasInformacoes: "",
 };
+
+/**
+ * As duas listas repetíveis são gravadas como texto (uma pessoa por linha), no
+ * mesmo campo que o painel interno já exibe. Linha em branco é descartada: a
+ * família pode adicionar e desistir de preencher sem bloquear o envio.
+ */
+export function textoContatosEmergencia(contatos: readonly ContatoEmergencia[]): string {
+  return contatos
+    .map((c) =>
+      [c.nome, c.parentesco, c.telefone]
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .join(" — "),
+    )
+    .filter((linha) => linha !== "")
+    .join("\n");
+}
+
+export function textoPessoasAutorizadas(pessoas: readonly PessoaAutorizada[]): string {
+  return pessoas
+    .map((p) =>
+      [p.nome, p.parentesco, p.telefone, p.cpf]
+        .map((parte) => parte.trim())
+        .filter(Boolean)
+        .join(" — "),
+    )
+    .filter((linha) => linha !== "")
+    .join("\n");
+}
 
 export const PERGUNTAS_SAUDE: readonly {
   campo: "alergia" | "problemaSaude" | "medicamentoContinuo" | "planoSaude";
@@ -661,22 +760,17 @@ export const PERGUNTAS_SAUDE: readonly {
 export function validarSaudeForm(saude: SaudeForm): ErrosForm {
   const erros: ErrosForm = {};
 
-  if (saude.contatoEmergencia.trim() === "")
-    erros["saude.contatoEmergencia"] = "Informe um contato de emergência.";
-
+  // As duas listas (contatos de emergência e autorizados a buscar) são
+  // opcionais: podem ficar vazias sem bloquear o envio.
   for (const { campo } of PERGUNTAS_SAUDE) {
     const resposta = saude[campo];
     if (resposta.opcao === "") {
       erros[`saude.${campo}`] = "Escolha uma opção.";
       continue;
     }
-    if (resposta.opcao === "Outro" && resposta.detalhe.trim() === "")
+    if (resposta.opcao === "Sim" && resposta.detalhe.trim() === "")
       erros[`saude.${campo}.detalhe`] = "Explique brevemente.";
   }
-
-  if (saude.pessoasAutorizadas.trim() === "")
-    erros["saude.pessoasAutorizadas"] =
-      "Informe quem está autorizado a buscar a criança na escola.";
 
   if (!CORES_RACAS.includes(saude.corRaca as (typeof CORES_RACAS)[number]))
     erros["saude.corRaca"] = "Escolha uma opção.";
@@ -731,19 +825,19 @@ export const DOCUMENTOS_MATRICULA: readonly DocumentoMatricula[] = [
   {
     chave: "declaracao_escolaridade",
     rotulo: "Declaração de escolaridade",
-    dica: "Se o aluno vem transferido de outra escola.",
+    dica: "Se o(a) aluno(a) vem transferido de outra escola.",
     bloqueiaSempre: false,
   },
   {
     chave: "declaracao_transferencia",
     rotulo: "Declaração de transferência",
-    dica: "Se o aluno vem transferido de outra escola.",
+    dica: "Se o(a) aluno(a) vem transferido de outra escola.",
     bloqueiaSempre: false,
   },
   {
     chave: "quitacao_escola_anterior",
     rotulo: "Declaração de quitação de mensalidades da escola anterior",
-    dica: "Se seu filho(a) vem de escola pública, anexe aqui a Declaração de Escolaridade no lugar.",
+    dica: "Se o(a) aluno(a) vem de escola pública, anexe aqui a Declaração de Escolaridade no lugar.",
     bloqueiaSempre: false,
     bloqueiaDoPrimeiroAno: true,
   },
@@ -834,12 +928,20 @@ function respostaPadronizada(resposta: RespostaSaude): RespostaSaude {
 export function padronizarSaudeForm(saude: SaudeForm): SaudeForm {
   return {
     ...saude,
-    contatoEmergencia: toTitleCase(saude.contatoEmergencia),
+    contatosEmergencia: saude.contatosEmergencia.map((c) => ({
+      ...c,
+      nome: toTitleCase(c.nome),
+      parentesco: toTitleCase(c.parentesco),
+    })),
     alergia: respostaPadronizada(saude.alergia),
     problemaSaude: respostaPadronizada(saude.problemaSaude),
     medicamentoContinuo: respostaPadronizada(saude.medicamentoContinuo),
     planoSaude: respostaPadronizada(saude.planoSaude),
-    pessoasAutorizadas: toTitleCase(saude.pessoasAutorizadas),
+    pessoasAutorizadas: saude.pessoasAutorizadas.map((p) => ({
+      ...p,
+      nome: toTitleCase(p.nome),
+      parentesco: toTitleCase(p.parentesco),
+    })),
     outrasInformacoes: toTitleCase(saude.outrasInformacoes),
   };
 }

@@ -210,34 +210,12 @@ export function useOnboarding() {
   });
   const run = (fn: () => Promise<void>) => m.mutate(fn);
 
-  const adicionarAluno = (
-    aluno: Pick<OnboardingAluno, "leadId" | "nomeAluno" | "turma" | "nomePaiMae" | "telefone"> & {
-      schoolId?: string;
-    },
-  ) => {
-    const schoolId = aluno.schoolId ?? requireSchool(selected);
-    if (!schoolId) return;
-    run(async () => {
-      const { error } = await supabase.from("onboarding").insert({
-        school_id: schoolId,
-        lead_id: aluno.leadId,
-        nome_aluno: aluno.nomeAluno,
-        turma: aluno.turma,
-        nome_pai_mae: aluno.nomePaiMae,
-        telefone: aluno.telefone,
-        tarefas: {} as Json,
-        concluido: false,
-      });
-      if (error) throw error;
-    });
-  };
-
   const alternarTarefa = (alunoId: string, tarefaId: TarefaOnboardingId) => {
     const aluno = alunos.find((a) => a.id === alunoId);
     if (!aluno) return;
     run(async () => {
       const tarefas = { ...aluno.tarefas, [tarefaId]: !aluno.tarefas[tarefaId] };
-      const concluido = Object.values(tarefas).every(Boolean);
+      const concluido = TAREFAS_ONBOARDING.every((t) => tarefas[t.id]);
       const { error } = await supabase
         .from("onboarding")
         .update({ tarefas: tarefas as Json, concluido })
@@ -267,7 +245,6 @@ export function useOnboarding() {
     alunosPendentes,
     alunosConcluidos,
     isLoading,
-    adicionarAluno,
     alternarTarefa,
     contarTarefas,
     removerAluno,

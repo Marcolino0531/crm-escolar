@@ -34,7 +34,7 @@ import {
 } from "@/lib/rematricula.functions";
 
 const OG_TITULO = "Rematrícula — School Hub";
-const OG_DESCRICAO = "Confirme a rematrícula do seu filho e escolha o parcelamento do material.";
+const OG_DESCRICAO = "Confirme a rematrícula do(a) aluno(a) e escolha o parcelamento do material.";
 
 export const Route = createFileRoute("/rematricula")({
   head: () => ({
