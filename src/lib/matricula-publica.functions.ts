@@ -37,15 +37,23 @@ import {
   textoContatosEmergencia,
   textoPessoasAutorizadas,
   validarDocumentosForm,
+  validarMaterialForm,
   validarMatriculaForm,
   validarRotinaForm,
   validarSaudeForm,
   type DocumentoChave,
   type DocumentosForm,
+  type MaterialForm,
   type MatriculaForm,
   type RotinaForm,
   type SaudeForm,
 } from "@/lib/matricula-form";
+import {
+  faturarMatricula,
+  materialAnualDaSerie,
+  type ResultadoFaturamento,
+} from "@/lib/matricula-faturamento.sponte";
+import { opcoesParcelamentoMaterialPrimeira, rotuloParcelamentoPrimeira } from "@/lib/rematricula";
 import { anosLetivosDisponiveis, turnoDaRotina } from "@/lib/matricula-turma";
 import {
   formalizarMatriculaTurma,
@@ -84,6 +92,59 @@ export const configMatriculaPublica = createServerFn({ method: "GET" }).handler(
     };
   },
 );
+
+// ─── Material pedagógico da série (valor anual + opções de parcelamento) ────
+//
+// A tela nunca informa a série nem o valor: manda unidade, data de nascimento e
+// ano letivo, e o servidor calcula a série pela data de corte e lê o valor da
+// unidade pedida. Assim a cobrança não muda por manipulação do navegador.
+
+export interface OpcaoMaterialPublica {
+  parcelas: number;
+  rotulo: string;
+}
+
+export interface MaterialMatriculaPublica {
+  configurado: boolean;
+  serie: string;
+  valorAnual: number;
+  opcoes: OpcaoMaterialPublica[];
+}
+
+const MaterialInput = z.object({
+  unidade: z.string(),
+  dataNascimento: z.string(),
+  anoLetivo: z.number(),
+});
+
+export const materialMatriculaPublica = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => MaterialInput.parse(input))
+  .handler(async ({ data }): Promise<MaterialMatriculaPublica> => {
+    const vazio: MaterialMatriculaPublica = {
+      configurado: false,
+      serie: "",
+      valorAnual: 0,
+      opcoes: [],
+    };
+    if (!UNIDADES_SPONTE.includes(data.unidade)) return vazio;
+    if (!anosLetivosDisponiveis(hojeSaoPaulo()).includes(data.anoLetivo)) return vazio;
+
+    const serie = serieCalculada(data.dataNascimento, data.anoLetivo);
+    if (!serie) return vazio;
+
+    const material = await materialAnualDaSerie(data.unidade, serie);
+    if (!material) return { ...vazio, serie };
+
+    return {
+      configurado: true,
+      serie: material.serieCadastrada || serie,
+      valorAnual: material.valorAnual,
+      opcoes: opcoesParcelamentoMaterialPrimeira(material.valorAnual).map((op) => ({
+        parcelas: op.parcelas,
+        rotulo: rotuloParcelamentoPrimeira(op),
+      })),
+    };
+  });
 
 function hashIp(ip: string): string {
   return createHash("sha256").update(`matricula:${ip}`).digest("hex");
@@ -211,9 +272,12 @@ const ArquivoInput = z.object({
 
 const DocumentosMatriculaInput = z.record(DocumentoChaveInput, ArquivoInput);
 
+const MaterialInputEnvio = z.object({ parcelas: z.number() });
+
 const EnviarInput = z.object({
   captchaToken: z.string(),
   rotina: RotinaInput,
+  material: MaterialInputEnvio,
   saude: SaudeInput,
   documentos: DocumentosMatriculaInput,
   form: z.object({
@@ -428,12 +492,31 @@ async function salvarRotina(
   if (error) console.error("[matrículas] falha ao gravar a rotina escolar:", error.message);
 }
 
+// A escolha do parcelamento fica na própria submissão, junto do valor anual
+// vigente no momento do envio: é o que o faturamento usa depois, sem depender
+// de o cadastro de material continuar igual.
+async function salvarEscolhaMaterial(
+  submissionId: string,
+  material: MaterialForm,
+  valorAnual: number | null,
+): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("enrollment_submissions" as never)
+    .update({
+      material_parcelas: material.parcelas > 0 ? material.parcelas : null,
+      material_valor_anual: valorAnual,
+    } as never)
+    .eq("submission_id", submissionId);
+  if (error) console.error("[matrículas] falha ao gravar a escolha do material:", error.message);
+}
+
 // Matrícula na turma + onboarding, depois do aluno já criado no Sponte. Nada
 // aqui pode desfazer o cadastro: o que falhar vira pendência na submissão para a
 // secretaria resolver na mão.
 async function formalizar(
   form: MatriculaForm,
   rotina: RotinaForm,
+  material: MaterialForm,
   serie: string,
   submissionId: string,
   alunoId: number | null,
@@ -495,6 +578,45 @@ async function formalizar(
     onboarding_id: resultado.onboardingId,
     boas_vindas_status: resultado.boasVindas,
   });
+
+  // Faturamento só depois da matrícula formalizada na turma: sem curso não há
+  // plano do Sponte para ler, e cobrar aluno sem turma seria pior que a
+  // pendência.
+  if (turma.status !== "matriculado" || turma.cursoId === null) {
+    await registrar({
+      faturamento_status: "nao_aplicavel",
+      faturamento_pendencia:
+        "Matrícula sem turma formalizada — as cobranças não foram geradas automaticamente.",
+    });
+    return;
+  }
+
+  let faturamento: ResultadoFaturamento;
+  try {
+    faturamento = await faturarMatricula({
+      submissionId,
+      unidade: form.unidade,
+      alunoId,
+      cursoId: turma.cursoId,
+      serie,
+      anoLetivo: form.anoLetivo,
+      dataMatricula: hojeSaoPaulo(),
+      materialParcelas: material.parcelas > 0 ? material.parcelas : null,
+      refeicoes: rotina.refeicoes,
+      semRefeicoes: rotina.semRefeicoes,
+      horarioEstendido: rotina.horarioEstendido,
+    });
+  } catch (e) {
+    const erro = e instanceof Error ? e.message : String(e);
+    console.error("[matrículas] falha ao faturar a matrícula:", erro);
+    await registrar({ faturamento_status: "erro", faturamento_pendencia: erro.slice(0, 1000) });
+    return;
+  }
+
+  await registrar({
+    faturamento_status: faturamento.status,
+    faturamento_pendencia: faturamento.pendencias.join(" | ").slice(0, 1000) || null,
+  });
 }
 
 export const enviarMatriculaPublica = createServerFn({ method: "POST" })
@@ -530,14 +652,19 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     // burlada; o Sponte não pode receber lixo).
     const form = padronizarMatriculaForm(data.form as MatriculaForm);
     const rotina = data.rotina as RotinaForm;
+    const material = data.material as MaterialForm;
     const saude = padronizarSaudeForm(data.saude as SaudeForm);
     const documentos = data.documentos as DocumentosForm;
     const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
+    // O valor do material é lido do banco pela unidade + série do servidor: a
+    // escolha do responsável só é exigida quando existe valor cadastrado.
+    const materialConfig = await materialAnualDaSerie(form.unidade, serie);
     const erros = {
       ...validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE),
       ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
+      ...validarMaterialForm(material, materialConfig !== null),
     };
     if (Object.keys(erros).length > 0) {
       return { ok: false, erros, erro: "Confira os campos destacados." };
@@ -553,7 +680,8 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
       await salvarRotina(form, rotina, serie, submissionId, alunoId);
       await salvarSaude(form, saude, serie, submissionId, alunoId);
       await salvarDocumentos(form, documentos, submissionId, alunoId);
-      await formalizar(form, rotina, serie, submissionId, alunoId);
+      await salvarEscolhaMaterial(submissionId, material, materialConfig?.valorAnual ?? null);
+      await formalizar(form, rotina, material, serie, submissionId, alunoId);
       return { ok: true, protocolo: submissionId };
     }
 

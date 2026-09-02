@@ -23,6 +23,7 @@ import {
 import { usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { ValoresOpcionais } from "@/components/matriculas/ValoresOpcionais";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -273,6 +274,8 @@ function MatriculasPage() {
           <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Atualizar
         </Button>
       </div>
+
+      <ValoresOpcionais unidade={unidade} podeEditar={podeReprocessar} />
 
       {/* Filtros */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">

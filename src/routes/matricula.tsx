@@ -32,16 +32,19 @@ import {
 import { formatPhoneBR } from "@/lib/phone";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
 import { DocumentosMatricula } from "@/components/matricula/DocumentosMatricula";
+import { MaterialPedagogico } from "@/components/matricula/MaterialPedagogico";
 import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
   GENEROS_MATRICULA,
+  MATERIAL_FORM_VAZIO,
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
   SAUDE_FORM_VAZIO,
   serieCalculada,
   validarDocumentosForm,
+  validarMaterialForm,
   validarSaudeForm,
   cepCompletoValido,
   formatarCep,
@@ -53,6 +56,7 @@ import {
   type EnderecoForm,
   type ErrosForm,
   type GeneroMatricula,
+  type MaterialForm,
   type MatriculaForm,
   type ParentescoForm,
   type DocumentosForm,
@@ -60,7 +64,11 @@ import {
   type RotinaForm,
   type SaudeForm,
 } from "@/lib/matricula-form";
-import { configMatriculaPublica, enviarMatriculaPublica } from "@/lib/matricula-publica.functions";
+import {
+  configMatriculaPublica,
+  enviarMatriculaPublica,
+  materialMatriculaPublica,
+} from "@/lib/matricula-publica.functions";
 
 // Título neutro: o mesmo link atende todas as unidades (a unidade é escolhida
 // no formulário ou vem em ?colegio=).
@@ -381,6 +389,7 @@ function MatriculaPublicaPage() {
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
   const [saude, setSaude] = useState<SaudeForm>({ ...SAUDE_FORM_VAZIO });
   const [documentos, setDocumentos] = useState<DocumentosForm>({});
+  const [material, setMaterial] = useState<MaterialForm>({ ...MATERIAL_FORM_VAZIO });
   // 1 = aluno/responsáveis · 2 = rotina · 3 = saúde · 4 = documentos.
   const [etapa, setEtapa] = useState<1 | 2 | 3 | 4>(1);
   const [erros, setErros] = useState<ErrosForm>({});
@@ -410,8 +419,32 @@ function MatriculaPublicaPage() {
     }
   }, [anosLetivos, form.anoLetivo]);
 
+  // Valor do material pela unidade + data de nascimento + ano letivo. A série
+  // e o valor são resolvidos no servidor; a tela não decide preço.
+  const materialFn = useServerFn(materialMatriculaPublica);
+  const materialQuery = useQuery({
+    queryKey: [
+      "matricula_publica_material",
+      form.unidade,
+      form.aluno.dataNascimento,
+      form.anoLetivo,
+    ],
+    queryFn: async () =>
+      materialFn({
+        data: {
+          unidade: form.unidade,
+          dataNascimento: form.aluno.dataNascimento,
+          anoLetivo: form.anoLetivo,
+        },
+      }),
+    enabled: form.unidade !== "" && serie !== "" && form.anoLetivo > 0,
+  });
+
+  const materialConfigurado = materialQuery.data?.configurado === true;
+
   const enviar = useMutation({
-    mutationFn: async () => enviarFn({ data: { captchaToken, form, rotina, saude, documentos } }),
+    mutationFn: async () =>
+      enviarFn({ data: { captchaToken, form, rotina, saude, documentos, material } }),
     onSuccess: (res) => {
       if (res.ok) {
         setEnviado(true);
@@ -428,7 +461,10 @@ function MatriculaPublicaPage() {
     if (numero === 1) return validarMatriculaForm(form, hoje, unidades);
     if (numero === 2) return validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true });
     if (numero === 3) return validarSaudeForm(saude);
-    return validarDocumentosForm(documentos, serie);
+    return {
+      ...validarDocumentosForm(documentos, serie),
+      ...validarMaterialForm(material, materialConfigurado),
+    };
   };
 
   const avancar = () => {
@@ -455,6 +491,7 @@ function MatriculaPublicaPage() {
       ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
+      ...validarMaterialForm(material, materialConfigurado),
     };
     setErros(encontrados);
     if (!formValido(encontrados)) {
@@ -717,6 +754,14 @@ function MatriculaPublicaPage() {
                   documentos={documentos}
                   erros={erros}
                   onChange={setDocumentos}
+                />
+
+                <MaterialPedagogico
+                  material={material}
+                  dados={materialQuery.data}
+                  carregando={materialQuery.isLoading}
+                  erros={erros}
+                  onChange={setMaterial}
                 />
 
                 <CaptchaTurnstile
