@@ -9,6 +9,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
+import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import {
@@ -291,4 +293,79 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         : null,
       documentos,
     };
+  });
+
+// ─── Valores opcionais por unidade (refeição e hora extra) ──────────────────
+//
+// Matrícula e mensalidade vêm do plano nativo do Sponte (GetPlanosCursos) e o
+// material da tela "Material Pedagógico por Série". Só alimentação e hora extra
+// não existem como conceito estruturado no Sponte, então ficam aqui — uma linha
+// por unidade, sempre a unidade selecionada no seletor global do topo.
+
+export interface ValoresOpcionaisRegistro {
+  unidade: string;
+  valorRefeicao: number;
+  valorHoraExtra: number;
+  atualizadoEm: string | null;
+  atualizadoPor: string;
+}
+
+export const obterValoresOpcionais = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ unidade: z.string().trim().min(1) }).parse(input))
+  .handler(async ({ data, context }): Promise<ValoresOpcionaisRegistro> => {
+    await assertCanViewAdmissoes(context.userId);
+    if (!UNIDADES_SPONTE.includes(data.unidade)) {
+      throw new Error("Escolha uma unidade específica no seletor do topo.");
+    }
+
+    const { data: linha, error } = await supabaseAdmin
+      .from("unidade_valores_opcionais" as never)
+      .select("valor_refeicao, valor_hora_extra, updated_at, updated_by_nome")
+      .eq("unidade", data.unidade)
+      .maybeSingle<{
+        valor_refeicao: number;
+        valor_hora_extra: number;
+        updated_at: string;
+        updated_by_nome: string | null;
+      }>();
+    if (error) throw new Error(error.message);
+
+    return {
+      unidade: data.unidade,
+      valorRefeicao: Number(linha?.valor_refeicao ?? 0),
+      valorHoraExtra: Number(linha?.valor_hora_extra ?? 0),
+      atualizadoEm: linha?.updated_at ?? null,
+      atualizadoPor: linha?.updated_by_nome ?? "",
+    };
+  });
+
+const SalvarValoresOpcionaisSchema = z.object({
+  unidade: z.string().trim().min(1, "Escolha a unidade."),
+  valorRefeicao: z.number().min(0, "O valor por refeição não pode ser negativo."),
+  valorHoraExtra: z.number().min(0, "O valor de hora extra não pode ser negativo."),
+});
+
+export const salvarValoresOpcionais = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SalvarValoresOpcionaisSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await assertCanEditAdmissoes(context.userId);
+    if (!UNIDADES_SPONTE.includes(data.unidade)) {
+      throw new Error("Escolha uma unidade específica no seletor do topo.");
+    }
+
+    const { error } = await supabaseAdmin.from("unidade_valores_opcionais" as never).upsert(
+      {
+        unidade: data.unidade,
+        valor_refeicao: data.valorRefeicao,
+        valor_hora_extra: data.valorHoraExtra,
+        updated_at: new Date().toISOString(),
+        updated_by: context.userId,
+        updated_by_nome: await nomeDoUsuario(context.userId),
+      } as never,
+      { onConflict: "unidade" },
+    );
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });

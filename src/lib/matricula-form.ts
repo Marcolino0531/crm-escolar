@@ -12,6 +12,7 @@ import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/l
 import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
 import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
+import { parcelasMaterialValida } from "@/lib/rematricula";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -882,6 +883,27 @@ export function validarDocumentosForm(documentos: DocumentosForm, serie: string)
       erros[`documentos.${documento.chave}`] = "Anexe este documento para concluir a matrícula.";
   }
   return erros;
+}
+
+// ─── Material pedagógico (parcelamento escolhido pelo responsável) ──────────
+//
+// Mesmo desenho da Rematrícula: o valor anual vem da tabela
+// `material_pedagogico_series` pela Unidade + Série (calculada pela data de
+// corte), e o responsável escolhe de 1x a 8x. `parcelas: 0` é "ainda não
+// escolheu"; quando a série não tem valor cadastrado na unidade, a escolha não
+// é exigida e o material fica como pendência da secretaria.
+
+export interface MaterialForm {
+  parcelas: number;
+}
+
+export const MATERIAL_FORM_VAZIO: MaterialForm = { parcelas: 0 };
+
+export function validarMaterialForm(material: MaterialForm, configurado: boolean): ErrosForm {
+  if (!configurado) return {};
+  if (!parcelasMaterialValida(material.parcelas))
+    return { "material.parcelas": "Escolha em quantas parcelas quer pagar o material." };
+  return {};
 }
 
 // ─── Padronização de capitalização ──────────────────────────────────────────
