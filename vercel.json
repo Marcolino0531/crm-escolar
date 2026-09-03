@@ -41,6 +41,10 @@
       "schedule": "0 19 * * *"
     },
     {
+      "path": "/api/whatsapp/cron/rematricula",
+      "schedule": "0 17 * * 5"
+    },
+    {
       "path": "/api/agenda/cron",
       "schedule": "0 10 * * *"
     }

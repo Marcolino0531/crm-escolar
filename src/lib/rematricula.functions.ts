@@ -108,7 +108,9 @@ const LOG_TAG = "[rematricula]";
 
 // Endereço público do portal, usado para montar o link do email. Sobrescrevível
 // por env para ambientes de preview.
-const BASE_URL_PORTAL = (process.env.PORTAL_BASE_URL || "https://schoolhubbr.vercel.app").trim();
+export const BASE_URL_PORTAL = (
+  process.env.PORTAL_BASE_URL || "https://schoolhubbr.vercel.app"
+).trim();
 
 // O CPF nunca é persistido: só o hash entra nas tabelas do portal.
 function hashCpf(cpfDigitos: string): string {
@@ -1257,7 +1259,7 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
 
 // ─── Ano letivo de referência ───────────────────────────────────────────────
 
-async function anoLetivoConfigurado(): Promise<number | null> {
+export async function anoLetivoConfigurado(): Promise<number | null> {
   const { data } = await supabaseAdmin
     .from("rematricula_config" as never)
     .select("ano_letivo")
@@ -1423,78 +1425,87 @@ export interface AcompanhamentoRematriculaResult {
 
 const UnidadeSchema = z.object({ unidade: z.string().min(1) });
 
+// Coleta bruta do acompanhamento de uma unidade — a mesma fonte da tela e do
+// lembrete semanal de rematrícula (cron). Sem checagem de permissão: quem chama
+// é responsável por ela.
+export async function carregarAcompanhamentoUnidade(
+  unidade: string,
+): Promise<AcompanhamentoRematriculaResult> {
+  const [ativos, escolhas, acessos, auditoria] = await Promise.all([
+    alunosAtivosDaUnidade(unidade),
+    supabaseAdmin
+      .from("rematricula_escolhas" as never)
+      .select(CAMPOS_ESCOLHA)
+      .eq("unidade", unidade),
+    supabaseAdmin
+      .from("rematricula_acessos" as never)
+      .select("unidade, aluno_id, ultimo_acesso_em")
+      .eq("unidade", unidade),
+    supabaseAdmin
+      .from("rematricula_cadastro_auditoria" as never)
+      .select("aluno_id")
+      .eq("unidade", unidade)
+      .eq("resultado", "gravado"),
+  ]);
+
+  const linhas = (escolhas.data ?? []) as unknown as EscolhaRow[];
+  const alterados = new Set(
+    ((auditoria.data ?? []) as unknown as { aluno_id: string }[]).map((a) => a.aluno_id),
+  );
+
+  return {
+    unidade,
+    alunos: ativos.alunos.map((a) => ({
+      alunoId: a.alunoId,
+      nome: a.nome,
+      unidade,
+      turma: a.turma,
+    })),
+    escolhas: linhas.map((r) => ({
+      unidade: r.unidade,
+      alunoId: r.aluno_id,
+      serie: r.serie,
+      valorAnual: Number(r.valor_anual),
+      parcelas: r.parcelas,
+      valorParcela: Number(r.valor_parcela),
+      valorPrimeiraParcela: Number(r.valor_primeira_parcela ?? r.valor_parcela),
+      anoLetivo: r.ano_letivo ?? null,
+      status: r.status,
+      atualizadoEm: r.updated_at,
+      sponteContaReceberId: r.sponte_conta_receber_id ?? "",
+      sponteErro: r.sponte_erro ?? "",
+      id: r.id,
+    })),
+    acessos: ((acessos.data ?? []) as unknown as AcessoRow[]).map((a) => ({
+      unidade: a.unidade,
+      alunoId: a.aluno_id,
+      ultimoAcessoEm: a.ultimo_acesso_em,
+    })),
+    cadastroAlterados: [...alterados].map((alunoId) => ({ unidade, alunoId })),
+    error: ativos.error,
+  };
+}
+
 export const acompanhamentoRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<AcompanhamentoRematriculaResult> => {
     await exigirPermissaoRematricula(context.userId, false);
     const { unidade } = data;
-    const vazio: AcompanhamentoRematriculaResult = {
-      unidade,
-      alunos: [],
-      escolhas: [],
-      acessos: [],
-      cadastroAlterados: [],
-    };
 
     const permitidas = await allowedSponteUnidades(context.userId);
     if (permitidas !== null && !permitidas.includes(unidade)) {
-      return { ...vazio, error: "Sem permissão para esta unidade." };
+      return {
+        unidade,
+        alunos: [],
+        escolhas: [],
+        acessos: [],
+        cadastroAlterados: [],
+        error: "Sem permissão para esta unidade.",
+      };
     }
 
-    const [ativos, escolhas, acessos, auditoria] = await Promise.all([
-      alunosAtivosDaUnidade(unidade),
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select(CAMPOS_ESCOLHA)
-        .eq("unidade", unidade),
-      supabaseAdmin
-        .from("rematricula_acessos" as never)
-        .select("unidade, aluno_id, ultimo_acesso_em")
-        .eq("unidade", unidade),
-      supabaseAdmin
-        .from("rematricula_cadastro_auditoria" as never)
-        .select("aluno_id")
-        .eq("unidade", unidade)
-        .eq("resultado", "gravado"),
-    ]);
-
-    const linhas = (escolhas.data ?? []) as unknown as EscolhaRow[];
-    const alterados = new Set(
-      ((auditoria.data ?? []) as unknown as { aluno_id: string }[]).map((a) => a.aluno_id),
-    );
-
-    return {
-      unidade,
-      alunos: ativos.alunos.map((a) => ({
-        alunoId: a.alunoId,
-        nome: a.nome,
-        unidade,
-        turma: a.turma,
-      })),
-      escolhas: linhas.map((r) => ({
-        unidade: r.unidade,
-        alunoId: r.aluno_id,
-        serie: r.serie,
-        valorAnual: Number(r.valor_anual),
-        parcelas: r.parcelas,
-        valorParcela: Number(r.valor_parcela),
-        valorPrimeiraParcela: Number(r.valor_primeira_parcela ?? r.valor_parcela),
-        anoLetivo: r.ano_letivo ?? null,
-        status: r.status,
-        atualizadoEm: r.updated_at,
-        sponteContaReceberId: r.sponte_conta_receber_id ?? "",
-        sponteErro: r.sponte_erro ?? "",
-        id: r.id,
-      })),
-      acessos: ((acessos.data ?? []) as unknown as AcessoRow[]).map((a) => ({
-        unidade: a.unidade,
-        alunoId: a.aluno_id,
-        ultimoAcessoEm: a.ultimo_acesso_em,
-      })),
-      cadastroAlterados: [...alterados].map((alunoId) => ({ unidade, alunoId })),
-      error: ativos.error,
-    };
+    return carregarAcompanhamentoUnidade(unidade);
   });
 
 interface AcessoRow {

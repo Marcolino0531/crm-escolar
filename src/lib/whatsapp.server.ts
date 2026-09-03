@@ -16,6 +16,11 @@
 
 import { onlyDigits } from "@/lib/phone";
 import {
+  TEMPLATES_REMATRICULA_PADRAO,
+  type RematriculaTemplateVars,
+  type TemplateRematricula,
+} from "@/lib/rematricula-lembretes";
+import {
   numeroDeEnvio,
   type ConversaRoteavel,
   type NumeroGrupo,
@@ -32,6 +37,10 @@ export interface WhatsAppConfig {
   // Template PREVENTIVO (lembrete antes do vencimento). Configurável por env;
   // default "lembrete_vencimento_boleto".
   templateLembreteName: string;
+  // Templates do lembrete SEMANAL de rematrícula, um por status do
+  // acompanhamento. Envs WHATSAPP_TEMPLATE_REMATRICULA_NAO_INICIADO e
+  // WHATSAPP_TEMPLATE_REMATRICULA_EM_ANDAMENTO.
+  templatesRematricula: Record<TemplateRematricula, string>;
   templateLang: string;
   graphVersion: string;
 }
@@ -48,6 +57,14 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
     templateMultiplaName: process.env.WHATSAPP_TEMPLATE_MULTIPLA_NAME || "aviso_cobranca_multipla",
     templateLembreteName:
       process.env.WHATSAPP_TEMPLATE_LEMBRETE_NAME || "lembrete_vencimento_boleto",
+    templatesRematricula: {
+      nao_iniciado:
+        process.env.WHATSAPP_TEMPLATE_REMATRICULA_NAO_INICIADO ||
+        TEMPLATES_REMATRICULA_PADRAO.nao_iniciado,
+      em_andamento:
+        process.env.WHATSAPP_TEMPLATE_REMATRICULA_EM_ANDAMENTO ||
+        TEMPLATES_REMATRICULA_PADRAO.em_andamento,
+    },
     templateLang: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
     graphVersion: process.env.WHATSAPP_GRAPH_VERSION || "v21.0",
   };
@@ -391,6 +408,64 @@ export function renderReminderMessage(vars: ReminderTemplateVars): string {
 
 // Dispara o lembrete preventivo. Mesma mecânica do sendBillingTemplate, com as 5
 // variáveis do template "lembrete_vencimento_boleto". Lança em caso de erro.
+// Dispara um template do lembrete semanal de rematrícula (5 variáveis:
+// responsável, aluno, unidade, ano letivo, link). Lança em caso de erro.
+export async function sendRematriculaTemplate(
+  cfg: WhatsAppConfig,
+  template: TemplateRematricula,
+  vars: RematriculaTemplateVars,
+): Promise<SendResult> {
+  const to = toMetaPhone(vars.to);
+  if (!to) throw new Error("Telefone do responsável ausente ou inválido.");
+
+  const endpoint = `https://graph.facebook.com/${cfg.graphVersion}/${cfg.phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: cfg.templatesRematricula[template],
+      language: { code: cfg.templateLang },
+      components: [
+        {
+          type: "body",
+          parameters: [
+            textParam(vars.responsavel),
+            textParam(vars.aluno),
+            textParam(vars.unidade),
+            textParam(vars.anoLetivo),
+            textParam(vars.link),
+          ],
+        },
+      ],
+    },
+  };
+
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const body = (await resp.json().catch(() => null)) as {
+    messages?: { id: string }[];
+    error?: { message?: string; code?: number; error_data?: { details?: string } };
+  } | null;
+
+  if (!resp.ok || !body?.messages?.[0]?.id) {
+    const detail =
+      body?.error?.error_data?.details ||
+      body?.error?.message ||
+      `HTTP ${resp.status} ao chamar a WhatsApp Cloud API.`;
+    throw new Error(detail);
+  }
+
+  return { messageId: body.messages[0].id };
+}
+
 export async function sendReminderTemplate(
   cfg: WhatsAppConfig,
   vars: ReminderTemplateVars,

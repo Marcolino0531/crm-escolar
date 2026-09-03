@@ -55,6 +55,7 @@ import {
   sendBillingTemplate,
   sendBillingTemplateMultipla,
   sendReminderTemplate,
+  sendRematriculaTemplate,
   type WhatsAppConfig,
   type WhatsAppSendConfig,
 } from "@/lib/whatsapp.server";
@@ -91,7 +92,27 @@ import {
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
 import { grupoDaUnidade, grupoDoPhoneNumberId, type NumeroGrupo } from "@/lib/whatsapp-numeros";
 import { parseReacao } from "@/lib/whatsapp-reacoes";
-import { slotDaRota, slotLembreteDaRota, type StatusExecucao } from "@/lib/billing-cron-runs";
+import {
+  slotDaRota,
+  slotLembreteDaRota,
+  slotRematriculaDaRota,
+  type StatusExecucao,
+} from "@/lib/billing-cron-runs";
+import { montarLinhasAcompanhamento } from "@/lib/rematricula-acompanhamento";
+import {
+  chaveLembrete,
+  contarPorTemplate,
+  ehSextaFeira,
+  filtrarJaLembrados,
+  renderRematriculaMessage,
+  selecionarLembretesRematricula,
+  type LembreteRematricula,
+} from "@/lib/rematricula-lembretes";
+import {
+  BASE_URL_PORTAL,
+  anoLetivoConfigurado,
+  carregarAcompanhamentoUnidade,
+} from "@/lib/rematricula.functions";
 import {
   parseIncomingMessage,
   buildMessageFields,
@@ -210,7 +231,7 @@ interface CandidatoCobranca {
 // Régua de origem do disparo, gravada em `whatsapp_billing_logs.tipo`. Separa o
 // histórico das duas abas e impede que quem recebeu lembrete preventivo entre na
 // régua de cobrança pelo histórico.
-type TipoDisparo = "cobranca" | "lembrete";
+type TipoDisparo = "cobranca" | "lembrete" | "rematricula";
 
 // Coluna ausente no Postgres (migration ainda não aplicada em produção).
 function erroColunaInexistente(error: { code?: string; message?: string } | null): boolean {
@@ -232,6 +253,7 @@ async function inserirBillingLog(row: Record<string, unknown>): Promise<void> {
   delete legado.tipo;
   delete legado.prazo_lembrete;
   delete legado.data_ref;
+  delete legado.status_rematricula;
   const { error: erroLegado } = await supabaseAdmin
     .from("whatsapp_billing_logs" as never)
     .insert(legado as never);
@@ -295,6 +317,15 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
     return await runCronRegistrado(slotLembrete, runCronLembretes);
   }
 
+  const slotRematricula = request.method === "GET" ? slotRematriculaDaRota(pathname) : null;
+  if (slotRematricula) {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && bearer(request) !== cronSecret) {
+      return json({ ok: false, error: "não autorizado" }, 401);
+    }
+    return await runCronRegistrado(slotRematricula, runCronRematricula);
+  }
+
   // Simulação (dry-run) das duas réguas: roda toda a seleção do dia e devolve só
   // contagens por template e unidade, sem chamar a Cloud API e sem gravar
   // disparo. Serve para conferir o volume antes de liberar um número novo.
@@ -312,6 +343,12 @@ export async function handleWhatsAppApi(request: Request): Promise<Response | nu
       return json({ ok: false, error: "dia inválido (use YYYY-MM-DD)" }, 400);
     }
     const hoje = dia || diaYMD(0);
+    // ?rotina=rematricula: só o lembrete semanal de rematrícula (volume por
+    // template e por unidade da sexta-feira pedida).
+    if (url.searchParams.get("rotina") === "rematricula") {
+      const rematricula = await runCronRematricula(hoje, { grupos, simular: true });
+      return json({ ok: true, hoje, grupos, rematricula });
+    }
     const [cobranca, lembretes] = await Promise.all([
       runCron(hoje, { grupos, simular: true }),
       runCronLembretes(hoje, { grupos, simular: true }),
@@ -1181,6 +1218,239 @@ async function dispararLembrete(grupo: GrupoLembrete, hoje: string): Promise<{ e
         aluno_name: grupo.alunosLabel || "",
         responsavel_name: grupo.responsavelNome || "",
         unidade: grupo.unidade || "",
+      },
+    });
+    return { enviado: true };
+  } catch (e) {
+    await inserirBillingLog({
+      ...base,
+      status: "falha",
+      erro_mensagem: e instanceof Error ? e.message : String(e),
+    });
+    return { enviado: false };
+  }
+}
+
+// ─── Lembrete SEMANAL de rematrícula ─────────────────────────────────────────────
+//
+// Roda uma vez por semana (sexta à tarde). Lê a MESMA coleção da tela
+// "Rematrícula — Acompanhamento" de cada unidade atendida, seleciona quem está
+// "Não iniciado" ou "Em andamento" (rematricula-lembretes), busca o responsável
+// financeiro atual no Sponte e dispara o template daquele status pelo número da
+// unidade. Cada tentativa vira uma linha em whatsapp_billing_logs (tipo
+// 'rematricula') com o status do acompanhamento no momento do envio.
+
+// Alunos já lembrados na rodada de `hoje` (retry/reexecução não duplica).
+async function carregarJaLembradosRematricula(hoje: string): Promise<Set<string>> {
+  const { data, error } = await supabaseAdmin
+    .from("whatsapp_billing_logs" as never)
+    .select("unidade, fatura_id")
+    .eq("tipo", "rematricula")
+    .eq("data_ref", hoje)
+    .in("status", STATUS_ENVIADO);
+  if (error) {
+    // Fail-closed: sem conseguir ler o histórico, não dá para garantir que
+    // ninguém receba duas vezes.
+    throw new Error(`falha ao ler o histórico de lembretes de rematrícula: ${error.message}`);
+  }
+  const rows = (data ?? []) as unknown as { unidade: string; fatura_id: string | null }[];
+  return new Set(
+    rows.filter((r) => r.fatura_id).map((r) => chaveLembrete(r.unidade, r.fatura_id!)),
+  );
+}
+
+async function runCronRematricula(hoje: string, opcoes: OpcoesRotina = {}): Promise<ResultadoCron> {
+  if (!getWhatsAppConfig()) {
+    throw new Error(
+      "WhatsApp Cloud API não configurada (defina WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_TEMPLATE_NAME).",
+    );
+  }
+
+  const gruposAlvo = opcoes.grupos ?? gruposEmOperacao();
+  const unidades = unidadesAtendidas(gruposAlvo);
+  if (unidades.size === 0) {
+    return { status: "sem_envio", motivo: "nenhuma unidade com envio automático ativo" };
+  }
+
+  // O agendamento já é semanal; a checagem protege uma reexecução manual fora do
+  // dia e pula feriado que caia na sexta. O dry-run avalia qualquer dia.
+  if (!opcoes.simular) {
+    if (!ehSextaFeira(hoje)) {
+      return { status: "nao_util", motivo: "lembrete de rematrícula só sai na sexta-feira" };
+    }
+    if (!isDiaUtil(hoje)) {
+      return { status: "nao_util", motivo: "dia não útil (feriado)" };
+    }
+    if (await envioPausadoHoje(hoje)) {
+      return { status: "pausado", motivo: "envios pausados para hoje (kill switch)" };
+    }
+  }
+
+  const anoLetivo = await anoLetivoConfigurado();
+  if (!anoLetivo) {
+    return {
+      status: "sem_envio",
+      motivo: "ano letivo de referência da rematrícula não configurado",
+    };
+  }
+
+  // Mesma fonte da tela de acompanhamento, unidade a unidade.
+  const selecionados: LembreteRematricula[] = [];
+  const errosUnidade: string[] = [];
+  for (const unidade of unidades) {
+    const dados = await carregarAcompanhamentoUnidade(unidade);
+    if (dados.error) {
+      errosUnidade.push(`${unidade}: ${dados.error}`);
+      continue;
+    }
+    const linhas = montarLinhasAcompanhamento(dados);
+    selecionados.push(...selecionarLembretesRematricula(linhas));
+  }
+  if (errosUnidade.length > 0 && selecionados.length === 0) {
+    throw new Error(`falha ao carregar o acompanhamento: ${errosUnidade.join(" | ")}`);
+  }
+
+  const jaLembrados = opcoes.simular
+    ? new Set<string>()
+    : await carregarJaLembradosRematricula(hoje);
+  const { pendentes, pulados } = filtrarJaLembrados(selecionados, jaLembrados);
+
+  // Responsável financeiro ATUAL de cada aluno (mesmo cadastro da cobrança), em
+  // lotes concorrentes.
+  const destinatarios: (LembreteRematricula & { telefone: string; responsavelNome: string })[] = [];
+  for (let i = 0; i < pendentes.length; i += CONCORRENCIA_SPONTE) {
+    const lote = pendentes.slice(i, i + CONCORRENCIA_SPONTE);
+    const resultados = await Promise.all(
+      lote.map(async (l) => {
+        const resp = await buscarResponsavelFinanceiroAluno(l.unidade, l.alunoId);
+        return { ...l, telefone: resp?.telefone ?? "", responsavelNome: resp?.nome ?? "" };
+      }),
+    );
+    destinatarios.push(...resultados);
+  }
+
+  if (opcoes.simular) {
+    const simulacao = contarSimulacao(
+      destinatarios.map((d) => ({
+        template: d.template,
+        unidade: d.unidade,
+        telefone: d.telefone,
+      })),
+    );
+    const porStatus = contarPorTemplate(selecionados);
+    return {
+      status: destinatarios.length > 0 ? "ok" : "sem_envio",
+      motivo:
+        errosUnidade.length > 0
+          ? `unidades com erro: ${errosUnidade.join(" | ")}`
+          : destinatarios.length === 0
+            ? "nenhum aluno em Não iniciado/Em andamento"
+            : null,
+      alunos: selecionados.length,
+      responsaveis: destinatarios.length,
+      enviados: 0,
+      falhas: 0,
+      pulados,
+      simulacao: {
+        ...simulacao,
+        porTemplate: {
+          nao_iniciado: porStatus.nao_iniciado,
+          em_andamento: porStatus.em_andamento,
+          ...simulacao.porTemplate,
+        },
+      },
+    };
+  }
+
+  let enviados = 0;
+  let falhas = 0;
+  for (const d of destinatarios) {
+    const r = await dispararLembreteRematricula(d, hoje, String(anoLetivo));
+    if (r.enviado) enviados++;
+    else falhas++;
+  }
+
+  console.log(
+    `[whatsapp] rematrícula ${hoje}: ${enviados} enviado(s), ${falhas} falha(s), ${pulados} pulado(s) de ${selecionados.length} aluno(s).`,
+  );
+  return {
+    status: enviados > 0 || falhas > 0 ? "ok" : "sem_envio",
+    motivo:
+      enviados === 0 && falhas === 0
+        ? errosUnidade.length > 0
+          ? `unidades com erro: ${errosUnidade.join(" | ")}`
+          : "ninguém pendente de lembrete"
+        : errosUnidade.length > 0
+          ? `unidades com erro: ${errosUnidade.join(" | ")}`
+          : null,
+    responsaveis: destinatarios.length,
+    alunos: selecionados.length,
+    enviados,
+    falhas,
+    pulados,
+  };
+}
+
+// Dispara (e registra) o lembrete de rematrícula de UM aluno.
+async function dispararLembreteRematricula(
+  d: LembreteRematricula & { telefone: string; responsavelNome: string },
+  hoje: string,
+  anoLetivo: string,
+): Promise<{ enviado: boolean }> {
+  const cfg = configDaUnidade(d.unidade);
+  const vars = {
+    to: d.telefone,
+    responsavel: d.responsavelNome,
+    aluno: d.alunoNome,
+    unidade: d.unidade,
+    anoLetivo,
+    link: `${BASE_URL_PORTAL}/rematricula`,
+  };
+  const base = {
+    responsavel_name: d.responsavelNome || "",
+    aluno_name: d.alunoNome || "",
+    telefone: d.telefone || "",
+    unidade: d.unidade || "",
+    valor: 0,
+    vencimento: null,
+    template_name: cfg?.templatesRematricula[d.template] ?? "",
+    fatura_id: d.alunoId,
+    alunos_cobrados: [{ id: d.alunoId, nome: d.alunoNome }],
+    message_body: cfg ? renderRematriculaMessage(d.template, vars) : "",
+    tipo: "rematricula",
+    status_rematricula: d.status,
+    data_ref: hoje,
+  };
+
+  if (!cfg) {
+    await inserirBillingLog({
+      ...base,
+      status: "falha",
+      erro_mensagem: `Sem número de WhatsApp configurado para a unidade "${d.unidade}".`,
+    });
+    return { enviado: false };
+  }
+  if (!d.telefone || d.telefone === "-") {
+    await inserirBillingLog({
+      ...base,
+      status: "falha",
+      erro_mensagem: "Responsável financeiro sem telefone cadastrado no Sponte.",
+    });
+    return { enviado: false };
+  }
+
+  try {
+    const { messageId } = await sendRematriculaTemplate(cfg, d.template, vars);
+    await inserirBillingLog({ ...base, status: "enviado", wa_message_id: messageId });
+    await registrarTemplateNoChat({
+      telefone: d.telefone,
+      waMessageId: messageId,
+      body: base.message_body,
+      vinculo: {
+        aluno_id: d.alunoId,
+        aluno_name: d.alunoNome || "",
+        responsavel_name: d.responsavelNome || "",
+        unidade: d.unidade || "",
       },
     });
     return { enviado: true };
