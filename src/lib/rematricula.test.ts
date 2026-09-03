@@ -292,7 +292,6 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
       "Coleção Eu no Mundo",
       "Material de Arte",
       "Cultura Inglesa",
-      "Material Coletivo",
       "Robótica",
     ]);
   });
@@ -317,14 +316,12 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
       "Coleção Principal (Bernoulli)",
       "Coleção Eu no Mundo",
       "Cultura Inglesa",
-      "Material Coletivo",
       "Robótica",
     ]);
     expect(itensMaterialInclusos("CEC", "9º Ano")).toEqual([
       "Coleção Principal (Bernoulli)",
       "Material de Arte",
       "Cultura Inglesa",
-      "Material Coletivo",
       "Robótica",
     ]);
     expect(itensMaterialInclusos("CEC", "Maternal 2")).toEqual([]);

@@ -89,6 +89,40 @@ export async function buscarTurmas(
   });
 }
 
+// Todas as turmas do ano letivo (qualquer curso): usada para saber quais turnos
+// existem de fato para cada série na Rematrícula.
+export async function buscarTurmasDoAno(
+  creds: Credenciais,
+  anoLetivo: number,
+): Promise<TurmaSponte[]> {
+  const xml = await callSponte(
+    "GetTurmas",
+    `AnoLetivo=${anoLetivo}`,
+    creds.codigoCliente,
+    creds.token,
+  );
+  const falha = checkFault(xml);
+  if (falha) throw new Error(`GetTurmas: ${falha}`);
+  return parseXmlList(xml, "wsTurma").flatMap((item) => {
+    const turmaId = numero(item, "TurmaID");
+    const cursoId = numero(item, "CursoID");
+    if (turmaId === null || cursoId === null) return [];
+    return [
+      {
+        turmaId,
+        nome: parseXmlValue(item, "Nome"),
+        cursoId,
+        curso: parseXmlValue(item, "Curso"),
+        anoLetivo: numero(item, "AnoLetivo"),
+        situacao: parseXmlValue(item, "Situacao"),
+        horario: parseXmlValue(item, "Horario"),
+        maxAlunos: numero(item, "MaxAlunos"),
+        vagasOcupadas: numero(item, "VagasOcupadas"),
+      },
+    ];
+  });
+}
+
 // Contrato que o aluno já tenha na turma, para o reprocessamento não criar uma
 // segunda matrícula no Sponte.
 export async function contratoExistente(

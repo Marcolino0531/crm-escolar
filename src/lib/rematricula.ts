@@ -640,7 +640,6 @@ const ITENS_INFANTIL = [
   "Coleção Principal (Bernoulli)",
   "Coleção Eu no Mundo",
   "Cultura Inglesa",
-  "Material Coletivo",
   "Robótica",
 ];
 const ITENS_ANOS_INICIAIS = [
@@ -648,14 +647,12 @@ const ITENS_ANOS_INICIAIS = [
   "Coleção Eu no Mundo",
   "Material de Arte",
   "Cultura Inglesa",
-  "Material Coletivo",
   "Robótica",
 ];
 const ITENS_ANOS_FINAIS = [
   "Coleção Principal (Bernoulli)",
   "Material de Arte",
   "Cultura Inglesa",
-  "Material Coletivo",
   "Robótica",
 ];
 
