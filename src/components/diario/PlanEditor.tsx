@@ -17,7 +17,12 @@ import {
   MEALS,
   WEEKDAYS,
   DEFAULT_DAY,
+  emptyPlan,
+  groupMealPlans,
+  mealPlanToRows,
+  scheduleToRows,
   type DiarioStudent,
+  type MealPlanRow,
   type MealKey,
   type MealPlan,
   type Weekday,
@@ -68,10 +73,7 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
         .delete()
         .eq("student_id", student.id);
       if (dErr) throw dErr;
-      const mealRows: { student_id: string; meal: MealKey; weekday: Weekday }[] = [];
-      (Object.keys(draft) as MealKey[]).forEach((meal) => {
-        draft[meal].forEach((weekday) => mealRows.push({ student_id: student.id, meal, weekday }));
-      });
+      const mealRows = mealPlanToRows(student.id, draft);
       if (mealRows.length) {
         const { error } = await supabase
           .from("diario_meal_plans" as never)
@@ -85,22 +87,26 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
         .delete()
         .eq("student_id", student.id);
       if (dsErr) throw dsErr;
-      const schedRows: { student_id: string; weekday: Weekday; entry: string; exit: string }[] = [];
-      (Object.keys(scheduleDraft) as unknown as Weekday[]).forEach((d) => {
-        const day = scheduleDraft[d as Weekday];
-        if (day)
-          schedRows.push({
-            student_id: student.id,
-            weekday: d as Weekday,
-            entry: day.entry,
-            exit: day.exit,
-          });
-      });
+      const schedRows = scheduleToRows(student.id, scheduleDraft);
       if (schedRows.length) {
         const { error } = await supabase
           .from("diario_schedules" as never)
           .insert(schedRows as never);
         if (error) throw error;
+      }
+
+      // Confirma no banco antes de anunciar sucesso.
+      const { data: saved, error: rErr } = await supabase
+        .from("diario_meal_plans" as never)
+        .select("student_id, meal, weekday")
+        .eq("student_id", student.id);
+      if (rErr) throw rErr;
+      const persisted = mealPlanToRows(
+        student.id,
+        groupMealPlans((saved ?? []) as unknown as MealPlanRow[]).get(student.id) ?? emptyPlan(),
+      );
+      if (persisted.length !== mealRows.length) {
+        throw new Error("O plano não foi gravado por completo. Tente novamente.");
       }
     },
     onSuccess: () => {

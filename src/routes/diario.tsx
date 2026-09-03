@@ -37,9 +37,14 @@ import {
   MEAL_LABEL,
   emptyPlan,
   emptySchedule,
+  fetchAllRows,
+  groupMealPlans,
+  groupSchedules,
   isCoveredToday,
   type DiarioStudent,
   type MealKey,
+  type MealPlanRow,
+  type ScheduleRow,
   type Weekday,
 } from "@/lib/diario";
 
@@ -64,8 +69,6 @@ type StudentRow = {
   school_id: string;
   photo: string | null;
 };
-type MealPlanRow = { student_id: string; meal: MealKey; weekday: number };
-type ScheduleRow = { student_id: string; weekday: number; entry: string; exit: string };
 
 function useStudents(schoolFilterIds: string[] | null) {
   return useQuery({
@@ -77,28 +80,36 @@ function useStudents(schoolFilterIds: string[] | null) {
         .order("class_name")
         .order("name");
       if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
-      const [sRes, pRes, schRes] = await Promise.all([
+      const [sRes, plans, schedules] = await Promise.all([
         sq,
-        supabase.from("diario_meal_plans" as never).select("student_id, meal, weekday"),
-        supabase.from("diario_schedules" as never).select("student_id, weekday, entry, exit"),
+        fetchAllRows<MealPlanRow>(
+          (from, to) =>
+            supabase
+              .from("diario_meal_plans" as never)
+              .select("student_id, meal, weekday")
+              .order("id")
+              .range(from, to) as unknown as Promise<{
+              data: MealPlanRow[] | null;
+              error: unknown;
+            }>,
+        ),
+        fetchAllRows<ScheduleRow>(
+          (from, to) =>
+            supabase
+              .from("diario_schedules" as never)
+              .select("student_id, weekday, entry, exit")
+              .order("id")
+              .range(from, to) as unknown as Promise<{
+              data: ScheduleRow[] | null;
+              error: unknown;
+            }>,
+        ),
       ]);
       if (sRes.error) throw sRes.error;
       const students = (sRes.data ?? []) as unknown as StudentRow[];
-      const plans = (pRes.data ?? []) as unknown as MealPlanRow[];
-      const schedules = (schRes.data ?? []) as unknown as ScheduleRow[];
 
-      const planByStudent = new Map<string, ReturnType<typeof emptyPlan>>();
-      for (const p of plans) {
-        const plan = planByStudent.get(p.student_id) ?? emptyPlan();
-        plan[p.meal].push(p.weekday as Weekday);
-        planByStudent.set(p.student_id, plan);
-      }
-      const schedByStudent = new Map<string, ReturnType<typeof emptySchedule>>();
-      for (const s of schedules) {
-        const sched = schedByStudent.get(s.student_id) ?? emptySchedule();
-        sched[s.weekday as Weekday] = { entry: s.entry, exit: s.exit };
-        schedByStudent.set(s.student_id, sched);
-      }
+      const planByStudent = groupMealPlans(plans);
+      const schedByStudent = groupSchedules(schedules);
 
       return students.map<DiarioStudent>((s) => ({
         id: s.id,
