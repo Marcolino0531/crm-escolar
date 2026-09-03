@@ -14,6 +14,7 @@ import {
   Inbox,
   FileText,
   Loader2,
+  PhoneOff,
   Search,
   Trash2,
   X,
@@ -53,6 +54,14 @@ import { useAuth } from "@/lib/app-context";
 import { PausasPorComprovante } from "@/components/cobranca/PausaComprovante";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { displayPhoneBR } from "@/lib/phone";
+import { filtrarPorUnidade } from "@/lib/unidade-global";
+import {
+  ROTULO_CATEGORIA,
+  contarPorCategoria,
+  totalEmRisco,
+  type CategoriaFalha,
+  type FalhaEntrega,
+} from "@/lib/billing-falhas";
 
 export const Route = createFileRoute("/cobranca-automatica")({
   head: () => ({ meta: [{ title: "Mensagens Automáticas — School Hub" }] }),
@@ -92,6 +101,7 @@ function MensagensAutomaticasPage() {
           <TabsTrigger value="cobrancas">Cobranças Automáticas</TabsTrigger>
           <TabsTrigger value="lembretes">Lembretes Automáticos</TabsTrigger>
           <TabsTrigger value="rematricula">Lembretes de Rematrícula</TabsTrigger>
+          <TabsTrigger value="falhas">Falhas de Entrega</TabsTrigger>
         </TabsList>
         <TabsContent value="cobrancas" className="pt-4">
           <CobrancasAutomaticasTab />
@@ -101,6 +111,9 @@ function MensagensAutomaticasPage() {
         </TabsContent>
         <TabsContent value="rematricula" className="pt-4">
           <LembretesRematriculaTab />
+        </TabsContent>
+        <TabsContent value="falhas" className="pt-4">
+          <FalhasEntregaTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -698,6 +711,226 @@ const RUN_STATUS_STYLE: Record<CronRun["status"], { label: string; cls: string }
   pausado: { label: "Pausado", cls: "bg-amber-100 text-amber-700" },
   erro: { label: "Erro", cls: "bg-red-100 text-red-700" },
 };
+
+type FalhasResponse = { ok: boolean; dias: number; data: FalhaEntrega[]; error?: string };
+
+const CATEGORIA_STYLE: Record<CategoriaFalha, string> = {
+  sem_whatsapp: "bg-red-100 text-red-700",
+  sem_telefone: "bg-amber-100 text-amber-700",
+  fora_da_janela: "bg-sky-100 text-sky-700",
+  template: "bg-violet-100 text-violet-700",
+  limite_meta: "bg-orange-100 text-orange-700",
+  outro: "bg-slate-100 text-slate-600",
+};
+
+function formatDiaISO(ymd: string | null): string {
+  if (!ymd) return "—";
+  const [y, m, d] = ymd.split("-");
+  return y && m && d ? `${d}/${m}/${y}` : ymd;
+}
+
+// Visão consolidada de quem NÃO recebeu a cobrança/lembrete: uma linha por
+// responsável/telefone cujo último disparo falhou, com a contagem de tentativas
+// seguidas. Segue o seletor global de unidade do topo. Só acompanhamento — o
+// contato com o responsável é manual.
+function FalhasEntregaTab() {
+  const unidade = useUnidadeAtiva();
+  const [dias, setDias] = useState(60);
+  const [selecionada, setSelecionada] = useState<FalhaEntrega | null>(null);
+
+  const { data, isFetching, isError, error } = useQuery({
+    queryKey: ["cobranca-falhas-entrega", dias],
+    refetchInterval: 60000,
+    queryFn: async (): Promise<FalhasResponse> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+      const resp = await fetch(`/api/cobrancas/falhas?dias=${dias}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as FalhasResponse;
+      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar as falhas.");
+      return body;
+    },
+  });
+
+  const linhas = filtrarPorUnidade(data?.data ?? [], unidade, (l) => l.unidade);
+  const emRisco = totalEmRisco(linhas);
+  const porCategoria = contarPorCategoria(linhas);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
+        <PhoneOff className="mt-0.5 h-6 w-6 shrink-0 text-red-600" />
+        <div className="text-sm">
+          <div className="font-semibold text-red-900">Quem não recebeu a mensagem</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Responsáveis cujo último disparo de cobrança ou lembrete falhou (número sem WhatsApp,
+            sem telefone no Sponte, erro da Meta). Tentativas seguidas ao mesmo telefone ficam em
+            uma linha só; quem voltou a receber sai da lista. A equipe liga manualmente — não há
+            reenvio automático.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-xs text-muted-foreground">Responsáveis sem entrega</div>
+          <div className="text-2xl font-bold">{linhas.length}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-xs text-muted-foreground">Valor em risco (última cobrança)</div>
+          <div className="text-2xl font-bold text-red-700">{formatBRL(emRisco)}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-xs text-muted-foreground">Por motivo</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(Object.keys(porCategoria) as CategoriaFalha[]).map((c) => (
+              <span
+                key={c}
+                className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${CATEGORIA_STYLE[c]}`}
+              >
+                {ROTULO_CATEGORIA[c]}: {porCategoria[c]}
+              </span>
+            ))}
+            {linhas.length === 0 && <span className="text-sm text-muted-foreground">—</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <h2 className="text-base font-semibold">
+            Falhas de Entrega · {unidade ?? "Todas as Unidades"}
+          </h2>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Janela</span>
+            <select
+              value={dias}
+              onChange={(e) => setDias(Number(e.target.value))}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+            >
+              <option value={30}>30 dias</option>
+              <option value={60}>60 dias</option>
+              <option value={90}>90 dias</option>
+              <option value={180}>180 dias</option>
+            </select>
+            {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          </div>
+        </div>
+        {isError ? (
+          <div className="px-4 py-6 text-sm text-red-600">
+            {error instanceof Error ? error.message : "Falha ao carregar as falhas."}
+          </div>
+        ) : isFetching && !data ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : linhas.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+            <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+            <p className="text-sm font-medium">Nenhuma falha de entrega pendente.</p>
+            <p className="text-xs text-muted-foreground">
+              Todos os responsáveis cobrados na janela receberam a última mensagem.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Última tentativa</TableHead>
+                <TableHead>Responsável</TableHead>
+                <TableHead>Telefone</TableHead>
+                <TableHead>Aluno(s)</TableHead>
+                <TableHead>Unidade</TableHead>
+                <TableHead>Motivo</TableHead>
+                <TableHead className="text-center">Tentativas</TableHead>
+                <TableHead className="text-right">Valor</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {linhas.map((l) => (
+                <TableRow
+                  key={l.chave}
+                  onClick={() => setSelecionada(l)}
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                >
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {formatDataHora(l.ultimaTentativa)}
+                  </TableCell>
+                  <TableCell className="text-sm font-medium">{l.responsavel}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {l.telefone ? displayPhoneBR(l.telefone) : "—"}
+                  </TableCell>
+                  <TableCell className="max-w-[220px] truncate text-sm" title={l.alunos.join(", ")}>
+                    {l.alunos.length > 0 ? l.alunos.join(", ") : "—"}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">{l.unidade}</TableCell>
+                  <TableCell>
+                    <span
+                      title={l.erro}
+                      className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${CATEGORIA_STYLE[l.categoria]}`}
+                    >
+                      {ROTULO_CATEGORIA[l.categoria]}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-center text-sm">
+                    {l.tentativas > 1 ? (
+                      <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                        {l.tentativas}×
+                      </span>
+                    ) : (
+                      "1×"
+                    )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right text-sm font-medium">
+                    {l.valor > 0 ? formatBRL(l.valor) : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      <Dialog open={!!selecionada} onOpenChange={(o) => !o && setSelecionada(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Falha de entrega</DialogTitle>
+          </DialogHeader>
+          {selecionada && (
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <Campo label="Responsável" valor={selecionada.responsavel} />
+              <Campo
+                label="Telefone"
+                valor={selecionada.telefone ? displayPhoneBR(selecionada.telefone) : "—"}
+              />
+              <Campo label="Aluno(s)" valor={selecionada.alunos.join(", ") || "—"} />
+              <Campo label="Unidade" valor={selecionada.unidade} />
+              <Campo
+                label="Régua"
+                valor={selecionada.tipo === "lembrete" ? "Lembrete" : "Cobrança"}
+              />
+              <Campo label="Tentativas seguidas" valor={`${selecionada.tentativas}×`} />
+              <Campo label="Última tentativa" valor={formatDataHora(selecionada.ultimaTentativa)} />
+              <Campo label="Vencimento" valor={formatDiaISO(selecionada.vencimento)} />
+              <Campo
+                label="Valor cobrado"
+                valor={selecionada.valor > 0 ? formatBRL(selecionada.valor) : "—"}
+              />
+              <Campo label="Motivo" valor={ROTULO_CATEGORIA[selecionada.categoria]} />
+              <div className="col-span-2">
+                <Campo label="Erro reportado" valor={selecionada.erro} />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 // Execuções do cron — inclusive as que não enviaram nada. É aqui que um disparo
 // perdido (deploy na hora do agendamento, timeout, erro do Sponte) fica visível.

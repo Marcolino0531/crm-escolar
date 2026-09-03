@@ -3,6 +3,7 @@
 //
 //   GET /api/cobrancas/logs       — lista paginada dos disparos (filtros + resumo)
 //   GET /api/cobrancas/cron-runs  — últimas execuções do cron
+//   GET /api/cobrancas/falhas     — falhas de entrega agrupadas por responsável/telefone
 //
 // Filtros (query string): unidade, status ('sucesso'|'erro'), date (YYYY-MM-DD),
 // page (1-based), per_page. Resposta inclui `summary` (envios de hoje, falhas,
@@ -16,6 +17,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { PREFIXO_SLOT_LEMBRETE, PREFIXO_SLOT_REMATRICULA } from "@/lib/billing-cron-runs";
+import { agruparFalhas, type LogEntrega } from "@/lib/billing-falhas";
 
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 100;
@@ -113,7 +115,54 @@ export async function handleCobrancasApi(request: Request): Promise<Response | n
     }
   }
 
+  if (pathname === "/api/cobrancas/falhas" && request.method === "GET") {
+    if (!(await isAuthenticated(request))) {
+      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+    }
+    try {
+      return await listFalhas(url);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[cobrancas] /falhas falhou:", msg);
+      return json({ ok: false, error: msg }, 500);
+    }
+  }
+
   return json({ ok: false, error: "Rota não encontrada." }, 404);
+}
+
+const FALHAS_DIAS_PADRAO = 60;
+const FALHAS_DIAS_MAX = 365;
+const PAGINA_LEITURA = 1000;
+
+// Falhas de entrega das réguas de cobrança e lembrete (a de rematrícula fica
+// fora: não tem valor cobrado). Lê TODOS os disparos da janela — sucessos
+// inclusive — porque só assim dá para saber se o responsável voltou a receber
+// depois da falha; o agrupamento é feito em `agruparFalhas`.
+async function listFalhas(url: URL): Promise<Response> {
+  const diasRaw = Number.parseInt(url.searchParams.get("dias") ?? String(FALHAS_DIAS_PADRAO), 10);
+  const dias = Math.min(FALHAS_DIAS_MAX, Math.max(1, diasRaw || FALHAS_DIAS_PADRAO));
+  const inicio = new Date();
+  inicio.setDate(inicio.getDate() - dias);
+
+  const logs: LogEntrega[] = [];
+  for (let from = 0; ; from += PAGINA_LEITURA) {
+    const { data, error } = await supabaseAdmin
+      .from("whatsapp_billing_logs" as never)
+      .select(
+        "id, data_envio, responsavel_name, aluno_name, alunos_cobrados, telefone, unidade, valor, vencimento, status, erro_mensagem, tipo",
+      )
+      .in("tipo", ["cobranca", "lembrete"])
+      .gte("data_envio", inicio.toISOString())
+      .order("data_envio", { ascending: true })
+      .range(from, from + PAGINA_LEITURA - 1);
+    if (error) throw new Error(error.message);
+    const pagina = (data ?? []) as unknown as LogEntrega[];
+    logs.push(...pagina);
+    if (pagina.length < PAGINA_LEITURA) break;
+  }
+
+  return json({ ok: true, dias, data: agruparFalhas(logs) });
 }
 
 const MAX_CRON_RUNS = 60;
