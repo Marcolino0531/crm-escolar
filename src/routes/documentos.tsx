@@ -12,12 +12,14 @@ import {
   Receipt,
   Search,
   User,
+  FlaskConical,
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
+import { ZapSignSandbox } from "@/components/documentos/ZapSignSandbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -168,6 +170,9 @@ function DocumentosPage() {
           <TabsTrigger value="historico" className="gap-1">
             <History className="h-4 w-4" /> Histórico
           </TabsTrigger>
+          <TabsTrigger value="zapsign" className="gap-1">
+            <FlaskConical className="h-4 w-4" /> ZapSign (teste)
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="documento" className="mt-4">
@@ -175,6 +180,9 @@ function DocumentosPage() {
         </TabsContent>
         <TabsContent value="historico" className="mt-4">
           <HistoricoDocumentos />
+        </TabsContent>
+        <TabsContent value="zapsign" className="mt-4">
+          <ZapSignSandbox />
         </TabsContent>
       </Tabs>
     </div>
