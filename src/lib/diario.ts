@@ -57,6 +57,64 @@ export function emptySchedule(): SchedulePlan {
 
 export const DEFAULT_DAY: DaySchedule = { entry: "07:30", exit: "17:30" };
 
+export type MealPlanRow = { student_id: string; meal: MealKey; weekday: Weekday };
+export type ScheduleRow = { student_id: string; weekday: Weekday; entry: string; exit: string };
+
+export function mealPlanToRows(studentId: string, plan: MealPlan): MealPlanRow[] {
+  const rows: MealPlanRow[] = [];
+  (Object.keys(plan) as MealKey[]).forEach((meal) => {
+    plan[meal].forEach((weekday) => rows.push({ student_id: studentId, meal, weekday }));
+  });
+  return rows;
+}
+
+export function scheduleToRows(studentId: string, schedule: SchedulePlan): ScheduleRow[] {
+  const rows: ScheduleRow[] = [];
+  (Object.keys(schedule).map(Number) as Weekday[]).forEach((weekday) => {
+    const day = schedule[weekday];
+    if (day) rows.push({ student_id: studentId, weekday, entry: day.entry, exit: day.exit });
+  });
+  return rows;
+}
+
+export function groupMealPlans(rows: readonly MealPlanRow[]): Map<string, MealPlan> {
+  const byStudent = new Map<string, MealPlan>();
+  for (const r of rows) {
+    const plan = byStudent.get(r.student_id) ?? emptyPlan();
+    if (!plan[r.meal].includes(r.weekday)) plan[r.meal].push(r.weekday);
+    byStudent.set(r.student_id, plan);
+  }
+  return byStudent;
+}
+
+export function groupSchedules(rows: readonly ScheduleRow[]): Map<string, SchedulePlan> {
+  const byStudent = new Map<string, SchedulePlan>();
+  for (const r of rows) {
+    const sched = byStudent.get(r.student_id) ?? emptySchedule();
+    sched[r.weekday] = { entry: r.entry, exit: r.exit };
+    byStudent.set(r.student_id, sched);
+  }
+  return byStudent;
+}
+
+// O PostgREST devolve no máximo 1000 linhas por requisição; lê em páginas até a
+// página vir incompleta. `fetchPage` recebe o intervalo [from, to] inclusivo.
+export const DIARIO_PAGE_SIZE = 1000;
+
+export async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: unknown }>,
+  pageSize = DIARIO_PAGE_SIZE,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await fetchPage(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    all.push(...page);
+    if (page.length < pageSize) return all;
+  }
+}
+
 // QR Code de portaria: o "código único" do aluno é o próprio id, prefixado para
 // diferenciar de QRs genéricos. A leitura aceita o valor prefixado ou o id cru.
 export const DIARIO_QR_PREFIX = "SCHOOLHUB-DIARIO:";
