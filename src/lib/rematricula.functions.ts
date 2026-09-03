@@ -72,6 +72,28 @@ import {
 } from "@/lib/matricula-form";
 import type { MealKey, Weekday } from "@/lib/diario";
 import {
+  TODOS_OS_TURNOS,
+  cronogramaMatricula,
+  normalizarRotinaParaSerie,
+  observacaoMatriculaSponte,
+  parcelamentoMatricula,
+  parcelamentoMatriculaDisponivel,
+  parcelasMatriculaValida,
+  segmentoMatricula,
+  turnosDisponiveisParaSerie,
+  unidadeRestringeTurno,
+  validarPrimeiroVencimento,
+  valorMatricula,
+  vencimentosMatriculaPelasMensalidades,
+  type ParcelaMatriculaLancada,
+  type ParcelaMatriculaOpcao,
+  type SegmentoMatricula,
+  type TurnosDisponiveis,
+} from "@/lib/rematricula-matricula";
+import { CATEGORIA_MATRICULA_SPONTE } from "@/lib/matricula-faturamento";
+import { addMesesYMD } from "@/lib/confissao-divida";
+import { buscarTurmasDoAno } from "@/lib/matricula-turma.sponte";
+import {
   CAMPOS_EDITAVEIS_ALUNO,
   aplicarEdicao,
   camposAlterados,
@@ -664,6 +686,24 @@ export interface MaterialRematricula {
   } | null;
 }
 
+export interface MatriculaRematricula {
+  serie: string;
+  segmento: SegmentoMatricula;
+  valor: number;
+  // Data de hoje no servidor (Brasília): define o mês de referência, o máximo
+  // de parcelas e os limites do 1º vencimento — o relógio do navegador não conta.
+  dataPreenchimento: string;
+  mesReferencia: string;
+  somenteAVista: boolean;
+  opcoes: ParcelaMatriculaOpcao[];
+  escolhaAtual: {
+    parcelas: number;
+    primeiroVencimento: string;
+    atualizadoEm: string;
+    status: StatusEscolhaRematricula;
+  } | null;
+}
+
 export interface DadosRematricula {
   ok: boolean;
   erro?: string;
@@ -672,9 +712,50 @@ export interface DadosRematricula {
   responsaveis?: ResponsavelRematricula[];
   mensalidade?: MensalidadeVigente | null;
   material?: MaterialRematricula;
+  matricula?: MatriculaRematricula;
+  // Envio final ("Finalizar Matrícula") já feito pelo responsável.
+  enviadaEm?: string | null;
 }
 
 const TokenSchema = z.object({ token: z.string().min(16) });
+
+// A Vercel roda em UTC; o dia de calendário do colégio é o de Brasília.
+function hojeBRT(): string {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+interface MatriculaEscolhaResumo {
+  parcelas: number;
+  primeiro_vencimento: string;
+  updated_at: string;
+  status: StatusEscolhaRematricula;
+}
+
+function montarMatricula(
+  serie: string,
+  escolha: MatriculaEscolhaResumo | null,
+): MatriculaRematricula {
+  const valor = valorMatricula(serie);
+  const hoje = hojeBRT();
+  const disponivel = parcelamentoMatriculaDisponivel(valor, hoje);
+  return {
+    serie,
+    segmento: segmentoMatricula(serie),
+    valor,
+    dataPreenchimento: hoje,
+    mesReferencia: disponivel.mesReferencia,
+    somenteAVista: disponivel.somenteAVista,
+    opcoes: disponivel.opcoes,
+    escolhaAtual: escolha
+      ? {
+          parcelas: escolha.parcelas,
+          primeiroVencimento: escolha.primeiro_vencimento,
+          atualizadoEm: escolha.updated_at,
+          status: escolha.status,
+        }
+      : null,
+  };
+}
 
 async function materialDaSerie(
   unidade: string,
@@ -725,21 +806,34 @@ export const dadosRematricula = createServerFn({ method: "POST" })
 
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
-    const [responsaveis, mensalidade, material, escolha] = await Promise.all([
-      buscarResponsaveis(sessao.unidade, sessao.alunoId, responsavelFinanceiroId),
-      buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
-      materialDaSerie(sessao.unidade, serieAlvo),
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select("parcelas, updated_at, status")
-        .eq("unidade", sessao.unidade)
-        .eq("aluno_id", sessao.alunoId)
-        .maybeSingle<{
-          parcelas: number;
-          updated_at: string;
-          status: StatusEscolhaRematricula;
-        }>(),
-    ]);
+    const [responsaveis, mensalidade, material, escolha, escolhaMatricula, envio] =
+      await Promise.all([
+        buscarResponsaveis(sessao.unidade, sessao.alunoId, responsavelFinanceiroId),
+        buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
+        materialDaSerie(sessao.unidade, serieAlvo),
+        supabaseAdmin
+          .from("rematricula_escolhas" as never)
+          .select("parcelas, updated_at, status")
+          .eq("unidade", sessao.unidade)
+          .eq("aluno_id", sessao.alunoId)
+          .maybeSingle<{
+            parcelas: number;
+            updated_at: string;
+            status: StatusEscolhaRematricula;
+          }>(),
+        supabaseAdmin
+          .from("rematricula_matricula_escolhas" as never)
+          .select("parcelas, primeiro_vencimento, updated_at, status")
+          .eq("unidade", sessao.unidade)
+          .eq("aluno_id", sessao.alunoId)
+          .maybeSingle<MatriculaEscolhaResumo>(),
+        supabaseAdmin
+          .from("rematricula_envios" as never)
+          .select("enviada_em")
+          .eq("unidade", sessao.unidade)
+          .eq("aluno_id", sessao.alunoId)
+          .maybeSingle<{ enviada_em: string }>(),
+      ]);
 
     const apresentacao = apresentacaoMaterial({
       unidade: sessao.unidade,
@@ -771,6 +865,8 @@ export const dadosRematricula = createServerFn({ method: "POST" })
             }
           : null,
       },
+      matricula: montarMatricula(serieAlvo, escolhaMatricula.data ?? null),
+      enviadaEm: envio.data?.enviada_em ?? null,
     };
   });
 
@@ -869,10 +965,34 @@ export interface RotinaRematriculaResult {
   // "diario" (plano do Diário) ou "" (etapa em branco).
   origem?: string;
   rotina?: RotinaForm;
+  // Turnos que existem para a série do aluno (CEC/CEC Baby); demais unidades
+  // recebem os dois.
+  turnos?: TurnosDisponiveis;
+}
+
+// Turnos reais por série a partir das turmas abertas do Sponte. Só CEC/CEC Baby
+// restringem; qualquer falha na consulta mantém os dois turnos (nunca esconde
+// uma opção por erro de rede).
+async function turnosDaSerie(
+  unidade: string,
+  serie: string,
+  anoLetivo: number | null,
+): Promise<TurnosDisponiveis> {
+  if (!unidadeRestringeTurno(unidade)) return { ...TODOS_OS_TURNOS };
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return { ...TODOS_OS_TURNOS };
+  const ano = anoLetivo ?? Number(hojeBRT().slice(0, 4)) + 1;
+  try {
+    const turmas = await buscarTurmasDoAno(creds, ano);
+    return turnosDisponiveisParaSerie(turmas, serie);
+  } catch (e) {
+    console.warn(`${LOG_TAG} GetTurmas falhou (${ano}): ${e instanceof Error ? e.message : e}`);
+    return { ...TODOS_OS_TURNOS };
+  }
 }
 
 interface LinhaRotinaSalva {
-  data_inicio: string;
+  data_inicio: string | null;
   horarios: { weekday: number; entrada: string; saida: string }[];
   refeicoes: Record<string, number[]>;
   origem: string;
@@ -886,7 +1006,7 @@ function planoDaRotinaSalva(linha: LinhaRotinaSalva): PlanoRotinaExistente {
     }
   }
   return {
-    dataInicio: linha.data_inicio,
+    dataInicio: linha.data_inicio ?? "",
     horarios: linha.horarios.map((h) => ({
       weekday: h.weekday as Weekday,
       entrada: h.entrada,
@@ -961,30 +1081,42 @@ export const rotinaRematricula = createServerFn({ method: "POST" })
     if (!aluno) return { ok: false, erro: "Não conseguimos ler os dados do aluno agora." };
     const serie = aluno.serie;
 
-    const { data: salva } = await supabaseAdmin
-      .from("student_routine" as never)
-      .select("data_inicio, horarios, refeicoes, origem")
-      .eq("unidade", sessao.unidade)
-      .eq("sponte_aluno_id", Number(sessao.alunoId))
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<LinhaRotinaSalva>();
+    const [{ data: salva }, anoLetivo] = await Promise.all([
+      supabaseAdmin
+        .from("student_routine" as never)
+        .select("data_inicio, horarios, refeicoes, origem")
+        .eq("unidade", sessao.unidade)
+        .eq("sponte_aluno_id", Number(sessao.alunoId))
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<LinhaRotinaSalva>(),
+      anoLetivoConfigurado(),
+    ]);
+    const turnos = await turnosDaSerie(sessao.unidade, serie, anoLetivo);
+    const ajustar = (r: RotinaForm) => normalizarRotinaParaSerie(r, serie, turnos);
 
     if (salva) {
       return {
         ok: true,
         serie,
         origem: salva.origem,
-        rotina: rotinaDoPlanoExistente(planoDaRotinaSalva(salva), serie),
+        rotina: ajustar(rotinaDoPlanoExistente(planoDaRotinaSalva(salva), serie)),
+        turnos,
       };
     }
 
     const plano = await planoDoDiario(sessao.unidade, sessao.alunoId);
     if (plano) {
-      return { ok: true, serie, origem: "diario", rotina: rotinaDoPlanoExistente(plano, serie) };
+      return {
+        ok: true,
+        serie,
+        origem: "diario",
+        rotina: ajustar(rotinaDoPlanoExistente(plano, serie)),
+        turnos,
+      };
     }
 
-    return { ok: true, serie, origem: "", rotina: { ...ROTINA_FORM_VAZIA } };
+    return { ok: true, serie, origem: "", rotina: { ...ROTINA_FORM_VAZIA }, turnos };
   });
 
 const DiaRotinaSchema = z.union([
@@ -1031,14 +1163,17 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
     const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
     if (!aluno) return { ok: false, erro: "Não conseguimos confirmar os dados do aluno." };
 
-    // A série vem do Sponte, não da tela: é ela que define o horário fixo gravado.
-    const rotina = data.rotina as RotinaForm;
-    const erros = validarRotinaForm(rotina, aluno.serie);
+    // A série vem do Sponte, não da tela: é ela que define o horário fixo gravado
+    // e o que a tela oferece (frequência parcial, turnos) — o que não é oferecido
+    // não entra, mesmo que o navegador mande.
+    const anoLetivo = await anoLetivoConfigurado();
+    const turnos = await turnosDaSerie(sessao.unidade, aluno.serie, anoLetivo);
+    const rotina = normalizarRotinaParaSerie(data.rotina as RotinaForm, aluno.serie, turnos);
+    const erros = validarRotinaForm(rotina, aluno.serie, { exigirDataInicio: false });
     if (Object.keys(erros).length > 0) {
       return { ok: false, erros, erro: "Confira os campos destacados." };
     }
 
-    const anoLetivo = await anoLetivoConfigurado();
     const dados = montarRotinaPersistida(rotina, aluno.serie);
     const { error } = await supabaseAdmin.from("student_routine" as never).upsert(
       {
@@ -1049,7 +1184,7 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
         serie: aluno.serie,
         origem: "rematricula",
         ano_letivo: anoLetivo,
-        data_inicio: dados.dataInicio,
+        data_inicio: dados.dataInicio || null,
         dias_ativos: dados.diasAtivos,
         horarios: dados.horarios,
         periodo_manha: dados.periodoManha,
@@ -1065,6 +1200,131 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
       return { ok: false, erro: "Não foi possível salvar a rotina. Tente novamente." };
     }
     return { ok: true };
+  });
+
+// ─── Envio final: matrícula parcelada + "Finalizar Matrícula" ───────────────
+//
+// O botão final do portal grava a escolha da matrícula (valor por segmento,
+// parcelas e 1º vencimento) e registra o envio. Como no material, NADA é lançado
+// no Sponte aqui: a linha nasce 'pendente_lancamento' e só a secretaria efetiva.
+
+const FinalizarSchema = z.object({
+  token: z.string().min(16),
+  matricula: z.object({
+    parcelas: z.number().int().min(1).max(5),
+    primeiroVencimento: z.string().max(10),
+  }),
+});
+
+export interface FinalizarRematriculaResult {
+  ok: boolean;
+  erro?: string;
+  erros?: Record<string, string>;
+  enviadaEm?: string;
+}
+
+export const finalizarRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => FinalizarSchema.parse(input))
+  .handler(async ({ data }): Promise<FinalizarRematriculaResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
+    if (!aluno) return { ok: false, erro: "Não conseguimos confirmar os dados do aluno." };
+
+    const anoLetivo = await anoLetivoConfigurado();
+    const serieAlvo = serieRematricula(aluno, anoLetivo);
+
+    // Regras recalculadas no servidor com a data de hoje: a tela só sugere.
+    const hoje = hojeBRT();
+    const erros: Record<string, string> = {};
+    if (!parcelasMatriculaValida(data.matricula.parcelas, hoje)) {
+      erros["matricula.parcelas"] = "Escolha uma quantidade de parcelas disponível.";
+    }
+    const erroVencimento = validarPrimeiroVencimento(data.matricula.primeiroVencimento, hoje);
+    if (erroVencimento) erros["matricula.primeiroVencimento"] = erroVencimento;
+
+    // As demais seções precisam ter sido salvas antes do envio final.
+    const [rotina, material, escolhaMaterial, existente] = await Promise.all([
+      supabaseAdmin
+        .from("student_routine" as never)
+        .select("id")
+        .eq(
+          "submission_id",
+          submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
+        )
+        .maybeSingle<{ id: string }>(),
+      materialDaSerie(sessao.unidade, serieAlvo),
+      supabaseAdmin
+        .from("rematricula_escolhas" as never)
+        .select("id")
+        .eq("unidade", sessao.unidade)
+        .eq("aluno_id", sessao.alunoId)
+        .maybeSingle<{ id: string }>(),
+      supabaseAdmin
+        .from("rematricula_matricula_escolhas" as never)
+        .select("status")
+        .eq("unidade", sessao.unidade)
+        .eq("aluno_id", sessao.alunoId)
+        .maybeSingle<{ status: StatusEscolhaRematricula }>(),
+    ]);
+    if (!rotina.data) erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
+    if (material && !escolhaMaterial.data) {
+      erros["material"] = "Confirme o parcelamento do Material Pedagógico antes de finalizar.";
+    }
+    if (Object.keys(erros).length > 0) {
+      return { ok: false, erros, erro: "Confira os campos destacados." };
+    }
+
+    if (existente.data && existente.data.status !== "pendente_lancamento") {
+      return {
+        ok: false,
+        erro: "Sua matrícula já está em processamento pela secretaria. Fale com a escola para alterá-la.",
+      };
+    }
+
+    const valor = valorMatricula(serieAlvo);
+    const parcelamento = parcelamentoMatricula(valor, data.matricula.parcelas);
+    const agora = new Date().toISOString();
+    const { error } = await supabaseAdmin.from("rematricula_matricula_escolhas" as never).upsert(
+      {
+        unidade: sessao.unidade,
+        aluno_id: sessao.alunoId,
+        aluno_nome: aluno.nome,
+        serie: serieAlvo,
+        segmento: segmentoMatricula(serieAlvo),
+        valor,
+        parcelas: parcelamento.parcelas,
+        valor_parcela: parcelamento.valorParcela,
+        valor_primeira_parcela: parcelamento.valorPrimeiraParcela,
+        primeiro_vencimento: data.matricula.primeiroVencimento,
+        data_preenchimento: hoje,
+        mes_referencia: parcelamentoMatriculaDisponivel(valor, hoje).mesReferencia,
+        ano_letivo: anoLetivo,
+        status: "pendente_lancamento",
+        updated_at: agora,
+      } as never,
+      { onConflict: "unidade,aluno_id" },
+    );
+    if (error) {
+      console.error(`${LOG_TAG} falha ao salvar a matrícula: ${error.message}`);
+      return { ok: false, erro: "Não foi possível enviar sua matrícula. Tente novamente." };
+    }
+
+    const envio = await supabaseAdmin.from("rematricula_envios" as never).upsert(
+      {
+        unidade: sessao.unidade,
+        aluno_id: sessao.alunoId,
+        ano_letivo: anoLetivo,
+        enviada_em: agora,
+      } as never,
+      { onConflict: "unidade,aluno_id" },
+    );
+    if (envio.error) {
+      console.error(`${LOG_TAG} falha ao registrar o envio: ${envio.error.message}`);
+      return { ok: false, erro: "Não foi possível enviar sua matrícula. Tente novamente." };
+    }
+    return { ok: true, enviadaEm: agora };
   });
 
 // ─── Sincronização cadastral (portal público → Sponte) ──────────────────────
@@ -1809,6 +2069,321 @@ export const lancarEscolhaRematriculaNoSponte = createServerFn({ method: "POST" 
       return { ok: false, erro: "Esta solicitação já tem cobrança criada no Sponte." };
     }
     return lancarMaterialNoSponte(escolha, nome);
+  });
+
+// ─── Efetivação da MATRÍCULA parcelada (secretaria) ─────────────────────────
+//
+// Mesmo desenho do material: reivindica a linha ('efetivada') antes de falar com
+// o Sponte, grava o título assim que ele existe e só depois ajusta parcelas. A
+// 1ª parcela vence na data escolhida pelo responsável; da 2ª em diante o
+// vencimento é o da mensalidade real do aluno naquele mês (lido agora do Sponte).
+
+export interface MatriculaSolicitacao {
+  id: string;
+  unidade: string;
+  alunoId: string;
+  alunoNome: string;
+  serie: string;
+  segmento: string;
+  valor: number;
+  parcelas: number;
+  valorParcela: number;
+  valorPrimeiraParcela: number;
+  primeiroVencimento: string;
+  dataPreenchimento: string;
+  anoLetivo: number | null;
+  status: StatusEscolhaRematricula;
+  solicitadaEm: string;
+  efetivadaEm: string;
+  efetivadaPor: string;
+  sponteContaReceberId: string;
+  sponteErro: string;
+  parcelasLancadas: ParcelaMatriculaLancada[];
+}
+
+interface MatriculaRow {
+  id: string;
+  unidade: string;
+  aluno_id: string;
+  aluno_nome: string;
+  serie: string;
+  segmento: string;
+  valor: number;
+  parcelas: number;
+  valor_parcela: number;
+  valor_primeira_parcela: number;
+  primeiro_vencimento: string;
+  data_preenchimento: string;
+  ano_letivo: number | null;
+  status: StatusEscolhaRematricula;
+  created_at: string;
+  efetivada_at: string | null;
+  efetivada_por_nome: string | null;
+  sponte_conta_receber_id: string | null;
+  sponte_erro: string | null;
+  parcelas_lancadas: ParcelaMatriculaLancada[] | null;
+  historico: { status: string; at: string; por: string }[] | null;
+}
+
+const CAMPOS_MATRICULA =
+  "id, unidade, aluno_id, aluno_nome, serie, segmento, valor, parcelas, valor_parcela, valor_primeira_parcela, primeiro_vencimento, data_preenchimento, ano_letivo, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_erro, parcelas_lancadas, historico";
+
+function paraMatriculaSolicitacao(r: MatriculaRow): MatriculaSolicitacao {
+  return {
+    id: r.id,
+    unidade: r.unidade,
+    alunoId: r.aluno_id,
+    alunoNome: r.aluno_nome,
+    serie: r.serie,
+    segmento: r.segmento,
+    valor: Number(r.valor),
+    parcelas: r.parcelas,
+    valorParcela: Number(r.valor_parcela),
+    valorPrimeiraParcela: Number(r.valor_primeira_parcela),
+    primeiroVencimento: r.primeiro_vencimento,
+    dataPreenchimento: r.data_preenchimento,
+    anoLetivo: r.ano_letivo ?? null,
+    status: r.status,
+    solicitadaEm: r.created_at,
+    efetivadaEm: r.efetivada_at ?? "",
+    efetivadaPor: r.efetivada_por_nome ?? "",
+    sponteContaReceberId: r.sponte_conta_receber_id ?? "",
+    sponteErro: r.sponte_erro ?? "",
+    parcelasLancadas: r.parcelas_lancadas ?? [],
+  };
+}
+
+export interface DetalheMatriculaResult {
+  matricula: MatriculaSolicitacao | null;
+  enviadaEm: string | null;
+}
+
+export const detalheMatriculaRematricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DetalheSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DetalheMatriculaResult> => {
+    await exigirPermissaoRematricula(context.userId, false);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    if (permitidas !== null && !permitidas.includes(data.unidade)) {
+      throw new Error("Sem permissão para esta unidade.");
+    }
+    const [matricula, envio] = await Promise.all([
+      supabaseAdmin
+        .from("rematricula_matricula_escolhas" as never)
+        .select(CAMPOS_MATRICULA)
+        .eq("unidade", data.unidade)
+        .eq("aluno_id", data.alunoId)
+        .maybeSingle<MatriculaRow>(),
+      supabaseAdmin
+        .from("rematricula_envios" as never)
+        .select("enviada_em")
+        .eq("unidade", data.unidade)
+        .eq("aluno_id", data.alunoId)
+        .maybeSingle<{ enviada_em: string }>(),
+    ]);
+    return {
+      matricula: matricula.data ? paraMatriculaSolicitacao(matricula.data) : null,
+      enviadaEm: envio.data?.enviada_em ?? null,
+    };
+  });
+
+export interface EfetivarMatriculaResult {
+  ok: boolean;
+  erro?: string;
+  lancadaNoSponte?: boolean;
+  sponteContaReceberId?: string;
+  sponteErro?: string;
+  parcelas?: ParcelaMatriculaLancada[];
+}
+
+async function carregarMatricula(id: string): Promise<MatriculaRow | null> {
+  const { data } = await supabaseAdmin
+    .from("rematricula_matricula_escolhas" as never)
+    .select(CAMPOS_MATRICULA)
+    .eq("id", id)
+    .maybeSingle<MatriculaRow>();
+  return data ?? null;
+}
+
+async function registrarErroMatricula(id: string, erro: string): Promise<void> {
+  await supabaseAdmin
+    .from("rematricula_matricula_escolhas" as never)
+    .update({ sponte_erro: erro } as never)
+    .eq("id", id);
+}
+
+async function lancarMatriculaNoSponte(
+  escolha: MatriculaRow,
+  nome: string,
+): Promise<EfetivarMatriculaResult> {
+  const falhar = async (erro: string): Promise<EfetivarMatriculaResult> => {
+    await registrarErroMatricula(escolha.id, erro);
+    return { ok: true, lancadaNoSponte: false, sponteErro: erro };
+  };
+
+  const anoLetivo = await anoLetivoConfigurado();
+  if (anoLetivo === null) {
+    return falhar(
+      'Configure o "Ano Letivo de Referência" em Configurações antes de lançar — nenhuma cobrança foi criada.',
+    );
+  }
+
+  const titulos = await coletarTitulosAluno(escolha.unidade, escolha.aluno_id);
+  if (titulos.indisponivel || titulos.error) {
+    return falhar(
+      titulos.error ??
+        "Credenciais do Sponte ausentes para esta unidade — nenhuma cobrança foi criada.",
+    );
+  }
+
+  const valor = Number(escolha.valor);
+  const vencimentos = vencimentosMatriculaPelasMensalidades(
+    titulos.titulos,
+    escolha.primeiro_vencimento,
+    escolha.parcelas,
+  );
+  const itens = cronogramaMatricula(valor, escolha.parcelas, vencimentos);
+  const observacao = observacaoMatriculaSponte(anoLetivo, escolha.parcelas);
+  const logTag = "[Rematrícula][Matrícula][Sponte]";
+
+  const inserido = await inserirPlanoSponte({
+    unidade: escolha.unidade,
+    sponteAlunoId: escolha.aluno_id,
+    valor: Number(escolha.valor_parcela),
+    vencimento: escolha.primeiro_vencimento,
+    categoria: CATEGORIA_MATRICULA_SPONTE,
+    observacao,
+    logTag,
+    parcelas: escolha.parcelas,
+  });
+  if (!inserido.ok || !inserido.contaReceberID) {
+    return falhar(
+      inserido.error ??
+        "O Sponte não confirmou a criação da cobrança — nenhuma cobrança foi criada.",
+    );
+  }
+
+  const contaReceberId = inserido.contaReceberID;
+  const agoraISO = new Date().toISOString();
+  const { error: erroGravacao } = await supabaseAdmin
+    .from("rematricula_matricula_escolhas" as never)
+    .update({
+      status: "lancada",
+      lancada_at: agoraISO,
+      sponte_conta_receber_id: contaReceberId,
+      parcelas_lancadas: itens,
+      ano_letivo: anoLetivo,
+      sponte_erro: "",
+      historico: [...(escolha.historico ?? []), { status: "lancada", at: agoraISO, por: nome }],
+    } as never)
+    .eq("id", escolha.id)
+    .eq("status", "efetivada");
+  if (erroGravacao) {
+    return falhar(
+      `Cobrança criada no Sponte (conta ${contaReceberId}), mas o School Hub não conseguiu registrar o status. NÃO lance novamente.`,
+    );
+  }
+
+  // Ajustes parcela a parcela: a 1ª leva a sobra de centavos; da 2ª em diante o
+  // vencimento passa a ser o da mensalidade real do mês (o InsertPlano gera
+  // vencimentos mensais a partir da 1ª data, que não é o dia da mensalidade).
+  const pendencias: string[] = [];
+  for (const item of itens) {
+    const valorNominal = Number(escolha.valor_parcela);
+    const vencimentoNominal = addMesesYMD(escolha.primeiro_vencimento, item.numero - 1);
+    const precisaAjuste =
+      Math.round(item.valor * 100) !== Math.round(valorNominal * 100) ||
+      item.vencimento !== vencimentoNominal;
+    if (!precisaAjuste) continue;
+    const ajuste = await atualizarParcelaSponte({
+      unidade: escolha.unidade,
+      contaReceberId,
+      numeroParcela: item.numero,
+      valor: item.valor,
+      vencimento: item.vencimento,
+      categoria: CATEGORIA_MATRICULA_SPONTE,
+      observacao,
+      logTag,
+    });
+    if (!ajuste.ok) {
+      pendencias.push(
+        `parcela ${item.numero}: ${item.valor.toFixed(2)} em ${item.vencimento} (${ajuste.error ?? "o Sponte não confirmou"})`,
+      );
+    }
+  }
+  if (pendencias.length > 0) {
+    const erro = `Cobrança criada no Sponte (conta ${contaReceberId}), mas o ajuste falhou — corrija no Sponte: ${pendencias.join("; ")}. NÃO lance novamente.`;
+    await registrarErroMatricula(escolha.id, erro);
+    return {
+      ok: true,
+      lancadaNoSponte: true,
+      sponteContaReceberId: contaReceberId,
+      sponteErro: erro,
+      parcelas: itens,
+    };
+  }
+
+  return { ok: true, lancadaNoSponte: true, sponteContaReceberId: contaReceberId, parcelas: itens };
+}
+
+export const efetivarMatriculaRematricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => EscolhaIdSchema.parse(input))
+  .handler(async ({ data, context }): Promise<EfetivarMatriculaResult> => {
+    const nome = await exigirPermissaoRematricula(context.userId, true);
+    const escolha = await carregarMatricula(data.id);
+    if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    if (escolha.status !== "pendente_lancamento") {
+      return {
+        ok: false,
+        erro:
+          escolha.status === "lancada"
+            ? "Esta matrícula já foi lançada no Sponte."
+            : "Esta matrícula já foi efetivada.",
+      };
+    }
+
+    const agoraISO = new Date().toISOString();
+    const { data: atualizadas, error } = await supabaseAdmin
+      .from("rematricula_matricula_escolhas" as never)
+      .update({
+        status: "efetivada",
+        efetivada_at: agoraISO,
+        efetivada_por: context.userId,
+        efetivada_por_nome: nome,
+        historico: [...(escolha.historico ?? []), { status: "efetivada", at: agoraISO, por: nome }],
+      } as never)
+      .eq("id", escolha.id)
+      .eq("status", "pendente_lancamento")
+      .select("id");
+    if (error) return { ok: false, erro: "Não foi possível efetivar a matrícula." };
+    if ((atualizadas ?? []).length === 0) {
+      return { ok: false, erro: "Esta matrícula já foi efetivada." };
+    }
+
+    return lancarMatriculaNoSponte({ ...escolha, status: "efetivada" }, nome);
+  });
+
+export const lancarMatriculaRematriculaNoSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => EscolhaIdSchema.parse(input))
+  .handler(async ({ data, context }): Promise<EfetivarMatriculaResult> => {
+    const nome = await exigirPermissaoRematricula(context.userId, true);
+    const escolha = await carregarMatricula(data.id);
+    if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    if (escolha.status !== "efetivada") {
+      return {
+        ok: false,
+        erro:
+          escolha.status === "pendente_lancamento"
+            ? "Efetive a matrícula antes de lançar no Sponte."
+            : "Esta matrícula já está lançada no Sponte.",
+      };
+    }
+    if (escolha.sponte_conta_receber_id) {
+      return { ok: false, erro: "Esta matrícula já tem cobrança criada no Sponte." };
+    }
+    return lancarMatriculaNoSponte(escolha, nome);
   });
 
 // ─── Cadastro administrativo: Material Pedagógico por Série ─────────────────

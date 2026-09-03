@@ -497,11 +497,15 @@ export function validarRotinaForm(
   serie: string,
   // O horário curricular só é cobrado na matrícula nova, que é quem precisa da
   // turma; na Rematrícula o aluno já tem turma no Sponte.
-  opcoes: { exigirHorarioCurricular?: boolean } = {},
+  opcoes: { exigirHorarioCurricular?: boolean; exigirDataInicio?: boolean } = {},
 ): ErrosForm {
   const erros: ErrosForm = {};
 
-  if (!dataValida(rotina.dataInicio)) erros["rotina.dataInicio"] = "Informe a data de início.";
+  const exigirDataInicio = opcoes.exigirDataInicio ?? true;
+  if (exigirDataInicio && !dataValida(rotina.dataInicio))
+    erros["rotina.dataInicio"] = "Informe a data de início.";
+  else if (!exigirDataInicio && rotina.dataInicio.trim() && !dataValida(rotina.dataInicio))
+    erros["rotina.dataInicio"] = "Data de início inválida.";
 
   const ativos = diasAtivosRotina(rotina);
   if (ativos.length === 0)

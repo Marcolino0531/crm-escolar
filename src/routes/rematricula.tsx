@@ -12,6 +12,14 @@ import {
   rotuloParcelamentoPrimeira,
   type ParcelamentoPrimeira,
 } from "@/lib/rematricula";
+import {
+  TODOS_OS_TURNOS,
+  formatarDataBR,
+  limitesPrimeiroVencimento,
+  validarPrimeiroVencimento,
+  valorMensalidadeComDesconto,
+  type TurnosDisponiveis,
+} from "@/lib/rematricula-matricula";
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
@@ -24,6 +32,7 @@ import {
 } from "@/lib/matricula-form";
 import {
   dadosRematricula,
+  finalizarRematricula,
   rotinaRematricula,
   salvarEscolhaMaterialRematricula,
   salvarRotinaRematricula,
@@ -194,6 +203,7 @@ function RematriculaPage() {
   const sincronizar = useServerFn(sincronizarCadastroRematricula);
   const carregarRotina = useServerFn(rotinaRematricula);
   const guardarRotina = useServerFn(salvarRotinaRematricula);
+  const finalizar = useServerFn(finalizarRematricula);
 
   const [etapa, setEtapa] = useState<Etapa>("cpf");
   const [cpf, setCpf] = useState("");
@@ -211,6 +221,11 @@ function RematriculaPage() {
   const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
   const [rotinaSalva, setRotinaSalva] = useState("");
   const [rotinaSugerida, setRotinaSugerida] = useState(false);
+  const [turnos, setTurnos] = useState<TurnosDisponiveis>(TODOS_OS_TURNOS);
+  const [matParcelas, setMatParcelas] = useState<number>(1);
+  const [matVencimento, setMatVencimento] = useState("");
+  const [errosEnvio, setErrosEnvio] = useState<Record<string, string>>({});
+  const [enviadaEm, setEnviadaEm] = useState<string | null>(null);
 
   const solicitar = useMutation({
     mutationFn: async () => pedirLink({ data: { cpf } }),
@@ -265,6 +280,11 @@ function RematriculaPage() {
         );
         setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
         setSalvo(!!portal.material?.escolhaAtual);
+        if (portal.matricula) {
+          setMatParcelas(portal.matricula.escolhaAtual?.parcelas ?? 1);
+          setMatVencimento(portal.matricula.escolhaAtual?.primeiroVencimento ?? "");
+        }
+        setEnviadaEm(portal.enviadaEm ?? null);
         setEtapa("portal");
       } catch {
         if (ativo) setErro("Não foi possível carregar seus dados agora. Tente novamente.");
@@ -288,6 +308,7 @@ function RematriculaPage() {
         if (!ativo || !res.ok || !res.rotina) return;
         setRotina(res.rotina);
         setRotinaSugerida(res.origem !== "");
+        if (res.turnos) setTurnos(res.turnos);
       } catch {
         /* etapa segue em branco; o responsável preenche à mão */
       }
@@ -324,6 +345,27 @@ function RematriculaPage() {
       setSalvo(true);
     },
     onError: () => setErro("Não foi possível salvar sua escolha agora. Tente novamente."),
+  });
+
+  // Envio final: grava a escolha da matrícula e registra o envio. Exige rotina e
+  // material já salvos (o servidor confere de novo) e o sucesso só aparece depois
+  // da resposta positiva — mesmo padrão das demais seções.
+  const enviarMatricula = useMutation({
+    mutationFn: async () =>
+      finalizar({
+        data: { token, matricula: { parcelas: matParcelas, primeiroVencimento: matVencimento } },
+      }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        setErrosEnvio(res.erros ?? {});
+        setErro(res.erro ?? "Não foi possível enviar sua matrícula.");
+        return;
+      }
+      setErro("");
+      setErrosEnvio({});
+      setEnviadaEm(res.enviadaEm ?? new Date().toISOString());
+    },
+    onError: () => setErro("Não foi possível enviar sua matrícula agora. Tente novamente."),
   });
 
   // Correção cadastral: vai direto para o Sponte (o servidor relê a ficha inteira
@@ -365,6 +407,11 @@ function RematriculaPage() {
   const aluno = dados?.aluno;
   const material = dados?.material;
   const opcoes: ParcelamentoPrimeira[] = material?.opcoes ?? [];
+  const matricula = dados?.matricula;
+  const limitesVencimento = matricula
+    ? limitesPrimeiroVencimento(matricula.dataPreenchimento)
+    : null;
+  const mensalidade = dados?.mensalidade;
 
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
@@ -442,7 +489,10 @@ function RematriculaPage() {
                 <CampoLeitura label="Nome" valor={aluno.nome} />
                 <CampoLeitura label="CPF" valor={aluno.cpf} />
                 <CampoLeitura label="Matrícula" valor={aluno.matricula} />
-                <CampoLeitura label="Data de nascimento" valor={aluno.dataNascimento} />
+                <CampoLeitura
+                  label="Data de nascimento"
+                  valor={formatarDataBR(aluno.dataNascimento)}
+                />
                 <CampoLeitura label="Série atual" valor={aluno.serie} />
                 <CampoLeitura label="UF" valor={aluno.uf} />
                 {contatoAluno && (
@@ -460,28 +510,6 @@ function RematriculaPage() {
                 Corrija endereço, celular e email se algo estiver desatualizado. Nome, CPF e data de
                 nascimento só a secretaria altera.
               </p>
-            </div>
-
-            <div className="rounded-lg border p-4">
-              <h2 className="mb-3 text-sm font-semibold">Mensalidade vigente</h2>
-              {dados?.mensalidade ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <CampoLeitura label="Valor" valor={formatarBRL(dados.mensalidade.valor)} />
-                  <CampoLeitura
-                    label="Desconto aplicado"
-                    valor={
-                      dados.mensalidade.descontoPercentual > 0
-                        ? `${dados.mensalidade.descontoPercentual.toLocaleString("pt-BR")}%`
-                        : "Sem desconto"
-                    }
-                  />
-                  <CampoLeitura label="Vencimento" valor={dados.mensalidade.vencimento} />
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Não encontramos a mensalidade vigente no sistema da escola. Fale com a secretaria.
-                </p>
-              )}
             </div>
 
             {dados?.responsaveis && dados.responsaveis.length > 0 && (
@@ -530,6 +558,9 @@ function RematriculaPage() {
                 rotina={rotina}
                 erros={errosRotina}
                 serie={aluno.serie}
+                perguntarDataInicio={false}
+                frequenciaParcialPorSerie
+                turnos={turnos}
                 titulo="Atualização da Rotina Escolar"
                 descricao={
                   rotinaSugerida
@@ -546,7 +577,9 @@ function RematriculaPage() {
                 variant="secondary"
                 disabled={enviarRotina.isPending}
                 onClick={() => {
-                  const encontrados = validarRotinaForm(rotina, aluno.serie);
+                  const encontrados = validarRotinaForm(rotina, aluno.serie, {
+                    exigirDataInicio: false,
+                  });
                   setErrosRotina(encontrados);
                   if (!formValido(encontrados)) {
                     setErro("Confira os campos destacados da rotina.");
@@ -562,6 +595,128 @@ function RematriculaPage() {
                 <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
                   <CheckCircle2 className="h-4 w-4" />
                   {rotinaSalva}
+                </p>
+              )}
+              {errosEnvio["rotina"] && (
+                <p className="mt-2 text-xs text-destructive">{errosEnvio["rotina"]}</p>
+              )}
+            </div>
+
+            {matricula && limitesVencimento && (
+              <div className="rounded-lg border p-4">
+                <h2 className="mb-1 text-sm font-semibold">Matrícula</h2>
+                <p className="text-sm text-muted-foreground">
+                  Série {matricula.serie}. Valor da matrícula:{" "}
+                  <strong className="text-foreground">{formatarBRL(matricula.valor)}</strong>.
+                </p>
+                {matricula.somenteAVista ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    A partir de janeiro a matrícula é paga à vista, em parcela única.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mb-2 mt-3 text-sm text-muted-foreground">
+                      Escolha em quantas parcelas quer pagar.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {matricula.opcoes.map((op) => (
+                        <button
+                          key={op.parcelas}
+                          type="button"
+                          disabled={!!enviadaEm}
+                          onClick={() => setMatParcelas(op.parcelas)}
+                          className={`rounded-md border px-3 py-2 text-left text-sm transition disabled:opacity-60 ${
+                            matParcelas === op.parcelas
+                              ? "border-primary bg-primary/10"
+                              : "hover:bg-muted/60"
+                          }`}
+                        >
+                          {op.parcelas === 1
+                            ? `À vista — ${formatarBRL(op.valorPrimeiraParcela)}`
+                            : op.valorPrimeiraParcela === op.valorParcela
+                              ? `${op.parcelas}x de ${formatarBRL(op.valorParcela)}`
+                              : `${op.parcelas}x — 1ª de ${formatarBRL(op.valorPrimeiraParcela)} e ${op.parcelas - 1}x de ${formatarBRL(op.valorParcela)}`}
+                        </button>
+                      ))}
+                    </div>
+                    {errosEnvio["matricula.parcelas"] && (
+                      <p className="mt-2 text-xs text-destructive">
+                        {errosEnvio["matricula.parcelas"]}
+                      </p>
+                    )}
+                  </>
+                )}
+                <div className="mt-4 space-y-1.5">
+                  <Label htmlFor="matricula-vencimento">
+                    {matricula.somenteAVista
+                      ? "Data de vencimento da parcela única"
+                      : "Data de vencimento da 1ª parcela"}
+                  </Label>
+                  <Input
+                    id="matricula-vencimento"
+                    type="date"
+                    lang="pt-BR"
+                    className="sm:max-w-[220px]"
+                    min={limitesVencimento.minimo}
+                    max={limitesVencimento.maximo}
+                    disabled={!!enviadaEm}
+                    value={matVencimento}
+                    onChange={(e) => {
+                      setMatVencimento(e.target.value);
+                      setErrosEnvio((atual) =>
+                        Object.fromEntries(
+                          Object.entries(atual).filter(
+                            ([chave]) => chave !== "matricula.primeiroVencimento",
+                          ),
+                        ),
+                      );
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Entre {formatarDataBR(limitesVencimento.minimo)} e{" "}
+                    {formatarDataBR(limitesVencimento.maximo)}.
+                  </p>
+                  {errosEnvio["matricula.primeiroVencimento"] && (
+                    <p className="text-xs text-destructive">
+                      {errosEnvio["matricula.primeiroVencimento"]}
+                    </p>
+                  )}
+                </div>
+                {!matricula.somenteAVista && (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    As demais parcelas (2ª em diante) vencem no mesmo dia da mensalidade do aluno em
+                    cada mês, como no parcelamento do material pedagógico.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-lg border p-4">
+              <h2 className="mb-3 text-sm font-semibold">Mensalidade vigente</h2>
+              {mensalidade ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <CampoLeitura label="Valor" valor={formatarBRL(mensalidade.valor)} />
+                  <CampoLeitura
+                    label="Desconto aplicado"
+                    valor={
+                      mensalidade.descontoPercentual > 0
+                        ? `${mensalidade.descontoPercentual.toLocaleString("pt-BR")}%`
+                        : "Sem desconto"
+                    }
+                  />
+                  <CampoLeitura
+                    label="Valor com desconto"
+                    valor={formatarBRL(
+                      valorMensalidadeComDesconto(
+                        mensalidade.valor,
+                        mensalidade.descontoPercentual,
+                      ),
+                    )}
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Não encontramos a mensalidade vigente no sistema da escola. Fale com a secretaria.
                 </p>
               )}
             </div>
@@ -629,6 +784,54 @@ function RematriculaPage() {
                   O valor do material da série do aluno ainda não está disponível. Fale com a
                   secretaria.
                 </p>
+              )}
+              {errosEnvio["material"] && (
+                <p className="mt-2 text-xs text-destructive">{errosEnvio["material"]}</p>
+              )}
+            </div>
+
+            <div className="rounded-lg border p-4">
+              {enviadaEm ? (
+                <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      Matrícula enviada em {formatarDataBR(enviadaEm.slice(0, 10))}.
+                    </p>
+                    <p>
+                      Sua matrícula está aguardando validação da secretaria. Estando tudo certo, o
+                      contrato será enviado para assinatura eletrônica no email do responsável
+                      financeiro cadastrado.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    Confira as seções acima (rotina e material já salvos) e envie a matrícula para a
+                    secretaria validar.
+                  </p>
+                  <Button
+                    className="w-full"
+                    disabled={enviarMatricula.isPending || !matricula}
+                    onClick={() => {
+                      if (!matricula) return;
+                      const erroVencimento = validarPrimeiroVencimento(
+                        matVencimento,
+                        matricula.dataPreenchimento,
+                      );
+                      if (erroVencimento) {
+                        setErrosEnvio({ "matricula.primeiroVencimento": erroVencimento });
+                        setErro("Confira a data de vencimento da matrícula.");
+                        return;
+                      }
+                      enviarMatricula.mutate();
+                    }}
+                  >
+                    {enviarMatricula.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Finalizar Matrícula
+                  </Button>
+                </>
               )}
             </div>
           </div>

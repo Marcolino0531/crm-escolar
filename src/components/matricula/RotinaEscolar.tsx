@@ -19,6 +19,11 @@ import {
   type RotinaForm,
 } from "@/lib/matricula-form";
 import { ROTULO_TURNO, TURNOS_TURMA, type TurnoTurma } from "@/lib/matricula-turma";
+import {
+  TODOS_OS_TURNOS,
+  perguntaFrequenciaParcial,
+  type TurnosDisponiveis,
+} from "@/lib/rematricula-matricula";
 
 function alternar<T>(lista: T[], valor: T): T[] {
   return lista.includes(valor) ? lista.filter((v) => v !== valor) : [...lista, valor];
@@ -29,8 +34,11 @@ export function RotinaEscolar({
   erros,
   serie,
   titulo = "Rotina Escolar",
-  descricao = "Quando o aluno começa, em que horários fica no colégio e quais refeições são contratadas.",
+  descricao = "Em que horários o aluno fica no colégio e quais refeições são contratadas.",
   perguntarHorarioCurricular = false,
+  perguntarDataInicio = true,
+  frequenciaParcialPorSerie = false,
+  turnos = TODOS_OS_TURNOS,
   onChange,
 }: {
   rotina: RotinaForm;
@@ -41,10 +49,18 @@ export function RotinaEscolar({
   descricao?: string;
   // Só na matrícula nova: o turno curricular é o que define a turma do aluno.
   perguntarHorarioCurricular?: boolean;
+  // A Rematrícula não pergunta a data de início (o aluno já está na escola).
+  perguntarDataInicio?: boolean;
+  // Rematrícula: a pergunta de frequência parcial só aparece até o Maternal 3.
+  frequenciaParcialPorSerie?: boolean;
+  // Turnos que existem de fato para a série (CEC/CEC Baby); o Horário Estendido
+  // é sempre oferecido.
+  turnos?: TurnosDisponiveis;
   onChange: (r: RotinaForm) => void;
 }) {
   const ativos = diasAtivosRotina(rotina);
   const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  const mostrarFrequenciaParcial = !frequenciaParcialPorSerie || perguntaFrequenciaParcial(serie);
 
   const definirHorario = (dia: Weekday, horario: HorarioDia) =>
     onChange({ ...rotina, horarios: { ...rotina.horarios, [dia]: horario } });
@@ -65,55 +81,59 @@ export function RotinaEscolar({
         <p className="text-xs text-muted-foreground">{descricao}</p>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="rotina-inicio">Data de início</Label>
-        <Input
-          id="rotina-inicio"
-          type="date"
-          className="sm:max-w-[220px]"
-          value={rotina.dataInicio}
-          onChange={(e) => onChange({ ...rotina, dataInicio: e.target.value })}
-        />
-        {erros["rotina.dataInicio"] && (
-          <p className="text-xs text-destructive">{erros["rotina.dataInicio"]}</p>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <label className="flex items-start gap-2 text-sm">
-          <Checkbox
-            className="mt-0.5"
-            checked={rotina.frequenciaParcial}
-            onCheckedChange={(v) => onChange({ ...rotina, frequenciaParcial: v === true })}
+      {perguntarDataInicio && (
+        <div className="space-y-1.5">
+          <Label htmlFor="rotina-inicio">Data de início</Label>
+          <Input
+            id="rotina-inicio"
+            type="date"
+            className="sm:max-w-[220px]"
+            value={rotina.dataInicio}
+            onChange={(e) => onChange({ ...rotina, dataInicio: e.target.value })}
           />
-          O(A) aluno(a) não frequenta todos os dias úteis (segunda a sexta)
-        </label>
+          {erros["rotina.dataInicio"] && (
+            <p className="text-xs text-destructive">{erros["rotina.dataInicio"]}</p>
+          )}
+        </div>
+      )}
 
-        {rotina.frequenciaParcial && (
-          <div className="space-y-1.5">
-            <p className="text-xs text-muted-foreground">Marque os dias em que ele frequenta:</p>
-            <div className="flex flex-wrap gap-3">
-              {DIAS_UTEIS.map((dia) => (
-                <label key={dia} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={rotina.diasSelecionados.includes(dia)}
-                    onCheckedChange={() =>
-                      onChange({
-                        ...rotina,
-                        diasSelecionados: alternar(rotina.diasSelecionados, dia),
-                      })
-                    }
-                  />
-                  {rotulo(dia)}
-                </label>
-              ))}
+      {mostrarFrequenciaParcial && (
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              className="mt-0.5"
+              checked={rotina.frequenciaParcial}
+              onCheckedChange={(v) => onChange({ ...rotina, frequenciaParcial: v === true })}
+            />
+            O(A) aluno(a) não frequenta todos os dias úteis (segunda a sexta)
+          </label>
+
+          {rotina.frequenciaParcial && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">Marque os dias em que ele frequenta:</p>
+              <div className="flex flex-wrap gap-3">
+                {DIAS_UTEIS.map((dia) => (
+                  <label key={dia} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={rotina.diasSelecionados.includes(dia)}
+                      onCheckedChange={() =>
+                        onChange({
+                          ...rotina,
+                          diasSelecionados: alternar(rotina.diasSelecionados, dia),
+                        })
+                      }
+                    />
+                    {rotulo(dia)}
+                  </label>
+                ))}
+              </div>
+              {erros["rotina.dias"] && (
+                <p className="text-xs text-destructive">{erros["rotina.dias"]}</p>
+              )}
             </div>
-            {erros["rotina.dias"] && (
-              <p className="text-xs text-destructive">{erros["rotina.dias"]}</p>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Períodos com horário fixo do colégio; o preenchimento manual por dia
           existe apenas no Horário Estendido. */}
@@ -121,32 +141,36 @@ export function RotinaEscolar({
         <p className="text-sm font-medium">Horários</p>
 
         <div className="space-y-2 rounded-md border p-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              name="rotina-periodo"
-              className="size-4"
-              checked={rotina.periodoManha}
-              onChange={() => onChange(selecionarPeriodo(rotina, "manha"))}
-            />
-            <span>
-              Manhã — <strong>{padrao.manha.entrada}</strong> às{" "}
-              <strong>{padrao.manha.saida}</strong>
-            </span>
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              name="rotina-periodo"
-              className="size-4"
-              checked={rotina.periodoTarde}
-              onChange={() => onChange(selecionarPeriodo(rotina, "tarde"))}
-            />
-            <span>
-              Tarde — <strong>{padrao.tarde.entrada}</strong> às{" "}
-              <strong>{padrao.tarde.saida}</strong>
-            </span>
-          </label>
+          {turnos.manha && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="rotina-periodo"
+                className="size-4"
+                checked={rotina.periodoManha}
+                onChange={() => onChange(selecionarPeriodo(rotina, "manha"))}
+              />
+              <span>
+                Manhã — <strong>{padrao.manha.entrada}</strong> às{" "}
+                <strong>{padrao.manha.saida}</strong>
+              </span>
+            </label>
+          )}
+          {turnos.tarde && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="rotina-periodo"
+                className="size-4"
+                checked={rotina.periodoTarde}
+                onChange={() => onChange(selecionarPeriodo(rotina, "tarde"))}
+              />
+              <span>
+                Tarde — <strong>{padrao.tarde.entrada}</strong> às{" "}
+                <strong>{padrao.tarde.saida}</strong>
+              </span>
+            </label>
+          )}
           <label className="flex items-start gap-2 text-sm">
             <input
               type="radio"
