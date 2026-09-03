@@ -63,3 +63,30 @@ export function separarPorAba<T extends ConversaArquivavel>(
 export function totalNaoLidas(conversas: ConversaArquivavel[]): number {
   return conversas.reduce((acc, c) => acc + (c.unread_count > 0 ? c.unread_count : 0), 0);
 }
+
+export interface ConversaOrdenavel extends ConversaArquivavel {
+  last_message_at: string | null;
+}
+
+// Tamanho de página da leitura da lista. A tela carrega TODAS as conversas em
+// páginas: qualquer teto fixo faz conversas com resposta pendente sumirem das
+// duas abas assim que uma rodada de cobrança automática (200+ disparos) empurra
+// o `last_message_at` delas para baixo do corte.
+export const PAGINA_CONVERSAS = 1000;
+
+export function haMaisPaginas(recebidas: number, tamanhoPagina = PAGINA_CONVERSAS): boolean {
+  return recebidas === tamanhoPagina;
+}
+
+// Ordem de exibição: conversas com mensagem não lida do responsável primeiro
+// (independentemente de quantos disparos automáticos vieram depois), depois
+// pela mensagem mais recente.
+export function ordenarParaLista<T extends ConversaOrdenavel>(conversas: T[]): T[] {
+  const ts = (c: T) => (c.last_message_at ? new Date(c.last_message_at).getTime() : 0);
+  return [...conversas].sort((a, b) => {
+    const na = a.unread_count > 0 ? 1 : 0;
+    const nb = b.unread_count > 0 ? 1 : 0;
+    if (na !== nb) return nb - na;
+    return ts(b) - ts(a);
+  });
+}

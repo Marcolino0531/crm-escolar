@@ -1822,7 +1822,7 @@ async function processarMensagensRecebidas(
       .maybeSingle();
     const unread = (conv as unknown as { unread_count: number } | null)?.unread_count ?? 0;
 
-    await supabaseAdmin
+    const { error: erroConversa } = await supabaseAdmin
       .from("whatsapp_conversations" as never)
       .update({
         last_message_at: waTs ?? new Date().toISOString(),
@@ -1833,6 +1833,12 @@ async function processarMensagensRecebidas(
         archived: false,
       } as never)
       .eq("id", conversa.id);
+    if (erroConversa) {
+      console.error(
+        "[whatsapp] falha ao reabrir conversa após mensagem recebida:",
+        erroConversa.message,
+      );
+    }
   }
 }
 

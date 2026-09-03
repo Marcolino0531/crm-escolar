@@ -51,7 +51,14 @@ import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.function
 import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
 import { AcaoPausarCobranca } from "@/components/cobranca/PausaComprovante";
-import { separarPorAba, type AbaAtendimento } from "@/lib/atendimento-archive";
+import {
+  PAGINA_CONVERSAS,
+  haMaisPaginas,
+  ordenarParaLista,
+  separarPorAba,
+  totalNaoLidas,
+  type AbaAtendimento,
+} from "@/lib/atendimento-archive";
 import { agruparPorDia, rotuloRelativoLista } from "@/lib/atendimento-dias";
 import { conversaVisivelNaUnidade } from "@/lib/whatsapp-numeros";
 import {
@@ -207,15 +214,22 @@ function AtendimentoPage() {
     queryKey: ["atendimento-conversas"],
     refetchInterval: 15000,
     queryFn: async (): Promise<Conversation[]> => {
-      const { data, error } = await supabase
-        .from("whatsapp_conversations" as never)
-        .select(
-          "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, numero_grupo, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
-        )
-        .order("last_message_at", { ascending: false, nullsFirst: false })
-        .limit(200);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as Conversation[];
+      const todas: Conversation[] = [];
+      for (let inicio = 0; ; inicio += PAGINA_CONVERSAS) {
+        const { data, error } = await supabase
+          .from("whatsapp_conversations" as never)
+          .select(
+            "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, numero_grupo, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
+          )
+          .order("last_message_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: true })
+          .range(inicio, inicio + PAGINA_CONVERSAS - 1);
+        if (error) throw new Error(error.message);
+        const pagina = (data ?? []) as unknown as Conversation[];
+        todas.push(...pagina);
+        if (!haMaisPaginas(pagina.length)) break;
+      }
+      return ordenarParaLista(todas);
     },
   });
 
@@ -251,6 +265,7 @@ function AtendimentoPage() {
     [conversasQuery.data, unidadeSelecionada],
   );
   const { ativas, arquivadas } = useMemo(() => separarPorAba(conversas), [conversas]);
+  const naoLidasAtivas = useMemo(() => totalNaoLidas(ativas), [ativas]);
   const listaDaAba = aba === "arquivadas" ? arquivadas : ativas;
 
   const conversasFiltradas = useMemo(() => {
@@ -312,6 +327,14 @@ function AtendimentoPage() {
                 }`}
               >
                 Gerais{ativas.length > 0 ? ` (${ativas.length})` : ""}
+                {naoLidasAtivas > 0 && (
+                  <span
+                    title={`${naoLidasAtivas} mensagem(ns) não lida(s)`}
+                    className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white"
+                  >
+                    {naoLidasAtivas}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => trocarAba("arquivadas")}
