@@ -16,6 +16,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAll } from "@/lib/supabase-paginate";
 import { cpfValido, normalizarCpf } from "@/lib/cantina";
 import {
   ANO_LETIVO_MAX,
@@ -1401,12 +1402,14 @@ export const listarSolicitacoesRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<SolicitacaoRematricula[]> => {
     await exigirPermissaoRematricula(context.userId, false);
-    const { data, error } = await supabaseAdmin
-      .from("rematricula_escolhas" as never)
-      .select(CAMPOS_ESCOLHA)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return ((data ?? []) as unknown as EscolhaRow[]).map(paraSolicitacao);
+    const data = await selectAll<EscolhaRow>(() =>
+      supabaseAdmin
+        .from("rematricula_escolhas" as never)
+        .select(CAMPOS_ESCOLHA)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }),
+    );
+    return data.map(paraSolicitacao);
   });
 
 // ─── Tela interna: Rematrícula — Acompanhamento ─────────────────────────────
@@ -1433,10 +1436,13 @@ export async function carregarAcompanhamentoUnidade(
 ): Promise<AcompanhamentoRematriculaResult> {
   const [ativos, escolhas, acessos, auditoria] = await Promise.all([
     alunosAtivosDaUnidade(unidade),
-    supabaseAdmin
-      .from("rematricula_escolhas" as never)
-      .select(CAMPOS_ESCOLHA)
-      .eq("unidade", unidade),
+    selectAll<EscolhaRow>(() =>
+      supabaseAdmin
+        .from("rematricula_escolhas" as never)
+        .select(CAMPOS_ESCOLHA)
+        .eq("unidade", unidade)
+        .order("id", { ascending: true }),
+    ),
     supabaseAdmin
       .from("rematricula_acessos" as never)
       .select("unidade, aluno_id, ultimo_acesso_em")
@@ -1448,7 +1454,7 @@ export async function carregarAcompanhamentoUnidade(
       .eq("resultado", "gravado"),
   ]);
 
-  const linhas = (escolhas.data ?? []) as unknown as EscolhaRow[];
+  const linhas = escolhas;
   const alterados = new Set(
     ((auditoria.data ?? []) as unknown as { aluno_id: string }[]).map((a) => a.aluno_id),
   );

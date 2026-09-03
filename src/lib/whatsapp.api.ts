@@ -26,6 +26,7 @@
 // o status por `wa_message_id` (wamid retornado no envio).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
 import { onlyDigits } from "@/lib/phone";
 import {
   buscarLinhaDigitavelPorUnidade,
@@ -785,27 +786,37 @@ async function candidatosDoHistorico(
   unidades: Set<string>,
 ): Promise<CandidatoCobranca[]> {
   const desde = addDaysYMD(hoje, -JANELA_RECORRENCIA_DIAS);
-  const consulta = () =>
-    supabaseAdmin
-      .from("whatsapp_billing_logs" as never)
-      .select("fatura_id, alunos_cobrados, aluno_name, responsavel_name, telefone, unidade")
-      .gte("data_envio", `${desde}T00:00:00Z`)
-      .in("status", STATUS_ENVIADO)
-      .order("data_envio", { ascending: true });
-
-  // Só disparos da régua de COBRANÇA: um lembrete preventivo não coloca o aluno
-  // na recorrência de cobrança (a parcela dele nem venceu).
-  const comTipo = await consulta().eq("tipo", "cobranca");
-  const { data } = erroColunaInexistente(comTipo.error) ? await consulta() : comTipo;
-
-  const rows = (data ?? []) as unknown as {
+  type Linha = {
     fatura_id: string | null;
     alunos_cobrados: { id?: string; nome?: string }[] | null;
     aluno_name: string | null;
     responsavel_name: string | null;
     telefone: string | null;
     unidade: string | null;
-  }[];
+  };
+  const consulta = (comTipo: boolean) =>
+    fetchAllRows<Linha>((from, to) => {
+      const q = supabaseAdmin
+        .from("whatsapp_billing_logs" as never)
+        .select("fatura_id, alunos_cobrados, aluno_name, responsavel_name, telefone, unidade")
+        .gte("data_envio", `${desde}T00:00:00Z`)
+        .in("status", STATUS_ENVIADO)
+        .order("data_envio", { ascending: true })
+        .order("id", { ascending: true });
+      return (comTipo ? q.eq("tipo", "cobranca") : q).range(from, to) as unknown as PromiseLike<
+        PagedRows<Linha>
+      >;
+    });
+
+  // Só disparos da régua de COBRANÇA: um lembrete preventivo não coloca o aluno
+  // na recorrência de cobrança (a parcela dele nem venceu).
+  let rows: Linha[];
+  try {
+    rows = await consulta(true);
+  } catch (e) {
+    if (!erroColunaInexistente(e as { code?: string; message?: string })) throw e;
+    rows = await consulta(false);
+  }
 
   // Ordem ascendente: o registro mais recente sobrescreve nome/telefone.
   const mapa = new Map<string, CandidatoCobranca>();
@@ -836,19 +847,29 @@ async function disparosDeHoje(
   hoje: string,
   tipo: TipoDisparo,
 ): Promise<{ telefone: string; unidade: string }[]> {
-  const consulta = () =>
-    supabaseAdmin
-      .from("whatsapp_billing_logs" as never)
-      .select("telefone, unidade")
-      .gte("data_envio", `${hoje}T00:00:00-03:00`)
-      .lte("data_envio", `${hoje}T23:59:59-03:00`)
-      .in("status", STATUS_ENVIADO);
+  type Linha = { telefone: string | null; unidade: string | null };
+  const consulta = (comTipo: boolean) =>
+    fetchAllRows<Linha>((from, to) => {
+      const q = supabaseAdmin
+        .from("whatsapp_billing_logs" as never)
+        .select("telefone, unidade")
+        .gte("data_envio", `${hoje}T00:00:00-03:00`)
+        .lte("data_envio", `${hoje}T23:59:59-03:00`)
+        .in("status", STATUS_ENVIADO)
+        .order("id", { ascending: true });
+      return (comTipo ? q.eq("tipo", tipo) : q).range(from, to) as unknown as PromiseLike<
+        PagedRows<Linha>
+      >;
+    });
 
-  const comTipo = await consulta().eq("tipo", tipo);
-  const { data } = erroColunaInexistente(comTipo.error) ? await consulta() : comTipo;
-  return ((data ?? []) as unknown as { telefone: string | null; unidade: string | null }[]).map(
-    (r) => ({ telefone: r.telefone ?? "", unidade: r.unidade ?? "" }),
-  );
+  let rows: Linha[];
+  try {
+    rows = await consulta(true);
+  } catch (e) {
+    if (!erroColunaInexistente(e as { code?: string; message?: string })) throw e;
+    rows = await consulta(false);
+  }
+  return rows.map((r) => ({ telefone: r.telefone ?? "", unidade: r.unidade ?? "" }));
 }
 
 async function telefonesComDisparoHoje(hoje: string, tipo: TipoDisparo): Promise<string[]> {
@@ -1242,18 +1263,26 @@ async function dispararLembrete(grupo: GrupoLembrete, hoje: string): Promise<{ e
 
 // Alunos já lembrados na rodada de `hoje` (retry/reexecução não duplica).
 async function carregarJaLembradosRematricula(hoje: string): Promise<Set<string>> {
-  const { data, error } = await supabaseAdmin
-    .from("whatsapp_billing_logs" as never)
-    .select("unidade, fatura_id")
-    .eq("tipo", "rematricula")
-    .eq("data_ref", hoje)
-    .in("status", STATUS_ENVIADO);
-  if (error) {
+  type Linha = { unidade: string; fatura_id: string | null };
+  let rows: Linha[];
+  try {
+    rows = await fetchAllRows<Linha>(
+      (from, to) =>
+        supabaseAdmin
+          .from("whatsapp_billing_logs" as never)
+          .select("unidade, fatura_id")
+          .eq("tipo", "rematricula")
+          .eq("data_ref", hoje)
+          .in("status", STATUS_ENVIADO)
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PagedRows<Linha>>,
+    );
+  } catch (e) {
     // Fail-closed: sem conseguir ler o histórico, não dá para garantir que
     // ninguém receba duas vezes.
-    throw new Error(`falha ao ler o histórico de lembretes de rematrícula: ${error.message}`);
+    const msg = (e as { message?: string })?.message ?? String(e);
+    throw new Error(`falha ao ler o histórico de lembretes de rematrícula: ${msg}`);
   }
-  const rows = (data ?? []) as unknown as { unidade: string; fatura_id: string | null }[];
   return new Set(
     rows.filter((r) => r.fatura_id).map((r) => chaveLembrete(r.unidade, r.fatura_id!)),
   );

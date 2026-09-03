@@ -97,24 +97,6 @@ export function groupSchedules(rows: readonly ScheduleRow[]): Map<string, Schedu
   return byStudent;
 }
 
-// O PostgREST devolve no máximo 1000 linhas por requisição; lê em páginas até a
-// página vir incompleta. `fetchPage` recebe o intervalo [from, to] inclusivo.
-export const DIARIO_PAGE_SIZE = 1000;
-
-export async function fetchAllRows<T>(
-  fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: unknown }>,
-  pageSize = DIARIO_PAGE_SIZE,
-): Promise<T[]> {
-  const all: T[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await fetchPage(from, from + pageSize - 1);
-    if (error) throw error;
-    const page = data ?? [];
-    all.push(...page);
-    if (page.length < pageSize) return all;
-  }
-}
-
 // QR Code de portaria: o "código único" do aluno é o próprio id, prefixado para
 // diferenciar de QRs genéricos. A leitura aceita o valor prefixado ou o id cru.
 export const DIARIO_QR_PREFIX = "SCHOOLHUB-DIARIO:";

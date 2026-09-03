@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -107,15 +108,16 @@ function MainDashboard() {
     queryKey: ["dash-leads", startDate, endDate, schoolFilterIds],
     staleTime: 60_000,
     queryFn: async () => {
-      let q = supabase
-        .from("leads")
-        .select("origem, coluna, created_at")
-        .gte("created_at", `${startDate}T00:00:00`)
-        .lte("created_at", `${endDate}T23:59:59.999`);
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as { origem: string | null; coluna: string | null; created_at: string }[];
+      return selectAll<{ origem: string | null; coluna: string | null; created_at: string }>(() => {
+        let q = supabase
+          .from("leads")
+          .select("origem, coluna, created_at")
+          .gte("created_at", `${startDate}T00:00:00`)
+          .lte("created_at", `${endDate}T23:59:59.999`)
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
     },
   });
 

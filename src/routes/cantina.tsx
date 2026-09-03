@@ -35,6 +35,7 @@ import {
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { STATUS_RECARGA_LABEL, formatarBRLRecarga, type StatusRecarga } from "@/lib/cantina";
 import {
   efetivarRecargaCantina,
@@ -191,14 +192,15 @@ function CantinaPage() {
     queryKey: ["cantina_recargas"],
     enabled: canView("cantina"),
     queryFn: async (): Promise<RecargaRow[]> => {
-      const { data, error } = await supabase
-        .from("cantina_recargas" as never)
-        .select(
-          "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancada_automatica, lancada_at, lancada_por_nome",
-        )
-        .order("created_at", { ascending: false });
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as RecargaRow[];
+      return selectAll<RecargaRow>(() =>
+        supabase
+          .from("cantina_recargas" as never)
+          .select(
+            "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancada_automatica, lancada_at, lancada_por_nome",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+      );
     },
   });
 

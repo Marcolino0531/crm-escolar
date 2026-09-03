@@ -37,7 +37,6 @@ import {
   MEAL_LABEL,
   emptyPlan,
   emptySchedule,
-  fetchAllRows,
   groupMealPlans,
   groupSchedules,
   isCoveredToday,
@@ -47,6 +46,7 @@ import {
   type ScheduleRow,
   type Weekday,
 } from "@/lib/diario";
+import { selectAll } from "@/lib/supabase-paginate";
 
 export const Route = createFileRoute("/diario")({
   head: () => ({ meta: [{ title: "Diário do Aluno — School Hub" }] }),
@@ -74,39 +74,30 @@ function useStudents(schoolFilterIds: string[] | null) {
   return useQuery({
     queryKey: ["diario_students", schoolFilterIds ?? "all"],
     queryFn: async () => {
-      let sq = supabase
-        .from("diario_students" as never)
-        .select("id, name, class_id, class_name, school_id, photo")
-        .order("class_name")
-        .order("name");
-      if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
-      const [sRes, plans, schedules] = await Promise.all([
-        sq,
-        fetchAllRows<MealPlanRow>(
-          (from, to) =>
-            supabase
-              .from("diario_meal_plans" as never)
-              .select("student_id, meal, weekday")
-              .order("id")
-              .range(from, to) as unknown as Promise<{
-              data: MealPlanRow[] | null;
-              error: unknown;
-            }>,
+      const [students, plans, schedules] = await Promise.all([
+        selectAll<StudentRow>(() => {
+          let sq = supabase
+            .from("diario_students" as never)
+            .select("id, name, class_id, class_name, school_id, photo")
+            .order("class_name")
+            .order("name")
+            .order("id");
+          if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
+          return sq;
+        }),
+        selectAll<MealPlanRow>(() =>
+          supabase
+            .from("diario_meal_plans" as never)
+            .select("student_id, meal, weekday")
+            .order("id"),
         ),
-        fetchAllRows<ScheduleRow>(
-          (from, to) =>
-            supabase
-              .from("diario_schedules" as never)
-              .select("student_id, weekday, entry, exit")
-              .order("id")
-              .range(from, to) as unknown as Promise<{
-              data: ScheduleRow[] | null;
-              error: unknown;
-            }>,
+        selectAll<ScheduleRow>(() =>
+          supabase
+            .from("diario_schedules" as never)
+            .select("student_id, weekday, entry, exit")
+            .order("id"),
         ),
       ]);
-      if (sRes.error) throw sRes.error;
-      const students = (sRes.data ?? []) as unknown as StudentRow[];
 
       const planByStudent = groupMealPlans(plans);
       const schedByStudent = groupSchedules(schedules);

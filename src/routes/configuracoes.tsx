@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+import { selectAll } from "@/lib/supabase-paginate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1131,14 +1133,21 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
   const { data: rules = [] } = useQuery({
     queryKey: ["rules"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("categorization_rules")
-        .select(
-          "*, cost_centers(name, color), sub_cost_centers(name), revenue_categories(name), revenue_subcategories(name)",
-        )
-        .order("keyword");
-      if (error) throw error;
-      return data;
+      type RuleRow = Tables<"categorization_rules"> & {
+        cost_centers: { name: string; color: string | null } | null;
+        sub_cost_centers: { name: string } | null;
+        revenue_categories: { name: string } | null;
+        revenue_subcategories: { name: string } | null;
+      };
+      return selectAll<RuleRow>(() =>
+        supabase
+          .from("categorization_rules")
+          .select(
+            "*, cost_centers(name, color), sub_cost_centers(name), revenue_categories(name), revenue_subcategories(name)",
+          )
+          .order("keyword")
+          .order("id", { ascending: true }),
+      );
     },
   });
 
@@ -1359,7 +1368,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
           {rules.length === 0 && (
             <div className="p-4 text-sm text-muted-foreground">Nenhuma regra ainda.</div>
           )}
-          {rules.map((r: any) => {
+          {rules.map((r) => {
             const isRev = r.kind === "revenue";
             return (
               <div key={r.id} className="flex items-center justify-between gap-3 p-3">
@@ -1384,7 +1393,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
                     <span className="inline-flex items-center gap-2 rounded-full bg-secondary px-2 py-0.5 text-xs">
                       <span
                         className="h-2 w-2 rounded-full"
-                        style={{ background: r.cost_centers?.color }}
+                        style={{ background: r.cost_centers?.color ?? undefined }}
                       />
                       {r.cost_centers?.name}
                       {r.sub_cost_centers?.name && (

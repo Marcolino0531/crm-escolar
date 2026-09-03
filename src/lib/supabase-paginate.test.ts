@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fetchAllRows, type PagedRows } from "./supabase-paginate";
+import { fetchAllRows, selectAll, type PagedRows } from "./supabase-paginate";
 
 const PAGE_SIZE = 1000;
 
@@ -49,9 +49,27 @@ describe("fetchAllRows", () => {
 
   it("propaga erro do PostgREST em vez de devolver lista parcial", async () => {
     await expect(
-      fetchAllRows(() =>
-        Promise.resolve({ data: null, error: { message: "boom" } as never }),
-      ),
+      fetchAllRows(() => Promise.resolve({ data: null, error: { message: "boom" } as never })),
     ).rejects.toMatchObject({ message: "boom" });
+  });
+});
+
+describe("selectAll", () => {
+  it("aplica o range à consulta montada e junta todas as páginas", async () => {
+    const rows = linhas(2001);
+    const { page, chamadas } = fakeTable(rows);
+    const fabricas: number[] = [];
+    const result = await selectAll<{ id: string }>(() => {
+      fabricas.push(1);
+      return { range: page };
+    });
+    expect(result).toHaveLength(2001);
+    expect(chamadas).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+    // A fábrica é reavaliada a cada página (builders do Supabase são de uso único).
+    expect(fabricas).toHaveLength(3);
   });
 });

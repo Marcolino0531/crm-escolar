@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { buildDiarioQrValue, type DiarioClass } from "@/lib/diario";
 
 type StudentRow = { id: string; name: string; class_id: string | null; class_name: string };
@@ -219,14 +220,15 @@ function StudentsTab({ schoolId }: { schoolId: string }) {
   const { data: students = [], isLoading } = useQuery({
     queryKey: ["diario_students_manage", schoolId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("diario_students" as never)
-        .select("id, name, class_id, class_name")
-        .eq("school_id", schoolId)
-        .order("class_name")
-        .order("name");
-      if (error) throw error;
-      return (data ?? []) as unknown as StudentRow[];
+      return selectAll<StudentRow>(() =>
+        supabase
+          .from("diario_students" as never)
+          .select("id, name, class_id, class_name")
+          .eq("school_id", schoolId)
+          .order("class_name")
+          .order("name")
+          .order("id", { ascending: true }),
+      );
     },
   });
 

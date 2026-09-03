@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { selectAll } from "@/lib/supabase-paginate";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const APP_MODULES = [
@@ -125,11 +126,19 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push(r.role);
       roleMap.set(r.user_id, arr);
     });
-    const { data: perms } = await supabaseAdmin
-      .from("user_permissions" as any)
-      .select("user_id, module, can_view, can_edit");
+    const perms = await selectAll<{
+      user_id: string;
+      module: string;
+      can_view: boolean;
+      can_edit: boolean;
+    }>(() =>
+      supabaseAdmin
+        .from("user_permissions" as never)
+        .select("user_id, module, can_view, can_edit")
+        .order("id", { ascending: true }),
+    );
     const permMap = new Map<string, { module: string; can_view: boolean; can_edit: boolean }[]>();
-    (perms ?? []).forEach((p: any) => {
+    perms.forEach((p) => {
       const arr = permMap.get(p.user_id) ?? [];
       arr.push({ module: p.module, can_view: p.can_view, can_edit: p.can_edit });
       permMap.set(p.user_id, arr);
