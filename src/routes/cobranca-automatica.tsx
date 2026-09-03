@@ -91,12 +91,16 @@ function MensagensAutomaticasPage() {
         <TabsList>
           <TabsTrigger value="cobrancas">Cobranças Automáticas</TabsTrigger>
           <TabsTrigger value="lembretes">Lembretes Automáticos</TabsTrigger>
+          <TabsTrigger value="rematricula">Lembretes de Rematrícula</TabsTrigger>
         </TabsList>
         <TabsContent value="cobrancas" className="pt-4">
           <CobrancasAutomaticasTab />
         </TabsContent>
         <TabsContent value="lembretes" className="pt-4">
           <LembretesAutomaticosTab />
+        </TabsContent>
+        <TabsContent value="rematricula" className="pt-4">
+          <LembretesRematriculaTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -119,6 +123,7 @@ type BillingLog = {
   fatura_id: string | null;
   message_body: string | null;
   prazo_lembrete?: string | null;
+  status_rematricula?: string | null;
 };
 
 type LogsResponse = {
@@ -491,6 +496,184 @@ function LembretesAutomaticosTab() {
   );
 }
 
+const STATUS_REMATRICULA_STYLE: Record<string, { label: string; cls: string }> = {
+  nao_iniciado: { label: "Não iniciado", cls: "bg-slate-100 text-slate-700" },
+  em_andamento: { label: "Em andamento", cls: "bg-sky-100 text-sky-700" },
+};
+
+// Lembrete SEMANAL de rematrícula: toda sexta à tarde, um template por status do
+// acompanhamento (Não iniciado / Em andamento); quem já escolheu ou já foi
+// rematriculado não recebe nada. O status gravado é o do momento do envio.
+function LembretesRematriculaTab() {
+  const [page, setPage] = useState(1);
+  const [selecionado, setSelecionado] = useState<BillingLog | null>(null);
+
+  const { data, isFetching, isError, error } = useQuery({
+    queryKey: ["lembretes-rematricula-logs", page],
+    refetchInterval: 60000,
+    queryFn: async (): Promise<LogsResponse> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(PER_PAGE),
+        tipo: "rematricula",
+      });
+      const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as LogsResponse;
+      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar os logs.");
+      return body;
+    },
+  });
+
+  const rows = data?.data ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4">
+        <CalendarClock className="mt-0.5 h-6 w-6 shrink-0 text-violet-600" />
+        <div className="text-sm">
+          <div className="font-semibold text-violet-900">Lembrete semanal de rematrícula</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Toda <strong>sexta-feira às 14h</strong> (BRT), a partir da tela “Rematrícula —
+            Acompanhamento”: quem está <strong>Não iniciado</strong> recebe o template de início e
+            quem está <strong>Em andamento</strong> recebe o de continuação, no WhatsApp do
+            responsável financeiro, pelo número da unidade. Aguardando aprovação e Rematriculado não
+            recebem nada. Vale o mesmo kill switch das outras abas.
+          </p>
+        </div>
+      </div>
+
+      <ExecucoesDoCron
+        tipo="rematricula"
+        legenda="Uma execução por semana, sexta-feira às 14h (BRT) · um lembrete por aluno por semana"
+      />
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h2 className="text-base font-semibold">Histórico de Disparos</h2>
+          <span className="text-xs text-muted-foreground">
+            {total} registro(s) · clique em uma linha para ver o conteúdo enviado
+          </span>
+        </div>
+        {isError ? (
+          <div className="px-4 py-6 text-sm text-red-600">
+            {error instanceof Error ? error.message : "Falha ao carregar os logs."}
+          </div>
+        ) : isFetching && rows.length === 0 ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+            <Inbox className="h-8 w-8 text-muted-foreground/60" />
+            <p className="text-sm font-medium">Nenhum lembrete de rematrícula disparado.</p>
+            <p className="text-xs text-muted-foreground">
+              Os lembretes saem toda sexta-feira à tarde para quem ainda não concluiu a rematrícula.
+            </p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Data e Hora</TableHead>
+                <TableHead>Status no envio</TableHead>
+                <TableHead>Aluno</TableHead>
+                <TableHead>Responsável</TableHead>
+                <TableHead>Unidade</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((log) => {
+                const style = STATUS_STYLE[log.status] ?? STATUS_STYLE.pendente;
+                const st = log.status_rematricula
+                  ? STATUS_REMATRICULA_STYLE[log.status_rematricula]
+                  : null;
+                const falhou = log.status === "falha" || log.status === "erro";
+                return (
+                  <TableRow
+                    key={log.id}
+                    onClick={() => setSelecionado(log)}
+                    className="cursor-pointer transition-colors hover:bg-muted/50"
+                  >
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {formatDataHora(log.data_envio)}
+                    </TableCell>
+                    <TableCell>
+                      {st ? (
+                        <span
+                          className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${st.cls}`}
+                        >
+                          {st.label}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{log.aluno_name || "—"}</TableCell>
+                    <TableCell className="text-sm">{log.responsavel_name || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {log.unidade || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}
+                      >
+                        {falhou ? (
+                          <AlertTriangle className="h-3 w-3" />
+                        ) : (
+                          <CheckCircle2 className="h-3 w-3" />
+                        )}
+                        {style.label}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+
+        {total > 0 && (
+          <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm text-muted-foreground">
+            <span>
+              Página {page} de {totalPages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || isFetching}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <DetalheDisparo log={selecionado} onClose={() => setSelecionado(null)} />
+    </div>
+  );
+}
+
 type CronRun = {
   id: string;
   data_ref: string;
@@ -522,7 +705,7 @@ function ExecucoesDoCron({
   tipo = "cobranca",
   legenda = "Tentativas diárias às 09h, 12h, 15h e 18h · quem já foi cobrado no dia não recebe de novo",
 }: {
-  tipo?: "cobranca" | "lembrete";
+  tipo?: "cobranca" | "lembrete" | "rematricula";
   legenda?: string;
 }) {
   const { data: runs = [], isError } = useQuery({

@@ -29,12 +29,24 @@ export const SLOTS_CRON_LEMBRETE: Record<string, string> = {
 // preventiva das da cobrança. O histórico das duas abas é separado por ele.
 export const PREFIXO_SLOT_LEMBRETE = "lembretes";
 
+// Lembrete SEMANAL de rematrícula: uma execução por semana, sexta-feira à tarde
+// (14h BRT no vercel.json; ajustável lá — o slot é só o rótulo do histórico).
+export const SLOTS_CRON_REMATRICULA: Record<string, string> = {
+  "/api/whatsapp/cron/rematricula": "rematricula-sexta-14h",
+};
+
+export const PREFIXO_SLOT_REMATRICULA = "rematricula";
+
 export function slotDaRota(pathname: string): string | null {
   return SLOTS_CRON[pathname] ?? null;
 }
 
 export function slotLembreteDaRota(pathname: string): string | null {
   return SLOTS_CRON_LEMBRETE[pathname] ?? null;
+}
+
+export function slotRematriculaDaRota(pathname: string): string | null {
+  return SLOTS_CRON_REMATRICULA[pathname] ?? null;
 }
 
 export type StatusExecucao =

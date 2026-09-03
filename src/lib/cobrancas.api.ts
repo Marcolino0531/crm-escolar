@@ -15,7 +15,7 @@
 // histórico de cobrança não parar de abrir por causa disso.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { PREFIXO_SLOT_LEMBRETE } from "@/lib/billing-cron-runs";
+import { PREFIXO_SLOT_LEMBRETE, PREFIXO_SLOT_REMATRICULA } from "@/lib/billing-cron-runs";
 
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 100;
@@ -57,12 +57,14 @@ type BillingLog = {
   fatura_id: string | null;
   message_body: string | null;
   prazo_lembrete?: string | null;
+  status_rematricula?: string | null;
 };
 
-type TipoDisparo = "cobranca" | "lembrete";
+type TipoDisparo = "cobranca" | "lembrete" | "rematricula";
 
 function tipoDaQuery(params: URLSearchParams): TipoDisparo {
-  return params.get("tipo")?.trim() === "lembrete" ? "lembrete" : "cobranca";
+  const t = params.get("tipo")?.trim();
+  return t === "lembrete" || t === "rematricula" ? t : "cobranca";
 }
 
 function erroColunaInexistente(error: { code?: string; message?: string } | null): boolean {
@@ -137,7 +139,11 @@ async function listCronRuns(url: URL): Promise<Response> {
   query =
     tipo === "lembrete"
       ? query.like("slot", `${PREFIXO_SLOT_LEMBRETE}%`)
-      : query.not("slot", "like", `${PREFIXO_SLOT_LEMBRETE}%`);
+      : tipo === "rematricula"
+        ? query.like("slot", `${PREFIXO_SLOT_REMATRICULA}%`)
+        : query
+            .not("slot", "like", `${PREFIXO_SLOT_LEMBRETE}%`)
+            .not("slot", "like", `${PREFIXO_SLOT_REMATRICULA}%`);
 
   const { data, error } = await query;
 
@@ -177,7 +183,7 @@ async function listLogs(url: URL): Promise<Response> {
       .from("whatsapp_billing_logs" as never)
       .select(
         "id, data_envio, responsavel_name, aluno_name, telefone, unidade, valor, vencimento, status, erro_mensagem, fatura_id, message_body" +
-          (comTipo ? ", prazo_lembrete" : ""),
+          (comTipo ? ", prazo_lembrete, status_rematricula" : ""),
         { count: "exact" },
       )
       .order("data_envio", { ascending: false })
