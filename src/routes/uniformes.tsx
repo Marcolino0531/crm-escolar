@@ -27,6 +27,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { formatDateBR } from "@/lib/date-utils";
 import { compareSize } from "@/lib/uniformes.sizes";
 import {
@@ -125,14 +126,15 @@ function UniformesPage() {
   } = useQuery({
     queryKey: ["uniform_variants"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("uniform_variants" as any)
-        .select(
-          "id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock, price, order_placed_at",
-        )
-        .order("size", { ascending: true });
-      if (error) return [] as UniformVariant[];
-      return (data ?? []) as unknown as UniformVariant[];
+      return selectAll<UniformVariant>(() =>
+        supabase
+          .from("uniform_variants" as never)
+          .select(
+            "id, ns_variant_id, ns_product_id, store_key, size, sku, stock, min_stock, price, order_placed_at",
+          )
+          .order("size", { ascending: true })
+          .order("id", { ascending: true }),
+      );
     },
   });
 
@@ -188,9 +190,7 @@ function UniformesPage() {
     }));
     if (!termo) return enriched;
     return enriched.filter(
-      (v) =>
-        v.produto.toLowerCase().includes(termo) ||
-        v.size.toLowerCase().includes(termo),
+      (v) => v.produto.toLowerCase().includes(termo) || v.size.toLowerCase().includes(termo),
     );
   }, [unitFiltered, busca, productName]);
 

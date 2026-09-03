@@ -19,7 +19,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAll } from "@/lib/supabase-paginate";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -303,15 +303,20 @@ export function NotificationsBell() {
     enabled: !!userId && canFluxo,
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("recurring_forecasts")
-        .select("id, description, due_date, projected_amount, status, school_id, month")
-        .neq("status", "paid")
-        .not("due_date", "is", null)
-        .lte("due_date", today)
-        .order("due_date", { ascending: true });
-      if (error) return [] as Forecast[];
-      return (data ?? []) as unknown as Forecast[];
+      try {
+        return await selectAll<Forecast>(() =>
+          supabase
+            .from("recurring_forecasts")
+            .select("id, description, due_date, projected_amount, status, school_id, month")
+            .neq("status", "paid")
+            .not("due_date", "is", null)
+            .lte("due_date", today)
+            .order("due_date", { ascending: true })
+            .order("id", { ascending: true }),
+        );
+      } catch {
+        return [] as Forecast[];
+      }
     },
   });
 

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
 import { rowToFuncionario, rowToLead, rowToOnboarding } from "./mappers";
@@ -17,7 +18,7 @@ import type {
   TipoFalta,
   CategoriaFalta,
 } from "./types";
-import type { Json, TablesUpdate } from "@/integrations/supabase/types";
+import type { Json, Tables, TablesUpdate } from "@/integrations/supabase/types";
 
 type LeadInput = {
   // Unidade escolhida no próprio modal (independe do filtro global). A RLS de
@@ -46,10 +47,15 @@ export function useLeads() {
   const { data: leads = [], isLoading } = useQuery({
     queryKey: ["leads", selected, schoolFilterIds],
     queryFn: async () => {
-      let q = supabase.from("leads").select("*").order("created_at", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data, error } = await q;
-      if (error) throw error;
+      const data = await selectAll<Tables<"leads">>(() => {
+        let q = supabase
+          .from("leads")
+          .select("*")
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
       return data.map(rowToLead);
     },
   });
@@ -286,10 +292,15 @@ export function useFuncionarios() {
   const { data: funcionarios = [], isLoading } = useQuery({
     queryKey: ["funcionarios", selected, schools.length, schoolFilterIds],
     queryFn: async () => {
-      let q = supabase.from("funcionarios").select("*").order("nome_completo", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data, error } = await q;
-      if (error) throw error;
+      const data = await selectAll<Tables<"funcionarios">>(() => {
+        let q = supabase
+          .from("funcionarios")
+          .select("*")
+          .order("nome_completo", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
       return data.map((r) => {
         const f = rowToFuncionario(r);
         f.unidade = nameById.get(f.schoolId) ?? "";

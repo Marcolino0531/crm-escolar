@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyPlan,
-  fetchAllRows,
   groupMealPlans,
   groupSchedules,
   isCoveredToday,
@@ -11,6 +10,7 @@ import {
   type MealPlanRow,
   type Weekday,
 } from "./diario";
+import { fetchAllRows } from "./supabase-paginate";
 
 const ALUNO = "aluno-a";
 const SEG_A_SEX: Weekday[] = [1, 2, 3, 4, 5];
@@ -127,7 +127,10 @@ describe("fetchAllRows — leitura além do teto de 1000 linhas do PostgREST", (
 
   it("propaga erro da página em vez de devolver lista parcial", async () => {
     await expect(
-      fetchAllRows<MealPlanRow>(async () => ({ data: null, error: new Error("RLS") })),
+      fetchAllRows<MealPlanRow>(async () => ({
+        data: null,
+        error: { message: "RLS" } as never,
+      })),
     ).rejects.toThrow("RLS");
   });
 });

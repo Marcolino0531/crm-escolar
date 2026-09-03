@@ -7,6 +7,7 @@
 // individuais não atravessam esta fronteira.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAll } from "@/lib/supabase-paginate";
 import type {
   ConversaAtendimentoIA,
   ContrachequeEnvioIA,
@@ -98,16 +99,17 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     dataFim: string;
   }): Promise<RecargaCantinaIA[]> {
     if (filtro.unidades.length === 0) return [];
-    const { data, error } = await supabaseAdmin
-      .from("cantina_recargas" as never)
-      .select("unidade, valor, status, created_at")
-      .in("unidade", filtro.unidades)
-      .gte("created_at", inicioDoDia(filtro.dataInicio))
-      .lte("created_at", fimDoDia(filtro.dataFim));
-    if (error) throw new Error(error.message);
-
     type Linha = { unidade: string; valor: number | string; status: string; created_at: string };
-    return ((data ?? []) as unknown as Linha[]).map((r) => ({
+    const data = await selectAll<Linha>(() =>
+      supabaseAdmin
+        .from("cantina_recargas" as never)
+        .select("unidade, valor, status, created_at")
+        .in("unidade", filtro.unidades)
+        .gte("created_at", inicioDoDia(filtro.dataInicio))
+        .lte("created_at", fimDoDia(filtro.dataFim))
+        .order("id", { ascending: true }),
+    );
+    return data.map((r) => ({
       unidade: r.unidade,
       data: diaBRT(r.created_at),
       status: r.status as RecargaCantinaIA["status"],
@@ -524,14 +526,14 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     if (filtro.unidades.length === 0) return { conversas: [] };
 
     type ConversaRow = { id: string; unidade: string };
-    const conversas = await supabaseAdmin
-      .from("whatsapp_conversations" as never)
-      .select("id, unidade")
-      .in("unidade", filtro.unidades);
-    if (conversas.error) throw new Error(conversas.error.message);
-    const unidadePorConversa = new Map(
-      ((conversas.data ?? []) as unknown as ConversaRow[]).map((c) => [c.id, c.unidade]),
+    const conversas = await selectAll<ConversaRow>(() =>
+      supabaseAdmin
+        .from("whatsapp_conversations" as never)
+        .select("id, unidade")
+        .in("unidade", filtro.unidades)
+        .order("id", { ascending: true }),
     );
+    const unidadePorConversa = new Map(conversas.map((c) => [c.id, c.unidade]));
     if (unidadePorConversa.size === 0) return { conversas: [] };
 
     // Só direção e instante das mensagens: o corpo e a mídia ficam fora.
@@ -636,12 +638,15 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     type FuncionarioRow = { school_id: string; data_rescisao: string | null };
 
     const [payslips, lotes, funcionarios] = await Promise.all([
-      supabaseAdmin
-        .from("hr_payslip_sends" as never)
-        .select("school_id, competencia, status")
-        .in("school_id", ids)
-        .gte("competencia", filtro.mesInicio)
-        .lte("competencia", filtro.mesFim),
+      selectAll<PayslipRow>(() =>
+        supabaseAdmin
+          .from("hr_payslip_sends" as never)
+          .select("school_id, competencia, status")
+          .in("school_id", ids)
+          .gte("competencia", filtro.mesInicio)
+          .lte("competencia", filtro.mesFim)
+          .order("id", { ascending: true }),
+      ),
       supabaseAdmin
         .from("hr_transport_batches" as never)
         .select("school_id, reference_month, total_amount")
@@ -653,12 +658,11 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
         .select("school_id, data_rescisao")
         .in("school_id", ids),
     ]);
-    if (payslips.error) throw new Error(payslips.error.message);
     if (lotes.error) throw new Error(lotes.error.message);
     if (funcionarios.error) throw new Error(funcionarios.error.message);
 
     const contracheques: ContrachequeEnvioIA[] = [];
-    for (const r of (payslips.data ?? []) as unknown as PayslipRow[]) {
+    for (const r of payslips) {
       const unidade = r.school_id ? nomePorId.get(r.school_id) : undefined;
       if (!unidade) continue;
       contracheques.push({ unidade, competencia: r.competencia, status: r.status });

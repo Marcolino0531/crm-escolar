@@ -48,3 +48,10 @@ initial_balances, recurring_forecasts, user_roles, schools, etc.).
 
 Os `schools` correspondem às Unidades do Schooler Hub:
 CEC, CEC Baby, Núcleo Belvedere, Núcleo Vale do Sereno.
+
+### Leituras: paginação obrigatória
+
+O PostgREST corta toda resposta em 1000 linhas **sem erro**. Qualquer leitura
+que possa passar disso (listas que crescem, somas, checagens de duplicidade)
+deve usar `selectAll`/`fetchAllRows` de `src/lib/supabase-paginate.ts`.
+Regra completa e exemplos em [docs/PAGINACAO-SUPABASE.md](docs/PAGINACAO-SUPABASE.md).

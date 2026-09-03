@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { ColoniaActionSheet } from "@/components/colonia/ColoniaActionSheet";
 import { FechamentoSemanal } from "@/components/colonia/FechamentoSemanal";
 import { type ColoniaStudent } from "@/lib/colonia";
@@ -52,15 +53,16 @@ function useColoniaStudents(schoolFilterIds: string[] | null) {
   return useQuery({
     queryKey: ["colonia_students", schoolFilterIds ?? "all"],
     queryFn: async () => {
-      let sq = supabase
-        .from("diario_students" as never)
-        .select("id, name, class_name, school_id, photo")
-        .order("class_name")
-        .order("name");
-      if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
-      const { data, error } = await sq;
-      if (error) throw error;
-      const rows = (data ?? []) as unknown as StudentRow[];
+      const rows = await selectAll<StudentRow>(() => {
+        let sq = supabase
+          .from("diario_students" as never)
+          .select("id, name, class_name, school_id, photo")
+          .order("class_name")
+          .order("name")
+          .order("id", { ascending: true });
+        if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
+        return sq;
+      });
       return rows.map<ColoniaStudent>((s) => ({
         id: s.id,
         name: s.name,

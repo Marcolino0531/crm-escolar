@@ -6,6 +6,7 @@
 // Sponte sai daqui, justamente para não vazar dado cadastral.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAll } from "@/lib/supabase-paginate";
 import type { FonteDadosModulos } from "@/lib/analises-ia-modulos";
 import { criarFonteDadosModulos } from "@/lib/analises-ia-modulos.server";
 import {
@@ -140,17 +141,19 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
     const { categorias: cats, subcategorias: subs } = await catalogos();
     // `month` é o primeiro dia da competência; a janela é ampliada ao início do
     // mês da data inicial para não perder o mês parcialmente coberto.
-    const { data, error } = await supabaseAdmin
-      .from("recurring_forecasts" as never)
-      .select(
-        "school_id, month, description, cost_center_id, sub_cost_center_id, projected_amount, status, series_id",
-      )
-      .in("school_id", ids)
-      .gte("month", `${competencia(filtro.dataInicio)}-01`)
-      .lte("month", filtro.dataFim);
-    if (error) throw new Error(error.message);
+    const data = await selectAll<LinhaForecast>(() =>
+      supabaseAdmin
+        .from("recurring_forecasts" as never)
+        .select(
+          "school_id, month, description, cost_center_id, sub_cost_center_id, projected_amount, status, series_id",
+        )
+        .in("school_id", ids)
+        .gte("month", `${competencia(filtro.dataInicio)}-01`)
+        .lte("month", filtro.dataFim)
+        .order("id", { ascending: true }),
+    );
 
-    return ((data ?? []) as unknown as LinhaForecast[])
+    return data
       .map((r) => ({
         unidade: nomePorId.get(r.school_id) ?? "",
         mes: String(r.month).slice(0, 10),
@@ -177,16 +180,18 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
     const { ids, nomePorId } = await idsDe(filtro.unidades);
     if (ids.length === 0) return [];
     const { categorias: cats, subcategorias: subs } = await catalogos();
-    const { data, error } = await supabaseAdmin
-      .from("transactions" as never)
-      .select("school_id, date, amount, description, cost_center_id, sub_cost_center_id")
-      .eq("type", "saida")
-      .in("school_id", ids)
-      .gte("date", filtro.dataInicio)
-      .lte("date", filtro.dataFim);
-    if (error) throw new Error(error.message);
+    const data = await selectAll<LinhaTransacaoSaida>(() =>
+      supabaseAdmin
+        .from("transactions" as never)
+        .select("school_id, date, amount, description, cost_center_id, sub_cost_center_id")
+        .eq("type", "saida")
+        .in("school_id", ids)
+        .gte("date", filtro.dataInicio)
+        .lte("date", filtro.dataFim)
+        .order("id", { ascending: true }),
+    );
 
-    return ((data ?? []) as unknown as LinhaTransacaoSaida[])
+    return data
       .map((r) => ({
         unidade: nomePorId.get(r.school_id) ?? "",
         data: String(r.date).slice(0, 10),
@@ -208,15 +213,17 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
     const { ids, nomePorId } = await idsDe(filtro.unidades);
     if (ids.length === 0) return [];
     const { categorias: cats, subcategorias: subs } = await catalogos();
-    const { data, error } = await supabaseAdmin
-      .from("recurring_series" as never)
-      .select(
-        "school_id, description, cost_center_id, sub_cost_center_id, projected_amount, start_month, end_month, skipped_months",
-      )
-      .in("school_id", ids);
-    if (error) throw new Error(error.message);
+    const data = await selectAll<LinhaSerie>(() =>
+      supabaseAdmin
+        .from("recurring_series" as never)
+        .select(
+          "school_id, description, cost_center_id, sub_cost_center_id, projected_amount, start_month, end_month, skipped_months",
+        )
+        .in("school_id", ids)
+        .order("id", { ascending: true }),
+    );
 
-    return ((data ?? []) as unknown as LinhaSerie[])
+    return data
       .map((r) => ({
         unidade: nomePorId.get(r.school_id) ?? "",
         descricao: r.description ?? "",
@@ -237,16 +244,18 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
     const { ids, nomePorId } = await idsDe(filtro.unidades);
     if (ids.length === 0) return [];
     const { categorias: cats, subcategorias: subs } = await catalogos();
-    const { data, error } = await supabaseAdmin
-      .from("transactions" as never)
-      .select("school_id, date, amount, cost_center_id, sub_cost_center_id")
-      .eq("type", "entrada")
-      .in("school_id", ids)
-      .gte("date", filtro.dataInicio)
-      .lte("date", filtro.dataFim);
-    if (error) throw new Error(error.message);
+    const data = await selectAll<LinhaTransacao>(() =>
+      supabaseAdmin
+        .from("transactions" as never)
+        .select("school_id, date, amount, cost_center_id, sub_cost_center_id")
+        .eq("type", "entrada")
+        .in("school_id", ids)
+        .gte("date", filtro.dataInicio)
+        .lte("date", filtro.dataFim)
+        .order("id", { ascending: true }),
+    );
 
-    return ((data ?? []) as unknown as LinhaTransacao[])
+    return data
       .map((r) => ({
         unidade: nomePorId.get(r.school_id) ?? "",
         data: String(r.date).slice(0, 10),

@@ -15,6 +15,7 @@
 // Docs: https://tiendanube.github.io/api-documentation/
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAll } from "@/lib/supabase-paginate";
 import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
 import { pedidoFoiAtendido } from "@/lib/uniformes-pedido";
 import type { PedidoVenda } from "@/lib/uniformes.vendas";
@@ -201,8 +202,7 @@ export async function fetchPaidOrders(
 ): Promise<PedidoVenda[]> {
   const orders: PedidoVenda[] = [];
   const perPage = 200;
-  const fields =
-    "id,status,payment_status,paid_at,completed_at,created_at,cancelled_at,products";
+  const fields = "id,status,payment_status,paid_at,completed_at,created_at,cancelled_at,products";
   for (let page = 1; ; page++) {
     const query = new URLSearchParams({
       page: String(page),
@@ -244,13 +244,21 @@ async function upsertCatalog(
   let variantCount = 0;
   let discrepancies = 0;
 
-  const { data: existing } = await supabaseAdmin
-    .from("uniform_variants" as never)
-    .select("ns_variant_id, stock, min_stock, order_placed_at")
-    .eq("store_key", storeKey);
+  const existing = await selectAll<{
+    ns_variant_id: string;
+    stock: number;
+    min_stock: number;
+    order_placed_at: string | null;
+  }>(() =>
+    supabaseAdmin
+      .from("uniform_variants" as never)
+      .select("ns_variant_id, stock, min_stock, order_placed_at")
+      .eq("store_key", storeKey)
+      .order("id", { ascending: true }),
+  );
   const localStock = new Map<string, number>();
   const local = new Map<string, { minStock: number; orderPlacedAt: string | null }>();
-  for (const row of (existing ?? []) as {
+  for (const row of existing as {
     ns_variant_id: string;
     stock: number;
     min_stock: number;

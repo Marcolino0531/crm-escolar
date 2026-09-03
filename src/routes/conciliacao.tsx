@@ -4,16 +4,55 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchSponteConciliacao, fetchSpontePix, type ConciliacaoSponteResult, type PixPagamentoSponte } from "@/lib/sponte.functions";
+import { selectAll } from "@/lib/supabase-paginate";
+import type { Tables } from "@/integrations/supabase/types";
+import {
+  fetchSponteConciliacao,
+  fetchSpontePix,
+  type ConciliacaoSponteResult,
+  type PixPagamentoSponte,
+} from "@/lib/sponte.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Upload, CheckCircle2, Clock, Loader2, FileText, Trash2, RefreshCcw, SplitSquareHorizontal, Plus, X, Palette, UserSearch } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Upload,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  FileText,
+  Trash2,
+  RefreshCcw,
+  SplitSquareHorizontal,
+  Plus,
+  X,
+  Palette,
+  UserSearch,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { autoReconcileSubcategorized } from "@/lib/auto-reconcile";
@@ -21,7 +60,10 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { escolaAtivaId, unidadeAtiva } from "@/lib/unidade-global";
-import { ConciliarPorAlunoDialog, type ItemConciliacaoAluno } from "@/components/conciliacao/ConciliarPorAlunoDialog";
+import {
+  ConciliarPorAlunoDialog,
+  type ItemConciliacaoAluno,
+} from "@/components/conciliacao/ConciliarPorAlunoDialog";
 import type { AlunoBuscaSponte } from "@/lib/sponte.functions";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
@@ -30,7 +72,10 @@ export const Route = createFileRoute("/conciliacao")({
   head: () => ({
     meta: [
       { title: "Faturamento — School Hub" },
-      { name: "description", content: "Concilie qualquer receita do extrato anexando a planilha de detalhamento." },
+      {
+        name: "description",
+        content: "Concilie qualquer receita do extrato anexando a planilha de detalhamento.",
+      },
     ],
   }),
   component: ConciliacaoPage,
@@ -125,7 +170,24 @@ function nomeBate(nome: string, descNorm: string): boolean {
   return presentes.length >= 2;
 }
 
-const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#6366f1", "#14b8a6", "#a855f7", "#eab308", "#0ea5e9", "#f43f5e", "#22c55e"];
+const PALETTE = [
+  "#10b981",
+  "#3b82f6",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
+  "#f97316",
+  "#6366f1",
+  "#14b8a6",
+  "#a855f7",
+  "#eab308",
+  "#0ea5e9",
+  "#f43f5e",
+  "#22c55e",
+];
 function hashColor(label: string): string {
   const s = (label ?? "").trim().toLowerCase();
   let h = 0;
@@ -144,7 +206,9 @@ function norm(s: unknown) {
 function parseBRNumber(v: unknown): number | null {
   if (v == null || v === "") return null;
   if (typeof v === "number") return isNaN(v) ? null : v;
-  let s = String(v).replace(/[R$\s]/g, "").replace(/\u00a0/g, "");
+  let s = String(v)
+    .replace(/[R$\s]/g, "")
+    .replace(/\u00a0/g, "");
   if (!s) return null;
   // BR format "1.234,56" → "1234.56"
   if (s.includes(",") && s.lastIndexOf(",") > s.lastIndexOf(".")) {
@@ -165,11 +229,33 @@ type ParsedSheet = {
 };
 
 // Preferences for which column holds the "Valor" and the "Serviço/Categoria".
-const VALUE_KEYS = ["valor pago", "valor recebido", "vlr pago", "valor liquido", "valor líquido", "valor"];
+const VALUE_KEYS = [
+  "valor pago",
+  "valor recebido",
+  "vlr pago",
+  "valor liquido",
+  "valor líquido",
+  "valor",
+];
 const LABEL_KEYS = [
-  "categoria", "subcategoria", "servico", "serviço", "descricao", "descrição",
-  "historico", "histórico", "produto", "item", "plano", "tipo", "discriminacao", "discriminação",
-  "sacado", "cliente", "aluno", "favorecido",
+  "categoria",
+  "subcategoria",
+  "servico",
+  "serviço",
+  "descricao",
+  "descrição",
+  "historico",
+  "histórico",
+  "produto",
+  "item",
+  "plano",
+  "tipo",
+  "discriminacao",
+  "discriminação",
+  "sacado",
+  "cliente",
+  "aluno",
+  "favorecido",
 ];
 
 async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
@@ -196,7 +282,10 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
   let valueCol = -1;
   for (const k of VALUE_KEYS) {
     const idx = header.findIndex((h) => h === k || h.includes(k));
-    if (idx >= 0) { valueCol = idx; break; }
+    if (idx >= 0) {
+      valueCol = idx;
+      break;
+    }
   }
   if (valueCol < 0) throw new Error("Coluna de valor não encontrada.");
 
@@ -204,7 +293,10 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
   let labelCol = -1;
   for (const k of LABEL_KEYS) {
     const idx = header.findIndex((h, i) => i !== valueCol && (h === k || h.includes(k)));
-    if (idx >= 0) { labelCol = idx; break; }
+    if (idx >= 0) {
+      labelCol = idx;
+      break;
+    }
   }
   // Fallback: first non-value, non-empty column.
   if (labelCol < 0) labelCol = header.findIndex((h, i) => i !== valueCol && h.length > 0);
@@ -224,7 +316,10 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
   }
 
   const items = [...groups.entries()]
-    .map(([subcategory_label, amount]) => ({ subcategory_label, amount: Math.round(amount * 100) / 100 }))
+    .map(([subcategory_label, amount]) => ({
+      subcategory_label,
+      amount: Math.round(amount * 100) / 100,
+    }))
     .sort((a, b) => b.amount - a.amount);
   const total = Math.round(items.reduce((s, it) => s + it.amount, 0) * 100) / 100;
 
@@ -270,11 +365,22 @@ function ConciliacaoPage() {
     queryFn: async () => {
       const [cats, subs] = await Promise.all([
         supabase.from("revenue_categories").select("id, name, color").order("name"),
-        supabase.from("revenue_subcategories").select("id, name, revenue_category_id, color").order("name"),
+        supabase
+          .from("revenue_subcategories")
+          .select("id, name, revenue_category_id, color")
+          .order("name"),
       ]);
       if (cats.error) throw cats.error;
       if (subs.error) throw subs.error;
-      return { cats: cats.data, subs: subs.data as Array<{ id: string; name: string; revenue_category_id: string; color: string }> };
+      return {
+        cats: cats.data,
+        subs: subs.data as Array<{
+          id: string;
+          name: string;
+          revenue_category_id: string;
+          color: string;
+        }>,
+      };
     },
   });
 
@@ -302,23 +408,40 @@ function ConciliacaoPage() {
     queryKey: ["conc-txs", schoolId, startDate, endDate],
     enabled: !!schoolId && !!startDate && !!endDate,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("id, date, amount, description, type, revenue_category_id, revenue_subcategory_id, parent_transaction_id")
-        .eq("school_id", schoolId)
-        .eq("type", "entrada")
-        .is("parent_transaction_id", null)
-        .gte("date", startDate)
-        .lte("date", endDate)
-        .order("date", { ascending: false });
-      if (error) throw error;
-      return data;
+      return selectAll<
+        Pick<
+          Tables<"transactions">,
+          | "id"
+          | "date"
+          | "amount"
+          | "description"
+          | "type"
+          | "revenue_category_id"
+          | "revenue_subcategory_id"
+          | "parent_transaction_id"
+        >
+      >(() =>
+        supabase
+          .from("transactions")
+          .select(
+            "id, date, amount, description, type, revenue_category_id, revenue_subcategory_id, parent_transaction_id",
+          )
+          .eq("school_id", schoolId)
+          .eq("type", "entrada")
+          .is("parent_transaction_id", null)
+          .gte("date", startDate)
+          .lte("date", endDate)
+          .order("date", { ascending: false })
+          .order("id", { ascending: true }),
+      );
     },
   });
 
   const revenueTxs = useMemo(() => {
     return txs.filter((t) => {
-      const desc = String(t.description ?? "").trim().toUpperCase();
+      const desc = String(t.description ?? "")
+        .trim()
+        .toUpperCase();
       const amt = Number(t.amount ?? 1);
       if (desc === "SALDO DIA" || desc.includes("SALDO DIA")) return false;
       if (amt === 1) return false;
@@ -334,11 +457,15 @@ function ConciliacaoPage() {
     queryKey: ["conc-recs", txIds.join(",")],
     enabled: txIds.length > 0,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("boleto_reconciliations")
-        .select("id, transaction_id, source_filename, total_amount, created_at, sponte_aluno_id, sponte_aluno_nome, boleto_reconciliation_items(id, subcategory_label, amount, revenue_category_id, revenue_subcategory_id, sponte_numero_boleto, sponte_vencimento)")
-        .in("transaction_id", txIds);
-      if (error) throw error;
+      const data = await selectAll<unknown>(() =>
+        supabase
+          .from("boleto_reconciliations")
+          .select(
+            "id, transaction_id, source_filename, total_amount, created_at, sponte_aluno_id, sponte_aluno_nome, boleto_reconciliation_items(id, subcategory_label, amount, revenue_category_id, revenue_subcategory_id, sponte_numero_boleto, sponte_vencimento)",
+          )
+          .in("transaction_id", txIds)
+          .order("id", { ascending: true }),
+      );
       return data as Array<{
         id: string;
         transaction_id: string;
@@ -421,7 +548,8 @@ function ConciliacaoPage() {
   function matchSubcategory(label: string) {
     if (!revRefs) return { revenue_category_id: null, revenue_subcategory_id: null };
     const n = norm(label);
-    const sub = revRefs.subs.find((s) => norm(s.name) === n) ??
+    const sub =
+      revRefs.subs.find((s) => norm(s.name) === n) ??
       revRefs.subs.find((s) => n.includes(norm(s.name)) || norm(s.name).includes(n));
     if (sub) {
       return { revenue_category_id: sub.revenue_category_id, revenue_subcategory_id: sub.id };
@@ -460,7 +588,10 @@ function ConciliacaoPage() {
       await supabase.from("boleto_reconciliations").delete().eq("id", existing.id);
     }
     // 2. Limpeza defensiva: apaga qualquer transação-filha fantasma de versões antigas.
-    await supabase.from("transactions").delete().eq("parent_transaction_id" as any, txId);
+    await supabase
+      .from("transactions")
+      .delete()
+      .eq("parent_transaction_id" as any, txId);
 
     // 3. Cria o cabeçalho da conciliação (marca a transação pai como "Conciliada").
     const { data: rec, error: recErr } = await supabase
@@ -489,7 +620,9 @@ function ConciliacaoPage() {
       sponte_numero_boleto: it.sponte_numero_boleto ?? null,
       sponte_vencimento: it.sponte_vencimento || null,
     }));
-    const { error: itErr } = await supabase.from("boleto_reconciliation_items").insert(itemRows as any);
+    const { error: itErr } = await supabase
+      .from("boleto_reconciliation_items")
+      .insert(itemRows as any);
     if (itErr) throw new Error(`Erro ao salvar itens: ${itErr.message}`);
 
     // 5. Atualiza a transação pai: associa a categoria principal quando todos os itens são da mesma.
@@ -511,11 +644,14 @@ function ConciliacaoPage() {
     try {
       const parsed = await parseSpreadsheet(file);
       console.log("[CONC] Planilha parseada:", parsed);
-      if (parsed.items.length === 0) throw new Error("Nenhuma linha de valor identificada na planilha.");
+      if (parsed.items.length === 0)
+        throw new Error("Nenhuma linha de valor identificada na planilha.");
 
       const diff = Math.abs(parsed.total - Number(expectedTotal));
       if (!fechaCentavos(parsed.total, Number(expectedTotal))) {
-        throw new Error(`Valores não batem: planilha soma ${formatBRL(parsed.total)}, mas o extrato registra ${formatBRL(Number(expectedTotal))} (diferença ${formatBRL(diff)}).`);
+        throw new Error(
+          `Valores não batem: planilha soma ${formatBRL(parsed.total)}, mas o extrato registra ${formatBRL(Number(expectedTotal))} (diferença ${formatBRL(diff)}).`,
+        );
       }
 
       const items = parsed.items.map((it) => {
@@ -523,7 +659,13 @@ function ConciliacaoPage() {
         return { ...it, ...m };
       });
 
-      await persistReconciliation(txId, file.name, parentTx.date, parentTx.description ?? "Receita", items);
+      await persistReconciliation(
+        txId,
+        file.name,
+        parentTx.date,
+        parentTx.description ?? "Receita",
+        items,
+      );
       toast.success(`Conciliação salva: ${items.length} subcategoria(s) detalhadas.`);
       qc.invalidateQueries({ queryKey: ["conc-recs"] });
       qc.invalidateQueries({ queryKey: ["conc-txs"] });
@@ -545,7 +687,10 @@ function ConciliacaoPage() {
     const rows = manualRows
       .map((r) => ({ subcategory_id: r.subcategory_id, amount: parseBRNumber(r.amount) ?? 0 }))
       .filter((r) => r.subcategory_id && r.amount > 0);
-    if (rows.length === 0) { toast.error("Adicione ao menos uma linha válida."); return; }
+    if (rows.length === 0) {
+      toast.error("Adicione ao menos uma linha válida.");
+      return;
+    }
     const total = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100;
     if (!fechaCentavos(total, expected)) {
       toast.error(`Soma ${formatBRL(total)} não confere com o total ${formatBRL(expected)}.`);
@@ -562,7 +707,13 @@ function ConciliacaoPage() {
           revenue_subcategory_id: sub.id,
         };
       });
-      await persistReconciliation(manualTxId, "Desmembramento manual", parentTx.date, parentTx.description ?? "Receita", items);
+      await persistReconciliation(
+        manualTxId,
+        "Desmembramento manual",
+        parentTx.date,
+        parentTx.description ?? "Receita",
+        items,
+      );
       toast.success(`Conciliação manual salva: ${items.length} subcategoria(s).`);
       qc.invalidateQueries({ queryKey: ["conc-recs"] });
       qc.invalidateQueries({ queryKey: ["conc-txs"] });
@@ -635,11 +786,17 @@ function ConciliacaoPage() {
     if (!parentTx) return false;
     const unidade = schoolName;
     if (!UNIDADES_SPONTE.includes(unidade)) {
-      if (!silent) toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
+      if (!silent)
+        toast.error(`A unidade "${unidade || "selecionada"}" não possui integração Sponte ativa.`);
       return false;
     }
     setAutoTxId(txId);
-    console.log("[CONC] === Conciliação automática Sponte ===", { txId, expectedTotal, date, unidade });
+    console.log("[CONC] === Conciliação automática Sponte ===", {
+      txId,
+      expectedTotal,
+      date,
+      unidade,
+    });
     try {
       // Janelas tentadas em ordem, respeitando a margem de compensação de
       // boleto (D+1/D+2): a baixa é registrada no Sponte na data do pagamento,
@@ -747,7 +904,10 @@ function ConciliacaoPage() {
       return;
     }
     setPixRunning(true);
-    console.log("[CONC][PIX] === Conciliação automática de PIX ===", { unidade, linhas: pendentes.length });
+    console.log("[CONC][PIX] === Conciliação automática de PIX ===", {
+      unidade,
+      linhas: pendentes.length,
+    });
     let conciliados = 0;
     let colisoes = 0;
     let semMatch = 0;
@@ -842,9 +1002,17 @@ function ConciliacaoPage() {
   }
 
   async function removeRec(recId: string, txId: string) {
-    if (!confirm("Remover esta conciliação? O detalhamento por subcategoria será apagado, mas a linha do extrato será preservada.")) return;
+    if (
+      !confirm(
+        "Remover esta conciliação? O detalhamento por subcategoria será apagado, mas a linha do extrato será preservada.",
+      )
+    )
+      return;
     // Limpeza defensiva contra transações-filhas legadas.
-    await supabase.from("transactions").delete().eq("parent_transaction_id" as any, txId);
+    await supabase
+      .from("transactions")
+      .delete()
+      .eq("parent_transaction_id" as any, txId);
     const { error } = await supabase.from("boleto_reconciliations").delete().eq("id", recId);
     if (error) toast.error(error.message);
     else {
@@ -857,19 +1025,28 @@ function ConciliacaoPage() {
 
   if (roleLoading) return null;
   if (!canView("financeiro_conciliacao"))
-    return <AccessDenied message="Você não tem permissão para acessar a Conciliação de Faturamento." />;
+    return (
+      <AccessDenied message="Você não tem permissão para acessar a Conciliação de Faturamento." />
+    );
 
   return (
     <div className="space-y-6 max-w-7xl">
       <div>
         <h1 className="text-2xl font-bold">Conciliação de Faturamento</h1>
         <p className="text-sm text-muted-foreground">
-          Use <strong>Sincronizar com Sponte</strong> para conciliar de uma vez os <strong>Boletos</strong> (COB COMPE / COB INTERN) e o <strong>PIX</strong> da unidade. Para boletos, o sistema busca as parcelas baixadas do dia e na margem de compensação D+1/D+2, monta o rateio por categoria e respeita o token/filtro da unidade. Também é possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma deve fechar com o valor da linha.
+          Use <strong>Sincronizar com Sponte</strong> para conciliar de uma vez os{" "}
+          <strong>Boletos</strong> (COB COMPE / COB INTERN) e o <strong>PIX</strong> da unidade.
+          Para boletos, o sistema busca as parcelas baixadas do dia e na margem de compensação
+          D+1/D+2, monta o rateio por categoria e respeita o token/filtro da unidade. Também é
+          possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma
+          deve fechar com o valor da linha.
         </p>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Filtros</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Filtros</CardTitle>
+        </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div>
             <Label>Colégio</Label>
@@ -880,10 +1057,20 @@ function ConciliacaoPage() {
           <MonthYearPicker
             className="md:col-span-2"
             startDate={startDate}
-            onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+            onChange={(start, end) => {
+              setStartDate(start);
+              setEndDate(end);
+            }}
           />
           <div className="flex items-end">
-            <Button variant="outline" className="w-full" onClick={() => { setStartDate(firstOfMonth()); setEndDate(lastOfMonth()); }}>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                setStartDate(firstOfMonth());
+                setEndDate(lastOfMonth());
+              }}
+            >
               <RefreshCcw className="h-4 w-4" /> Mês atual
             </Button>
           </div>
@@ -935,19 +1122,38 @@ function ConciliacaoPage() {
                   <div className="h-80">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={chartData} dataKey="value" nameKey="name" innerRadius={70} outerRadius={120} paddingAngle={2}>
-                          {chartData.map((d) => <Cell key={d.name} fill={d.color} />)}
+                        <Pie
+                          data={chartData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={70}
+                          outerRadius={120}
+                          paddingAngle={2}
+                        >
+                          {chartData.map((d) => (
+                            <Cell key={d.name} fill={d.color} />
+                          ))}
                         </Pie>
                         <Tooltip formatter={(v: number) => formatBRL(v)} />
-                        <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11 }} />
+                        <Legend
+                          verticalAlign="bottom"
+                          height={36}
+                          wrapperStyle={{ fontSize: 11 }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
                   <div className="space-y-1 max-h-80 overflow-y-auto pr-2">
                     {chartData.map((d) => (
-                      <div key={d.name} className="flex items-center justify-between text-xs border-b py-1.5">
+                      <div
+                        key={d.name}
+                        className="flex items-center justify-between text-xs border-b py-1.5"
+                      >
                         <span className="flex items-center gap-2 truncate">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: d.color }} />
+                          <span
+                            className="h-2 w-2 rounded-full shrink-0"
+                            style={{ background: d.color }}
+                          />
                           {d.name}
                         </span>
                         <span className="font-mono">{formatBRL(d.value)}</span>
@@ -973,7 +1179,11 @@ function ConciliacaoPage() {
                     disabled={syncing || pixRunning || !!autoTxId || !!uploadingTxId}
                     title="Concilia em lote todas as linhas pendentes do período: Boletos (COB COMPE / COB INTERN) e PIX, via Sponte"
                   >
-                    {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+                    {syncing ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RefreshCcw className="h-3 w-3" />
+                    )}
                     Sincronizar com Sponte
                   </Button>
                 )}
@@ -985,7 +1195,9 @@ function ConciliacaoPage() {
             {!schoolId ? (
               <SelecioneUnidade acao="A conciliação de faturamento" />
             ) : txLoading ? (
-              <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Carregando…</p>
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-3 w-3 animate-spin" /> Carregando…
+              </p>
             ) : revenueTxs.length === 0 ? (
               <p className="text-sm text-muted-foreground rounded-md border border-dashed p-6 text-center">
                 Nenhuma receita encontrada no período selecionado.
@@ -998,7 +1210,9 @@ function ConciliacaoPage() {
                     <TableHead>Descrição</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead className="w-32">Status</TableHead>
-                    <TableHead className="w-56 text-right">{isAdmin ? "Ação" : "Detalhes"}</TableHead>
+                    <TableHead className="w-56 text-right">
+                      {isAdmin ? "Ação" : "Detalhes"}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1017,26 +1231,39 @@ function ConciliacaoPage() {
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
                         <TableCell className="text-sm max-w-[280px]" title={t.description}>
-                          <span className="truncate inline-block max-w-[200px] align-middle">{t.description}</span>
+                          <span className="truncate inline-block max-w-[200px] align-middle">
+                            {t.description}
+                          </span>
                           {cobCompe && (
-                            <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300 border-sky-500/40">
+                            <Badge
+                              variant="outline"
+                              className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300 border-sky-500/40"
+                            >
                               {norm(t.description).includes("intern") ? "COB INTERN" : "COB COMPE"}
                             </Badge>
                           )}
                           {pix && !cobCompe && (
-                            <Badge variant="outline" className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 border-emerald-500/40">
+                            <Badge
+                              variant="outline"
+                              className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
+                            >
                               PIX
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm">{formatBRL(Number(t.amount))}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {formatBRL(Number(t.amount))}
+                        </TableCell>
                         <TableCell>
                           {isReconciled ? (
                             <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
                               <CheckCircle2 className="h-3 w-3" /> Conciliado
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="text-amber-700 dark:text-amber-300 border-amber-500/40">
+                            <Badge
+                              variant="outline"
+                              className="text-amber-700 dark:text-amber-300 border-amber-500/40"
+                            >
                               <Clock className="h-3 w-3" /> Pendente
                             </Badge>
                           )}
@@ -1044,12 +1271,21 @@ function ConciliacaoPage() {
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             {isReconciled && (
-                              <Button size="sm" variant="ghost" onClick={() => setViewerOpen(t.id)} title="Visualizar desmembramento">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setViewerOpen(t.id)}
+                                title="Visualizar desmembramento"
+                              >
                                 <FileText className="h-3 w-3" />
                               </Button>
                             )}
                             {isAdmin && isReconciled && (
-                              <Button size="sm" variant="ghost" onClick={() => removeRec(rec.id, t.id)}>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removeRec(rec.id, t.id)}
+                              >
                                 <Trash2 className="h-3 w-3" />
                               </Button>
                             )}
@@ -1070,8 +1306,14 @@ function ConciliacaoPage() {
                                     <UserSearch className="h-3 w-3" /> Buscar Aluno
                                   </Button>
                                 )}
-                                <Button size="sm" variant="outline" onClick={() => openManual(t.id)} disabled={isUploading || isAuto}>
-                                  <SplitSquareHorizontal className="h-3 w-3" /> Desmembrar Manualmente
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openManual(t.id)}
+                                  disabled={isUploading || isAuto}
+                                >
+                                  <SplitSquareHorizontal className="h-3 w-3" /> Desmembrar
+                                  Manualmente
                                 </Button>
                                 <label>
                                   <input
@@ -1085,10 +1327,21 @@ function ConciliacaoPage() {
                                       e.target.value = "";
                                     }}
                                   />
-                                  <Button size="sm" variant={isReconciled ? "outline" : "default"} asChild disabled={isUploading || isAuto}>
+                                  <Button
+                                    size="sm"
+                                    variant={isReconciled ? "outline" : "default"}
+                                    asChild
+                                    disabled={isUploading || isAuto}
+                                  >
                                     <span className="cursor-pointer">
-                                      {isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-                                      {isReconciled ? "Substituir Planilha" : "Anexar Planilha (Excel/CSV)"}
+                                      {isUploading ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Upload className="h-3 w-3" />
+                                      )}
+                                      {isReconciled
+                                        ? "Substituir Planilha"
+                                        : "Anexar Planilha (Excel/CSV)"}
                                     </span>
                                   </Button>
                                 </label>
@@ -1111,35 +1364,54 @@ function ConciliacaoPage() {
 
       <Dialog open={!!viewerOpen} onOpenChange={(o) => !o && setViewerOpen(null)}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Desmembramento da Planilha</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Desmembramento da Planilha</DialogTitle>
+          </DialogHeader>
           {(() => {
             const rec = viewerOpen ? recByTx.get(viewerOpen) : null;
             if (!rec) return null;
             return (
               <div className="space-y-3">
                 <div className="text-xs text-muted-foreground">
-                  Arquivo: <strong>{rec.source_filename}</strong> · Total: <strong>{formatBRL(Number(rec.total_amount))}</strong>
+                  Arquivo: <strong>{rec.source_filename}</strong> · Total:{" "}
+                  <strong>{formatBRL(Number(rec.total_amount))}</strong>
                   {rec.sponte_aluno_id && (
                     <>
-                      {" · "}Aluno: <strong>{rec.sponte_aluno_nome}</strong> (Sponte {rec.sponte_aluno_id})
+                      {" · "}Aluno: <strong>{rec.sponte_aluno_nome}</strong> (Sponte{" "}
+                      {rec.sponte_aluno_id})
                     </>
                   )}
                 </div>
                 <Table>
                   <TableHeader>
-                    <TableRow><TableHead>Subcategoria</TableHead><TableHead className="w-40">Título</TableHead><TableHead className="text-right">Valor</TableHead></TableRow>
+                    <TableRow>
+                      <TableHead>Subcategoria</TableHead>
+                      <TableHead className="w-40">Título</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                    </TableRow>
                   </TableHeader>
                   <TableBody>
                     {[...rec.boleto_reconciliation_items]
                       .sort((a, b) => a.subcategory_label.localeCompare(b.subcategory_label))
                       .map((it) => (
                         <TableRow key={it.id}>
-                          <TableCell className="text-sm">{it.subcategory_label}{!it.revenue_subcategory_id && <Badge variant="outline" className="ml-2 text-xs">não mapeada</Badge>}</TableCell>
+                          <TableCell className="text-sm">
+                            {it.subcategory_label}
+                            {!it.revenue_subcategory_id && (
+                              <Badge variant="outline" className="ml-2 text-xs">
+                                não mapeada
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {it.sponte_vencimento ? `Venc. ${formatBR(it.sponte_vencimento)}` : "—"}
-                            {it.sponte_numero_boleto && it.sponte_numero_boleto !== "0" ? ` · boleto ${it.sponte_numero_boleto}` : ""}
+                            {it.sponte_numero_boleto && it.sponte_numero_boleto !== "0"
+                              ? ` · boleto ${it.sponte_numero_boleto}`
+                              : ""}
                           </TableCell>
-                          <TableCell className="text-right font-mono">{formatBRL(Number(it.amount))}</TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatBRL(Number(it.amount))}
+                          </TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
@@ -1152,31 +1424,51 @@ function ConciliacaoPage() {
 
       <ConciliarPorAlunoDialog
         open={!!alunoTxId}
-        onOpenChange={(o) => { if (!o) setAlunoTxId(null); }}
+        onOpenChange={(o) => {
+          if (!o) setAlunoTxId(null);
+        }}
         unidade={schoolName}
         transacao={(() => {
           const t = alunoTxId ? revenueTxs.find((x) => x.id === alunoTxId) : null;
-          return t ? { id: t.id, date: t.date, description: t.description, amount: Number(t.amount) } : null;
+          return t
+            ? { id: t.id, date: t.date, description: t.description, amount: Number(t.amount) }
+            : null;
         })()}
         salvando={alunoSaving}
         onConfirmar={handleConciliarPorAluno}
       />
 
-      <Dialog open={!!manualTxId} onOpenChange={(o) => { if (!o) { setManualTxId(null); setManualRows([]); } }}>
+      <Dialog
+        open={!!manualTxId}
+        onOpenChange={(o) => {
+          if (!o) {
+            setManualTxId(null);
+            setManualRows([]);
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Desmembramento Manual</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Desmembramento Manual</DialogTitle>
+          </DialogHeader>
           {(() => {
             const parent = manualTxId ? revenueTxs.find((t) => t.id === manualTxId) : null;
             if (!parent) return null;
             const expected = Number(parent.amount);
             const sum = manualRows.reduce((s, r) => s + (parseBRNumber(r.amount) ?? 0), 0);
             const diff = Math.round((expected - sum) * 100) / 100;
-            const ok = fechaCentavos(sum, expected) && manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
+            const ok =
+              fechaCentavos(sum, expected) &&
+              manualRows.some((r) => r.subcategory_id && (parseBRNumber(r.amount) ?? 0) > 0);
             return (
               <div className="space-y-3">
                 <div className="rounded-md bg-muted p-3 text-sm">
-                  <div><strong>{parent.description}</strong> · {formatBR(parent.date)}</div>
-                  <div className="mt-1">Total a desmembrar: <strong className="font-mono">{formatBRL(expected)}</strong></div>
+                  <div>
+                    <strong>{parent.description}</strong> · {formatBR(parent.date)}
+                  </div>
+                  <div className="mt-1">
+                    Total a desmembrar: <strong className="font-mono">{formatBRL(expected)}</strong>
+                  </div>
                 </div>
 
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto">
@@ -1186,16 +1478,30 @@ function ConciliacaoPage() {
                         {idx === 0 && <Label className="text-xs">Subcategoria de Receita</Label>}
                         <Select
                           value={row.subcategory_id}
-                          onValueChange={(v) => setManualRows((rs) => rs.map((r, i) => i === idx ? { ...r, subcategory_id: v } : r))}
+                          onValueChange={(v) =>
+                            setManualRows((rs) =>
+                              rs.map((r, i) => (i === idx ? { ...r, subcategory_id: v } : r)),
+                            )
+                          }
                         >
-                          <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione" />
+                          </SelectTrigger>
                           <SelectContent>
                             {(() => {
                               if (!revRefs) return null;
-                              const sortedSubs = [...revRefs.subs].sort((a: any, b: any) => a.name.localeCompare(b.name));
+                              const sortedSubs = [...revRefs.subs].sort((a: any, b: any) =>
+                                a.name.localeCompare(b.name),
+                              );
                               return sortedSubs.map((s) => {
-                                const cat = revRefs.cats.find((c) => c.id === s.revenue_category_id);
-                                return <SelectItem key={s.id} value={s.id}>{cat?.name ?? "?"} → {s.name}</SelectItem>;
+                                const cat = revRefs.cats.find(
+                                  (c) => c.id === s.revenue_category_id,
+                                );
+                                return (
+                                  <SelectItem key={s.id} value={s.id}>
+                                    {cat?.name ?? "?"} → {s.name}
+                                  </SelectItem>
+                                );
                               });
                             })()}
                           </SelectContent>
@@ -1207,7 +1513,11 @@ function ConciliacaoPage() {
                           inputMode="decimal"
                           placeholder="0,00"
                           value={row.amount}
-                          onChange={(e) => setManualRows((rs) => rs.map((r, i) => i === idx ? { ...r, amount: e.target.value } : r))}
+                          onChange={(e) =>
+                            setManualRows((rs) =>
+                              rs.map((r, i) => (i === idx ? { ...r, amount: e.target.value } : r)),
+                            )
+                          }
                         />
                       </div>
                       <Button
@@ -1222,23 +1532,49 @@ function ConciliacaoPage() {
                   ))}
                 </div>
 
-                <Button size="sm" variant="outline" onClick={() => setManualRows((rs) => [...rs, { subcategory_id: "", amount: "" }])}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setManualRows((rs) => [...rs, { subcategory_id: "", amount: "" }])}
+                >
                   <Plus className="h-3 w-3" /> Adicionar linha
                 </Button>
 
-                <div className={`rounded-md border p-3 text-sm flex items-center justify-between ${ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
-                  <span>Soma informada: <strong className="font-mono">{formatBRL(sum)}</strong></span>
+                <div
+                  className={`rounded-md border p-3 text-sm flex items-center justify-between ${ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}
+                >
                   <span>
-                    {fechaCentavos(sum, expected)
-                      ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">Bate com o total</Badge>
-                      : <span className="text-amber-700 dark:text-amber-300">Faltam <strong className="font-mono">{formatBRL(diff)}</strong></span>}
+                    Soma informada: <strong className="font-mono">{formatBRL(sum)}</strong>
+                  </span>
+                  <span>
+                    {fechaCentavos(sum, expected) ? (
+                      <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                        Bate com o total
+                      </Badge>
+                    ) : (
+                      <span className="text-amber-700 dark:text-amber-300">
+                        Faltam <strong className="font-mono">{formatBRL(diff)}</strong>
+                      </span>
+                    )}
                   </span>
                 </div>
 
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => { setManualTxId(null); setManualRows([]); }}>Cancelar</Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setManualTxId(null);
+                      setManualRows([]);
+                    }}
+                  >
+                    Cancelar
+                  </Button>
                   <Button onClick={saveManual} disabled={!ok || manualSaving}>
-                    {manualSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                    {manualSaving ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3" />
+                    )}
                     Salvar Conciliação Manual
                   </Button>
                 </DialogFooter>
@@ -1250,43 +1586,59 @@ function ConciliacaoPage() {
 
       <Dialog open={colorsOpen} onOpenChange={setColorsOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Configurar Cores do Faturamento</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Configurar Cores do Faturamento</DialogTitle>
+          </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Escolha uma cor fixa para cada subcategoria de receita. As cores serão aplicadas no gráfico e na legenda em todos os meses.
+            Escolha uma cor fixa para cada subcategoria de receita. As cores serão aplicadas no
+            gráfico e na legenda em todos os meses.
           </p>
           <div className="space-y-1 max-h-[60vh] overflow-y-auto pr-1">
-            {revRefs && [...revRefs.subs].sort((a, b) => a.name.localeCompare(b.name)).map((s) => {
-              const cat = revRefs.cats.find((c) => c.id === s.revenue_category_id);
-              const val = colorDraft[s.id] ?? s.color ?? "#3b82f6";
-              return (
-                <div key={s.id} className="flex items-center justify-between gap-3 border-b py-2">
-                  <div className="text-sm truncate">
-                    <span className="text-muted-foreground">{cat?.name ?? "?"} →</span> {s.name}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-4 w-4 rounded-full border" style={{ background: val }} />
-                    <input
-                      type="color"
-                      value={val}
-                      onChange={(e) => setColorDraft((d) => ({ ...d, [s.id]: e.target.value }))}
-                      className="h-8 w-12 cursor-pointer rounded border bg-transparent"
-                    />
-                  </div>
-                </div>
-              );
-            })}
+            {revRefs &&
+              [...revRefs.subs]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((s) => {
+                  const cat = revRefs.cats.find((c) => c.id === s.revenue_category_id);
+                  const val = colorDraft[s.id] ?? s.color ?? "#3b82f6";
+                  return (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between gap-3 border-b py-2"
+                    >
+                      <div className="text-sm truncate">
+                        <span className="text-muted-foreground">{cat?.name ?? "?"} →</span> {s.name}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-4 w-4 rounded-full border" style={{ background: val }} />
+                        <input
+                          type="color"
+                          value={val}
+                          onChange={(e) => setColorDraft((d) => ({ ...d, [s.id]: e.target.value }))}
+                          className="h-8 w-12 cursor-pointer rounded border bg-transparent"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setColorsOpen(false)} disabled={colorsSaving}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setColorsOpen(false)} disabled={colorsSaving}>
+              Cancelar
+            </Button>
             <Button
               disabled={colorsSaving || !revRefs}
               onClick={async () => {
                 if (!revRefs) return;
                 setColorsSaving(true);
                 try {
-                  const changes = revRefs.subs.filter((s) => colorDraft[s.id] && colorDraft[s.id] !== s.color);
+                  const changes = revRefs.subs.filter(
+                    (s) => colorDraft[s.id] && colorDraft[s.id] !== s.color,
+                  );
                   for (const s of changes) {
-                    const { error } = await supabase.from("revenue_subcategories").update({ color: colorDraft[s.id] }).eq("id", s.id);
+                    const { error } = await supabase
+                      .from("revenue_subcategories")
+                      .update({ color: colorDraft[s.id] })
+                      .eq("id", s.id);
                     if (error) throw error;
                   }
                   toast.success(`Cores atualizadas (${changes.length}).`);
@@ -1299,7 +1651,11 @@ function ConciliacaoPage() {
                 }
               }}
             >
-              {colorsSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+              {colorsSaving ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-3 w-3" />
+              )}
               Salvar Cores
             </Button>
           </DialogFooter>
