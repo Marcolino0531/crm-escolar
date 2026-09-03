@@ -1259,6 +1259,12 @@ async function carregarJaLembradosRematricula(hoje: string): Promise<Set<string>
   );
 }
 
+// O envio real só sai depois da revisão do dry-run e da confirmação dos templates
+// aprovados na Meta; até lá o cron semanal registra a execução sem enviar nada.
+export function lembreteRematriculaLiberado(): boolean {
+  return (process.env.WHATSAPP_REMATRICULA_ATIVO ?? "").trim() === "1";
+}
+
 async function runCronRematricula(hoje: string, opcoes: OpcoesRotina = {}): Promise<ResultadoCron> {
   if (!getWhatsAppConfig()) {
     throw new Error(
@@ -1275,6 +1281,12 @@ async function runCronRematricula(hoje: string, opcoes: OpcoesRotina = {}): Prom
   // O agendamento já é semanal; a checagem protege uma reexecução manual fora do
   // dia e pula feriado que caia na sexta. O dry-run avalia qualquer dia.
   if (!opcoes.simular) {
+    if (!lembreteRematriculaLiberado()) {
+      return {
+        status: "sem_envio",
+        motivo: "lembrete de rematrícula ainda não liberado (WHATSAPP_REMATRICULA_ATIVO=1)",
+      };
+    }
     if (!ehSextaFeira(hoje)) {
       return { status: "nao_util", motivo: "lembrete de rematrícula só sai na sexta-feira" };
     }
