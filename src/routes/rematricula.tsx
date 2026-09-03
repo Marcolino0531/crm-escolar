@@ -796,20 +796,19 @@ function RematriculaPage() {
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
                   <div className="space-y-1">
                     <p className="font-medium">
-                      Matrícula enviada em {formatarDataBR(enviadaEm.slice(0, 10))}.
+                      Matrícula registrada com sucesso em {formatarDataBR(enviadaEm.slice(0, 10))}.
                     </p>
                     <p>
-                      Sua matrícula está aguardando validação da secretaria. Estando tudo certo, o
-                      contrato será enviado para assinatura eletrônica no email do responsável
-                      financeiro cadastrado.
+                      O contrato de matrícula será enviado em até 2 horas para assinatura eletrônica
+                      no email do responsável financeiro cadastrado. Confira a caixa de entrada e
+                      também a pasta de spam.
                     </p>
                   </div>
                 </div>
               ) : (
                 <>
                   <p className="mb-3 text-sm text-muted-foreground">
-                    Confira as seções acima (rotina e material já salvos) e envie a matrícula para a
-                    secretaria validar.
+                    Confira as seções acima (rotina e material já salvos) e finalize a matrícula.
                   </p>
                   <Button
                     className="w-full"
