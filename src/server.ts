@@ -13,6 +13,7 @@ import { handleMatriculasApi } from "./lib/matriculas.api";
 // TEMPORÁRIO: homologação das escritas da Rematrícula (Fase A). Sai daqui
 // depois da validação do teste.
 import { handleRematriculaHomologacaoApi } from "./lib/rematricula-homologacao.api";
+import { handleZapSignApi } from "./lib/zapsign.api";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -116,6 +117,9 @@ export default {
 
       const homologacaoResponse = await handleRematriculaHomologacaoApi(request);
       if (homologacaoResponse) return homologacaoResponse;
+
+      const zapsignResponse = await handleZapSignApi(request);
+      if (zapsignResponse) return zapsignResponse;
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
