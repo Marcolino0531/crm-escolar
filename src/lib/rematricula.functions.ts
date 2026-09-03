@@ -26,6 +26,7 @@ import {
   MENSAGEM_LINK_INVALIDO,
   MENSAGEM_SESSAO_EXPIRADA,
   anoLetivoValido,
+  apresentacaoMaterial,
   assuntoEmailRematricula,
   corpoEmailRematricula,
   chaveSerie,
@@ -43,6 +44,7 @@ import {
   primeiraMensalidadeDoAnoLetivo,
   resultadoEnvioLink,
   serieDaTurma,
+  serieRematricula,
   urlLinkRematricula,
   validarLinkMagico,
   vencimentosMaterialPelasMensalidades,
@@ -50,6 +52,7 @@ import {
   type ParcelaMaterial,
   type ParcelaMensalidade,
   type ParcelamentoPrimeira,
+  type ReajusteMaterial,
   type StatusEscolhaRematricula,
 } from "@/lib/rematricula";
 import {
@@ -646,6 +649,10 @@ export interface MaterialRematricula {
   configurado: boolean;
   valorAnual: number;
   serie: string;
+  anoLetivo: number | null;
+  itens: string[];
+  reajuste: ReajusteMaterial | null;
+  texto: string;
   opcoes: ParcelamentoPrimeira[];
   escolhaAtual: {
     parcelas: number;
@@ -713,10 +720,12 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       }
     }
 
+    const anoLetivo = await anoLetivoConfigurado();
+    const serieAlvo = serieRematricula(aluno, anoLetivo);
     const [responsaveis, mensalidade, material, escolha] = await Promise.all([
       buscarResponsaveis(sessao.unidade, sessao.alunoId, responsavelFinanceiroId),
       buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
-      materialDaSerie(sessao.unidade, aluno.serie),
+      materialDaSerie(sessao.unidade, serieAlvo),
       supabaseAdmin
         .from("rematricula_escolhas" as never)
         .select("parcelas, updated_at, status")
@@ -729,6 +738,13 @@ export const dadosRematricula = createServerFn({ method: "POST" })
         }>(),
     ]);
 
+    const apresentacao = apresentacaoMaterial({
+      unidade: sessao.unidade,
+      serie: material?.serieCadastrada || serieAlvo,
+      anoLetivo,
+      valorAnual: material?.valorAnual ?? 0,
+    });
+
     return {
       ok: true,
       unidade: sessao.unidade,
@@ -738,7 +754,11 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       material: {
         configurado: !!material,
         valorAnual: material?.valorAnual ?? 0,
-        serie: material?.serieCadastrada || aluno.serie,
+        serie: apresentacao.serie,
+        anoLetivo,
+        itens: apresentacao.itens,
+        reajuste: apresentacao.reajuste,
+        texto: apresentacao.texto,
         opcoes: material ? opcoesParcelamentoMaterialPrimeira(material.valorAnual) : [],
         escolhaAtual: escolha.data
           ? {
@@ -778,7 +798,9 @@ export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" 
     if (!aluno) return { ok: false, erro: "Não conseguimos confirmar os dados do aluno." };
 
     // O valor vem do cadastro, relido agora — não do que a tela mandou.
-    const material = await materialDaSerie(sessao.unidade, aluno.serie);
+    const anoLetivo = await anoLetivoConfigurado();
+    const serieAlvo = serieRematricula(aluno, anoLetivo);
+    const material = await materialDaSerie(sessao.unidade, serieAlvo);
     if (!material) {
       return {
         ok: false,
@@ -802,7 +824,6 @@ export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" 
     }
 
     const parcelamento = parcelamentoMaterialPrimeira(material.valorAnual, data.parcelas);
-    const anoLetivo = await anoLetivoConfigurado();
     const agora = new Date().toISOString();
     const { error } = await supabaseAdmin.from("rematricula_escolhas" as never).upsert(
       {
@@ -810,7 +831,7 @@ export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" 
         aluno_id: sessao.alunoId,
         aluno_nome: aluno.nome,
         serie: material.serieCadastrada,
-        serie_chave: chaveSerie(aluno.serie),
+        serie_chave: chaveSerie(serieAlvo),
         valor_anual: material.valorAnual,
         parcelas: parcelamento.parcelas,
         valor_parcela: parcelamento.valorParcela,

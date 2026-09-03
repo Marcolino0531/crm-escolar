@@ -25,6 +25,7 @@ import {
 } from "./cantina";
 import { addMesesYMD } from "./confissao-divida";
 import { proximoDiaUtil } from "./billing-schedule";
+import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "./crm/mecCutoff";
 
 export const LINK_VALIDADE_MINUTOS = 15;
 export const MAX_LINKS_POR_JANELA = 3;
@@ -596,12 +597,14 @@ export function chaveSerie(serie: string): string {
     .toLowerCase();
 }
 
-// Série a partir da turma do Sponte (campo TurmaAtual): a turma traz o
-// identificador da turma e, às vezes, turno ("3º Ano A - Manhã", "Maternal II B").
-// A série é o trecho antes do separador, sem a letra final que identifica a
-// turma.
+// Série a partir da turma do Sponte (campo TurmaAtual): a turma traz um código
+// numérico opcional, o identificador da turma/turno e, às vezes, o professor
+// ("07 - 1º Ano M / Prof. Ana", "3º Ano A - Manhã", "Maternal II B"). A série é
+// o trecho antes do separador, sem o código inicial e sem a letra final que
+// identifica a turma ou o turno.
 export function serieDaTurma(turma: string): string {
-  const semTurno = turma.split(/[-–—/(]/)[0].trim();
+  const semCodigo = turma.trim().replace(/^\d{1,3}\s*[-–—]\s*/, "");
+  const semTurno = semCodigo.split(/[-–—/(]/)[0].trim();
   const partes = semTurno.split(/\s+/).filter(Boolean);
   if (partes.length > 1) {
     const ultima = partes[partes.length - 1];
@@ -610,4 +613,135 @@ export function serieDaTurma(turma: string): string {
     if (/^[A-Za-z]$/.test(ultima)) partes.pop();
   }
   return partes.join(" ");
+}
+
+// Série que o aluno cursará no ano letivo da rematrícula: a MESMA regra de
+// corte (31/03) da admissão e do formulário de matrícula, aplicada ao ano de
+// referência. Sem data de nascimento válida, cai na série seguinte à atual.
+export function serieRematricula(
+  aluno: { dataNascimento: string; serie: string },
+  anoLetivo: number | null,
+): string {
+  if (anoLetivo && /^\d{4}-\d{2}-\d{2}$/.test(aluno.dataNascimento)) {
+    return calcularIdadeEscolar(aluno.dataNascimento, anoLetivo).turma;
+  }
+  const atual = TURMAS_POR_IDADE.findIndex((s) => chaveSerie(s) === chaveSerie(aluno.serie));
+  if (atual >= 0 && atual < TURMAS_POR_IDADE.length - 1) return TURMAS_POR_IDADE[atual + 1];
+  return aluno.serie;
+}
+
+// ─── Apresentação do material ao responsável ───────────────────────────────
+//
+// O pai vê só o total anual da série do próprio aluno, os itens inclusos (sem
+// valor individual) e o reajuste frente ao ano anterior. Os valores do ano
+// anterior são histórico fixo — não há por que cadastrá-los na tela.
+
+const ITENS_INFANTIL = [
+  "Coleção Principal (Bernoulli)",
+  "Coleção Eu no Mundo",
+  "Cultura Inglesa",
+  "Material Coletivo",
+  "Robótica",
+];
+const ITENS_ANOS_INICIAIS = [
+  "Coleção Principal (Bernoulli)",
+  "Coleção Eu no Mundo",
+  "Material de Arte",
+  "Cultura Inglesa",
+  "Material Coletivo",
+  "Robótica",
+];
+const ITENS_ANOS_FINAIS = [
+  "Coleção Principal (Bernoulli)",
+  "Material de Arte",
+  "Cultura Inglesa",
+  "Material Coletivo",
+  "Robótica",
+];
+
+export function itensMaterialInclusos(unidade: string, serie: string): string[] {
+  if (unidade !== "CEC") return [];
+  const indice = TURMAS_POR_IDADE.findIndex((s) => chaveSerie(s) === chaveSerie(serie));
+  if (indice < 0) return [];
+  if (indice < INDICE_PRIMEIRO_ANO) {
+    // Só 1º e 2º Período entram nesta rodada (Maternal fica de fora).
+    return /periodo/.test(chaveSerie(serie)) ? [...ITENS_INFANTIL] : [];
+  }
+  return indice <= INDICE_PRIMEIRO_ANO + 4 ? [...ITENS_ANOS_INICIAIS] : [...ITENS_ANOS_FINAIS];
+}
+
+// Valor anual do material por unidade → ano letivo → chave da série.
+const HISTORICO_MATERIAL: Record<string, Record<number, Record<string, number>>> = {
+  CEC: {
+    2026: {
+      "1 periodo": 2893.7,
+      "2 periodo": 2893.7,
+      "1 ano": 3439.1,
+      "2 ano": 3439.1,
+      "3 ano": 3439.1,
+      "4 ano": 3439.1,
+      "5 ano": 3439.1,
+      "6 ano": 3339.7,
+      "7 ano": 3339.7,
+      "8 ano": 3339.7,
+      "9 ano": 3339.7,
+    },
+  },
+};
+
+export interface ReajusteMaterial {
+  anoAnterior: number;
+  valorAnterior: number;
+  /** Percentual com duas casas (ex.: 3.1 = +3,10%; -0.34 = -0,34%). */
+  percentual: number;
+}
+
+export function reajusteMaterial(
+  unidade: string,
+  serie: string,
+  anoLetivo: number | null,
+  valorAnual: number,
+): ReajusteMaterial | null {
+  if (!anoLetivo || valorAnual <= 0) return null;
+  const anoAnterior = anoLetivo - 1;
+  const valorAnterior = HISTORICO_MATERIAL[unidade]?.[anoAnterior]?.[chaveSerie(serie)];
+  if (!valorAnterior) return null;
+  const percentual = Math.round(((valorAnual - valorAnterior) / valorAnterior) * 10000) / 100;
+  return { anoAnterior, valorAnterior, percentual };
+}
+
+export function formatarPercentual(percentual: number): string {
+  const sinal = percentual > 0 ? "+" : percentual < 0 ? "-" : "";
+  return `${sinal}${Math.abs(percentual).toFixed(2).replace(".", ",")}%`;
+}
+
+export interface ApresentacaoMaterial {
+  serie: string;
+  anoLetivo: number | null;
+  valorAnual: number;
+  itens: string[];
+  reajuste: ReajusteMaterial | null;
+  /** Ex.: "Valor 2027: R$ 3.427,48 (reajuste de -0,34% em relação a 2026)". */
+  texto: string;
+}
+
+export function apresentacaoMaterial(input: {
+  unidade: string;
+  serie: string;
+  anoLetivo: number | null;
+  valorAnual: number;
+}): ApresentacaoMaterial {
+  const reajuste = reajusteMaterial(input.unidade, input.serie, input.anoLetivo, input.valorAnual);
+  const rotuloAno = input.anoLetivo ? `Valor ${input.anoLetivo}` : "Valor anual";
+  const texto = reajuste
+    ? `${rotuloAno}: ${formatarBRL(input.valorAnual)} (reajuste de ${formatarPercentual(reajuste.percentual)} em relação a ${reajuste.anoAnterior})`
+    : `${rotuloAno}: ${formatarBRL(input.valorAnual)}`;
+  return {
+    serie: input.serie,
+    anoLetivo: input.anoLetivo,
+    valorAnual: input.valorAnual,
+    itens: itensMaterialInclusos(input.unidade, input.serie),
+    reajuste,
+    texto,
+  };
 }
