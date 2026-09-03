@@ -428,7 +428,7 @@ function AtendimentoPage() {
                 return (
                   <div
                     key={c.id}
-                    className={`group flex w-full items-start gap-3 border-b border-border/60 px-3 py-3 transition-colors hover:bg-muted/50 ${
+                    className={`group flex w-full items-start gap-3 overflow-hidden border-b border-border/60 px-3 py-3 transition-colors hover:bg-muted/50 ${
                       c.id === selecionadaId && !modoSelecao ? "bg-muted" : ""
                     } ${marcada ? "bg-primary/5" : ""}`}
                   >
@@ -448,20 +448,23 @@ function AtendimentoPage() {
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                         <User className="h-4 w-4" />
                       </div>
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 overflow-hidden">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-semibold">
+                          <span
+                            title={nomeResponsavel(c)}
+                            className="block min-w-0 flex-1 truncate text-sm font-semibold"
+                          >
                             {nomeResponsavel(c)}
-                            {c.aluno_name && (
-                              <span className="text-xs font-normal text-muted-foreground">
-                                {" "}
-                                (aluno: {c.aluno_name})
-                              </span>
-                            )}
                           </span>
                           <span className="shrink-0 text-[10px] text-muted-foreground">
                             {rotuloRelativoLista(c.last_message_at, new Date())}
                           </span>
+                        </div>
+                        <div
+                          title={c.aluno_name ? `aluno: ${c.aluno_name}` : undefined}
+                          className="block h-4 min-w-0 truncate text-xs text-muted-foreground"
+                        >
+                          {c.aluno_name ? `aluno: ${c.aluno_name}` : "\u00a0"}
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-xs text-muted-foreground">
