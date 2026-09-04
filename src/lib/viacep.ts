@@ -6,12 +6,14 @@ export interface EnderecoViaCep {
   logradouro: string;
   bairro: string;
   cidade: string;
+  uf: string;
 }
 
 interface ViaCepResposta {
   logradouro?: string;
   bairro?: string;
   localidade?: string;
+  uf?: string;
   erro?: boolean | string;
 }
 
@@ -29,6 +31,7 @@ export async function buscarEnderecoPorCep(cep: string): Promise<EnderecoViaCep 
       logradouro: dados.logradouro ?? "",
       bairro: dados.bairro ?? "",
       cidade: dados.localidade ?? "",
+      uf: dados.uf ?? "",
     };
   } catch {
     return null;

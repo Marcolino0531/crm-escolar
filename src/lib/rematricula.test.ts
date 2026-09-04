@@ -36,6 +36,7 @@ import {
   urlLinkRematricula,
   validarLinkMagico,
   type LinkMagico,
+  validarResponsavelFinanceiro,
 } from "@/lib/rematricula";
 import type { ParcelaAberta } from "@/lib/cantina";
 import { isDiaUtil, isFeriadoNacional } from "@/lib/billing-schedule";
@@ -653,5 +654,47 @@ describe("vencimentos do material pelas mensalidades", () => {
   it("recusa vencimentos em quantidade diferente das parcelas e data inválida", () => {
     expect(() => cronogramaMaterialFaseB(1000, 3, ["2027-01-10"])).toThrow();
     expect(() => vencimentosMaterialPelasMensalidades(mensalidades, "10/01/2027", 3)).toThrow();
+  });
+});
+
+describe("validarResponsavelFinanceiro", () => {
+  const completo = {
+    nome: "Maria Silva",
+    cpf: "529.982.247-25",
+    dataNascimento: "1985-04-10",
+    celular: "(31) 99999-8888",
+    email: "maria@exemplo.com",
+    cep: "30140-071",
+    endereco: "Rua da Bahia",
+    numeroEndereco: "1000",
+    bairro: "Centro",
+    cidade: "Belo Horizonte",
+    estado: "MG",
+  };
+
+  it("aceita o cadastro completo", () => {
+    expect(validarResponsavelFinanceiro(completo, "2026-09-10")).toEqual({});
+  });
+
+  it("exige cada campo obrigatório", () => {
+    const erros = validarResponsavelFinanceiro(
+      { ...completo, nome: "", celular: "", estado: " " },
+      "2026-09-10",
+    );
+    expect(Object.keys(erros).sort()).toEqual(["celular", "estado", "nome"]);
+  });
+
+  it("recusa CPF, email, CEP e nascimento no futuro", () => {
+    const erros = validarResponsavelFinanceiro(
+      {
+        ...completo,
+        cpf: "111.111.111-11",
+        email: "sem-arroba",
+        cep: "1234",
+        dataNascimento: "2030-01-01",
+      },
+      "2026-09-10",
+    );
+    expect(Object.keys(erros).sort()).toEqual(["cep", "cpf", "dataNascimento", "email"]);
   });
 });

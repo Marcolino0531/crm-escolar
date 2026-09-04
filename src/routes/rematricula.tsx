@@ -10,6 +10,8 @@ import {
   LINK_VALIDADE_MINUTOS,
   formatarBRL,
   rotuloParcelamentoPrimeira,
+  validarResponsavelFinanceiro,
+  type DadosResponsavelValidacao,
   type ParcelamentoPrimeira,
 } from "@/lib/rematricula";
 import {
@@ -161,15 +163,73 @@ function contatoDoResponsavel(resp: ResponsavelRematricula): EdicaoContato {
   };
 }
 
+// Edição do responsável: além dos contatos, a data de nascimento (gravada no
+// Sponte) e o Estado (preenchido pelo ViaCEP; conferido aqui, pois o Sponte não
+// grava UF do responsável). Nome e CPF seguem somente leitura.
+interface EdicaoResponsavel extends EdicaoContato {
+  dataNascimento: string;
+  estado: string;
+}
+
+type ErrosResponsavel = Partial<Record<keyof DadosResponsavelValidacao, string>>;
+
 function BlocoResponsavel({
   resp,
   edicao,
+  erros,
   onChange,
 }: {
   resp: ResponsavelRematricula;
-  edicao: EdicaoContato;
-  onChange: (chave: keyof EdicaoContato, valor: string) => void;
+  edicao: EdicaoResponsavel;
+  erros: ErrosResponsavel;
+  onChange: (chave: keyof EdicaoResponsavel, valor: string) => void;
 }) {
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const obrigatorio = resp.financeiro;
+
+  const aoMudarCep = async (valor: string) => {
+    onChange("cep", valor);
+    if (valor.replace(/\D/g, "").length !== 8) return;
+    setBuscandoCep(true);
+    const achado = await buscarEnderecoPorCep(valor);
+    setBuscandoCep(false);
+    if (!achado) return;
+    onChange("endereco", achado.logradouro);
+    onChange("bairro", achado.bairro);
+    onChange("cidade", achado.cidade);
+    onChange("estado", achado.uf.toUpperCase());
+  };
+
+  const campo = (
+    chave: keyof EdicaoResponsavel,
+    label: string,
+    extra?: { type?: string; sufixo?: string; maxLength?: number },
+  ) => {
+    const erroCampo = erros[chave as keyof DadosResponsavelValidacao];
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">
+          {label}
+          {obrigatorio && chave !== "complementoEndereco" && " *"}
+          {extra?.sufixo}
+        </Label>
+        <Input
+          type={extra?.type ?? "text"}
+          lang={extra?.type === "date" ? "pt-BR" : undefined}
+          maxLength={extra?.maxLength}
+          value={edicao[chave]}
+          aria-invalid={!!erroCampo}
+          onChange={(e) => {
+            if (chave === "cep") void aoMudarCep(e.target.value);
+            else if (chave === "estado") onChange(chave, e.target.value.toUpperCase());
+            else onChange(chave, e.target.value);
+          }}
+        />
+        {erroCampo && <p className="text-xs text-destructive">{erroCampo}</p>}
+      </div>
+    );
+  };
+
   return (
     <div className="rounded-lg border p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -181,13 +241,56 @@ function BlocoResponsavel({
         )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <CampoLeitura label="Nome" valor={resp.nome} />
-        <CampoLeitura label="CPF" valor={resp.cpf} />
-        <CampoLeitura label="Data de nascimento" valor={resp.dataNascimento} />
-        <CampoLeitura label="UF" valor={resp.uf} />
-        <CamposContato edicao={edicao} onChange={onChange} />
+        <CampoLeitura label={obrigatorio ? "Nome *" : "Nome"} valor={resp.nome} />
+        <CampoLeitura label={obrigatorio ? "CPF *" : "CPF"} valor={resp.cpf} />
+        {campo("dataNascimento", "Data de nascimento", { type: "date" })}
+        {campo("celular", "Celular")}
+        {campo("email", "Email")}
+        {campo("cep", "CEP", { sufixo: buscandoCep ? " — buscando endereço…" : "" })}
+        {campo("endereco", "Endereço")}
+        {campo("numeroEndereco", "Número")}
+        {campo("complementoEndereco", "Complemento")}
+        {campo("bairro", "Bairro")}
+        {campo("cidade", "Cidade")}
+        {campo("estado", "Estado", { maxLength: 2 })}
       </div>
+      {(erros.nome || erros.cpf) && (
+        <p className="mt-2 text-xs text-destructive">
+          {[erros.nome, erros.cpf].filter(Boolean).join(" ")} Fale com a secretaria para completar.
+        </p>
+      )}
     </div>
+  );
+}
+
+function edicaoDoResponsavel(resp: ResponsavelRematricula): EdicaoResponsavel {
+  return {
+    ...contatoDoResponsavel(resp),
+    dataNascimento: resp.dataNascimento,
+    estado: resp.uf,
+  };
+}
+
+function validarFinanceiro(
+  resp: ResponsavelRematricula,
+  edicao: EdicaoResponsavel,
+  hojeYMD: string,
+): ErrosResponsavel {
+  return validarResponsavelFinanceiro(
+    {
+      nome: resp.nome,
+      cpf: resp.cpf,
+      dataNascimento: edicao.dataNascimento,
+      celular: edicao.celular,
+      email: edicao.email,
+      cep: edicao.cep,
+      endereco: edicao.endereco,
+      numeroEndereco: edicao.numeroEndereco,
+      bairro: edicao.bairro,
+      cidade: edicao.cidade,
+      estado: edicao.estado,
+    },
+    hojeYMD,
   );
 }
 
@@ -215,7 +318,25 @@ function RematriculaPage() {
   const [parcelas, setParcelas] = useState<number | null>(null);
   const [salvo, setSalvo] = useState(false);
   const [contatoAluno, setContatoAluno] = useState<EdicaoContato | null>(null);
-  const [contatoResp, setContatoResp] = useState<Record<string, EdicaoContato>>({});
+  const [contatoResp, setContatoResp] = useState<Record<string, EdicaoResponsavel>>({});
+  const [errosResp, setErrosResp] = useState<Record<string, ErrosResponsavel>>({});
+
+  // Só o responsável financeiro tem cadastro obrigatório; devolve false se faltar algo.
+  const conferirFinanceiro = (): boolean => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const novos: Record<string, ErrosResponsavel> = {};
+    for (const r of dados?.responsaveis ?? []) {
+      if (!r.financeiro) continue;
+      const erros = validarFinanceiro(
+        r,
+        contatoResp[r.responsavelId] ?? edicaoDoResponsavel(r),
+        hoje,
+      );
+      if (Object.keys(erros).length > 0) novos[r.responsavelId] = erros;
+    }
+    setErrosResp(novos);
+    return Object.keys(novos).length === 0;
+  };
   const [cadastroSalvo, setCadastroSalvo] = useState("");
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
   const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
@@ -275,7 +396,7 @@ function RematriculaPage() {
         }
         setContatoResp(
           Object.fromEntries(
-            (portal.responsaveis ?? []).map((r) => [r.responsavelId, contatoDoResponsavel(r)]),
+            (portal.responsaveis ?? []).map((r) => [r.responsavelId, edicaoDoResponsavel(r)]),
           ),
         );
         setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
@@ -507,8 +628,8 @@ function RematriculaPage() {
               </div>
               <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Corrija endereço, celular e email se algo estiver desatualizado. Nome, CPF e data de
-                nascimento só a secretaria altera.
+                Corrija endereço, celular e email se algo estiver desatualizado. Nome e CPF só a
+                secretaria altera. Os campos com * são obrigatórios para o responsável financeiro.
               </p>
             </div>
 
@@ -519,12 +640,13 @@ function RematriculaPage() {
                   <BlocoResponsavel
                     key={r.responsavelId}
                     resp={r}
-                    edicao={contatoResp[r.responsavelId] ?? contatoDoResponsavel(r)}
+                    edicao={contatoResp[r.responsavelId] ?? edicaoDoResponsavel(r)}
+                    erros={errosResp[r.responsavelId] ?? {}}
                     onChange={(chave, valor) => {
                       setContatoResp((atual) => ({
                         ...atual,
                         [r.responsavelId]: {
-                          ...(atual[r.responsavelId] ?? contatoDoResponsavel(r)),
+                          ...(atual[r.responsavelId] ?? edicaoDoResponsavel(r)),
                           [chave]: valor,
                         },
                       }));
@@ -540,7 +662,13 @@ function RematriculaPage() {
                 className="w-full"
                 variant="secondary"
                 disabled={enviarCadastro.isPending}
-                onClick={() => enviarCadastro.mutate()}
+                onClick={() => {
+                  if (!conferirFinanceiro()) {
+                    setErro("Complete os dados obrigatórios do responsável financeiro.");
+                    return;
+                  }
+                  enviarCadastro.mutate();
+                }}
               >
                 {enviarCadastro.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Salvar dados cadastrais
@@ -799,9 +927,9 @@ function RematriculaPage() {
                       Matrícula registrada com sucesso em {formatarDataBR(enviadaEm.slice(0, 10))}.
                     </p>
                     <p>
-                      O contrato de matrícula será enviado em até 2 horas para assinatura eletrônica
-                      no email do responsável financeiro cadastrado. Confira a caixa de entrada e
-                      também a pasta de spam.
+                      Sua matrícula está com a secretaria para conferência. Após essa conferência, o
+                      contrato para assinatura eletrônica será enviado em breve para o email do
+                      responsável financeiro cadastrado.
                     </p>
                   </div>
                 </div>
@@ -822,6 +950,12 @@ function RematriculaPage() {
                       if (erroVencimento) {
                         setErrosEnvio({ "matricula.primeiroVencimento": erroVencimento });
                         setErro("Confira a data de vencimento da matrícula.");
+                        return;
+                      }
+                      if (!conferirFinanceiro()) {
+                        setErro(
+                          "Complete e salve os dados obrigatórios do responsável financeiro antes de finalizar.",
+                        );
                         return;
                       }
                       enviarMatricula.mutate();

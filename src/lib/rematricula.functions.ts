@@ -26,6 +26,7 @@ import {
   MENSAGEM_LINK_ENVIADO,
   MENSAGEM_LINK_INVALIDO,
   MENSAGEM_SESSAO_EXPIRADA,
+  validarResponsavelFinanceiro,
   anoLetivoValido,
   apresentacaoMaterial,
   assuntoEmailRematricula,
@@ -95,6 +96,7 @@ import { addMesesYMD } from "@/lib/confissao-divida";
 import { buscarTurmasDoAno } from "@/lib/matricula-turma.sponte";
 import {
   CAMPOS_EDITAVEIS_ALUNO,
+  CAMPOS_EDITAVEIS_RESPONSAVEL,
   aplicarEdicao,
   camposAlterados,
   camposEsvaziados,
@@ -292,6 +294,56 @@ export interface ResponsavelRematricula {
   email: string;
   telefone: string;
   financeiro: boolean;
+}
+
+async function buscarResponsavelFinanceiroId(unidade: string, alunoId: string): Promise<string> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return "";
+  try {
+    const xml = await callSponte(
+      "GetAlunos",
+      `AlunoID=${alunoId}`,
+      creds.codigoCliente,
+      creds.token,
+    );
+    const node = parseXmlList(xml, "wsAluno").find((n) => parseXmlValue(n, "AlunoID") === alunoId);
+    return node ? parseXmlValue(node, "ResponsavelFinanceiroID") : "";
+  } catch {
+    return "";
+  }
+}
+
+// Campos que o Sponte precisa ter para o contrato do responsável financeiro.
+// Estado fica fora: UpdateResponsaveis2 não grava UF, então ele é conferido só
+// no portal (ViaCEP), sem bloquear aqui.
+async function erroCadastroFinanceiro(
+  unidade: string,
+  alunoId: string,
+  hoje: string,
+): Promise<string | null> {
+  const financeiroId = await buscarResponsavelFinanceiroId(unidade, alunoId);
+  const responsaveis = await buscarResponsaveis(unidade, alunoId, financeiroId);
+  const fin = responsaveis.find((r) => r.financeiro);
+  if (!fin) return "Não encontramos o responsável financeiro do aluno. Fale com a secretaria.";
+  const erros = validarResponsavelFinanceiro(
+    {
+      nome: fin.nome,
+      cpf: fin.cpf,
+      dataNascimento: fin.dataNascimento,
+      celular: fin.telefone,
+      email: fin.email,
+      cep: fin.cep,
+      endereco: fin.endereco,
+      numeroEndereco: fin.numero,
+      bairro: fin.bairro,
+      cidade: fin.cidade,
+      estado: fin.uf || "--",
+    },
+    hoje,
+  );
+  const pendentes = Object.values(erros);
+  if (pendentes.length === 0) return null;
+  return `Complete os dados do responsável financeiro e salve antes de finalizar: ${pendentes.join(" ")}`;
 }
 
 async function buscarResponsaveis(
@@ -785,24 +837,10 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const creds = resolverCredenciais(sessao.unidade);
-    let responsavelFinanceiroId = "";
-    if (creds) {
-      try {
-        const xml = await callSponte(
-          "GetAlunos",
-          `AlunoID=${sessao.alunoId}`,
-          creds.codigoCliente,
-          creds.token,
-        );
-        const node = parseXmlList(xml, "wsAluno").find(
-          (n) => parseXmlValue(n, "AlunoID") === sessao.alunoId,
-        );
-        responsavelFinanceiroId = node ? parseXmlValue(node, "ResponsavelFinanceiroID") : "";
-      } catch {
-        responsavelFinanceiroId = "";
-      }
-    }
+    const responsavelFinanceiroId = await buscarResponsavelFinanceiroId(
+      sessao.unidade,
+      sessao.alunoId,
+    );
 
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
@@ -1269,6 +1307,8 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         .maybeSingle<{ status: StatusEscolhaRematricula }>(),
     ]);
     if (!rotina.data) erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
+    const erroFinanceiro = await erroCadastroFinanceiro(sessao.unidade, sessao.alunoId, hoje);
+    if (erroFinanceiro) erros["responsavel"] = erroFinanceiro;
     if (material && !escolhaMaterial.data) {
       erros["material"] = "Confirme o parcelamento do Material Pedagógico antes de finalizar.";
     }
@@ -1348,13 +1388,22 @@ const EdicaoSchema = z.object({
   email: z.string().trim().max(150).optional(),
 });
 
+const EdicaoResponsavelSchema = EdicaoSchema.extend({
+  responsavelId: z.string().trim().min(1),
+  dataNascimento: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .or(z.literal(""))
+    .optional(),
+  // Só validado no portal: o Sponte não expõe Estado em UpdateResponsaveis2.
+  estado: z.string().trim().max(2).optional(),
+});
+
 const SincronizarCadastroSchema = z.object({
   token: z.string().min(16),
   aluno: EdicaoSchema.optional(),
-  responsaveis: z
-    .array(EdicaoSchema.extend({ responsavelId: z.string().trim().min(1) }))
-    .max(4)
-    .optional(),
+  responsaveis: z.array(EdicaoResponsavelSchema).max(4).optional(),
 });
 
 export interface SincronizarCadastroResult {
@@ -1409,10 +1458,11 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
       rotulo: string,
       lida: T,
       edicao: EdicaoCadastral,
+      campos: readonly string[],
       escrever: (ficha: T) => Promise<EscritaCadastroResult>,
       reler: () => Promise<T | null>,
     ): Promise<void> {
-      const aEnviar = aplicarEdicao(lida, edicao, CAMPOS_EDITAVEIS_ALUNO);
+      const aEnviar = aplicarEdicao(lida, edicao, campos);
       const mudancas = camposAlterados(lida, aEnviar);
       if (mudancas.length === 0) return;
 
@@ -1480,13 +1530,14 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
         "Aluno",
         leituraAluno.ficha,
         data.aluno,
+        CAMPOS_EDITAVEIS_ALUNO,
         (ficha) => atualizarFichaAlunoSponte(sessao.unidade, ficha),
         async () => (await lerFichaAlunoSponte(sessao.unidade, sessao.alunoId)).ficha,
       );
     }
 
     for (const entrada of data.responsaveis ?? []) {
-      const { responsavelId, ...edicao } = entrada;
+      const { responsavelId, estado: _estado, ...edicao } = entrada;
       const ler = () =>
         lerFichaResponsavelSponte(
           sessao.unidade,
@@ -1509,6 +1560,7 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
         leitura.ficha.nome || "Responsável",
         leitura.ficha,
         edicao,
+        CAMPOS_EDITAVEIS_RESPONSAVEL,
         (ficha) => atualizarFichaResponsavelSponte(sessao.unidade, ficha),
         async () => (await ler()).ficha,
       );
