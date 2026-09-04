@@ -50,11 +50,21 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canEdit: boolean;
+  // Ano do plano exibido/editado; o registro diário só é permitido no vigente.
+  anoLetivo: number;
+  anoVigente: number | null;
 };
 
 type Pending = { key: MealKey | "checkinout"; label: string; charge: boolean };
 
-export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Props) {
+export function StudentActionSheet({
+  student,
+  open,
+  onOpenChange,
+  canEdit,
+  anoLetivo,
+  anoVigente,
+}: Props) {
   const { session } = useAuth();
   const qc = useQueryClient();
   const userId = session?.user?.id;
@@ -120,6 +130,10 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
   });
 
   if (!student) return null;
+
+  // O registro do dia a dia cobra pelo plano do ano vigente; em outro ano a tela
+  // é só consulta/edição do plano.
+  const registroPermitido = anoVigente === null || anoLetivo === anoVigente;
 
   const handleMeal = (meal: MealKey, label: string) => {
     if (!canEdit) {
@@ -200,6 +214,12 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
           </SheetHeader>
 
           <div className="grid gap-2.5 p-5 pb-8 pt-4">
+            {!registroPermitido && (
+              <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                Plano de {anoLetivo} em consulta. O registro de refeições e entrada/saída usa sempre
+                o ano vigente ({anoVigente}).
+              </p>
+            )}
             {MEALS.map((meal) => {
               const Icon = ICONS[meal.key];
               const covered = isCoveredToday(student.plan, meal.key);
@@ -207,7 +227,7 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
                 <button
                   key={meal.key}
                   onClick={() => handleMeal(meal.key, meal.label)}
-                  disabled={register.isPending}
+                  disabled={register.isPending || !registroPermitido}
                   className={[
                     "flex h-16 w-full items-center gap-4 rounded-2xl px-5 text-left text-base font-semibold transition-all active:scale-[0.98] disabled:opacity-60",
                     covered
@@ -238,7 +258,7 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
                   register.mutate({ key: "checkinout", label: "Entrada / Saída", charge: false });
                 }
               }}
-              disabled={register.isPending}
+              disabled={register.isPending || !registroPermitido}
               className={[
                 "mt-1 flex h-16 w-full items-center gap-4 rounded-2xl px-5 text-left text-base font-semibold transition-all active:scale-[0.98] disabled:opacity-60",
                 scheduleExtra
@@ -307,7 +327,14 @@ export function StudentActionSheet({ student, open, onOpenChange, canEdit }: Pro
         </AlertDialogContent>
       </AlertDialog>
 
-      {canEdit && <PlanEditor student={student} open={editingPlan} onOpenChange={setEditingPlan} />}
+      {canEdit && (
+        <PlanEditor
+          student={student}
+          open={editingPlan}
+          onOpenChange={setEditingPlan}
+          anoLetivo={anoLetivo}
+        />
+      )}
       {canEdit && (
         <StudentPhotoDialog student={student} open={editingPhoto} onOpenChange={setEditingPhoto} />
       )}

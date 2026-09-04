@@ -25,6 +25,7 @@ import {
   listarMaterialSeries,
   obterAnoLetivoRematricula,
   salvarAnoLetivoRematricula,
+  salvarAnoVigenteDiario,
   salvarMaterialSerie,
   type MaterialSerieRegistro,
 } from "@/lib/rematricula.functions";
@@ -36,7 +37,9 @@ function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const obter = useServerFn(obterAnoLetivoRematricula);
   const salvar = useServerFn(salvarAnoLetivoRematricula);
+  const salvarVigente = useServerFn(salvarAnoVigenteDiario);
   const [ano, setAno] = useState("");
+  const [anoVigente, setAnoVigente] = useState("");
 
   const config = useQuery({
     queryKey: ["rematricula_ano_letivo"],
@@ -53,7 +56,19 @@ function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
   });
 
+  const gravarVigente = useMutation({
+    mutationFn: async () => salvarVigente({ data: { anoVigente: Number(anoVigente) } }),
+    onSuccess: () => {
+      toast.success("Ano vigente atualizado. O Diário do Aluno passa a abrir nesse ano.");
+      setAnoVigente("");
+      void qc.invalidateQueries({ queryKey: ["rematricula_ano_letivo"] });
+      void qc.invalidateQueries({ queryKey: ["diario_anos_letivos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
   const atual = config.data?.anoLetivo ?? null;
+  const vigente = config.data?.anoVigente ?? null;
 
   return (
     <div className="rounded-lg border p-4">
@@ -87,6 +102,36 @@ function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
           >
             {gravar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             Salvar ano letivo
+          </Button>
+        </div>
+      )}
+
+      <h3 className="mt-5 text-sm font-semibold">Ano Vigente (Diário do Aluno)</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {vigente
+          ? `O Diário do Aluno abre e registra refeições/entrada-saída pelo plano de ${vigente}. A rotina preenchida na rematrícula fica guardada em ${atual ?? "ano da rematrícula"} sem mexer no ano vigente.`
+          : "Carregando…"}
+      </p>
+      {podeEditar && (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Ano</Label>
+            <Input
+              className="h-9 w-28"
+              inputMode="numeric"
+              placeholder={vigente ? String(vigente + 1) : ""}
+              value={anoVigente}
+              onChange={(e) => setAnoVigente(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled={anoVigente.length !== 4 || gravarVigente.isPending}
+            onClick={() => gravarVigente.mutate()}
+          >
+            {gravarVigente.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Trocar ano vigente
           </Button>
         </div>
       )}

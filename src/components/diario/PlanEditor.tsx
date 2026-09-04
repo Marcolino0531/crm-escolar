@@ -33,9 +33,10 @@ type Props = {
   student: DiarioStudent;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  anoLetivo: number;
 };
 
-export function PlanEditor({ student, open, onOpenChange }: Props) {
+export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<MealPlan>(student.plan);
   const [scheduleDraft, setScheduleDraft] = useState<SchedulePlan>(student.schedule);
@@ -71,9 +72,10 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
       const { error: dErr } = await supabase
         .from("diario_meal_plans" as never)
         .delete()
-        .eq("student_id", student.id);
+        .eq("student_id", student.id)
+        .eq("ano_letivo", anoLetivo);
       if (dErr) throw dErr;
-      const mealRows = mealPlanToRows(student.id, draft);
+      const mealRows = mealPlanToRows(student.id, draft, anoLetivo);
       if (mealRows.length) {
         const { error } = await supabase
           .from("diario_meal_plans" as never)
@@ -85,9 +87,10 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
       const { error: dsErr } = await supabase
         .from("diario_schedules" as never)
         .delete()
-        .eq("student_id", student.id);
+        .eq("student_id", student.id)
+        .eq("ano_letivo", anoLetivo);
       if (dsErr) throw dsErr;
-      const schedRows = scheduleToRows(student.id, scheduleDraft);
+      const schedRows = scheduleToRows(student.id, scheduleDraft, anoLetivo);
       if (schedRows.length) {
         const { error } = await supabase
           .from("diario_schedules" as never)
@@ -98,12 +101,15 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
       // Confirma no banco antes de anunciar sucesso.
       const { data: saved, error: rErr } = await supabase
         .from("diario_meal_plans" as never)
-        .select("student_id, meal, weekday")
-        .eq("student_id", student.id);
+        .select("student_id, meal, weekday, ano_letivo")
+        .eq("student_id", student.id)
+        .eq("ano_letivo", anoLetivo);
       if (rErr) throw rErr;
       const persisted = mealPlanToRows(
         student.id,
-        groupMealPlans((saved ?? []) as unknown as MealPlanRow[]).get(student.id) ?? emptyPlan(),
+        groupMealPlans((saved ?? []) as unknown as MealPlanRow[], anoLetivo).get(student.id) ??
+          emptyPlan(),
+        anoLetivo,
       );
       if (persisted.length !== mealRows.length) {
         throw new Error("O plano não foi gravado por completo. Tente novamente.");
@@ -124,7 +130,9 @@ export function PlanEditor({ student, open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Plano de {student.name}</DialogTitle>
+          <DialogTitle>
+            Plano de {student.name} · {anoLetivo}
+          </DialogTitle>
           <DialogDescription>
             Configure as refeições contratadas e o horário de entrada/saída por dia da semana.
           </DialogDescription>

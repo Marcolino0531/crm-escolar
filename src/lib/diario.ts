@@ -57,29 +57,64 @@ export function emptySchedule(): SchedulePlan {
 
 export const DEFAULT_DAY: DaySchedule = { entry: "07:30", exit: "17:30" };
 
-export type MealPlanRow = { student_id: string; meal: MealKey; weekday: Weekday };
-export type ScheduleRow = { student_id: string; weekday: Weekday; entry: string; exit: string };
+export type MealPlanRow = {
+  student_id: string;
+  meal: MealKey;
+  weekday: Weekday;
+  ano_letivo: number;
+};
+export type ScheduleRow = {
+  student_id: string;
+  weekday: Weekday;
+  entry: string;
+  exit: string;
+  ano_letivo: number;
+};
 
-export function mealPlanToRows(studentId: string, plan: MealPlan): MealPlanRow[] {
+export function mealPlanToRows(
+  studentId: string,
+  plan: MealPlan,
+  anoLetivo: number,
+): MealPlanRow[] {
   const rows: MealPlanRow[] = [];
   (Object.keys(plan) as MealKey[]).forEach((meal) => {
-    plan[meal].forEach((weekday) => rows.push({ student_id: studentId, meal, weekday }));
+    plan[meal].forEach((weekday) =>
+      rows.push({ student_id: studentId, meal, weekday, ano_letivo: anoLetivo }),
+    );
   });
   return rows;
 }
 
-export function scheduleToRows(studentId: string, schedule: SchedulePlan): ScheduleRow[] {
+export function scheduleToRows(
+  studentId: string,
+  schedule: SchedulePlan,
+  anoLetivo: number,
+): ScheduleRow[] {
   const rows: ScheduleRow[] = [];
   (Object.keys(schedule).map(Number) as Weekday[]).forEach((weekday) => {
     const day = schedule[weekday];
-    if (day) rows.push({ student_id: studentId, weekday, entry: day.entry, exit: day.exit });
+    if (day) {
+      rows.push({
+        student_id: studentId,
+        weekday,
+        entry: day.entry,
+        exit: day.exit,
+        ano_letivo: anoLetivo,
+      });
+    }
   });
   return rows;
 }
 
-export function groupMealPlans(rows: readonly MealPlanRow[]): Map<string, MealPlan> {
+// Agrupa por aluno. Com `anoLetivo`, ignora linhas de outros anos: o plano do
+// ano seguinte (rematrícula) nunca entra no Diário do ano em uso.
+export function groupMealPlans(
+  rows: readonly MealPlanRow[],
+  anoLetivo?: number,
+): Map<string, MealPlan> {
   const byStudent = new Map<string, MealPlan>();
   for (const r of rows) {
+    if (anoLetivo !== undefined && r.ano_letivo !== anoLetivo) continue;
     const plan = byStudent.get(r.student_id) ?? emptyPlan();
     if (!plan[r.meal].includes(r.weekday)) plan[r.meal].push(r.weekday);
     byStudent.set(r.student_id, plan);
@@ -87,9 +122,13 @@ export function groupMealPlans(rows: readonly MealPlanRow[]): Map<string, MealPl
   return byStudent;
 }
 
-export function groupSchedules(rows: readonly ScheduleRow[]): Map<string, SchedulePlan> {
+export function groupSchedules(
+  rows: readonly ScheduleRow[],
+  anoLetivo?: number,
+): Map<string, SchedulePlan> {
   const byStudent = new Map<string, SchedulePlan>();
   for (const r of rows) {
+    if (anoLetivo !== undefined && r.ano_letivo !== anoLetivo) continue;
     const sched = byStudent.get(r.student_id) ?? emptySchedule();
     sched[r.weekday] = { entry: r.entry, exit: r.exit };
     byStudent.set(r.student_id, sched);

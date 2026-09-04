@@ -47,6 +47,14 @@ import {
   type Weekday,
 } from "@/lib/diario";
 import { selectAll } from "@/lib/supabase-paginate";
+import { anosLetivosDiario } from "@/lib/rematricula.functions";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/diario")({
   head: () => ({ meta: [{ title: "Diário do Aluno — School Hub" }] }),
@@ -70,10 +78,20 @@ type StudentRow = {
   photo: string | null;
 };
 
-function useStudents(schoolFilterIds: string[] | null) {
+// Anos oferecidos no seletor: o vigente (padrão) e o da rematrícula em andamento,
+// mais os vizinhos, para consulta/histórico.
+function anosDoSeletor(anoVigente: number, anoRematricula: number | null): number[] {
+  const anos = new Set<number>([anoVigente - 1, anoVigente, anoVigente + 1]);
+  if (anoRematricula) anos.add(anoRematricula);
+  return [...anos].sort((a, b) => a - b);
+}
+
+function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null) {
   return useQuery({
-    queryKey: ["diario_students", schoolFilterIds ?? "all"],
+    queryKey: ["diario_students", schoolFilterIds ?? "all", anoLetivo],
+    enabled: anoLetivo !== null,
     queryFn: async () => {
+      if (anoLetivo === null) return [];
       const [students, plans, schedules] = await Promise.all([
         selectAll<StudentRow>(() => {
           let sq = supabase
@@ -88,19 +106,21 @@ function useStudents(schoolFilterIds: string[] | null) {
         selectAll<MealPlanRow>(() =>
           supabase
             .from("diario_meal_plans" as never)
-            .select("student_id, meal, weekday")
+            .select("student_id, meal, weekday, ano_letivo")
+            .eq("ano_letivo", anoLetivo)
             .order("id"),
         ),
         selectAll<ScheduleRow>(() =>
           supabase
             .from("diario_schedules" as never)
-            .select("student_id, weekday, entry, exit")
+            .select("student_id, weekday, entry, exit, ano_letivo")
+            .eq("ano_letivo", anoLetivo)
             .order("id"),
         ),
       ]);
 
-      const planByStudent = groupMealPlans(plans);
-      const schedByStudent = groupSchedules(schedules);
+      const planByStudent = groupMealPlans(plans, anoLetivo);
+      const schedByStudent = groupSchedules(schedules, anoLetivo);
 
       return students.map<DiarioStudent>((s) => ({
         id: s.id,
@@ -120,7 +140,21 @@ function DiarioPage() {
   const { canEdit, isAdmin } = usePermissions();
   const podeEditar = canEdit("diario");
   const { selected, schools, schoolFilterIds } = useSchool();
-  const { data: students = [], isLoading } = useStudents(schoolFilterIds);
+
+  // Ano letivo: sempre abre no ano vigente configurado (não no mais recente
+  // cadastrado). Trocar o vigente na configuração muda o padrão daqui sozinho.
+  const anos = useQuery({
+    queryKey: ["diario_anos_letivos"],
+    queryFn: async () => anosLetivosDiario({ data: undefined }),
+  });
+  const anoVigente = anos.data?.anoVigente ?? null;
+  const [anoEscolhido, setAnoEscolhido] = useState<number | null>(null);
+  const anoLetivo = anoEscolhido ?? anoVigente;
+  const { data: students = [], isLoading: carregandoAlunos } = useStudents(
+    schoolFilterIds,
+    anoLetivo,
+  );
+  const isLoading = carregandoAlunos || anoLetivo === null;
   const qc = useQueryClient();
 
   // Sincronização com o Sponte (fonte da verdade de turmas/alunos). Admin-only.
@@ -214,6 +248,20 @@ function DiarioPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {anoVigente !== null && anoLetivo !== null && (
+            <Select value={String(anoLetivo)} onValueChange={(v) => setAnoEscolhido(Number(v))}>
+              <SelectTrigger className="w-[150px]" aria-label="Ano letivo">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {anosDoSeletor(anoVigente, anos.data?.anoRematricula ?? null).map((a) => (
+                  <SelectItem key={a} value={String(a)}>
+                    {a === anoVigente ? `${a} (vigente)` : String(a)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {isAdmin && (
             <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}>
               <RefreshCw className={`mr-2 h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />
@@ -336,6 +384,8 @@ function DiarioPage() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         canEdit={podeEditar}
+        anoLetivo={anoLetivo ?? new Date().getFullYear()}
+        anoVigente={anoVigente}
       />
       <DiarioManager
         open={managerOpen}
