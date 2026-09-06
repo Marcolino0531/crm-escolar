@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
 import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedagogicoSeries";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
@@ -306,6 +307,7 @@ function RematriculaAcompanhamentoPage() {
       <Tabs defaultValue="alunos">
         <TabsList>
           <TabsTrigger value="alunos">Alunos</TabsTrigger>
+          <TabsTrigger value="contratos">Contratos</TabsTrigger>
           <TabsTrigger value="material">Material Pedagógico por Série</TabsTrigger>
         </TabsList>
 
@@ -444,6 +446,10 @@ function RematriculaAcompanhamentoPage() {
               </Table>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="contratos" className="mt-4">
+          <ContratosMatricula podeEditar={podeEditar} />
         </TabsContent>
 
         <TabsContent value="material" className="mt-4">

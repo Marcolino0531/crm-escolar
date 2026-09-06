@@ -1,11 +1,17 @@
-// Persistência dos documentos ZapSign de teste (sandbox) e dos callbacks.
+// Persistência dos documentos ZapSign (sandbox/POC e produção) e dos callbacks.
 // Usado pelas server functions (criação/sincronização) e pela rota do webhook.
 // O estado gravado é sempre o que a ZapSign informou por último — nunca uma
-// suposição local — e o callback é idempotente pelo hash do payload.
+// suposição local — e o callback é idempotente pelo hash do payload. Toda
+// leitura/escrita por token é restrita ao `ambiente` informado: um callback do
+// sandbox nunca altera um contrato real, e vice-versa.
 
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import type { ZapSignDocResposta, ZapSignSignerResposta } from "@/lib/zapsign.server";
+import type {
+  ZapSignAmbiente,
+  ZapSignDocResposta,
+  ZapSignSignerResposta,
+} from "@/lib/zapsign.server";
 
 // Tabelas novas ainda fora do `Database` gerado — mesma convenção das demais
 // tabelas recentes (`from(... as never)` + resultado tipado no `.maybeSingle<T>()`).
@@ -56,11 +62,13 @@ function primeiraAssinaturaCompleta(doc: { status: string; signers?: ZapSignSign
 export async function aplicarEstadoDocumento(
   zapsignToken: string,
   doc: ZapSignDocResposta,
+  ambiente: ZapSignAmbiente = "sandbox",
 ): Promise<{ documentoId: string | null }> {
   const { data: atual } = await supabaseAdmin
     .from(T_DOCS)
     .select("id, signatarios, assinado_em")
     .eq("zapsign_token", zapsignToken)
+    .eq("ambiente", ambiente)
     .maybeSingle<{
       id: string;
       signatarios: SignatarioPersistido[] | null;
@@ -104,7 +112,10 @@ export type ResultadoCallback = {
 };
 
 /** Registra o callback (idempotente) e aplica o estado quando for de documento conhecido. */
-export async function registrarCallback(payload: CallbackZapSign): Promise<ResultadoCallback> {
+export async function registrarCallback(
+  payload: CallbackZapSign,
+  ambiente: ZapSignAmbiente = "sandbox",
+): Promise<ResultadoCallback> {
   const bruto = JSON.stringify(payload);
   const hash = createHash("sha256").update(bruto).digest("hex");
   const eventType = typeof payload.event_type === "string" ? payload.event_type : "";
@@ -112,13 +123,14 @@ export async function registrarCallback(payload: CallbackZapSign): Promise<Resul
 
   let documentoId: string | null = null;
   if (token && typeof payload.status === "string" && Array.isArray(payload.signers)) {
-    const r = await aplicarEstadoDocumento(token, payload as ZapSignDocResposta);
+    const r = await aplicarEstadoDocumento(token, payload as ZapSignDocResposta, ambiente);
     documentoId = r.documentoId;
   } else if (token) {
     const { data } = await supabaseAdmin
       .from(T_DOCS)
       .select("id")
       .eq("zapsign_token", token)
+      .eq("ambiente", ambiente)
       .maybeSingle<{ id: string }>();
     documentoId = data?.id ?? null;
   }
@@ -128,7 +140,7 @@ export async function registrarCallback(payload: CallbackZapSign): Promise<Resul
     zapsign_token: token,
     event_type: eventType,
     status_documento: typeof payload.status === "string" ? payload.status : null,
-    sandbox: typeof payload.sandbox === "boolean" ? payload.sandbox : null,
+    sandbox: typeof payload.sandbox === "boolean" ? payload.sandbox : ambiente === "sandbox",
     payload,
     payload_hash: hash,
   } as never);

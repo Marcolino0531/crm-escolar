@@ -27,13 +27,19 @@ export type ColegioRow = {
   assinante_cargo: string;
   representante_nome: string;
   representante_oab: string;
+  representante_cpf: string;
   observacao: string;
   logo_path: string | null;
   updated_at: string;
   updated_by_nome: string;
 };
 
-export const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder?: string }[] = [
+export const COLEGIO_CAMPOS: {
+  key: keyof ColegioRow;
+  label: string;
+  placeholder?: string;
+  mascara?: "cpf";
+}[] = [
   { key: "razao_social", label: "Razão social" },
   { key: "nome_fantasia", label: "Nome fantasia" },
   { key: "cnpj", label: "CNPJ", placeholder: "00.000.000/0000-00" },
@@ -50,8 +56,18 @@ export const COLEGIO_CAMPOS: { key: keyof ColegioRow; label: string; placeholder
   { key: "site", label: "Site" },
   { key: "assinante_nome", label: "Assina o recibo (nome)" },
   { key: "assinante_cargo", label: "Cargo de quem assina" },
-  { key: "representante_nome", label: "Representa o CREDOR (nome)" },
-  { key: "representante_oab", label: "OAB-MG do representante", placeholder: "000.000" },
+  { key: "representante_nome", label: "Representante Legal" },
+  {
+    key: "representante_cpf",
+    label: "CPF do representante legal",
+    placeholder: "000.000.000-00",
+    mascara: "cpf",
+  },
+  {
+    key: "representante_oab",
+    label: "OAB-MG do representante (Termo de Confissão de Dívida)",
+    placeholder: "000.000",
+  },
 ];
 
 export function colegioVazio(unidade: string): ColegioRow {
@@ -75,6 +91,7 @@ export function colegioVazio(unidade: string): ColegioRow {
     assinante_cargo: "",
     representante_nome: "",
     representante_oab: "",
+    representante_cpf: "",
     observacao: "",
     logo_path: null,
     updated_at: "",
