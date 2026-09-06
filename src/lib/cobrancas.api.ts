@@ -4,6 +4,7 @@
 //   GET /api/cobrancas/logs       — lista paginada dos disparos (filtros + resumo)
 //   GET /api/cobrancas/cron-runs  — últimas execuções do cron
 //   GET /api/cobrancas/falhas     — falhas de entrega agrupadas por responsável/telefone
+//                                   (já sem as linhas arquivadas pela equipe)
 //
 // Filtros (query string): unidade, status ('sucesso'|'erro'), date (YYYY-MM-DD),
 // page (1-based), per_page. Resposta inclui `summary` (envios de hoje, falhas,
@@ -17,7 +18,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { PREFIXO_SLOT_LEMBRETE, PREFIXO_SLOT_REMATRICULA } from "@/lib/billing-cron-runs";
-import { agruparFalhas, type LogEntrega } from "@/lib/billing-falhas";
+import { agruparFalhas, type FalhaArquivada, type LogEntrega } from "@/lib/billing-falhas";
 
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 100;
@@ -145,6 +146,20 @@ async function listFalhas(url: URL): Promise<Response> {
   const inicio = new Date();
   inicio.setDate(inicio.getDate() - dias);
 
+  const arquivadas: FalhaArquivada[] = [];
+  for (let from = 0; ; from += PAGINA_LEITURA) {
+    const { data, error } = await supabaseAdmin
+      .from("whatsapp_falhas_arquivadas" as never)
+      .select("chave, ate")
+      .gte("ate", inicio.toISOString())
+      .order("ate", { ascending: true })
+      .range(from, from + PAGINA_LEITURA - 1);
+    if (error) throw new Error(error.message);
+    const pagina = (data ?? []) as unknown as FalhaArquivada[];
+    arquivadas.push(...pagina);
+    if (pagina.length < PAGINA_LEITURA) break;
+  }
+
   const logs: LogEntrega[] = [];
   for (let from = 0; ; from += PAGINA_LEITURA) {
     const { data, error } = await supabaseAdmin
@@ -162,7 +177,7 @@ async function listFalhas(url: URL): Promise<Response> {
     if (pagina.length < PAGINA_LEITURA) break;
   }
 
-  return json({ ok: true, dias, data: agruparFalhas(logs) });
+  return json({ ok: true, dias, data: agruparFalhas(logs, arquivadas) });
 }
 
 const MAX_CRON_RUNS = 60;
@@ -245,7 +260,9 @@ async function listLogs(url: URL): Promise<Response> {
     }
     if (q) {
       const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-      q0 = q0.or(`responsavel_name.ilike.${like},aluno_name.ilike.${like}`);
+      const dig = q.replace(/\D/g, "");
+      const porTelefone = dig.length >= 4 ? `,telefone.ilike.%${dig}%` : "";
+      q0 = q0.or(`responsavel_name.ilike.${like},aluno_name.ilike.${like}${porTelefone}`);
     }
     if (date) {
       // Janela [date 00:00, próximo dia 00:00).

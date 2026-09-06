@@ -133,3 +133,50 @@ describe("totalEmRisco", () => {
     expect(totalEmRisco([])).toBe(0);
   });
 });
+
+describe("arquivamento visual das falhas", () => {
+  const falhas = [
+    log({ id: "a", data_envio: "2026-09-01T12:00:00Z", status: "falha" }),
+    log({ id: "b", data_envio: "2026-09-02T12:00:00Z", status: "falha" }),
+  ];
+  const chave = agruparFalhas(falhas)[0].chave;
+
+  it("linha arquivada até a última tentativa some, sem apagar log nenhum", () => {
+    expect(agruparFalhas(falhas, [{ chave, ate: "2026-09-02T12:00:00Z" }])).toEqual([]);
+  });
+
+  it("falha NOVA depois do arquivamento reaparece contando só as tentativas novas", () => {
+    const linhas = agruparFalhas(
+      [...falhas, log({ id: "c", data_envio: "2026-09-03T12:00:00Z", status: "falha" })],
+      [{ chave, ate: "2026-09-02T12:00:00Z" }],
+    );
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0].tentativas).toBe(1);
+    expect(linhas[0].logIds).toEqual(["c"]);
+  });
+
+  it("entrega bem-sucedida depois do arquivamento não reaparece", () => {
+    expect(
+      agruparFalhas(
+        [...falhas, log({ id: "c", data_envio: "2026-09-03T12:00:00Z", status: "entregue" })],
+        [{ chave, ate: "2026-09-02T12:00:00Z" }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("arquivar um telefone não afeta outro", () => {
+    const linhas = agruparFalhas(
+      [
+        ...falhas,
+        log({
+          id: "z",
+          data_envio: "2026-09-02T12:00:00Z",
+          status: "falha",
+          telefone: "(31) 97777-0003",
+        }),
+      ],
+      [{ chave, ate: "2026-09-02T12:00:00Z" }],
+    );
+    expect(linhas.map((l) => l.telefone)).toEqual(["(31) 97777-0003"]);
+  });
+});

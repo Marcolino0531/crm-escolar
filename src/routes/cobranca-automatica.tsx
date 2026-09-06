@@ -52,6 +52,8 @@ import { alertaExecucaoCron } from "@/lib/billing-cron-runs";
 import { rotuloMesReferencia } from "@/lib/billing-exceptions";
 import { useAuth } from "@/lib/app-context";
 import { PausasPorComprovante } from "@/components/cobranca/PausaComprovante";
+import { PausasLembrete } from "@/components/cobranca/PausasLembrete";
+import { Checkbox } from "@/components/ui/checkbox";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { displayPhoneBR } from "@/lib/phone";
 import { filtrarPorUnidade } from "@/lib/unidade-global";
@@ -336,6 +338,8 @@ const PRAZO_STYLE: Record<string, { label: string; cls: string }> = {
 // nem kill switch próprio: a pausa do dia e o calendário de dias úteis são os
 // mesmos da aba de Cobranças.
 function LembretesAutomaticosTab() {
+  const { canEdit } = usePermissions();
+  const podeEditar = canEdit("financeiro_cobranca");
   const [page, setPage] = useState(1);
   const [selecionado, setSelecionado] = useState<BillingLog | null>(null);
 
@@ -385,6 +389,8 @@ function LembretesAutomaticosTab() {
         tipo="lembrete"
         legenda="Tentativas diárias às 10h e 16h (BRT) · um lembrete por responsável por dia"
       />
+
+      <PausasLembrete podeEditar={podeEditar} />
 
       <div className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -735,8 +741,45 @@ function formatDiaISO(ymd: string | null): string {
 // contato com o responsável é manual.
 function FalhasEntregaTab() {
   const unidade = useUnidadeAtiva();
+  const { canEdit } = usePermissions();
+  const podeEditar = canEdit("financeiro_cobranca");
+  const { session } = useAuth();
+  const qc = useQueryClient();
   const [dias, setDias] = useState(60);
   const [selecionada, setSelecionada] = useState<FalhaEntrega | null>(null);
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+
+  // Arquiva a linha como está hoje (até a última tentativa). Os logs ficam
+  // intactos; uma falha nova depois disso reaparece na aba.
+  const arquivar = useMutation({
+    mutationFn: async (linhas: FalhaEntrega[]) => {
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const { error } = await supabase.from("whatsapp_falhas_arquivadas" as never).insert(
+        linhas.map((l) => ({
+          chave: l.chave,
+          ate: l.ultimaTentativa,
+          responsavel_nome: l.responsavel,
+          telefone: l.telefone,
+          unidade: l.unidade,
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        })) as never,
+      );
+      if (error) throw new Error(error.message);
+      return linhas.length;
+    },
+    onSuccess: (n) => {
+      toast.success(
+        n === 1
+          ? "Registro removido da lista. Se falhar de novo, volta a aparecer."
+          : `${n} registros removidos da lista. Se falharem de novo, voltam a aparecer.`,
+      );
+      setMarcadas(new Set());
+      setSelecionada(null);
+      qc.invalidateQueries({ queryKey: ["cobranca-falhas-entrega"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao remover."),
+  });
 
   const { data, isFetching, isError, error } = useQuery({
     queryKey: ["cobranca-falhas-entrega", dias],
@@ -757,6 +800,16 @@ function FalhasEntregaTab() {
   const linhas = filtrarPorUnidade(data?.data ?? [], unidade, (l) => l.unidade);
   const emRisco = totalEmRisco(linhas);
   const porCategoria = contarPorCategoria(linhas);
+  const linhasMarcadas = linhas.filter((l) => marcadas.has(l.chave));
+  const todasMarcadas = linhas.length > 0 && linhasMarcadas.length === linhas.length;
+
+  const alternar = (chave: string) =>
+    setMarcadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(chave)) next.delete(chave);
+      else next.add(chave);
+      return next;
+    });
 
   return (
     <div className="space-y-6">
@@ -768,7 +821,9 @@ function FalhasEntregaTab() {
             Responsáveis cujo último disparo de cobrança ou lembrete falhou (número sem WhatsApp,
             sem telefone no Sponte, erro da Meta). Tentativas seguidas ao mesmo telefone ficam em
             uma linha só; quem voltou a receber sai da lista. A equipe liga manualmente — não há
-            reenvio automático.
+            reenvio automático. Depois de corrigir o problema, remova a linha da lista: o histórico
+            de tentativas é preservado e, se a próxima mensagem falhar de novo, o responsável
+            reaparece aqui.
           </p>
         </div>
       </div>
@@ -804,6 +859,22 @@ function FalhasEntregaTab() {
             Falhas de Entrega · {unidade ?? "Todas as Unidades"}
           </h2>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {podeEditar && linhasMarcadas.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-red-700"
+                disabled={arquivar.isPending}
+                onClick={() => arquivar.mutate(linhasMarcadas)}
+              >
+                {arquivar.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Remover {linhasMarcadas.length} selecionado(s)
+              </Button>
+            )}
             <span>Janela</span>
             <select
               value={dias}
@@ -840,6 +911,17 @@ function FalhasEntregaTab() {
           <Table>
             <TableHeader>
               <TableRow>
+                {podeEditar && (
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label="Selecionar todas"
+                      checked={todasMarcadas}
+                      onCheckedChange={(v) =>
+                        setMarcadas(v ? new Set(linhas.map((l) => l.chave)) : new Set())
+                      }
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Última tentativa</TableHead>
                 <TableHead>Responsável</TableHead>
                 <TableHead>Telefone</TableHead>
@@ -848,6 +930,7 @@ function FalhasEntregaTab() {
                 <TableHead>Motivo</TableHead>
                 <TableHead className="text-center">Tentativas</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
+                {podeEditar && <TableHead className="w-10" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -857,6 +940,15 @@ function FalhasEntregaTab() {
                   onClick={() => setSelecionada(l)}
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                 >
+                  {podeEditar && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        aria-label={`Selecionar ${l.responsavel}`}
+                        checked={marcadas.has(l.chave)}
+                        onCheckedChange={() => alternar(l.chave)}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className="whitespace-nowrap text-sm">
                     {formatDataHora(l.ultimaTentativa)}
                   </TableCell>
@@ -888,6 +980,20 @@ function FalhasEntregaTab() {
                   <TableCell className="whitespace-nowrap text-right text-sm font-medium">
                     {l.valor > 0 ? formatBRL(l.valor) : "—"}
                   </TableCell>
+                  {podeEditar && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-muted-foreground hover:text-red-700"
+                        title="Remover da lista (mantém o histórico)"
+                        disabled={arquivar.isPending}
+                        onClick={() => arquivar.mutate([l])}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -924,6 +1030,20 @@ function FalhasEntregaTab() {
               <div className="col-span-2">
                 <Campo label="Erro reportado" valor={selecionada.erro} />
               </div>
+              {podeEditar && (
+                <div className="col-span-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-700"
+                    disabled={arquivar.isPending}
+                    onClick={() => arquivar.mutate([selecionada])}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Remover da lista
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

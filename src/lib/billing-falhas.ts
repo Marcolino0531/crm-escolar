@@ -105,10 +105,39 @@ export function valorNumerico(v: number | string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Arquivamento visual: a equipe remove a linha depois de corrigir o problema.
+// Nenhum log é apagado — guarda-se só "até quando" (data da última tentativa
+// arquivada) por chave. Falhas até essa data ficam ocultas; uma falha NOVA
+// depois dela faz o responsável reaparecer, contando só as tentativas novas.
+export interface FalhaArquivada {
+  chave: string;
+  ate: string; // ISO da última tentativa que estava na linha arquivada
+}
+
+function ts(iso: string): number {
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+export function mapaArquivadas(arquivadas: readonly FalhaArquivada[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const a of arquivadas) {
+    const t = ts(a.ate);
+    const atual = m.get(a.chave) ?? 0;
+    if (t > atual) m.set(a.chave, t);
+  }
+  return m;
+}
+
 // Uma linha por responsável/telefone cujo disparo mais recente falhou. A
 // contagem é a sequência de falhas contígua terminando no último disparo — se
-// entre duas falhas houve uma entrega, a sequência recomeça a partir dela.
-export function agruparFalhas(logs: readonly LogEntrega[]): FalhaEntrega[] {
+// entre duas falhas houve uma entrega, a sequência recomeça a partir dela; se
+// a linha foi arquivada, recomeça a partir do arquivamento.
+export function agruparFalhas(
+  logs: readonly LogEntrega[],
+  arquivadas: readonly FalhaArquivada[] = [],
+): FalhaEntrega[] {
+  const cortes = mapaArquivadas(arquivadas);
   const porChave = new Map<string, LogEntrega[]>();
   for (const l of logs) {
     const k = chaveFalha(l);
@@ -123,10 +152,13 @@ export function agruparFalhas(logs: readonly LogEntrega[]): FalhaEntrega[] {
     const ultimo = ordenado[ordenado.length - 1];
     if (!falhou(ultimo.status)) continue;
 
+    const corte = cortes.get(chave) ?? 0;
     const seguidas: LogEntrega[] = [];
     for (let i = ordenado.length - 1; i >= 0 && falhou(ordenado[i].status); i--) {
+      if (ts(ordenado[i].data_envio) <= corte) break;
       seguidas.push(ordenado[i]);
     }
+    if (seguidas.length === 0) continue;
 
     const alunos = new Set<string>();
     for (const l of seguidas) for (const n of nomesAlunos(l)) alunos.add(n);
