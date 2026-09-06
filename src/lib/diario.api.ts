@@ -8,6 +8,12 @@
 // Agendado no vercel.json para 00:00 UTC (= 21:00 no horário de Brasília).
 
 import { runDiarioSponteSync } from "@/lib/sponte.functions";
+import { runAuditoriaDiarioSponte } from "@/lib/diario-auditoria.functions";
+
+// Auditoria diária Plano do Diário × Sponte: uma execução por unidade
+// (?unidade=…), agendada em horários distintos no vercel.json para caber no
+// tempo de uma função.
+const UNIDADES_AUDITORIA = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -42,6 +48,28 @@ export async function handleDiarioApi(request: Request): Promise<Response | null
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[diario] cron falhou:", msg);
+      return json({ ok: false, error: msg }, 500);
+    }
+  }
+
+  if (pathname === "/api/diario/auditoria" && request.method === "GET") {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && bearer(request) !== cronSecret) {
+      return json({ ok: false, error: "não autorizado" }, 401);
+    }
+    const unidade = url.searchParams.get("unidade") ?? "";
+    if (!UNIDADES_AUDITORIA.includes(unidade)) {
+      return json({ ok: false, error: "Unidade inválida." }, 400);
+    }
+    try {
+      const res = await runAuditoriaDiarioSponte(unidade, "cron");
+      console.log(
+        `[diario] auditoria ${unidade}: ${res.alunosAuditados} auditado(s), ${res.alunosComInconsistencia} com inconsistência, ${res.alunosComErro} com erro.`,
+      );
+      return json({ ok: true, ...res });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[diario] auditoria ${unidade} falhou:`, msg);
       return json({ ok: false, error: msg }, 500);
     }
   }

@@ -17,6 +17,22 @@
       "schedule": "0 0 * * *"
     },
     {
+      "path": "/api/diario/auditoria?unidade=CEC",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/diario/auditoria?unidade=CEC%20Baby",
+      "schedule": "10 5 * * *"
+    },
+    {
+      "path": "/api/diario/auditoria?unidade=N%C3%BAcleo%20Belvedere",
+      "schedule": "20 5 * * *"
+    },
+    {
+      "path": "/api/diario/auditoria?unidade=N%C3%BAcleo%20Vale%20do%20Sereno",
+      "schedule": "30 5 * * *"
+    },
+    {
       "path": "/api/whatsapp/cron",
       "schedule": "0 12 * * *"
     },

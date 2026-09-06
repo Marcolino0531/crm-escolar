@@ -25,6 +25,13 @@ import {
 } from "./cantina";
 import { addMesesYMD } from "./confissao-divida";
 import { proximoDiaUtil } from "./billing-schedule";
+import {
+  cepCompletoValido,
+  cpfCompletoValido,
+  dataNascimentoValida,
+  emailValido,
+  telefoneValido,
+} from "./matricula-form";
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "./crm/mecCutoff";
 
 export const LINK_VALIDADE_MINUTOS = 15;
@@ -741,4 +748,72 @@ export function apresentacaoMaterial(input: {
     reajuste,
     texto,
   };
+}
+
+// ─── Dados obrigatórios do responsável FINANCEIRO ───────────────────────────
+//
+// Só o responsável financeiro assina o contrato: é dele que o cadastro precisa
+// estar completo. O outro responsável segue sem obrigatoriedade.
+
+export interface DadosResponsavelValidacao {
+  nome: string;
+  cpf: string;
+  dataNascimento: string; // YYYY-MM-DD
+  celular: string;
+  email: string;
+  cep: string;
+  endereco: string;
+  numeroEndereco: string;
+  bairro: string;
+  cidade: string;
+  estado: string;
+}
+
+export const CAMPOS_OBRIGATORIOS_FINANCEIRO: readonly (keyof DadosResponsavelValidacao)[] = [
+  "nome",
+  "cpf",
+  "dataNascimento",
+  "celular",
+  "email",
+  "cep",
+  "endereco",
+  "numeroEndereco",
+  "bairro",
+  "cidade",
+  "estado",
+];
+
+const ROTULO_CAMPO_RESPONSAVEL: Record<keyof DadosResponsavelValidacao, string> = {
+  nome: "Nome",
+  cpf: "CPF",
+  dataNascimento: "Data de nascimento",
+  celular: "Celular",
+  email: "Email",
+  cep: "CEP",
+  endereco: "Endereço",
+  numeroEndereco: "Número",
+  bairro: "Bairro",
+  cidade: "Cidade",
+  estado: "Estado",
+};
+
+export function validarResponsavelFinanceiro(
+  dados: DadosResponsavelValidacao,
+  hojeYMD: string,
+): Partial<Record<keyof DadosResponsavelValidacao, string>> {
+  const erros: Partial<Record<keyof DadosResponsavelValidacao, string>> = {};
+  for (const campo of CAMPOS_OBRIGATORIOS_FINANCEIRO) {
+    if (!dados[campo].trim()) erros[campo] = `${ROTULO_CAMPO_RESPONSAVEL[campo]} é obrigatório.`;
+  }
+  if (!erros.cpf && !cpfCompletoValido(dados.cpf)) erros.cpf = "CPF inválido.";
+  if (!erros.dataNascimento && !dataNascimentoValida(dados.dataNascimento, hojeYMD)) {
+    erros.dataNascimento = "Data de nascimento inválida.";
+  }
+  if (!erros.celular && !telefoneValido(dados.celular)) erros.celular = "Celular inválido.";
+  if (!erros.email && !emailValido(dados.email)) erros.email = "Email inválido.";
+  if (!erros.cep && !cepCompletoValido(dados.cep)) erros.cep = "CEP inválido.";
+  if (!erros.estado && !/^[A-Za-z]{2}$/.test(dados.estado.trim())) {
+    erros.estado = "Informe a sigla do estado (ex.: MG).";
+  }
+  return erros;
 }

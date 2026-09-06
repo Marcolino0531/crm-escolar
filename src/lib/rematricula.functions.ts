@@ -26,6 +26,7 @@ import {
   MENSAGEM_LINK_ENVIADO,
   MENSAGEM_LINK_INVALIDO,
   MENSAGEM_SESSAO_EXPIRADA,
+  validarResponsavelFinanceiro,
   anoLetivoValido,
   apresentacaoMaterial,
   assuntoEmailRematricula,
@@ -68,9 +69,10 @@ import {
   rotinaDoPlanoExistente,
   validarRotinaForm,
   type PlanoRotinaExistente,
+  type RotinaPersistida,
   type RotinaForm,
 } from "@/lib/matricula-form";
-import type { MealKey, Weekday } from "@/lib/diario";
+import type { MealKey, MealPlanRow, ScheduleRow, Weekday } from "@/lib/diario";
 import {
   TODOS_OS_TURNOS,
   cronogramaMatricula,
@@ -95,6 +97,7 @@ import { addMesesYMD } from "@/lib/confissao-divida";
 import { buscarTurmasDoAno } from "@/lib/matricula-turma.sponte";
 import {
   CAMPOS_EDITAVEIS_ALUNO,
+  CAMPOS_EDITAVEIS_RESPONSAVEL,
   aplicarEdicao,
   camposAlterados,
   camposEsvaziados,
@@ -292,6 +295,56 @@ export interface ResponsavelRematricula {
   email: string;
   telefone: string;
   financeiro: boolean;
+}
+
+async function buscarResponsavelFinanceiroId(unidade: string, alunoId: string): Promise<string> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return "";
+  try {
+    const xml = await callSponte(
+      "GetAlunos",
+      `AlunoID=${alunoId}`,
+      creds.codigoCliente,
+      creds.token,
+    );
+    const node = parseXmlList(xml, "wsAluno").find((n) => parseXmlValue(n, "AlunoID") === alunoId);
+    return node ? parseXmlValue(node, "ResponsavelFinanceiroID") : "";
+  } catch {
+    return "";
+  }
+}
+
+// Campos que o Sponte precisa ter para o contrato do responsável financeiro.
+// Estado fica fora: UpdateResponsaveis2 não grava UF, então ele é conferido só
+// no portal (ViaCEP), sem bloquear aqui.
+async function erroCadastroFinanceiro(
+  unidade: string,
+  alunoId: string,
+  hoje: string,
+): Promise<string | null> {
+  const financeiroId = await buscarResponsavelFinanceiroId(unidade, alunoId);
+  const responsaveis = await buscarResponsaveis(unidade, alunoId, financeiroId);
+  const fin = responsaveis.find((r) => r.financeiro);
+  if (!fin) return "Não encontramos o responsável financeiro do aluno. Fale com a secretaria.";
+  const erros = validarResponsavelFinanceiro(
+    {
+      nome: fin.nome,
+      cpf: fin.cpf,
+      dataNascimento: fin.dataNascimento,
+      celular: fin.telefone,
+      email: fin.email,
+      cep: fin.cep,
+      endereco: fin.endereco,
+      numeroEndereco: fin.numero,
+      bairro: fin.bairro,
+      cidade: fin.cidade,
+      estado: fin.uf || "--",
+    },
+    hoje,
+  );
+  const pendentes = Object.values(erros);
+  if (pendentes.length === 0) return null;
+  return `Complete os dados do responsável financeiro e salve antes de finalizar: ${pendentes.join(" ")}`;
 }
 
 async function buscarResponsaveis(
@@ -785,24 +838,10 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const creds = resolverCredenciais(sessao.unidade);
-    let responsavelFinanceiroId = "";
-    if (creds) {
-      try {
-        const xml = await callSponte(
-          "GetAlunos",
-          `AlunoID=${sessao.alunoId}`,
-          creds.codigoCliente,
-          creds.token,
-        );
-        const node = parseXmlList(xml, "wsAluno").find(
-          (n) => parseXmlValue(n, "AlunoID") === sessao.alunoId,
-        );
-        responsavelFinanceiroId = node ? parseXmlValue(node, "ResponsavelFinanceiroID") : "";
-      } catch {
-        responsavelFinanceiroId = "";
-      }
-    }
+    const responsavelFinanceiroId = await buscarResponsavelFinanceiroId(
+      sessao.unidade,
+      sessao.alunoId,
+    );
 
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
@@ -1037,15 +1076,18 @@ async function planoDoDiario(
     .maybeSingle<{ id: string }>();
   if (!aluno) return null;
 
+  const anoVigente = await anoVigenteConfigurado();
   const [horarios, refeicoes] = await Promise.all([
     supabaseAdmin
       .from("diario_schedules" as never)
       .select("weekday, entry, exit")
-      .eq("student_id", aluno.id),
+      .eq("student_id", aluno.id)
+      .eq("ano_letivo", anoVigente),
     supabaseAdmin
       .from("diario_meal_plans" as never)
       .select("meal, weekday")
-      .eq("student_id", aluno.id),
+      .eq("student_id", aluno.id)
+      .eq("ano_letivo", anoVigente),
   ]);
 
   const linhasHorario = (horarios.data ?? []) as { weekday: number; entry: string; exit: string }[];
@@ -1060,6 +1102,64 @@ async function planoDoDiario(
     })),
     refeicoes: linhasRefeicao.map((r) => ({ meal: r.meal, weekday: r.weekday as Weekday })),
   };
+}
+
+// Espelha a rotina da rematrícula no Diário do Aluno, SÓ no ano letivo da
+// rematrícula: apaga e regrava as linhas daquele aluno/ano, sem tocar no ano
+// vigente (que segue em uso diário até dezembro). Sem aluno no Diário, não faz
+// nada — a sincronização com o Sponte cria o aluno depois e a rotina fica em
+// student_routine para ser reaplicada.
+async function espelharRotinaNoDiario(
+  unidade: string,
+  alunoId: string,
+  anoLetivo: number,
+  dados: RotinaPersistida,
+): Promise<void> {
+  const { data: escola } = await supabaseAdmin
+    .from("schools")
+    .select("id")
+    .eq("name", unidade)
+    .maybeSingle<{ id: string }>();
+  if (!escola) return;
+  const { data: aluno } = await supabaseAdmin
+    .from("diario_students" as never)
+    .select("id")
+    .eq("school_id", escola.id)
+    .eq("sponte_aluno_id", alunoId)
+    .maybeSingle<{ id: string }>();
+  if (!aluno) return;
+
+  const refeicoes: MealPlanRow[] = [];
+  for (const meal of Object.keys(dados.refeicoes) as MealKey[]) {
+    for (const weekday of dados.refeicoes[meal]) {
+      refeicoes.push({ student_id: aluno.id, meal, weekday, ano_letivo: anoLetivo });
+    }
+  }
+  const horarios: ScheduleRow[] = dados.horarios
+    .filter((h) => h.entrada && h.saida)
+    .map((h) => ({
+      student_id: aluno.id,
+      weekday: h.weekday,
+      entry: h.entrada,
+      exit: h.saida,
+      ano_letivo: anoLetivo,
+    }));
+
+  for (const [tabela, linhas] of [
+    ["diario_meal_plans", refeicoes],
+    ["diario_schedules", horarios],
+  ] as const) {
+    const { error: dErr } = await supabaseAdmin
+      .from(tabela as never)
+      .delete()
+      .eq("student_id", aluno.id)
+      .eq("ano_letivo", anoLetivo);
+    if (dErr) throw new Error(dErr.message);
+    if (linhas.length > 0) {
+      const { error } = await supabaseAdmin.from(tabela as never).insert(linhas as never);
+      if (error) throw new Error(error.message);
+    }
+  }
 }
 
 // Uma linha de rotina por aluno/ano letivo na rematrícula (reenvio atualiza).
@@ -1199,6 +1299,14 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
       console.error(`${LOG_TAG} falha ao salvar a rotina: ${error.message}`);
       return { ok: false, erro: "Não foi possível salvar a rotina. Tente novamente." };
     }
+    if (anoLetivo) {
+      try {
+        await espelharRotinaNoDiario(sessao.unidade, sessao.alunoId, anoLetivo, dados);
+      } catch (e) {
+        console.error(`${LOG_TAG} falha ao espelhar a rotina no Diário: ${String(e)}`);
+        return { ok: false, erro: "Não foi possível salvar a rotina. Tente novamente." };
+      }
+    }
     return { ok: true };
   });
 
@@ -1269,6 +1377,8 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         .maybeSingle<{ status: StatusEscolhaRematricula }>(),
     ]);
     if (!rotina.data) erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
+    const erroFinanceiro = await erroCadastroFinanceiro(sessao.unidade, sessao.alunoId, hoje);
+    if (erroFinanceiro) erros["responsavel"] = erroFinanceiro;
     if (material && !escolhaMaterial.data) {
       erros["material"] = "Confirme o parcelamento do Material Pedagógico antes de finalizar.";
     }
@@ -1348,13 +1458,22 @@ const EdicaoSchema = z.object({
   email: z.string().trim().max(150).optional(),
 });
 
+const EdicaoResponsavelSchema = EdicaoSchema.extend({
+  responsavelId: z.string().trim().min(1),
+  dataNascimento: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .or(z.literal(""))
+    .optional(),
+  // Só validado no portal: o Sponte não expõe Estado em UpdateResponsaveis2.
+  estado: z.string().trim().max(2).optional(),
+});
+
 const SincronizarCadastroSchema = z.object({
   token: z.string().min(16),
   aluno: EdicaoSchema.optional(),
-  responsaveis: z
-    .array(EdicaoSchema.extend({ responsavelId: z.string().trim().min(1) }))
-    .max(4)
-    .optional(),
+  responsaveis: z.array(EdicaoResponsavelSchema).max(4).optional(),
 });
 
 export interface SincronizarCadastroResult {
@@ -1409,10 +1528,11 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
       rotulo: string,
       lida: T,
       edicao: EdicaoCadastral,
+      campos: readonly string[],
       escrever: (ficha: T) => Promise<EscritaCadastroResult>,
       reler: () => Promise<T | null>,
     ): Promise<void> {
-      const aEnviar = aplicarEdicao(lida, edicao, CAMPOS_EDITAVEIS_ALUNO);
+      const aEnviar = aplicarEdicao(lida, edicao, campos);
       const mudancas = camposAlterados(lida, aEnviar);
       if (mudancas.length === 0) return;
 
@@ -1480,13 +1600,14 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
         "Aluno",
         leituraAluno.ficha,
         data.aluno,
+        CAMPOS_EDITAVEIS_ALUNO,
         (ficha) => atualizarFichaAlunoSponte(sessao.unidade, ficha),
         async () => (await lerFichaAlunoSponte(sessao.unidade, sessao.alunoId)).ficha,
       );
     }
 
     for (const entrada of data.responsaveis ?? []) {
-      const { responsavelId, ...edicao } = entrada;
+      const { responsavelId, estado: _estado, ...edicao } = entrada;
       const ler = () =>
         lerFichaResponsavelSponte(
           sessao.unidade,
@@ -1509,6 +1630,7 @@ export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
         leitura.ficha.nome || "Responsável",
         leitura.ficha,
         edicao,
+        CAMPOS_EDITAVEIS_RESPONSAVEL,
         (ficha) => atualizarFichaResponsavelSponte(sessao.unidade, ficha),
         async () => (await ler()).ficha,
       );
@@ -1529,8 +1651,57 @@ export async function anoLetivoConfigurado(): Promise<number | null> {
   return data ? Number(data.ano_letivo) : null;
 }
 
+// Ano vigente do Diário do Aluno: o plano que o registro diário usa. Distinto do
+// ano_letivo da rematrícula (ano seguinte). Qualquer usuário autenticado lê;
+// só quem edita a configuração da rematrícula altera.
+export async function anoVigenteConfigurado(): Promise<number> {
+  const { data } = await supabaseAdmin
+    .from("rematricula_config" as never)
+    .select("ano_vigente")
+    .eq("id", true)
+    .maybeSingle<{ ano_vigente: number | null }>();
+  return data?.ano_vigente ? Number(data.ano_vigente) : new Date().getFullYear();
+}
+
+export interface AnosLetivosDiario {
+  anoVigente: number;
+  anoRematricula: number | null;
+}
+
+export const anosLetivosDiario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<AnosLetivosDiario> => {
+    const [anoVigente, anoRematricula] = await Promise.all([
+      anoVigenteConfigurado(),
+      anoLetivoConfigurado(),
+    ]);
+    return { anoVigente, anoRematricula };
+  });
+
+export const salvarAnoVigenteDiario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ anoVigente: z.number().int() }).parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    if (!anoLetivoValido(data.anoVigente)) {
+      throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
+    }
+    const { error } = await supabaseAdmin
+      .from("rematricula_config" as never)
+      .update({
+        ano_vigente: data.anoVigente,
+        updated_at: new Date().toISOString(),
+        updated_by: context.userId,
+        updated_by_nome: await nomeDoUsuario(context.userId),
+      } as never)
+      .eq("id", true);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export interface AnoLetivoRematricula {
   anoLetivo: number | null;
+  anoVigente: number;
   atualizadoEm: string;
   atualizadoPor: string;
 }
@@ -1541,11 +1712,17 @@ export const obterAnoLetivoRematricula = createServerFn({ method: "POST" })
     await exigirPermissaoMaterialPedagogico(context.userId, false);
     const { data } = await supabaseAdmin
       .from("rematricula_config" as never)
-      .select("ano_letivo, updated_at, updated_by_nome")
+      .select("ano_letivo, ano_vigente, updated_at, updated_by_nome")
       .eq("id", true)
-      .maybeSingle<{ ano_letivo: number; updated_at: string; updated_by_nome: string | null }>();
+      .maybeSingle<{
+        ano_letivo: number;
+        ano_vigente: number | null;
+        updated_at: string;
+        updated_by_nome: string | null;
+      }>();
     return {
       anoLetivo: data ? Number(data.ano_letivo) : null,
+      anoVigente: data?.ano_vigente ? Number(data.ano_vigente) : new Date().getFullYear(),
       atualizadoEm: data?.updated_at ?? "",
       atualizadoPor: data?.updated_by_nome ?? "",
     };

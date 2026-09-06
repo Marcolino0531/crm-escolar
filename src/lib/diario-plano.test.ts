@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyPlan,
+  emptySchedule,
   groupMealPlans,
   groupSchedules,
   isCoveredToday,
@@ -13,12 +14,13 @@ import {
 import { fetchAllRows } from "./supabase-paginate";
 
 const ALUNO = "aluno-a";
+const ANO = 2026;
 const SEG_A_SEX: Weekday[] = [1, 2, 3, 4, 5];
 const quarta = new Date(2026, 8, 2, 10, 0); // 02/09/2026 (quarta-feira)
 const sabado = new Date(2026, 8, 5, 10, 0);
 
 function salvarELer(studentId: string, plan: MealPlan): MealPlan {
-  const rows = mealPlanToRows(studentId, plan);
+  const rows = mealPlanToRows(studentId, plan, ANO);
   return groupMealPlans(rows).get(studentId) ?? emptyPlan();
 }
 
@@ -44,15 +46,15 @@ describe("plano de refeições — salvar e ler de volta (com plano vs sem plano
   });
 
   it("plano vazio não gera linhas e lê como 'sem plano' em tudo", () => {
-    expect(mealPlanToRows(ALUNO, emptyPlan())).toEqual([]);
+    expect(mealPlanToRows(ALUNO, emptyPlan(), ANO)).toEqual([]);
     const lido = salvarELer(ALUNO, emptyPlan());
     expect(isCoveredToday(lido, "lunch", quarta)).toBe(false);
   });
 
   it("linhas de outro aluno não vazam para o plano lido", () => {
     const rows = [
-      ...mealPlanToRows("aluno-b", { ...emptyPlan(), dinner: [3] }),
-      ...mealPlanToRows(ALUNO, { ...emptyPlan(), lunch: [3] }),
+      ...mealPlanToRows("aluno-b", { ...emptyPlan(), dinner: [3] }, ANO),
+      ...mealPlanToRows(ALUNO, { ...emptyPlan(), lunch: [3] }, ANO),
     ];
     const porAluno = groupMealPlans(rows);
     expect(isCoveredToday(porAluno.get(ALUNO)!, "dinner", quarta)).toBe(false);
@@ -61,19 +63,50 @@ describe("plano de refeições — salvar e ler de volta (com plano vs sem plano
   });
 
   it("horários fazem o mesmo round-trip por dia", () => {
-    const rows = scheduleToRows(ALUNO, {
-      0: null,
-      1: { entry: "07:30", exit: "17:30" },
-      2: null,
-      3: { entry: "13:00", exit: "18:00" },
-      4: null,
-      5: null,
-      6: null,
-    });
+    const rows = scheduleToRows(
+      ALUNO,
+      {
+        0: null,
+        1: { entry: "07:30", exit: "17:30" },
+        2: null,
+        3: { entry: "13:00", exit: "18:00" },
+        4: null,
+        5: null,
+        6: null,
+      },
+      ANO,
+    );
     expect(rows).toHaveLength(2);
     const lido = groupSchedules(rows).get(ALUNO)!;
     expect(lido[3]).toEqual({ entry: "13:00", exit: "18:00" });
     expect(lido[2]).toBeNull();
+  });
+
+  it("plano do ano seguinte (rematrícula) não altera o Diário do ano vigente", () => {
+    const rows = [
+      ...mealPlanToRows(ALUNO, { ...emptyPlan(), lunch: [3] }, 2026),
+      ...mealPlanToRows(ALUNO, { ...emptyPlan(), dinner: [3], breakfast: [3] }, 2027),
+    ];
+    const vigente = groupMealPlans(rows, 2026).get(ALUNO)!;
+    expect(isCoveredToday(vigente, "lunch", quarta)).toBe(true);
+    expect(isCoveredToday(vigente, "dinner", quarta)).toBe(false);
+    const proximo = groupMealPlans(rows, 2027).get(ALUNO)!;
+    expect(isCoveredToday(proximo, "lunch", quarta)).toBe(false);
+    expect(isCoveredToday(proximo, "dinner", quarta)).toBe(true);
+    expect(groupMealPlans(rows, 2025).get(ALUNO)).toBeUndefined();
+
+    const horarios = [
+      ...scheduleToRows(ALUNO, { ...emptySchedule(), 1: { entry: "07:20", exit: "12:40" } }, 2026),
+      ...scheduleToRows(ALUNO, { ...emptySchedule(), 1: { entry: "07:20", exit: "18:00" } }, 2027),
+    ];
+    expect(groupSchedules(horarios, 2026).get(ALUNO)![1]).toEqual({
+      entry: "07:20",
+      exit: "12:40",
+    });
+    expect(groupSchedules(horarios, 2027).get(ALUNO)![1]).toEqual({
+      entry: "07:20",
+      exit: "18:00",
+    });
   });
 });
 
@@ -85,12 +118,16 @@ describe("fetchAllRows — leitura além do teto de 1000 linhas do PostgREST", (
     const rows: MealPlanRow[] = [];
     for (let i = 0; i < qtdAlunos; i++) {
       rows.push(
-        ...mealPlanToRows(`aluno-${i}`, {
-          breakfast: SEG_A_SEX,
-          lunch: SEG_A_SEX,
-          snack: [],
-          dinner: [],
-        }),
+        ...mealPlanToRows(
+          `aluno-${i}`,
+          {
+            breakfast: SEG_A_SEX,
+            lunch: SEG_A_SEX,
+            snack: [],
+            dinner: [],
+          },
+          ANO,
+        ),
       );
     }
     return rows;

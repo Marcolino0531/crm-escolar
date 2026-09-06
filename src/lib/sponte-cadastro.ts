@@ -97,11 +97,14 @@ export const CAMPOS_EDITAVEIS_ALUNO = [
 
 export type CampoEditavelAluno = (typeof CAMPOS_EDITAVEIS_ALUNO)[number];
 
-export const CAMPOS_EDITAVEIS_RESPONSAVEL = CAMPOS_EDITAVEIS_ALUNO;
+// O responsável também pode corrigir a própria data de nascimento (exigida do
+// responsável financeiro para o contrato). Estado/UF não existe em
+// UpdateResponsaveis2, por isso fica fora daqui.
+export const CAMPOS_EDITAVEIS_RESPONSAVEL = [...CAMPOS_EDITAVEIS_ALUNO, "dataNascimento"] as const;
 
-export type CampoEditavelResponsavel = CampoEditavelAluno;
+export type CampoEditavelResponsavel = (typeof CAMPOS_EDITAVEIS_RESPONSAVEL)[number];
 
-export type EdicaoCadastral = Partial<Record<CampoEditavelAluno, string>>;
+export type EdicaoCadastral = Partial<Record<CampoEditavelResponsavel, string>>;
 
 // Aplica a edição sobre a ficha lida. Valor em branco é DESCARTADO: o portal
 // nunca apaga um dado que já existe no Sponte — quem quiser limpar um campo
@@ -113,7 +116,7 @@ export function aplicarEdicao<T extends object>(
 ): T {
   const atualizada: T = { ...ficha };
   for (const campo of campos) {
-    const valor = edicao[campo as CampoEditavelAluno];
+    const valor = edicao[campo as CampoEditavelResponsavel];
     if (typeof valor !== "string") continue;
     const limpo = valor.trim();
     if (!limpo) continue;
