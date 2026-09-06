@@ -13,12 +13,15 @@ import {
   RefreshCw,
   QrCode,
   Loader2,
+  ShieldAlert,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
+import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import {
   Accordion,
   AccordionContent,
@@ -289,6 +292,11 @@ function DiarioPage() {
           <TabsTrigger value="extras">
             <AlertTriangle className="mr-1.5 h-4 w-4" /> Consumos Extras
           </TabsTrigger>
+          {podeEditar && (
+            <TabsTrigger value="auditoria">
+              <ShieldAlert className="mr-1.5 h-4 w-4" /> Auditoria Sponte
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="registro" className="space-y-4">
@@ -377,6 +385,14 @@ function DiarioPage() {
         <TabsContent value="extras">
           <ExtraChargesTab schoolFilterIds={schoolFilterIds} studentIndex={students} />
         </TabsContent>
+        {podeEditar && (
+          <TabsContent value="auditoria">
+            <AuditoriaSponte
+              unidade={unidadeDaSelecao(selected, schools)}
+              podeExecutar={podeEditar}
+            />
+          </TabsContent>
+        )}
       </Tabs>
 
       <StudentActionSheet
