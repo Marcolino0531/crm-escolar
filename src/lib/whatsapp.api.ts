@@ -81,6 +81,7 @@ import {
   type ExcecaoCobranca,
 } from "@/lib/billing-exceptions";
 import { filtrarPorPausa, pausasVigentes, type PausaComprovante } from "@/lib/billing-pauses";
+import { filtrarPausadosLembrete, type PausaLembrete } from "@/lib/billing-lembrete-pausas";
 import {
   agruparLembretesPorResponsavel,
   etiquetaPrazo,
@@ -734,6 +735,17 @@ async function carregarPausasComprovante(): Promise<PausaComprovante[]> {
   );
 }
 
+async function carregarPausasLembrete(): Promise<PausaLembrete[]> {
+  const { data, error } = await supabaseAdmin
+    .from("whatsapp_lembrete_pausas" as never)
+    .select("telefone");
+  if (error) {
+    console.error("[whatsapp] falha ao ler pausas manuais de lembrete:", error.message);
+    return [];
+  }
+  return (data ?? []) as unknown as PausaLembrete[];
+}
+
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que
 // já vinham sendo cobrados (histórico de disparos). Deduplicados por AlunoID.
 async function coletarCandidatos(
@@ -1085,7 +1097,12 @@ async function runCronLembretes(hoje: string, opcoes: OpcoesRotina = {}): Promis
   const alunos = new Set(parcelas.map((p) => p.alunoId)).size;
   const comCobrancaHoje = await telefonesComDisparoHoje(hoje, "cobranca");
   const pausas = await carregarPausasComprovante();
-  const semPausa = filtrarPorPausa(parcelas, pausas, new Date());
+  // Pausa manual do lembrete (pedido do responsável): sai antes do agrupamento,
+  // então o número não vira grupo, tentativa nem registro. Só esta régua a lê.
+  const semPausa = filtrarPausadosLembrete(
+    filtrarPorPausa(parcelas, pausas, new Date()),
+    await carregarPausasLembrete(),
+  );
   const grupos: GrupoLembrete[] = [];
   for (const g of gruposAlvo) {
     const doGrupo = semPausa.filter((p) => grupoDaUnidade(p.unidade) === g);
