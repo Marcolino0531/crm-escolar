@@ -11,6 +11,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
 import { duplicarDespesa, temBaixaAutomatica, type DuplicacaoDespesa } from "@/lib/fluxo-futuro-duplicar";
+import { vencimentoRecorrente } from "@/lib/fluxo-futuro-dia-util";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -120,12 +121,6 @@ function addMonths(iso: string, delta: number) {
   const [y, m] = iso.split("-").map(Number);
   return monthKey(new Date(y, m - 1 + delta, 1));
 }
-function dueDateFor(monthIso: string, day: number): string {
-  const [y, m] = monthIso.split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const d = Math.min(day, lastDay);
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
 function ymd(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
@@ -228,7 +223,7 @@ function FluxoFuturoPage() {
         .map((s) => ({
           school_id: schoolId,
           month,
-          due_date: dueDateFor(month, s.due_day),
+          due_date: vencimentoRecorrente(month, s.due_day, s.description),
           description: s.description,
           cost_center_id: s.cost_center_id,
           sub_cost_center_id: s.sub_cost_center_id,
@@ -793,7 +788,7 @@ function ForecastDialog({
               projected_amount: amt,
               cost_center_id: costCenterId || null,
               sub_cost_center_id: subCostCenterId || null,
-              due_date: dueDateFor(r.month, dueDay),
+              due_date: vencimentoRecorrente(r.month, dueDay, description.trim()),
               notes: notes.trim() || null,
             }).eq("id", r.id),
           ));
@@ -846,7 +841,7 @@ function ForecastDialog({
               return {
                 school_id: schoolId,
                 month: mIso,
-                due_date: dueDateFor(mIso, dueDay),
+                due_date: vencimentoRecorrente(mIso, dueDay, description.trim()),
                 description: `${description.trim()} (Parcela ${i + 1}/${nParc})`,
                 projected_amount: amt,
                 cost_center_id: costCenterId || null,
@@ -869,7 +864,7 @@ function ForecastDialog({
               const { error } = await supabase.from("recurring_forecasts").insert({
                 school_id: schoolId,
                 month: monthOfDue,
-                due_date: dueDate,
+                due_date: vencimentoRecorrente(monthOfDue, dueDay, description.trim()),
                 description: description.trim(),
                 projected_amount: amt,
                 cost_center_id: costCenterId || null,
