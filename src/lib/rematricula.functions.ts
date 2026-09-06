@@ -175,7 +175,7 @@ function paraNumero(valorBr: string): number {
 
 // ─── Aluno no Sponte ────────────────────────────────────────────────────────
 
-interface AlunoSponteRematricula {
+export interface AlunoSponteRematricula {
   unidade: string;
   alunoId: string;
   nome: string;
@@ -258,7 +258,7 @@ async function buscarAlunoPorCpf(cpfDigitos: string): Promise<AlunoSponteRematri
   return null;
 }
 
-async function buscarAlunoPorId(
+export async function buscarAlunoPorId(
   unidade: string,
   alunoId: string,
 ): Promise<AlunoSponteRematricula | null> {
@@ -297,7 +297,10 @@ export interface ResponsavelRematricula {
   financeiro: boolean;
 }
 
-async function buscarResponsavelFinanceiroId(unidade: string, alunoId: string): Promise<string> {
+export async function buscarResponsavelFinanceiroId(
+  unidade: string,
+  alunoId: string,
+): Promise<string> {
   const creds = resolverCredenciais(unidade);
   if (!creds) return "";
   try {
@@ -347,7 +350,7 @@ async function erroCadastroFinanceiro(
   return `Complete os dados do responsável financeiro e salve antes de finalizar: ${pendentes.join(" ")}`;
 }
 
-async function buscarResponsaveis(
+export async function buscarResponsaveis(
   unidade: string,
   alunoId: string,
   responsavelFinanceiroId: string,
@@ -436,7 +439,7 @@ async function nomeColegioDaUnidade(unidade: string): Promise<string> {
 
 // ─── Mensalidade vigente (GetParcelas) ──────────────────────────────────────
 
-async function buscarMensalidadeVigente(
+export async function buscarMensalidadeVigente(
   unidade: string,
   alunoId: string,
 ): Promise<MensalidadeVigente | null> {
@@ -773,7 +776,7 @@ export interface DadosRematricula {
 const TokenSchema = z.object({ token: z.string().min(16) });
 
 // A Vercel roda em UTC; o dia de calendário do colégio é o de Brasília.
-function hojeBRT(): string {
+export function hojeBRT(): string {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
@@ -810,7 +813,7 @@ function montarMatricula(
   };
 }
 
-async function materialDaSerie(
+export async function materialDaSerie(
   unidade: string,
   serie: string,
 ): Promise<{ valorAnual: number; serieCadastrada: string } | null> {
@@ -1819,7 +1822,7 @@ function paraSolicitacao(r: EscolhaRow): SolicitacaoRematricula {
   };
 }
 
-async function exigirPermissaoRematricula(userId: string, edicao: boolean): Promise<string> {
+export async function exigirPermissaoRematricula(userId: string, edicao: boolean): Promise<string> {
   const { data, error } = await supabaseAdmin.rpc(
     (edicao ? "can_edit_module" : "can_view_module") as never,
     { _user_id: userId, _module: "rematricula" } as never,

@@ -1,9 +1,12 @@
-// Cliente server-side da API ZapSign — PROVA DE CONCEITO em SANDBOX.
-//
-// O token (ZAPSIGN_SANDBOX_TOKEN) é lido só aqui, do ambiente do servidor, e
-// vai no header `Authorization: Bearer`. Nada deste módulo pode ser importado
-// pelo navegador. O host é fixo no sandbox: documentos criados aqui não têm
-// validade jurídica e a troca para produção é uma decisão explícita futura.
+// Cliente server-side da API ZapSign, com dois ambientes ISOLADOS:
+//   - "sandbox"  → ZAPSIGN_SANDBOX_TOKEN, host sandbox (POC da aba de teste,
+//                  sem validade jurídica);
+//   - "producao" → ZAPSIGN_PROD_TOKEN, host de produção (Contrato de
+//                  Matrícula real, com validade jurídica).
+// O ambiente é sempre um parâmetro EXPLÍCITO de quem chama (default sandbox);
+// nunca há fallback de um token para o outro. Os tokens são lidos só aqui, do
+// servidor, e vão no header `Authorization: Bearer`. Nada deste módulo pode
+// ser importado pelo navegador.
 //
 // Documentação usada: docs.zapsign.com.br (criar documento via PDF em base64,
 // criar documento via modelo DOCX, criar modelo DOCX, detalhar documento,
@@ -12,6 +15,31 @@
 import { createHash } from "node:crypto";
 
 export const ZAPSIGN_SANDBOX_BASE = "https://sandbox.api.zapsign.com.br/api/v1";
+export const ZAPSIGN_PROD_BASE = "https://api.zapsign.com.br/api/v1";
+
+export type ZapSignAmbiente = "sandbox" | "producao";
+
+export const ZAPSIGN_AMBIENTES: Record<
+  ZapSignAmbiente,
+  { base: string; envToken: string; pasta: string }
+> = {
+  sandbox: {
+    base: ZAPSIGN_SANDBOX_BASE,
+    envToken: "ZAPSIGN_SANDBOX_TOKEN",
+    pasta: "/school-hub-poc/",
+  },
+  producao: {
+    base: ZAPSIGN_PROD_BASE,
+    envToken: "ZAPSIGN_PROD_TOKEN",
+    pasta: "/school-hub-contratos/",
+  },
+};
+
+function tokenDoAmbiente(ambiente: ZapSignAmbiente): string | undefined {
+  return ambiente === "producao"
+    ? process.env.ZAPSIGN_PROD_TOKEN
+    : process.env.ZAPSIGN_SANDBOX_TOKEN;
+}
 
 export type ZapSignSignatarioInput = {
   nome: string;
@@ -64,30 +92,34 @@ export type ZapSignResultado<T> =
   | { ok: true; dados: T }
   | { ok: false; status: number; erro: string; corpo?: unknown };
 
-export function zapsignConfigurado(): boolean {
-  return Boolean(process.env.ZAPSIGN_SANDBOX_TOKEN);
+export function zapsignConfigurado(ambiente: ZapSignAmbiente = "sandbox"): boolean {
+  return Boolean(tokenDoAmbiente(ambiente));
 }
 
 /**
  * Segredo do callback derivado do token da API (SHA-256), para a ZapSign
  * enviar em header customizado e o School Hub validar a origem — sem criar
- * outra variável de ambiente e sem o token cru sair do servidor.
+ * outra variável de ambiente e sem o token cru sair do servidor. Como o token
+ * difere por ambiente, o segredo também difere: o webhook sabe de qual
+ * ambiente veio o callback pelo segredo que casou.
  */
-export function zapsignWebhookSegredo(): string | null {
-  const token = process.env.ZAPSIGN_SANDBOX_TOKEN;
+export function zapsignWebhookSegredo(ambiente: ZapSignAmbiente = "sandbox"): string | null {
+  const token = tokenDoAmbiente(ambiente);
   if (!token) return null;
   return createHash("sha256").update(`school-hub-zapsign-webhook:${token}`).digest("hex");
 }
 
 async function zapsignFetch<T>(
+  ambiente: ZapSignAmbiente,
   caminho: string,
   init: { method: "GET" | "POST"; body?: unknown },
 ): Promise<ZapSignResultado<T>> {
-  const token = process.env.ZAPSIGN_SANDBOX_TOKEN;
+  const cfg = ZAPSIGN_AMBIENTES[ambiente];
+  const token = tokenDoAmbiente(ambiente);
   if (!token) {
-    return { ok: false, status: 503, erro: "ZAPSIGN_SANDBOX_TOKEN não configurada no servidor." };
+    return { ok: false, status: 503, erro: `${cfg.envToken} não configurada no servidor.` };
   }
-  const url = `${ZAPSIGN_SANDBOX_BASE}${caminho}`;
+  const url = `${cfg.base}${caminho}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -137,6 +169,7 @@ export function telefoneParaZapSign(telefone: string | undefined): {
 export function montarSigner(
   s: ZapSignSignatarioInput,
   ordemAtiva: boolean,
+  enviarEmail = false,
 ): Record<string, unknown> {
   const tel = telefoneParaZapSign(s.telefone);
   const cpf = somenteDigitos(s.cpf);
@@ -145,8 +178,8 @@ export function montarSigner(
     email: s.email ?? "",
     ...tel,
     auth_mode: "assinaturaTela",
-    // Envio automático desligado: na POC o link é copiado da tela.
-    send_automatic_email: false,
+    // POC: link copiado da tela. Contrato real: a ZapSign emaila o signatário.
+    send_automatic_email: enviarEmail,
     send_automatic_whatsapp: false,
     lock_name: true,
   };
@@ -163,27 +196,32 @@ export function montarSigner(
 }
 
 export type CriarDocPdfInput = {
+  ambiente?: ZapSignAmbiente;
   nome: string;
   pdfBase64: string;
   signatarios: ZapSignSignatarioInput[];
   externalId: string;
   ordemSequencial: boolean;
+  /** Produção: a ZapSign envia o email de assinatura ao signatário. */
+  enviarEmailAoSignatario?: boolean;
 };
 
 export async function criarDocumentoPdf(
   input: CriarDocPdfInput,
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
-  return zapsignFetch<ZapSignDocResposta>("/docs/", {
+  const ambiente = input.ambiente ?? "sandbox";
+  const enviarEmail = input.enviarEmailAoSignatario ?? false;
+  return zapsignFetch<ZapSignDocResposta>(ambiente, "/docs/", {
     method: "POST",
     body: {
       name: input.nome,
       base64_pdf: input.pdfBase64,
       lang: "pt-br",
-      disable_signer_emails: true,
+      disable_signer_emails: !enviarEmail,
       signature_order_active: input.ordemSequencial,
       external_id: input.externalId,
-      folder_path: "/school-hub-poc/",
-      signers: input.signatarios.map((s) => montarSigner(s, input.ordemSequencial)),
+      folder_path: ZAPSIGN_AMBIENTES[ambiente].pasta,
+      signers: input.signatarios.map((s) => montarSigner(s, input.ordemSequencial, enviarEmail)),
     },
   });
 }
@@ -196,7 +234,7 @@ export type CriarTemplateDocxInput = {
 export async function criarTemplateDocx(
   input: CriarTemplateDocxInput,
 ): Promise<ZapSignResultado<ZapSignTemplateResposta>> {
-  return zapsignFetch<ZapSignTemplateResposta>("/templates/create", {
+  return zapsignFetch<ZapSignTemplateResposta>("sandbox", "/templates/create", {
     method: "POST",
     body: {
       name: input.nome,
@@ -226,7 +264,7 @@ export async function criarDocumentoViaTemplate(
   input: CriarDocTemplateInput,
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
   const tel = telefoneParaZapSign(input.signatario.telefone);
-  return zapsignFetch<ZapSignDocResposta>("/models/create-doc/", {
+  return zapsignFetch<ZapSignDocResposta>("sandbox", "/models/create-doc/", {
     method: "POST",
     body: {
       template_id: input.templateToken,
@@ -247,18 +285,26 @@ export async function criarDocumentoViaTemplate(
 
 export async function detalharDocumento(
   docToken: string,
+  ambiente: ZapSignAmbiente = "sandbox",
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
-  return zapsignFetch<ZapSignDocResposta>(`/docs/${encodeURIComponent(docToken)}/`, {
+  return zapsignFetch<ZapSignDocResposta>(ambiente, `/docs/${encodeURIComponent(docToken)}/`, {
     method: "GET",
   });
 }
 
-export async function criarWebhook(url: string): Promise<ZapSignResultado<ZapSignWebhookResposta>> {
-  const segredo = zapsignWebhookSegredo();
+export async function criarWebhook(
+  url: string,
+  ambiente: ZapSignAmbiente = "sandbox",
+): Promise<ZapSignResultado<ZapSignWebhookResposta>> {
+  const segredo = zapsignWebhookSegredo(ambiente);
   if (!segredo) {
-    return { ok: false, status: 503, erro: "ZAPSIGN_SANDBOX_TOKEN não configurada no servidor." };
+    return {
+      ok: false,
+      status: 503,
+      erro: `${ZAPSIGN_AMBIENTES[ambiente].envToken} não configurada no servidor.`,
+    };
   }
-  return zapsignFetch<ZapSignWebhookResposta>("/user/company/webhook/", {
+  return zapsignFetch<ZapSignWebhookResposta>(ambiente, "/user/company/webhook/", {
     method: "POST",
     body: {
       url,
