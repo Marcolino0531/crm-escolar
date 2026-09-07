@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  boletosParaTotal,
   cobrancaPermitida,
   ehMensalidade,
   envioLiberado,
@@ -88,6 +89,7 @@ describe("política de produção do CEC e CEC Baby", () => {
     expect(regraCobrancaDaUnidade("CEC")).toEqual({
       dataBase: "2026-08-01",
       somenteMensalidade: false,
+      corteNoTotal: false,
     });
     expect(
       cobrancaPermitida({ unidade: "CEC", vencimento: "2026-08-01", categorias: ["Material"] }),
@@ -199,5 +201,64 @@ describe("data do Sponte na regra de cobrança", () => {
   it("converte o vencimento agrupado do Sponte antes de aplicar a regra", () => {
     const src = readFileSync(new URL("./whatsapp.api.ts", import.meta.url), "utf8");
     expect(src).toMatch(/vencimento: paraYMD\(p\.vencimento\) \|\| vencimento/);
+  });
+});
+
+describe("total da cobrança com parcelas vencidas em meses diferentes", () => {
+  // Caso real (Nita, CEC Baby): junho, julho e agosto em aberto; a cobrança só
+  // dispara a partir de agosto, mas a dívida anunciada tem de somar os três.
+  const nita = [
+    { unidade: "CEC Baby", vencimento: "2026-06-10", categorias: ["Mensalidade"], saldo: 3000 },
+    { unidade: "CEC Baby", vencimento: "2026-06-10", categorias: ["Almoço"], saldo: 400 },
+    { unidade: "CEC Baby", vencimento: "2026-07-10", categorias: ["Mensalidade"], saldo: 3000 },
+    { unidade: "CEC Baby", vencimento: "2026-08-10", categorias: ["Mensalidade"], saldo: 3000 },
+    { unidade: "CEC Baby", vencimento: "2026-08-10", categorias: ["Jantar"], saldo: 300 },
+  ];
+
+  it("no CEC/CEC Baby soma toda a dívida vencida, inclusive antes da data base", () => {
+    const total = boletosParaTotal("CEC Baby", nita).reduce((acc, b) => acc + b.saldo, 0);
+    expect(total).toBe(9700);
+    expect(boletosParaTotal("CEC", nita)).toHaveLength(5);
+  });
+
+  it("a data base do CEC continua decidindo só o disparo", () => {
+    expect(filtrarPorRegraDeCobranca(nita).map((b) => b.vencimento)).toEqual([
+      "2026-08-10",
+      "2026-08-10",
+    ]);
+  });
+
+  it("no Belvedere/Vale do Sereno o total respeita o corte e a categoria", () => {
+    const belv = [
+      {
+        unidade: "Núcleo Belvedere",
+        vencimento: "2026-08-10",
+        categorias: ["Mensalidade"],
+        saldo: 1000,
+      },
+      {
+        unidade: "Núcleo Belvedere",
+        vencimento: "2026-09-10",
+        categorias: ["Mensalidade"],
+        saldo: 1000,
+      },
+      {
+        unidade: "Núcleo Belvedere",
+        vencimento: "2026-09-10",
+        categorias: ["Material"],
+        saldo: 200,
+      },
+    ];
+    expect(boletosParaTotal("Núcleo Belvedere", belv).map((b) => b.saldo)).toEqual([1000]);
+    expect(
+      boletosParaTotal(
+        "Núcleo Vale do Sereno",
+        belv.map((b) => ({ ...b, unidade: "Núcleo Vale do Sereno" })),
+      ).map((b) => b.saldo),
+    ).toEqual([1000]);
+  });
+
+  it("unidade fora da automação não soma nada", () => {
+    expect(boletosParaTotal("Outra", nita)).toEqual([]);
   });
 });

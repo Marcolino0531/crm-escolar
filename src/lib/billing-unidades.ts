@@ -24,11 +24,16 @@ export interface RegraCobrancaGrupo {
   dataBase: string;
   // Restringe a cobrança às parcelas de mensalidade.
   somenteMensalidade: boolean;
+  // Quando true, o total anunciado na mensagem também obedece à data base e à
+  // restrição de categoria (a dívida anterior ao corte não é mencionada). Quando
+  // false, a data base só decide QUAL parcela dispara a cobrança: o total soma
+  // toda a dívida vencida do aluno, inclusive meses anteriores ao corte.
+  corteNoTotal: boolean;
 }
 
 export const REGRAS_COBRANCA: Record<NumeroGrupo, RegraCobrancaGrupo> = {
-  cec: { dataBase: "2026-08-01", somenteMensalidade: false },
-  belvedere: { dataBase: "2026-09-01", somenteMensalidade: true },
+  cec: { dataBase: "2026-08-01", somenteMensalidade: false, corteNoTotal: false },
+  belvedere: { dataBase: "2026-09-01", somenteMensalidade: true, corteNoTotal: true },
 };
 
 // Grupos com ENVIO REAL liberado. A simulação (dry-run) avalia qualquer grupo
@@ -95,6 +100,22 @@ export function cobrancaPermitida(item: ItemCobravel): boolean {
 
 export function filtrarPorRegraDeCobranca<T extends ItemCobravel>(itens: readonly T[]): T[] {
   return itens.filter((i) => cobrancaPermitida(i));
+}
+
+// Parcelas que entram no TOTAL da mensagem de cobrança da unidade. Onde o corte
+// vale só para o disparo, toda a dívida do aluno é somada (uma parcela de junho
+// continua devida mesmo que a cobrança tenha começado em agosto).
+export function boletosParaTotal<T extends Omit<ItemCobravel, "unidade">>(
+  unidade: string,
+  itens: readonly T[],
+): T[] {
+  const regra = regraCobrancaDaUnidade(unidade);
+  if (!regra) return [];
+  return regra.corteNoTotal
+    ? itens.filter((i) =>
+        cobrancaPermitida({ unidade, vencimento: i.vencimento, categorias: i.categorias }),
+      )
+    : [...itens];
 }
 
 // Vencimento mais antigo que ainda interessa a algum dos grupos em operação.
