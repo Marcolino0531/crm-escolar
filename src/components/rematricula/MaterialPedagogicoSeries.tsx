@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +27,12 @@ import {
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { parseBRLNumber } from "@/lib/currency";
-import { formatarBRL, opcoesParcelamentoMaterial, rotuloParcelamento } from "@/lib/rematricula";
+import {
+  formatarBRL,
+  opcoesParcelamentoMaterial,
+  rotuloItemMaterial,
+  rotuloParcelamento,
+} from "@/lib/rematricula";
 import {
   ROTULO_SEGMENTO_MATRICULA,
   SEGMENTOS_MATRICULA,
@@ -37,14 +42,18 @@ import {
 import {
   alterarCampanhaRematricula,
   anosLetivosDiario,
+  excluirMaterialItem,
   excluirMaterialSerie,
   listarCampanhasRematricula,
+  listarMaterialItens,
   listarMaterialSeries,
   listarValoresMatricula,
   prepararCampanhaRematricula,
   salvarAnoVigenteDiario,
+  salvarMaterialItem,
   salvarMaterialSerie,
   salvarValorMatricula,
+  type MaterialItemRegistro,
   type MaterialSerieRegistro,
 } from "@/lib/rematricula.functions";
 
@@ -380,12 +389,157 @@ function AnoVigenteDiario({ podeEditar }: { podeEditar: boolean }) {
   );
 }
 
-// Valor anual do material pedagógico por unidade + série. É o valor que o portal
-// público de Rematrícula oferece ao responsável para parcelar em até 8x — cada
-// unidade tem o seu, mesmo para a mesma série.
+// Itens inclusos no material de uma unidade × ano × série (nome + volumes).
+// É esta lista que o portal e o contrato exibem; sem cadastro, nada aparece.
+function ItensMaterialSerie({
+  podeEditar,
+  unidade,
+  anoLetivo,
+  serie,
+  itens,
+}: {
+  podeEditar: boolean;
+  unidade: string;
+  anoLetivo: number;
+  serie: string;
+  itens: MaterialItemRegistro[];
+}) {
+  const qc = useQueryClient();
+  const salvar = useServerFn(salvarMaterialItem);
+  const excluir = useServerFn(excluirMaterialItem);
+  const [editando, setEditando] = useState<MaterialItemRegistro | null>(null);
+  const [nome, setNome] = useState("");
+  const [quantidade, setQuantidade] = useState("1");
+
+  function limpar() {
+    setEditando(null);
+    setNome("");
+    setQuantidade("1");
+  }
+
+  const invalidar = () => void qc.invalidateQueries({ queryKey: ["material_pedagogico_itens"] });
+
+  const gravar = useMutation({
+    mutationFn: async () =>
+      salvar({
+        data: {
+          id: editando?.id ?? null,
+          unidade,
+          anoLetivo,
+          serie,
+          nome: nome.trim(),
+          quantidade: Number(quantidade),
+        },
+      }),
+    onSuccess: () => {
+      toast.success(editando ? "Item atualizado." : "Item adicionado.");
+      limpar();
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
+  const remover = useMutation({
+    mutationFn: async (id: string) => excluir({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Item removido.");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível remover."),
+  });
+
+  const qtd = Number(quantidade);
+  const formOk = nome.trim().length > 0 && Number.isInteger(qtd) && qtd > 0;
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3" data-itens-material>
+      <p className="text-xs font-medium">
+        Itens inclusos — {serie} · {anoLetivo}
+      </p>
+      {itens.length === 0 ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Nenhum item cadastrado. O portal e o contrato não listam itens para esta série.
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {itens.map((i) => (
+            <li key={i.id} className="flex items-center justify-between gap-2 text-sm">
+              <span>{rotuloItemMaterial({ nome: i.nome, quantidade: i.quantidade })}</span>
+              {podeEditar && (
+                <span className="flex shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Editar item"
+                    onClick={() => {
+                      setEditando(i);
+                      setNome(i.nome);
+                      setQuantidade(String(i.quantidade));
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Remover item"
+                    disabled={remover.isPending}
+                    onClick={() => remover.mutate(i.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {podeEditar && (
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Item</Label>
+            <Input
+              className="h-9 w-64"
+              placeholder="Ex.: Coleção Principal (Bernoulli)"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Volumes</Label>
+            <Input
+              className="h-9 w-20"
+              inputMode="numeric"
+              value={quantidade}
+              onChange={(e) => setQuantidade(e.target.value.replace(/\D/g, "").slice(0, 3))}
+            />
+          </div>
+          <Button size="sm" disabled={!formOk || gravar.isPending} onClick={() => gravar.mutate()}>
+            {gravar.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="mr-2 h-4 w-4" />
+            )}
+            {editando ? "Salvar item" : "Adicionar item"}
+          </Button>
+          {editando && (
+            <Button size="sm" variant="ghost" onClick={limpar}>
+              Cancelar
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Valor anual do material pedagógico por unidade + ano letivo + série, com a lista
+// de itens inclusos. É o valor que o portal público de Rematrícula do ano oferece
+// ao responsável para parcelar em até 8x — cada unidade e cada ano têm o seu.
 export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const listar = useServerFn(listarMaterialSeries);
+  const listarItens = useServerFn(listarMaterialItens);
   const salvar = useServerFn(salvarMaterialSerie);
   const excluir = useServerFn(excluirMaterialSerie);
 
@@ -393,12 +547,18 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
   // Unidade do seletor global do topo: a tela não tem seletor próprio, e o
   // cadastro grava sempre na unidade que está no topo.
   const unidade = useUnidadeAtiva();
+  const [ano, setAno] = useState(String(new Date().getFullYear() + 1));
   const [serie, setSerie] = useState("");
   const [valor, setValor] = useState("");
+  const [aberta, setAberta] = useState<string | null>(null);
 
   const registros = useQuery({
     queryKey: ["material_pedagogico_series"],
     queryFn: async () => listar({ data: undefined }),
+  });
+  const itens = useQuery({
+    queryKey: ["material_pedagogico_itens"],
+    queryFn: async () => listarItens({ data: undefined }),
   });
 
   function limpar() {
@@ -412,6 +572,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
     setEditando(null);
     setSerie("");
     setValor("");
+    setAberta(null);
   }, [unidade]);
 
   const gravar = useMutation({
@@ -420,6 +581,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
         data: {
           id: editando?.id ?? null,
           unidade: unidade ?? "",
+          anoLetivo: Number(ano),
           serie: serie.trim(),
           valorAnual: parseBRLNumber(valor),
         },
@@ -442,9 +604,10 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
   });
 
   const valorNumero = parseBRLNumber(valor);
-  const formOk = !!unidade && serie.trim().length > 0 && valorNumero > 0;
+  const formOk = !!unidade && ano.length === 4 && serie.trim().length > 0 && valorNumero > 0;
   const previa = formOk ? opcoesParcelamentoMaterial(valorNumero) : [];
   const linhas = filtrarPorUnidade(registros.data ?? [], unidade, (r) => r.unidade);
+  const todosItens = itens.data ?? [];
 
   return (
     <div className="space-y-6">
@@ -457,7 +620,7 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
           <h3 className="mb-3 text-sm font-semibold">
             {editando ? "Editar valor do material" : "Novo valor do material"}
           </h3>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">Unidade</Label>
               <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
@@ -465,9 +628,17 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
               </div>
             </div>
             <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Ano letivo</Label>
+              <Input
+                inputMode="numeric"
+                value={ano}
+                onChange={(e) => setAno(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              />
+            </div>
+            <div className="space-y-1">
               <Label className="text-[11px] text-muted-foreground">Série</Label>
               <Input
-                placeholder="Ex.: 1º Ano"
+                placeholder="Ex.: Maternal 3, 1º Ano"
                 value={serie}
                 onChange={(e) => setSerie(e.target.value)}
               />
@@ -514,8 +685,10 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
           <TableHeader>
             <TableRow>
               <TableHead>Unidade</TableHead>
+              <TableHead>Ano</TableHead>
               <TableHead>Série</TableHead>
               <TableHead className="text-right">Valor anual</TableHead>
+              <TableHead>Itens</TableHead>
               <TableHead>Atualizado por</TableHead>
               {podeEditar && <TableHead className="w-24 text-right">Ações</TableHead>}
             </TableRow>
@@ -523,43 +696,88 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
           <TableBody>
             {linhas.length === 0 && (
               <TableRow>
-                <TableCell colSpan={podeEditar ? 5 : 4} className="text-sm text-muted-foreground">
+                <TableCell colSpan={podeEditar ? 7 : 6} className="text-sm text-muted-foreground">
                   Nenhum valor cadastrado. Sem cadastro, o portal de Rematrícula não oferece o
                   material para a série.
                 </TableCell>
               </TableRow>
             )}
-            {linhas.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell>{r.unidade}</TableCell>
-                <TableCell>{r.serie}</TableCell>
-                <TableCell className="text-right">{formatarBRL(r.valorAnual)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{r.atualizadoPor}</TableCell>
-                {podeEditar && (
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        setEditando(r);
-                        setSerie(r.serie);
-                        setValor(r.valorAnual.toFixed(2).replace(".", ","));
-                      }}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      disabled={remover.isPending}
-                      onClick={() => remover.mutate(r.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
+            {linhas.map((r) => {
+              const itensDaSerie = todosItens.filter(
+                (i) =>
+                  i.unidade === r.unidade &&
+                  i.anoLetivo === r.anoLetivo &&
+                  i.serieChave === r.serieChave,
+              );
+              const expandida = aberta === r.id;
+              return (
+                <Fragment key={r.id}>
+                  <TableRow>
+                    <TableCell>{r.unidade}</TableCell>
+                    <TableCell>{r.anoLetivo}</TableCell>
+                    <TableCell>{r.serie}</TableCell>
+                    <TableCell className="text-right">{formatarBRL(r.valorAnual)}</TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 text-xs"
+                        onClick={() => setAberta(expandida ? null : r.id)}
+                      >
+                        {expandida ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )}
+                        {itensDaSerie.length} {itensDaSerie.length === 1 ? "item" : "itens"}
+                      </Button>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {r.atualizadoPor}
+                    </TableCell>
+                    {podeEditar && (
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Editar valor"
+                          onClick={() => {
+                            setEditando(r);
+                            setAno(String(r.anoLetivo));
+                            setSerie(r.serie);
+                            setValor(r.valorAnual.toFixed(2).replace(".", ","));
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Remover valor"
+                          disabled={remover.isPending}
+                          onClick={() => remover.mutate(r.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                  {expandida && (
+                    <TableRow>
+                      <TableCell colSpan={podeEditar ? 7 : 6} className="p-2">
+                        <ItensMaterialSerie
+                          podeEditar={podeEditar}
+                          unidade={r.unidade}
+                          anoLetivo={r.anoLetivo}
+                          serie={r.serie}
+                          itens={itensDaSerie}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       )}

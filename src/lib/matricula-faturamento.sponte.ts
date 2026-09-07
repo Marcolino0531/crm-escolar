@@ -127,14 +127,18 @@ export async function valoresOpcionaisDaUnidade(unidade: string): Promise<Valore
   };
 }
 
+// Valor do material só do ano letivo da matrícula — nunca de outro ano.
 export async function materialAnualDaSerie(
   unidade: string,
   serie: string,
+  anoLetivo: number,
 ): Promise<{ valorAnual: number; serieCadastrada: string } | null> {
+  if (!anoLetivo) return null;
   const { data } = await supabaseAdmin
     .from("material_pedagogico_series" as never)
     .select("serie, valor_anual")
     .eq("unidade", unidade)
+    .eq("ano_letivo", anoLetivo)
     .eq("serie_chave", chaveSerie(serie))
     .maybeSingle<{ serie: string; valor_anual: number }>();
   if (!data) return null;
@@ -373,7 +377,7 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
   }
 
   const [material, opcionais] = await Promise.all([
-    materialAnualDaSerie(entrada.unidade, entrada.serie),
+    materialAnualDaSerie(entrada.unidade, entrada.serie, entrada.anoLetivo),
     valoresOpcionaisDaUnidade(entrada.unidade),
   ]);
 

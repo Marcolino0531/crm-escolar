@@ -25,8 +25,10 @@ import {
   apresentacaoMaterial,
   chaveSerie,
   formatarPercentual,
-  itensMaterialInclusos,
   reajusteMaterial,
+  rotuloItemMaterial,
+  rotulosItensMaterial,
+  selecionarItensMaterial,
   serieRematricula,
   concentrarDiferenca,
   excedeuLimiteLinks,
@@ -298,15 +300,16 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
       serie: "1º Ano",
       anoLetivo: 2027,
       valorAnual: 3427.48,
+      itens: [
+        { nome: "Coleção Principal (Bernoulli)", quantidade: 1 },
+        { nome: "Cultura Inglesa", quantidade: 2 },
+      ],
     });
     expect(a.reajuste).toEqual({ anoAnterior: 2026, valorAnterior: 3439.1, percentual: -0.34 });
     expect(a.texto).toBe("Valor 2027: R$ 3.427,48 (reajuste de -0,34% em relação a 2026)");
     expect(a.itens).toEqual([
-      "Coleção Principal (Bernoulli)",
-      "Coleção Eu no Mundo",
-      "Material de Arte",
-      "Cultura Inglesa",
-      "Robótica",
+      { nome: "Coleção Principal (Bernoulli)", quantidade: 1 },
+      { nome: "Cultura Inglesa", quantidade: 2 },
     ]);
   });
 
@@ -325,21 +328,51 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
     expect(formatarPercentual(-0.34)).toBe("-0,34%");
   });
 
-  it("itens inclusos por faixa, e vazio para Maternal e outras unidades", () => {
-    expect(itensMaterialInclusos("CEC", "2º Período")).toEqual([
-      "Coleção Principal (Bernoulli)",
-      "Coleção Eu no Mundo",
-      "Cultura Inglesa",
-      "Robótica",
-    ]);
-    expect(itensMaterialInclusos("CEC", "9º Ano")).toEqual([
-      "Coleção Principal (Bernoulli)",
-      "Material de Arte",
-      "Cultura Inglesa",
-      "Robótica",
-    ]);
-    expect(itensMaterialInclusos("CEC", "Maternal 2")).toEqual([]);
-    expect(itensMaterialInclusos("Núcleo Belvedere", "2º Período")).toEqual([]);
+  it("rótulo do item: nome — N volume(s)", () => {
+    expect(rotuloItemMaterial({ nome: " Cultura Inglesa ", quantidade: 1 })).toBe(
+      "Cultura Inglesa — 1 volume",
+    );
+    expect(rotuloItemMaterial({ nome: "Coleção Principal (Bernoulli)", quantidade: 4 })).toBe(
+      "Coleção Principal (Bernoulli) — 4 volumes",
+    );
+    expect(
+      rotulosItensMaterial([
+        { nome: "A", quantidade: 1 },
+        { nome: "B", quantidade: 2 },
+      ]),
+    ).toEqual(["A — 1 volume", "B — 2 volumes"]);
+  });
+
+  it("itens vêm do cadastro por unidade × ano × série, inclusive Maternal e CEC Baby", () => {
+    const cadastro = [
+      { unidade: "CEC Baby", anoLetivo: 2027, serieChave: "maternal 3", ordem: 1, nome: "Inglês" },
+      {
+        unidade: "CEC Baby",
+        anoLetivo: 2027,
+        serieChave: "maternal 3",
+        ordem: 0,
+        nome: "Bernoulli",
+      },
+      {
+        unidade: "CEC Baby",
+        anoLetivo: 2028,
+        serieChave: "maternal 3",
+        ordem: 0,
+        nome: "Novo 2028",
+      },
+      { unidade: "CEC", anoLetivo: 2027, serieChave: "maternal 3", ordem: 0, nome: "Outro CEC" },
+      { unidade: "CEC Baby", anoLetivo: 2027, serieChave: "maternal 2", ordem: 0, nome: "M2" },
+    ];
+    expect(
+      selecionarItensMaterial(cadastro, "CEC Baby", "Maternal 3", 2027).map((i) => i.nome),
+    ).toEqual(["Bernoulli", "Inglês"]);
+    expect(
+      selecionarItensMaterial(cadastro, "CEC Baby", "Maternal 3", 2028).map((i) => i.nome),
+    ).toEqual(["Novo 2028"]);
+    expect(selecionarItensMaterial(cadastro, "Núcleo Belvedere", "Maternal 3", 2027)).toEqual([]);
+    expect(selecionarItensMaterial(cadastro, "CEC Baby", "1º Ano", 2027)).toEqual([]);
+    // Sem ano letivo não há fallback para outro ano.
+    expect(selecionarItensMaterial(cadastro, "CEC Baby", "Maternal 3", null)).toEqual([]);
   });
 
   it("sem histórico (outra unidade ou ano) mostra só o valor", () => {
@@ -348,7 +381,9 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
       serie: "2º Período",
       anoLetivo: 2027,
       valorAnual: 2209.5,
+      itens: [],
     });
+    expect(a.itens).toEqual([]);
     expect(a.reajuste).toBeNull();
     expect(a.texto).toBe("Valor 2027: R$ 2.209,50");
     expect(reajusteMaterial("CEC", "1º Ano", 2028, 3500)).toBeNull();

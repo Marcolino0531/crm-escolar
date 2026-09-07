@@ -32,7 +32,7 @@ import {
   emailValido,
   telefoneValido,
 } from "./matricula-form";
-import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "./crm/mecCutoff";
+import { TURMAS_POR_IDADE, calcularIdadeEscolar } from "./crm/mecCutoff";
 
 export const LINK_VALIDADE_MINUTOS = 15;
 export const MAX_LINKS_POR_JANELA = 3;
@@ -701,39 +701,37 @@ export function serieRematricula(
 
 // ─── Apresentação do material ao responsável ───────────────────────────────
 //
-// O pai vê só o total anual da série do próprio aluno, os itens inclusos (sem
-// valor individual) e o reajuste frente ao ano anterior. Os valores do ano
-// anterior são histórico fixo — não há por que cadastrá-los na tela.
+// O pai vê só o total anual da série do próprio aluno, os itens inclusos (nome
+// e quantidade, sem valor individual) e o reajuste frente ao ano anterior. Os
+// itens vêm do cadastro `material_pedagogico_itens` da mesma unidade × ano ×
+// série do valor; os valores do ano anterior são histórico fixo.
 
-const ITENS_INFANTIL = [
-  "Coleção Principal (Bernoulli)",
-  "Coleção Eu no Mundo",
-  "Cultura Inglesa",
-  "Robótica",
-];
-const ITENS_ANOS_INICIAIS = [
-  "Coleção Principal (Bernoulli)",
-  "Coleção Eu no Mundo",
-  "Material de Arte",
-  "Cultura Inglesa",
-  "Robótica",
-];
-const ITENS_ANOS_FINAIS = [
-  "Coleção Principal (Bernoulli)",
-  "Material de Arte",
-  "Cultura Inglesa",
-  "Robótica",
-];
+export interface ItemMaterial {
+  nome: string;
+  quantidade: number;
+}
 
-export function itensMaterialInclusos(unidade: string, serie: string): string[] {
-  if (unidade !== "CEC") return [];
-  const indice = TURMAS_POR_IDADE.findIndex((s) => chaveSerie(s) === chaveSerie(serie));
-  if (indice < 0) return [];
-  if (indice < INDICE_PRIMEIRO_ANO) {
-    // Só 1º e 2º Período entram nesta rodada (Maternal fica de fora).
-    return /periodo/.test(chaveSerie(serie)) ? [...ITENS_INFANTIL] : [];
-  }
-  return indice <= INDICE_PRIMEIRO_ANO + 4 ? [...ITENS_ANOS_INICIAIS] : [...ITENS_ANOS_FINAIS];
+/** "Coleção Principal (Bernoulli) — 1 volume" / "Cultura Inglesa — 2 volumes". */
+export function rotuloItemMaterial(item: ItemMaterial): string {
+  const unidade = item.quantidade === 1 ? "volume" : "volumes";
+  return `${item.nome.trim()} — ${item.quantidade} ${unidade}`;
+}
+
+export function rotulosItensMaterial(itens: readonly ItemMaterial[]): string[] {
+  return itens.map(rotuloItemMaterial);
+}
+
+// Itens da série na leitura do cadastro: só os da mesma unidade, ano e série
+// (chave normalizada), na ordem cadastrada. Sem cadastro para o ano, lista
+// vazia — nunca cai para outro ano ou unidade.
+export function selecionarItensMaterial<
+  T extends { unidade: string; anoLetivo: number; serieChave: string; ordem: number },
+>(itens: readonly T[], unidade: string, serie: string, anoLetivo: number | null): T[] {
+  if (!anoLetivo) return [];
+  const chave = chaveSerie(serie);
+  return itens
+    .filter((i) => i.unidade === unidade && i.anoLetivo === anoLetivo && i.serieChave === chave)
+    .sort((a, b) => a.ordem - b.ordem);
 }
 
 // Valor anual do material por unidade → ano letivo → chave da série.
@@ -785,7 +783,7 @@ export interface ApresentacaoMaterial {
   serie: string;
   anoLetivo: number | null;
   valorAnual: number;
-  itens: string[];
+  itens: ItemMaterial[];
   reajuste: ReajusteMaterial | null;
   /** Ex.: "Valor 2027: R$ 3.427,48 (reajuste de -0,34% em relação a 2026)". */
   texto: string;
@@ -796,6 +794,7 @@ export function apresentacaoMaterial(input: {
   serie: string;
   anoLetivo: number | null;
   valorAnual: number;
+  itens: readonly ItemMaterial[];
 }): ApresentacaoMaterial {
   const reajuste = reajusteMaterial(input.unidade, input.serie, input.anoLetivo, input.valorAnual);
   const rotuloAno = input.anoLetivo ? `Valor ${input.anoLetivo}` : "Valor anual";
@@ -806,7 +805,7 @@ export function apresentacaoMaterial(input: {
     serie: input.serie,
     anoLetivo: input.anoLetivo,
     valorAnual: input.valorAnual,
-    itens: itensMaterialInclusos(input.unidade, input.serie),
+    itens: input.itens.map((i) => ({ nome: i.nome, quantidade: i.quantidade })),
     reajuste,
     texto,
   };

@@ -18,6 +18,7 @@ import {
   mensagemMensalidadeAusente,
   mensagemSessaoDeOutroAno,
   mensagemCampanhaIndisponivel,
+  rotuloItemMaterial,
 } from "@/lib/rematricula";
 import {
   TODOS_OS_TURNOS,
@@ -1022,7 +1023,7 @@ function RematriculaPage() {
                       <p className="mb-1">Itens inclusos:</p>
                       <ul className="list-disc space-y-0.5 pl-5">
                         {material.itens.map((item) => (
-                          <li key={item}>{item}</li>
+                          <li key={item.nome}>{rotuloItemMaterial(item)}</li>
                         ))}
                       </ul>
                     </div>

@@ -43,7 +43,6 @@ import {
   type TestemunhaContrato,
 } from "@/lib/contrato-matricula";
 import { gerarPdfContratoMatricula } from "@/lib/contrato-matricula-pdf";
-import { itensMaterialInclusos } from "@/lib/rematricula";
 import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
@@ -55,6 +54,7 @@ import {
   buscarResponsaveisComFinanceiro,
   exigirPermissaoRematricula,
   hojeBRT,
+  itensMaterialDaSerie,
 } from "@/lib/rematricula.functions";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
 import {
@@ -546,6 +546,7 @@ async function montarPdfContrato(
   }
 
   const serie = matricula.data.serie;
+  const itensMaterial = escolha.data ? await itensMaterialDaSerie(unidade, serie, anoLetivo) : [];
   const input: MontarContratoInput = {
     numeroContrato: numero,
     anoLetivo,
@@ -594,7 +595,7 @@ async function montarPdfContrato(
     },
     material: escolha.data
       ? {
-          itens: itensMaterialInclusos(unidade, serie),
+          itens: itensMaterial,
           valorTotal: Number(escolha.data.valor_anual),
           parcelas: escolha.data.parcelas,
         }

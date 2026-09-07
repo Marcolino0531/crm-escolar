@@ -22,7 +22,6 @@ import {
   vencimentosMatriculaPelasMensalidades,
   type TurmaParaTurno,
 } from "./rematricula-matricula";
-import { itensMaterialInclusos } from "./rematricula";
 
 describe("mês de referência da matrícula", () => {
   it("até o dia 25 usa o mês do preenchimento", () => {
@@ -248,16 +247,6 @@ describe("turnos por série a partir das turmas reais do Sponte", () => {
     expect(unidadeRestringeTurno("CEC Baby")).toBe(true);
     expect(unidadeRestringeTurno("Belvedere")).toBe(false);
     expect(unidadeRestringeTurno("Vale do Sereno")).toBe(false);
-  });
-});
-
-describe("material pedagógico sem Material Coletivo", () => {
-  it("nenhuma faixa lista Material Coletivo", () => {
-    for (const s of ["1º Período", "3º Ano", "8º Ano"]) {
-      const itens = itensMaterialInclusos("CEC", s);
-      expect(itens.length).toBeGreaterThan(0);
-      expect(itens).not.toContain("Material Coletivo");
-    }
   });
 });
 
