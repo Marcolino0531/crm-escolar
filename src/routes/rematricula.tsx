@@ -721,7 +721,6 @@ function RematriculaPage() {
                   valor={formatarDataBR(aluno.dataNascimento)}
                 />
                 <CampoLeitura label="Série atual" valor={aluno.serie} />
-                <CampoLeitura label="UF" valor={aluno.uf} />
                 {contatoAluno && (
                   <CamposContato
                     edicao={contatoAluno}
@@ -761,25 +760,32 @@ function RematriculaPage() {
                     }}
                     onCopiarEnderecoDoAluno={
                       contatoAluno
-                        ? () => {
+                        ? async () => {
                             const base = contatoAluno;
-                            setContatoResp((atual) => {
-                              const antes = atual[r.responsavelId] ?? edicaoDoResponsavel(r);
-                              return {
-                                ...atual,
-                                [r.responsavelId]: {
-                                  ...antes,
-                                  cep: base.cep,
-                                  endereco: base.endereco,
-                                  numeroEndereco: base.numeroEndereco,
-                                  complementoEndereco: base.complementoEndereco,
-                                  bairro: base.bairro,
-                                  cidade: base.cidade,
-                                  estado: aluno?.uf || antes.estado,
-                                },
-                              };
-                            });
+                            const aplicar = (estado?: string) =>
+                              setContatoResp((atual) => {
+                                const antes = atual[r.responsavelId] ?? edicaoDoResponsavel(r);
+                                return {
+                                  ...atual,
+                                  [r.responsavelId]: {
+                                    ...antes,
+                                    cep: base.cep,
+                                    endereco: base.endereco,
+                                    numeroEndereco: base.numeroEndereco,
+                                    complementoEndereco: base.complementoEndereco,
+                                    bairro: base.bairro,
+                                    cidade: base.cidade,
+                                    estado: estado ?? antes.estado,
+                                  },
+                                };
+                              });
+                            aplicar();
                             setCadastroSalvo("");
+                            // O Sponte não devolve a UF do aluno; o Estado vem do CEP copiado.
+                            if (base.cep.replace(/\D/g, "").length === 8) {
+                              const achado = await buscarEnderecoPorCep(base.cep);
+                              if (achado?.uf) aplicar(achado.uf.toUpperCase());
+                            }
                           }
                         : undefined
                     }

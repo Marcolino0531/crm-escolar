@@ -210,9 +210,10 @@ export interface AlunoSponteRematricula {
   complemento: string;
   bairro: string;
   cidade: string;
-  uf: string;
 }
 
+// O GetAlunos do Sponte não devolve a UF do aluno (a tag existe no WSDL, mas
+// nunca vem na resposta); o Estado é deduzido do CEP no portal.
 function lerAluno(node: string, unidade: string): AlunoSponteRematricula {
   const turma = parseXmlValue(node, "TurmaAtual");
   return {
@@ -232,7 +233,6 @@ function lerAluno(node: string, unidade: string): AlunoSponteRematricula {
     complemento: parseXmlValue(node, "ComplementoEndereco"),
     bairro: parseXmlValue(node, "Bairro"),
     cidade: parseXmlValue(node, "Cidade"),
-    uf: parseXmlValue(node, "UF"),
   };
 }
 
