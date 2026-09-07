@@ -19,6 +19,7 @@ import {
   normalizarCategoria,
   temHorarioEstendido,
 } from "@/lib/diario-auditoria";
+import { serveJantar } from "@/lib/rematricula-matricula";
 
 /** Categorias recorrentes de extras, na ordem em que aparecem no formulário. */
 export const CATEGORIAS_EXTRAS_REMATRICULA = [
@@ -30,6 +31,15 @@ export const CATEGORIAS_EXTRAS_REMATRICULA = [
 ] as const;
 
 export type CategoriaExtra = (typeof CATEGORIAS_EXTRAS_REMATRICULA)[number];
+
+/**
+ * Categorias que o formulário oferece para a série: Jantar só até o 1º Período.
+ * É regra de oferta, não de auditoria — um Jantar já lançado no Sponte/Diário
+ * para série avançada continua entrando em `divergenciasExtras`.
+ */
+export function categoriasExtrasOferecidas(serie: string): CategoriaExtra[] {
+  return CATEGORIAS_EXTRAS_REMATRICULA.filter((c) => c !== "Jantar" || serveJantar(serie));
+}
 
 export interface TituloParaExtras {
   categoria: string;

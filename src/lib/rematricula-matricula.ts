@@ -70,6 +70,15 @@ export function perguntaFrequenciaParcial(serie: string): boolean {
   return indice < 0 || indice < INDICE_PRIMEIRO_PERIODO;
 }
 
+// ─── Jantar: só até o 1º Período ────────────────────────────────────────────
+
+// O Jantar não é servido do 2º Período em diante. Série desconhecida mantém a
+// opção visível.
+export function serveJantar(serie: string): boolean {
+  const indice = indiceSerie(serie);
+  return indice < 0 || indice <= INDICE_PRIMEIRO_PERIODO;
+}
+
 // ─── Mês de referência e parcelas ───────────────────────────────────────────
 
 export const DIA_LIMITE_MES_ATUAL = 25;
@@ -323,6 +332,9 @@ export function normalizarRotinaParaSerie(
   }
   if (!turnos.manha && r.periodoManha) r.periodoManha = false;
   if (!turnos.tarde && r.periodoTarde) r.periodoTarde = false;
+  if (!serveJantar(serie) && r.refeicoes.dinner.length > 0) {
+    r.refeicoes = { ...r.refeicoes, dinner: [] };
+  }
   return r;
 }
 

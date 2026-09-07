@@ -24,7 +24,7 @@ import {
 } from "@/lib/rematricula-matricula";
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
-import { CATEGORIAS_EXTRAS_REMATRICULA, type CategoriaExtra } from "@/lib/rematricula-extras";
+import { categoriasExtrasOferecidas, type CategoriaExtra } from "@/lib/rematricula-extras";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ROTINA_FORM_VAZIA,
@@ -407,7 +407,12 @@ function RematriculaPage() {
           setMatParcelas(portal.matricula.escolhaAtual?.parcelas ?? 1);
           setMatVencimento(portal.matricula.escolhaAtual?.primeiroVencimento ?? "");
         }
-        setExtrasMarcados(portal.extras?.selecionadas ?? []);
+        {
+          const oferecidas = categoriasExtrasOferecidas(portal.aluno?.serie ?? "");
+          setExtrasMarcados(
+            (portal.extras?.selecionadas ?? []).filter((c) => oferecidas.includes(c)),
+          );
+        }
         setEnviadaEm(portal.enviadaEm ?? null);
         setEtapa("portal");
       } catch {
@@ -421,8 +426,8 @@ function RematriculaPage() {
     };
   }, [carregar]);
 
-  // Sugestão inicial da rotina: envio anterior do próprio aluno ou o plano do
-  // Diário do Aluno. Sem nada cadastrado, a etapa abre em branco.
+  // Sugestão inicial da rotina: só um envio anterior do próprio responsável.
+  // Sem envio, a grade abre em branco (não herda o Diário do Aluno).
   useEffect(() => {
     if (token === "") return;
     let ativo = true;
@@ -541,6 +546,7 @@ function RematriculaPage() {
     : null;
   const mensalidade = dados?.mensalidade;
   const extras = dados?.extras ?? null;
+  const categoriasOferecidas = categoriasExtrasOferecidas(aluno?.serie ?? "");
 
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
@@ -689,55 +695,6 @@ function RematriculaPage() {
               )}
             </div>
 
-            <div className="rounded-lg border p-4">
-              <RotinaEscolar
-                rotina={rotina}
-                erros={errosRotina}
-                serie={aluno.serie}
-                perguntarDataInicio={false}
-                frequenciaParcialPorSerie
-                turnos={turnos}
-                titulo="Atualização da Rotina Escolar"
-                descricao={
-                  rotinaSugerida
-                    ? "Confira a rotina que está cadastrada hoje e ajuste o que mudar no próximo ano letivo."
-                    : "Informe os horários e as refeições contratadas para o próximo ano letivo."
-                }
-                onChange={(nova) => {
-                  setRotina(nova);
-                  setRotinaSalva("");
-                }}
-              />
-              <Button
-                className="mt-4 w-full"
-                variant="secondary"
-                disabled={enviarRotina.isPending}
-                onClick={() => {
-                  const encontrados = validarRotinaForm(rotina, aluno.serie, {
-                    exigirDataInicio: false,
-                  });
-                  setErrosRotina(encontrados);
-                  if (!formValido(encontrados)) {
-                    setErro("Confira os campos destacados da rotina.");
-                    return;
-                  }
-                  enviarRotina.mutate();
-                }}
-              >
-                {enviarRotina.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar rotina escolar
-              </Button>
-              {rotinaSalva && (
-                <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
-                  <CheckCircle2 className="h-4 w-4" />
-                  {rotinaSalva}
-                </p>
-              )}
-              {errosEnvio["rotina"] && (
-                <p className="mt-2 text-xs text-destructive">{errosEnvio["rotina"]}</p>
-              )}
-            </div>
-
             {matricula && limitesVencimento && (
               <div className="rounded-lg border p-4">
                 <h2 className="mb-1 text-sm font-semibold">Matrícula</h2>
@@ -857,63 +814,6 @@ function RematriculaPage() {
               )}
             </div>
 
-            {extras && (
-              <div className="rounded-lg border p-4">
-                <h2 className="mb-1 text-sm font-semibold">Extras</h2>
-                <p className="mb-3 text-sm text-muted-foreground">
-                  {extras.sponte.length > 0
-                    ? `Serviços já contratados para ${extras.anoLetivo} vêm marcados com o valor mensal atual. Desmarque o que não quiser manter ou marque um novo serviço.`
-                    : `Nenhum serviço extra contratado para ${extras.anoLetivo}. Se quiser, marque os que deseja contratar.`}
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {CATEGORIAS_EXTRAS_REMATRICULA.map((categoria) => {
-                    const lancado = extras.sponte.find((e) => e.categoria === categoria);
-                    const marcado = extrasMarcados.includes(categoria);
-                    return (
-                      <label
-                        key={categoria}
-                        className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition ${
-                          marcado ? "border-primary bg-primary/10" : "hover:bg-muted/60"
-                        } ${enviadaEm ? "cursor-default opacity-70" : ""}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 accent-primary"
-                            checked={marcado}
-                            disabled={!!enviadaEm}
-                            onChange={(e) =>
-                              setExtrasMarcados((atual) =>
-                                e.target.checked
-                                  ? CATEGORIAS_EXTRAS_REMATRICULA.filter(
-                                      (c) => c === categoria || atual.includes(c),
-                                    )
-                                  : atual.filter((c) => c !== categoria),
-                              )
-                            }
-                          />
-                          {categoria}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                {extras.indisponivel && (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Não conseguimos consultar os serviços já contratados agora; marque os que deseja
-                    manter ou contratar.
-                  </p>
-                )}
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Alterações são conferidas pela secretaria após a finalização; nenhum lançamento é
-                  feito neste momento.
-                </p>
-              </div>
-            )}
-
             <div className="rounded-lg border p-4">
               <h2 className="mb-1 text-sm font-semibold">Material pedagógico</h2>
               {material?.configurado ? (
@@ -980,6 +880,112 @@ function RematriculaPage() {
               )}
               {errosEnvio["material"] && (
                 <p className="mt-2 text-xs text-destructive">{errosEnvio["material"]}</p>
+              )}
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <RotinaEscolar
+                rotina={rotina}
+                erros={errosRotina}
+                serie={aluno.serie}
+                perguntarDataInicio={false}
+                frequenciaParcialPorSerie
+                turnos={turnos}
+                embutido
+                titulo="Atualização da Rotina Escolar"
+                descricao={
+                  rotinaSugerida
+                    ? "Confira o que você já informou e ajuste o que mudar no próximo ano letivo."
+                    : "Informe os horários e as refeições contratadas para o próximo ano letivo. A grade começa em branco: marque exatamente o que quer para o próximo ano."
+                }
+                onChange={(nova) => {
+                  setRotina(nova);
+                  setRotinaSalva("");
+                }}
+              />
+              <Button
+                className="mt-4 w-full"
+                variant="secondary"
+                disabled={enviarRotina.isPending}
+                onClick={() => {
+                  const encontrados = validarRotinaForm(rotina, aluno.serie, {
+                    exigirDataInicio: false,
+                  });
+                  setErrosRotina(encontrados);
+                  if (!formValido(encontrados)) {
+                    setErro("Confira os campos destacados da rotina.");
+                    return;
+                  }
+                  enviarRotina.mutate();
+                }}
+              >
+                {enviarRotina.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar rotina escolar
+              </Button>
+              {rotinaSalva && (
+                <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {rotinaSalva}
+                </p>
+              )}
+              {errosEnvio["rotina"] && (
+                <p className="mt-2 text-xs text-destructive">{errosEnvio["rotina"]}</p>
+              )}
+              {extras && (
+                <div className="mt-6 border-t pt-5">
+                  <h2 className="mb-1 text-sm font-semibold">Extras</h2>
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    {extras.sponte.length > 0
+                      ? `Serviços já contratados para ${extras.anoLetivo} vêm marcados com o valor mensal atual. Desmarque o que não quiser manter ou marque um novo serviço.`
+                      : `Nenhum serviço extra contratado para ${extras.anoLetivo}. Se quiser, marque os que deseja contratar.`}
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {categoriasOferecidas.map((categoria) => {
+                      const lancado = extras.sponte.find((e) => e.categoria === categoria);
+                      const marcado = extrasMarcados.includes(categoria);
+                      return (
+                        <label
+                          key={categoria}
+                          className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition ${
+                            marcado ? "border-primary bg-primary/10" : "hover:bg-muted/60"
+                          } ${enviadaEm ? "cursor-default opacity-70" : ""}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-primary"
+                              checked={marcado}
+                              disabled={!!enviadaEm}
+                              onChange={(e) =>
+                                setExtrasMarcados((atual) =>
+                                  e.target.checked
+                                    ? categoriasOferecidas.filter(
+                                        (c) => c === categoria || atual.includes(c),
+                                      )
+                                    : atual.filter((c) => c !== categoria),
+                                )
+                              }
+                            />
+                            {categoria}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {extras.indisponivel && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Não conseguimos consultar os serviços já contratados agora; marque os que
+                      deseja manter ou contratar.
+                    </p>
+                  )}
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Alterações são conferidas pela secretaria após a finalização; nenhum lançamento
+                    é feito neste momento.
+                  </p>
+                </div>
               )}
             </div>
 

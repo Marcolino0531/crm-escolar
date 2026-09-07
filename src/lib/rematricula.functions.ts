@@ -1071,55 +1071,6 @@ function planoDaRotinaSalva(linha: LinhaRotinaSalva): PlanoRotinaExistente {
   };
 }
 
-// Plano do Diário do Aluno da mesma unidade (o par school_id + sponte_aluno_id
-// é único, então não há risco de pegar homônimo de outra escola).
-async function planoDoDiario(
-  unidade: string,
-  alunoId: string,
-): Promise<PlanoRotinaExistente | null> {
-  const { data: escola } = await supabaseAdmin
-    .from("schools")
-    .select("id")
-    .eq("name", unidade)
-    .maybeSingle<{ id: string }>();
-  if (!escola) return null;
-
-  const { data: aluno } = await supabaseAdmin
-    .from("diario_students" as never)
-    .select("id")
-    .eq("school_id", escola.id)
-    .eq("sponte_aluno_id", alunoId)
-    .maybeSingle<{ id: string }>();
-  if (!aluno) return null;
-
-  const anoVigente = await anoVigenteConfigurado();
-  const [horarios, refeicoes] = await Promise.all([
-    supabaseAdmin
-      .from("diario_schedules" as never)
-      .select("weekday, entry, exit")
-      .eq("student_id", aluno.id)
-      .eq("ano_letivo", anoVigente),
-    supabaseAdmin
-      .from("diario_meal_plans" as never)
-      .select("meal, weekday")
-      .eq("student_id", aluno.id)
-      .eq("ano_letivo", anoVigente),
-  ]);
-
-  const linhasHorario = (horarios.data ?? []) as { weekday: number; entry: string; exit: string }[];
-  const linhasRefeicao = (refeicoes.data ?? []) as { meal: MealKey; weekday: number }[];
-  if (linhasHorario.length === 0 && linhasRefeicao.length === 0) return null;
-
-  return {
-    horarios: linhasHorario.map((h) => ({
-      weekday: h.weekday as Weekday,
-      entrada: h.entry,
-      saida: h.exit,
-    })),
-    refeicoes: linhasRefeicao.map((r) => ({ meal: r.meal, weekday: r.weekday as Weekday })),
-  };
-}
-
 // Espelha a rotina da rematrícula no Diário do Aluno, SÓ no ano letivo da
 // rematrícula: apaga e regrava as linhas daquele aluno/ano, sem tocar no ano
 // vigente (que segue em uso diário até dezembro). Sem aluno no Diário, não faz
@@ -1221,17 +1172,8 @@ export const rotinaRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const plano = await planoDoDiario(sessao.unidade, sessao.alunoId);
-    if (plano) {
-      return {
-        ok: true,
-        serie,
-        origem: "diario",
-        rotina: ajustar(rotinaDoPlanoExistente(plano, serie)),
-        turnos,
-      };
-    }
-
+    // Sem envio anterior a grade abre em branco: a rotina do próximo ano não
+    // herda o plano vigente do Diário do Aluno.
     return { ok: true, serie, origem: "", rotina: { ...ROTINA_FORM_VAZIA }, turnos };
   });
 
