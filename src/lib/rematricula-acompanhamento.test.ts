@@ -5,6 +5,7 @@ import {
   filtrarPorStatus,
   montarLinhasAcompanhamento,
   ordenarAcompanhamento,
+  resumirLancamentosRevisao,
   type AcessoAcompanhamento,
   type AlunoAtivoAcompanhamento,
   type EnvioAcompanhamento,
@@ -161,5 +162,71 @@ describe("cards de resumo x tabela filtrada por status", () => {
     const cards = contadoresAcompanhamento(base);
     expect(cards.total).toBe(base.length);
     expect(cards.responderam).toBe(base.filter((l) => l.parcelamento !== "").length);
+  });
+});
+
+describe("resumirLancamentosRevisao — material e matrícula independentes", () => {
+  const ok = (conta: string) => ({ ok: true, lancadaNoSponte: true, sponteContaReceberId: conta });
+
+  it("material lançado e matrícula com falha no Sponte: ambos aparecem, sem fechar", () => {
+    const r = resumirLancamentosRevisao({
+      material: ok("123"),
+      matricula: { ok: true, lancadaNoSponte: false, sponteErro: "InsertPlano recusado" },
+    });
+    expect(r.mensagens).toEqual([
+      { tipo: "sucesso", texto: "Material Pedagógico lançado no Sponte (conta a receber 123)." },
+      {
+        tipo: "erro",
+        texto: "Matrícula aprovado, mas NÃO foi lançado no Sponte: InsertPlano recusado",
+      },
+    ]);
+    expect(r.algumSucesso).toBe(true);
+    expect(r.tudoOk).toBe(false);
+  });
+
+  it("matrícula lançada e material com erro de rede: o sucesso da matrícula não é escondido", () => {
+    const r = resumirLancamentosRevisao({
+      material: new Error("Falha de conexão"),
+      matricula: ok("456"),
+    });
+    expect(r.mensagens.map((m) => m.tipo)).toEqual(["erro", "sucesso"]);
+    expect(r.mensagens[0].texto).toBe("Material Pedagógico: Falha de conexão");
+    expect(r.algumSucesso).toBe(true);
+    expect(r.tudoOk).toBe(false);
+  });
+
+  it("recusa de negócio (ok:false) vira erro com a mensagem do servidor", () => {
+    const r = resumirLancamentosRevisao({
+      material: { ok: false, erro: "Esta solicitação já foi lançada no Sponte." },
+      matricula: null,
+    });
+    expect(r.mensagens).toEqual([
+      { tipo: "erro", texto: "Material Pedagógico: Esta solicitação já foi lançada no Sponte." },
+    ]);
+    expect(r.algumSucesso).toBe(false);
+  });
+
+  it("os dois lançados: tudoOk e uma mensagem de sucesso para cada", () => {
+    const r = resumirLancamentosRevisao({ material: ok("1"), matricula: ok("2") });
+    expect(r.tudoOk).toBe(true);
+    expect(r.mensagens).toHaveLength(2);
+  });
+
+  it("lançado com pendência de ajuste de parcela conta como erro (não fecha o modal)", () => {
+    const r = resumirLancamentosRevisao({
+      material: null,
+      matricula: { ...ok("9"), sponteErro: "parcela 2 não ajustada" },
+    });
+    expect(r.mensagens[0].tipo).toBe("erro");
+    expect(r.mensagens[0].texto).toContain("conta 9");
+    expect(r.tudoOk).toBe(false);
+  });
+
+  it("nada tentado: sem mensagens e não fecha", () => {
+    expect(resumirLancamentosRevisao({ material: null, matricula: null })).toEqual({
+      mensagens: [],
+      algumSucesso: false,
+      tudoOk: false,
+    });
   });
 });
