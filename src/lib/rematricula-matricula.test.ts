@@ -15,6 +15,9 @@ import {
   unidadeRestringeTurno,
   validarPrimeiroVencimento,
   valorMatricula,
+  SEGMENTOS_MATRICULA,
+  mensagemPendenciasCampanha,
+  segmentosSemValorMatricula,
   valorMensalidadeComDesconto,
   vencimentosMatriculaPelasMensalidades,
   type TurmaParaTurno,
@@ -71,18 +74,42 @@ describe("quantidade de parcelas disponíveis (set–jan, máx 5x)", () => {
   });
 });
 
-describe("valor da matrícula por segmento", () => {
-  it("Educação Infantil e Fundamental I: R$ 2.057,10", () => {
+describe("valor da matrícula por segmento e ano", () => {
+  const valores2027 = { infantil_fundamental_1: 2057.1, fundamental_2: 2234.25 };
+  it("Educação Infantil e Fundamental I usam o valor cadastrado do segmento", () => {
     for (const serie of ["Berçário", "Maternal 2", "1º Período", "1º Ano", "5º Ano"]) {
       expect(segmentoMatricula(serie)).toBe("infantil_fundamental_1");
-      expect(valorMatricula(serie)).toBe(2057.1);
+      expect(valorMatricula(valores2027, serie)).toBe(2057.1);
     }
   });
-  it("Fundamental II: R$ 2.234,25", () => {
+  it("Fundamental II usa o valor cadastrado do segmento", () => {
     for (const serie of ["6º Ano", "7° Ano", "9º Ano"]) {
       expect(segmentoMatricula(serie)).toBe("fundamental_2");
-      expect(valorMatricula(serie)).toBe(2234.25);
+      expect(valorMatricula(valores2027, serie)).toBe(2234.25);
     }
+  });
+  it("sem valor cadastrado para o segmento do ano devolve null (não cai em outro ano)", () => {
+    expect(valorMatricula({}, "1º Ano")).toBeNull();
+    expect(valorMatricula({ infantil_fundamental_1: 2100 }, "6º Ano")).toBeNull();
+    expect(valorMatricula({ fundamental_2: 0 }, "6º Ano")).toBeNull();
+  });
+  it("lista os segmentos sem valor como pendência para abrir a campanha", () => {
+    expect(segmentosSemValorMatricula(valores2027)).toEqual([]);
+    expect(segmentosSemValorMatricula({ infantil_fundamental_1: 2100 })).toEqual(["fundamental_2"]);
+    expect(segmentosSemValorMatricula({})).toEqual(SEGMENTOS_MATRICULA);
+  });
+  it("mensagem de pendência cita o ano e o segmento que falta", () => {
+    expect(mensagemPendenciasCampanha(2028, { segmentosSemValorMatricula: [] })).toBeNull();
+    expect(
+      mensagemPendenciasCampanha(2028, { segmentosSemValorMatricula: ["fundamental_2"] }),
+    ).toBe(
+      "Não é possível abrir a campanha de 2028: falta cadastrar o valor da Matrícula de 2028 para Ensino Fundamental II.",
+    );
+    expect(
+      mensagemPendenciasCampanha(2028, {
+        segmentosSemValorMatricula: ["infantil_fundamental_1", "fundamental_2"],
+      }),
+    ).toContain("Educação Infantil e Ensino Fundamental I e Ensino Fundamental II");
   });
   it("divide em parcelas com sobra de centavos na 1ª e soma fecha no total", () => {
     const op = parcelamentoMatricula(2057.1, 3);

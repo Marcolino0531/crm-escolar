@@ -14,7 +14,6 @@ import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
-import { Route as RematriculaRouteImport } from './routes/rematricula'
 import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MatriculasRouteImport } from './routes/matriculas'
@@ -40,7 +39,10 @@ import { Route as AnalisesIaRouteImport } from './routes/analises-ia'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RematriculaIndexRouteImport } from './routes/rematricula.index'
 import { Route as RematriculaVerificarRouteImport } from './routes/rematricula_.verificar'
+import { Route as RematriculaAnoRouteImport } from './routes/rematricula.$ano'
+import { Route as RematriculaAnoVerificarRouteImport } from './routes/rematricula_.$ano_.verificar'
 
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
@@ -68,11 +70,6 @@ const RematriculaAcompanhamentoRoute =
     path: '/rematricula-acompanhamento',
     getParentRoute: () => rootRouteImport,
   } as any)
-const RematriculaRoute = RematriculaRouteImport.update({
-  id: '/rematricula',
-  path: '/rematricula',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PortalCantinaRoute = PortalCantinaRouteImport.update({
   id: '/portal-cantina',
   path: '/portal-cantina',
@@ -198,9 +195,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RematriculaIndexRoute = RematriculaIndexRouteImport.update({
+  id: '/rematricula/',
+  path: '/rematricula/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RematriculaVerificarRoute = RematriculaVerificarRouteImport.update({
   id: '/rematricula_/verificar',
   path: '/rematricula/verificar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RematriculaAnoRoute = RematriculaAnoRouteImport.update({
+  id: '/rematricula/$ano',
+  path: '/rematricula/$ano',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RematriculaAnoVerificarRoute = RematriculaAnoVerificarRouteImport.update({
+  id: '/rematricula_/$ano_/verificar',
+  path: '/rematricula/$ano/verificar',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -230,13 +242,15 @@ export interface FileRoutesByFullPath {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
-  '/rematricula': typeof RematriculaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula/$ano': typeof RematriculaAnoRoute
   '/rematricula/verificar': typeof RematriculaVerificarRoute
+  '/rematricula/': typeof RematriculaIndexRoute
+  '/rematricula/$ano/verificar': typeof RematriculaAnoVerificarRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -264,13 +278,15 @@ export interface FileRoutesByTo {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
-  '/rematricula': typeof RematriculaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula/$ano': typeof RematriculaAnoRoute
   '/rematricula/verificar': typeof RematriculaVerificarRoute
+  '/rematricula': typeof RematriculaIndexRoute
+  '/rematricula/$ano/verificar': typeof RematriculaAnoVerificarRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -299,13 +315,15 @@ export interface FileRoutesById {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/portal-cantina': typeof PortalCantinaRoute
-  '/rematricula': typeof RematriculaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
   '/uniformes': typeof UniformesRoute
   '/upload': typeof UploadRoute
+  '/rematricula/$ano': typeof RematriculaAnoRoute
   '/rematricula_/verificar': typeof RematriculaVerificarRoute
+  '/rematricula/': typeof RematriculaIndexRoute
+  '/rematricula_/$ano_/verificar': typeof RematriculaAnoVerificarRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -335,13 +353,15 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
-    | '/rematricula'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula/$ano'
     | '/rematricula/verificar'
+    | '/rematricula/'
+    | '/rematricula/$ano/verificar'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -369,13 +389,15 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
-    | '/rematricula'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula/$ano'
     | '/rematricula/verificar'
+    | '/rematricula'
+    | '/rematricula/$ano/verificar'
   id:
     | '__root__'
     | '/'
@@ -403,13 +425,15 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/portal-cantina'
-    | '/rematricula'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
     | '/uniformes'
     | '/upload'
+    | '/rematricula/$ano'
     | '/rematricula_/verificar'
+    | '/rematricula/'
+    | '/rematricula_/$ano_/verificar'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -438,13 +462,15 @@ export interface RootRouteChildren {
   MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
   PortalCantinaRoute: typeof PortalCantinaRoute
-  RematriculaRoute: typeof RematriculaRoute
   RematriculaAcompanhamentoRoute: typeof RematriculaAcompanhamentoRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
   UniformesRoute: typeof UniformesRoute
   UploadRoute: typeof UploadRoute
+  RematriculaAnoRoute: typeof RematriculaAnoRoute
   RematriculaVerificarRoute: typeof RematriculaVerificarRoute
+  RematriculaIndexRoute: typeof RematriculaIndexRoute
+  RematriculaAnoVerificarRoute: typeof RematriculaAnoVerificarRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -482,13 +508,6 @@ declare module '@tanstack/react-router' {
       path: '/rematricula-acompanhamento'
       fullPath: '/rematricula-acompanhamento'
       preLoaderRoute: typeof RematriculaAcompanhamentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rematricula': {
-      id: '/rematricula'
-      path: '/rematricula'
-      fullPath: '/rematricula'
-      preLoaderRoute: typeof RematriculaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/portal-cantina': {
@@ -666,11 +685,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rematricula/': {
+      id: '/rematricula/'
+      path: '/rematricula'
+      fullPath: '/rematricula/'
+      preLoaderRoute: typeof RematriculaIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/rematricula_/verificar': {
       id: '/rematricula_/verificar'
       path: '/rematricula/verificar'
       fullPath: '/rematricula/verificar'
       preLoaderRoute: typeof RematriculaVerificarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rematricula/$ano': {
+      id: '/rematricula/$ano'
+      path: '/rematricula/$ano'
+      fullPath: '/rematricula/$ano'
+      preLoaderRoute: typeof RematriculaAnoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rematricula_/$ano_/verificar': {
+      id: '/rematricula_/$ano_/verificar'
+      path: '/rematricula/$ano/verificar'
+      fullPath: '/rematricula/$ano/verificar'
+      preLoaderRoute: typeof RematriculaAnoVerificarRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -702,13 +742,15 @@ const rootRouteChildren: RootRouteChildren = {
   MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
   PortalCantinaRoute: PortalCantinaRoute,
-  RematriculaRoute: RematriculaRoute,
   RematriculaAcompanhamentoRoute: RematriculaAcompanhamentoRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,
   UniformesRoute: UniformesRoute,
   UploadRoute: UploadRoute,
+  RematriculaAnoRoute: RematriculaAnoRoute,
   RematriculaVerificarRoute: RematriculaVerificarRoute,
+  RematriculaIndexRoute: RematriculaIndexRoute,
+  RematriculaAnoVerificarRoute: RematriculaAnoVerificarRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

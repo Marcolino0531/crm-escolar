@@ -117,9 +117,62 @@ export function inicioJanelaLinks(agoraISO: string): string {
 
 // ─── Email do link mágico ───────────────────────────────────────────────────
 
-export function urlLinkRematricula(baseUrl: string, token: string): string {
+// O ano letivo faz parte da URL: um link de 2027 continua valendo para 2027
+// mesmo depois de a campanha de 2028 abrir.
+export function urlLinkRematricula(baseUrl: string, anoLetivo: number, token: string): string {
   const base = baseUrl.replace(/\/+$/, "");
-  return `${base}/rematricula/verificar?token=${encodeURIComponent(token)}`;
+  return `${base}/rematricula/${anoLetivo}/verificar?token=${encodeURIComponent(token)}`;
+}
+
+export function urlPortalRematricula(baseUrl: string, anoLetivo: number): string {
+  return `${baseUrl.replace(/\/+$/, "")}/rematricula/${anoLetivo}`;
+}
+
+// ─── Ano letivo da URL ──────────────────────────────────────────────────────
+
+// "2027" → 2027; qualquer outra coisa ("verificar", "27", "abc") → null.
+export function anoLetivoDaUrl(segmento: string): number | null {
+  if (!/^\d{4}$/.test(segmento)) return null;
+  const ano = Number(segmento);
+  return anoLetivoValido(ano) ? ano : null;
+}
+
+export type SituacaoCampanha = "aberta" | "fechada" | "inexistente";
+
+export function situacaoCampanha(
+  campanha: { anoLetivo: number; aberta: boolean } | null | undefined,
+): SituacaoCampanha {
+  if (!campanha) return "inexistente";
+  return campanha.aberta ? "aberta" : "fechada";
+}
+
+export function mensagemCampanhaIndisponivel(
+  anoLetivo: number | null,
+  situacao: SituacaoCampanha,
+): string {
+  if (anoLetivo === null) {
+    return "Este endereço não é de uma campanha de rematrícula. Use o link enviado pela escola.";
+  }
+  if (situacao === "inexistente") {
+    return `Não há campanha de rematrícula para ${anoLetivo}. Confira o link enviado pela escola ou fale com a secretaria.`;
+  }
+  return `A rematrícula para ${anoLetivo} não está aberta no momento. Fale com a secretaria.`;
+}
+
+// Mensalidade do ano da URL não lançada no Sponte: nunca mostra a de outro ano.
+export function mensagemMensalidadeAusente(anoLetivo: number): string {
+  return `A mensalidade de ${anoLetivo} ainda não foi lançada pela secretaria. Fale com a escola para confirmar o valor.`;
+}
+
+// Sessão criada por um link de um ano, aberta na URL de outro ano.
+export function mensagemSessaoDeOutroAno(
+  anoDaSessao: number | null,
+  anoDaUrl: number | null,
+): string {
+  const url = anoDaUrl ?? "este ano";
+  return anoDaSessao
+    ? `Seu acesso é da rematrícula de ${anoDaSessao}, e esta página é a de ${url}. Informe o CPF para receber um link de ${url}.`
+    : `Seu acesso não vale para a rematrícula de ${url}. Informe o CPF para receber um novo link.`;
 }
 
 // Mostra só a 1ª letra do usuário e a 1ª letra do domínio: o suficiente para o
@@ -561,16 +614,25 @@ export function percentualBolsa(bolsaAssociada: string): number {
   return parseFloat(`${m[1]}.${m[2] || "0"}`);
 }
 
-// Mensalidade VIGENTE = a parcela de mensalidade com o vencimento mais próximo
-// ainda por vencer; se o ano já acabou (só parcelas passadas), a mais recente.
-// Sempre lida na hora do Sponte — não há cache desse valor em lugar nenhum.
+// Mensalidade VIGENTE do ano letivo da campanha = a mensalidade com vencimento
+// entre 01/01 e 31/12 daquele ano com o vencimento mais próximo ainda por
+// vencer (ou, se todas já venceram, a mais recente delas). Nunca cai para outro
+// ano: sem mensalidade do ano pedido, devolve null e a tela avisa que a
+// secretaria ainda não a lançou. Sempre lida na hora do Sponte — sem cache.
 export function mensalidadeVigente(
   parcelas: ParcelaMensalidade[],
+  anoLetivo: number,
   hojeISO: string,
 ): MensalidadeVigente | null {
   const hoje = hojeISO.slice(0, 10);
+  const inicio = `${anoLetivo}-01-01`;
+  const fim = `${anoLetivo}-12-31`;
   const mensalidades = parcelas.filter(
-    (p) => chaveSerie(p.categoria).includes("mensalidade") && p.valor > 0 && p.vencimento,
+    (p) =>
+      chaveSerie(p.categoria).includes("mensalidade") &&
+      p.valor > 0 &&
+      p.vencimento >= inicio &&
+      p.vencimento <= fim,
   );
   if (mensalidades.length === 0) return null;
 

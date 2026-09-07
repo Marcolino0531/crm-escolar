@@ -142,7 +142,7 @@ export interface ContratosPendentesResult {
 interface EnvioRow {
   unidade: string;
   aluno_id: string;
-  ano_letivo: number | null;
+  ano_letivo: number;
   enviada_em: string;
 }
 
@@ -153,13 +153,14 @@ interface MatriculaRow {
   valor: number;
   parcelas: number;
   primeiro_vencimento: string;
-  ano_letivo: number | null;
+  ano_letivo: number;
 }
 
 interface EscolhaRow {
   aluno_id: string;
   valor_anual: number;
   parcelas: number;
+  ano_letivo: number;
 }
 
 interface ContratoRow {
@@ -263,7 +264,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
       selectAll<EscolhaRow>(() =>
         supabaseAdmin
           .from("rematricula_escolhas" as never)
-          .select("aluno_id, valor_anual, parcelas")
+          .select("aluno_id, valor_anual, parcelas, ano_letivo")
           .eq("unidade", unidade)
           .order("aluno_id", { ascending: true }),
       ),
@@ -290,14 +291,15 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
       for (const d of (rows ?? []) as unknown as DocRow[]) docs.set(d.id, d);
     }
 
-    const matPorAluno = new Map(matriculas.map((m) => [m.aluno_id, m]));
-    const escPorAluno = new Map(escolhas.map((e) => [e.aluno_id, e]));
+    // Tudo casado por aluno E ano: o envio de 2028 não herda a matrícula de 2027.
+    const matPor = new Map(matriculas.map((m) => [`${m.aluno_id}|${m.ano_letivo}`, m]));
+    const escPor = new Map(escolhas.map((e) => [`${e.aluno_id}|${e.ano_letivo}`, e]));
     const contratoPor = new Map(contratos.map((c) => [`${c.aluno_id}|${c.ano_letivo}`, c]));
 
     const itens: ContratoPendente[] = envios.map((e) => {
-      const m = matPorAluno.get(e.aluno_id);
-      const esc = escPorAluno.get(e.aluno_id);
-      const anoLetivo = e.ano_letivo ?? m?.ano_letivo ?? new Date().getFullYear() + 1;
+      const anoLetivo = e.ano_letivo;
+      const m = matPor.get(`${e.aluno_id}|${anoLetivo}`);
+      const esc = escPor.get(`${e.aluno_id}|${anoLetivo}`);
       const c = contratoPor.get(`${e.aluno_id}|${anoLetivo}`) ?? null;
       const doc = c?.zapsign_documento_id ? docs.get(c.zapsign_documento_id) : undefined;
       return {
@@ -511,13 +513,15 @@ async function montarPdfContrato(
       .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
       .eq("unidade", unidade)
       .eq("aluno_id", alunoId)
+      .eq("ano_letivo", anoLetivo)
       .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
     supabaseAdmin
       .from("rematricula_escolhas" as never)
       .select("valor_anual, parcelas")
       .eq("unidade", unidade)
       .eq("aluno_id", alunoId)
-      .maybeSingle<Omit<EscolhaRow, "aluno_id">>(),
+      .eq("ano_letivo", anoLetivo)
+      .maybeSingle<Omit<EscolhaRow, "aluno_id" | "ano_letivo">>(),
     buscarAlunoPorId(unidade, alunoId),
     colegioDaUnidade(unidade),
     testemunhasAtivas(),
@@ -527,8 +531,8 @@ async function montarPdfContrato(
 
   // Respeita a troca de responsável financeiro feita no portal de rematrícula.
   const [responsaveis, mensalidade, extras, logo] = await Promise.all([
-    buscarResponsaveisComFinanceiro(unidade, alunoId),
-    buscarMensalidadeVigente(unidade, alunoId),
+    buscarResponsaveisComFinanceiro(unidade, alunoId, anoLetivo),
+    buscarMensalidadeVigente(unidade, alunoId, anoLetivo),
     extrasDoAluno(unidade, alunoId, anoLetivo),
     carregarLogoServidor(colegio.logo_path),
   ]);
@@ -537,7 +541,9 @@ async function montarPdfContrato(
   if (!emailValido(fin.email)) {
     throw new Error("O responsável financeiro não tem email válido no Sponte.");
   }
-  if (!mensalidade) throw new Error("Mensalidade vigente não encontrada no Sponte.");
+  if (!mensalidade) {
+    throw new Error(`Nenhuma mensalidade de ${anoLetivo} encontrada no Sponte para este aluno.`);
+  }
 
   const serie = matricula.data.serie;
   const input: MontarContratoInput = {

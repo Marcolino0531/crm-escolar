@@ -271,16 +271,17 @@ export interface DivergenciaExtraAluno {
  *  filtro de permissão — quem chama já validou o acesso à unidade). */
 export async function divergenciasExtrasDaUnidade(
   unidade: string,
+  anoLetivo?: number,
 ): Promise<DivergenciaExtraAluno[]> {
   const rows = await selectAll<
     Pick<DivergenciaRow, "aluno_id" | "ano_letivo" | "categoria" | "tipo" | "valor">
-  >(() =>
-    supabaseAdmin
+  >(() => {
+    const q = supabaseAdmin
       .from("rematricula_extras_divergencias" as never)
       .select("aluno_id, ano_letivo, categoria, tipo, valor")
-      .eq("unidade", unidade)
-      .order("created_at"),
-  );
+      .eq("unidade", unidade);
+    return (anoLetivo === undefined ? q : q.eq("ano_letivo", anoLetivo)).order("created_at");
+  });
   return rows.map((r) => ({
     alunoId: r.aluno_id,
     anoLetivo: r.ano_letivo,

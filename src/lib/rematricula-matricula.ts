@@ -32,15 +32,35 @@ import { proximoDiaUtil } from "./billing-schedule";
 
 export type SegmentoMatricula = "infantil_fundamental_1" | "fundamental_2";
 
-export const VALOR_MATRICULA: Record<SegmentoMatricula, number> = {
-  infantil_fundamental_1: 2057.1,
-  fundamental_2: 2234.25,
-};
+export const SEGMENTOS_MATRICULA: readonly SegmentoMatricula[] = [
+  "infantil_fundamental_1",
+  "fundamental_2",
+];
+
+// Valor da Matrícula por segmento de UM ano letivo, lido do cadastro
+// (rematricula_matricula_valores). Segmento ausente = ainda não cadastrado.
+export type ValoresMatricula = Partial<Record<SegmentoMatricula, number>>;
+
+export function segmentosSemValorMatricula(valores: ValoresMatricula): SegmentoMatricula[] {
+  return SEGMENTOS_MATRICULA.filter((s) => !(valores[s] && valores[s] > 0));
+}
 
 export const ROTULO_SEGMENTO_MATRICULA: Record<SegmentoMatricula, string> = {
   infantil_fundamental_1: "Educação Infantil e Ensino Fundamental I",
   fundamental_2: "Ensino Fundamental II",
 };
+
+// Pendências que impedem abrir a campanha do ano ao público. null = pode abrir.
+export function mensagemPendenciasCampanha(
+  anoLetivo: number,
+  pendencias: { segmentosSemValorMatricula: SegmentoMatricula[] },
+): string | null {
+  if (pendencias.segmentosSemValorMatricula.length === 0) return null;
+  const rotulos = pendencias.segmentosSemValorMatricula
+    .map((s) => ROTULO_SEGMENTO_MATRICULA[s])
+    .join(" e ");
+  return `Não é possível abrir a campanha de ${anoLetivo}: falta cadastrar o valor da Matrícula de ${anoLetivo} para ${rotulos}.`;
+}
 
 const INDICE_SEXTO_ANO = TURMAS_POR_IDADE.indexOf("6º Ano");
 
@@ -56,8 +76,10 @@ export function segmentoMatricula(serie: string): SegmentoMatricula {
   return indice >= INDICE_SEXTO_ANO ? "fundamental_2" : "infantil_fundamental_1";
 }
 
-export function valorMatricula(serie: string): number {
-  return VALOR_MATRICULA[segmentoMatricula(serie)];
+// null quando o valor do segmento da série ainda não foi cadastrado para o ano.
+export function valorMatricula(valores: ValoresMatricula, serie: string): number | null {
+  const valor = valores[segmentoMatricula(serie)];
+  return valor && valor > 0 ? valor : null;
 }
 
 // ─── Frequência parcial: só até o Maternal 3 ────────────────────────────────
