@@ -153,7 +153,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
     tipo: "bloco",
     chave: "extras",
     texto:
-      "EXTRAS: «ListaExtrasSelecionados» (podendo incluir Hora Extra, Lanche da Manhã, Lanche da Tarde, Almoço e/ou Jantar), no valor mensal total de R$«ValorTotalExtrasMensal», cobrados juntamente com a mensalidade, enquanto vigente a contratação de cada serviço.",
+      "EXTRAS: «ListaExtrasSelecionados», no valor mensal total de R$«ValorTotalExtrasMensal», cobrados juntamente com a mensalidade, enquanto vigente a contratação de cada serviço.",
   },
   {
     tipo: "paragrafo",

@@ -257,9 +257,7 @@ describe("montarContratoMatricula — texto do modelo", () => {
     expect(texto).toContain(
       "MENSALIDADE: R$2.000,00, com desconto de 30% aplicado, resultando no valor mensal de R$1.400,00 (mil e quatrocentos reais)",
     );
-    expect(texto).toContain(
-      "EXTRAS: Hora Extra e Almoço (podendo incluir Hora Extra, Lanche da Manhã, Lanche da Tarde, Almoço e/ou Jantar), no valor mensal total de R$770,50",
-    );
+    expect(texto).toContain("EXTRAS: Hora Extra e Almoço, no valor mensal total de R$770,50");
     expect(texto).not.toContain("este bloco é substituído por");
     expect(doc.fecho).toBe("Belo Horizonte, 14 de setembro de 2026.");
   });
