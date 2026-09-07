@@ -100,11 +100,15 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
   });
   const carregando = consultas.some((c) => c.isLoading);
   const erros = consultas
-    .map((c) => c.data?.error)
+    .map((c) => c.data?.error ?? (c.error instanceof Error ? c.error.message : null))
     .filter((e): e is string => Boolean(e))
     .join(" · ");
-  const producaoConfigurada = consultas.every((c) => c.data?.producaoConfigurada !== false);
-  const webhookRegistrado = consultas.some((c) => c.data?.webhookProducaoRegistrado);
+  const carregadas = consultas.filter((c) => c.data);
+  const producaoConfigurada = carregadas.every((c) => c.data?.producaoConfigurada);
+  // Só afirma "não registrado" com resposta do servidor em mãos: uma consulta
+  // que falhou não pode ser lida como ausência de webhook.
+  const webhookRegistrado =
+    carregadas.length === 0 || carregadas.some((c) => c.data?.webhookProducaoRegistrado);
 
   const itens = useMemo(() => {
     const todos = consultas.flatMap((c) => c.data?.itens ?? []);
@@ -148,7 +152,8 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
   const webhookMutation = useMutation({
     mutationFn: async () => registrarWebhook(),
     onSuccess: (res) => {
-      if (res.ok) toast.success("Webhook de produção registrado na ZapSign.");
+      if (res.ok && res.jaExistia) toast.info("O webhook de produção já estava registrado.");
+      else if (res.ok) toast.success("Webhook de produção registrado na ZapSign.");
       else toast.error(res.erro ?? "Falha ao registrar o webhook.");
       void qc.invalidateQueries({ queryKey: ["contratos_matricula"] });
     },

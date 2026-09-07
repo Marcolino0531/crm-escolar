@@ -594,6 +594,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
 
 export interface RegistrarWebhookProducaoResult {
   ok: boolean;
+  jaExistia?: boolean;
   erro?: string;
 }
 
@@ -603,6 +604,7 @@ export const registrarWebhookContratos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<RegistrarWebhookProducaoResult> => {
     const nomeUsuario = await exigirPermissaoRematricula(context.userId, true);
+    if (await webhookProducaoRegistrado()) return { ok: true, jaExistia: true };
     const url = `${BASE_URL_PORTAL}/api/zapsign/webhook`;
     const r = await criarWebhook(url, AMBIENTE);
     if (!r.ok) return { ok: false, erro: r.erro };
