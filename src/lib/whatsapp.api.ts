@@ -37,6 +37,7 @@ import {
   type BoletoAberto,
 } from "@/lib/sponte.functions";
 import {
+  boletosParaTotal,
   cobrancaPermitida,
   envioLiberado,
   menorDataBaseCobranca,
@@ -464,9 +465,9 @@ async function runCron(hoje: string, opcoes: OpcoesRotina = {}): Promise<Resulta
           `[whatsapp] aluno ${c.alunoId}: responsável financeiro sem telefone no Sponte — sem disparo hoje.`,
         );
       }
-      // Só entram no total anunciado (e no disparo) os boletos que a regra da
-      // unidade permite cobrar — no Belvedere/Vale do Sereno, mensalidade a
-      // partir de setembro/2026.
+      // Disparam a cobrança só os boletos que a regra da unidade permite; o
+      // total anunciado segue `boletosParaTotal` (no CEC/CEC Baby, toda a
+      // dívida vencida; no Belvedere/Vale do Sereno, só o que passa no corte).
       const permitidos = divida.boletos.filter((b) =>
         cobrancaPermitida({
           unidade: c.unidade,
@@ -476,7 +477,11 @@ async function runCron(hoje: string, opcoes: OpcoesRotina = {}): Promise<Resulta
       );
       vencidasPorAluno.set(
         c.alunoId,
-        filtrarPorAcordoDoAluno(c.alunoId, parcelasVencidas(permitidos, hoje), excecoes),
+        filtrarPorAcordoDoAluno(
+          c.alunoId,
+          parcelasVencidas(boletosParaTotal(c.unidade, divida.boletos), hoje),
+          excecoes,
+        ),
       );
       for (const b of permitidos) {
         cobraveis.push({
