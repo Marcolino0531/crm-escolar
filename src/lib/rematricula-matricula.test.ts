@@ -127,7 +127,23 @@ describe("parcelas 2+ seguem o vencimento real da mensalidade", () => {
     );
     expect(datas).toEqual(["2026-09-18", "2026-10-05", "2026-11-05", "2026-12-07"]);
   });
-  it("sem mensalidade no mês, cai no mesmo dia da 1ª parcela", () => {
+  it("mês sem mensalidade emitida usa o dia habitual da mensalidade (rolado p/ dia útil), não o dia da 1ª", () => {
+    // Caso real: 1ª parcela em 21/09/2026, mensalidades só a partir de fev/2027 no dia 10.
+    const mensalidades2027 = [
+      "2027-02-10",
+      "2027-03-10",
+      "2027-04-12",
+      "2027-05-10",
+      "2027-06-10",
+    ].map(mensalidade);
+    const datas = vencimentosMatriculaPelasMensalidades(mensalidades2027, "2026-09-21", 5);
+    // 10/10/2026 é sábado → 13/10 (12/10 é feriado); 10/01/2027 é domingo → 11/01.
+    expect(datas).toEqual(["2026-09-21", "2026-10-13", "2026-11-10", "2026-12-10", "2027-01-11"]);
+    const itens = cronogramaMatricula(2234.25, 5, datas);
+    expect(itens.map((i) => i.valor)).toEqual([446.85, 446.85, 446.85, 446.85, 446.85]);
+    expect(itens.map((i) => i.vencimento)).toEqual(datas);
+  });
+  it("sem nenhuma mensalidade de referência, cai no mesmo dia da 1ª parcela", () => {
     expect(vencimentosMatriculaPelasMensalidades([], "2026-11-30", 3)).toEqual([
       "2026-11-30",
       "2026-12-30",
