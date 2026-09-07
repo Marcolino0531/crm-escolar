@@ -64,10 +64,30 @@ export type CamposContrato = Record<CampoContrato, string>;
 export const TEXTO_SEM_MATERIAL = "Não há material pedagógico contratado nesta matrícula.";
 export const TEXTO_SEM_EXTRAS = "Não há serviços extras contratados nesta rematrícula.";
 
-export const TESTEMUNHAS_CONTRATO: readonly { nome: string; cpf: string }[] = [
-  { nome: "Márcia Regina Ribeiro Marcolino", cpf: "631.466.656-20" },
-  { nome: "Anna Clara Marcolino Ribeiro", cpf: "157.432.546-99" },
-];
+/** Testemunha do contrato (cadastro global em Configurações). */
+export interface TestemunhaContrato {
+  nome: string;
+  cpf: string;
+  email: string;
+  celular: string;
+}
+
+export const PAPEIS_SIGNATARIOS = [
+  "CONTRATANTE",
+  "CONTRATADO",
+  "TESTEMUNHA 1",
+  "TESTEMUNHA 2",
+] as const;
+export type PapelSignatario = (typeof PAPEIS_SIGNATARIOS)[number];
+
+/** Signatário que vai para a ZapSign, na ordem de PAPEIS_SIGNATARIOS. */
+export interface SignatarioContrato {
+  papel: PapelSignatario;
+  nome: string;
+  email: string;
+  telefone: string;
+  cpf: string;
+}
 
 // ─── Extras (contas a receber do Sponte) ────────────────────────────────────
 
@@ -182,6 +202,9 @@ export interface ColegioContrato {
   email: string;
   representanteNome: string;
   representanteCpf: string;
+  /** Contato PESSOAL do representante (assina na ZapSign). */
+  representanteEmail: string;
+  representanteCelular: string;
 }
 
 export interface ResponsavelContrato {
@@ -231,6 +254,8 @@ export interface MontarContratoInput {
   mensalidade: MensalidadeContrato;
   material: MaterialContrato | null;
   extras: ExtrasContrato;
+  /** As duas testemunhas ativas, na ordem em que assinam. */
+  testemunhas: TestemunhaContrato[];
   /** YYYY-MM-DD da geração (Brasília). */
   hojeISO: string;
 }
@@ -397,7 +422,7 @@ export function montarContratoMatricula(input: MontarContratoInput): ContratoMat
         nome: campos.NomeRepresentanteLegal,
         cpf: campos.CPFRepresentanteLegal,
       },
-      ...TESTEMUNHAS_CONTRATO.map((t) => ({ papel: "TESTEMUNHA", nome: t.nome, cpf: t.cpf })),
+      ...input.testemunhas.map((t) => ({ papel: "TESTEMUNHA", nome: t.nome, cpf: t.cpf })),
     ],
   };
 }
@@ -410,6 +435,24 @@ export function validarContrato(input: MontarContratoInput): string[] {
   if (!c.cnpj.trim()) erros.push("CNPJ do colégio");
   if (!c.representanteNome.trim()) erros.push("Representante Legal (Dados dos Colégios)");
   if (!c.representanteCpf.trim()) erros.push("CPF do representante legal (Dados dos Colégios)");
+  if (!c.representanteEmail.trim()) {
+    erros.push("E-mail do representante legal (Dados dos Colégios)");
+  }
+  if (!c.representanteCelular.trim()) {
+    erros.push("Celular do representante legal (Dados dos Colégios)");
+  }
+  if (input.testemunhas.length !== 2) {
+    erros.push(
+      `Duas testemunhas ativas (Configurações → Testemunhas do contrato; há ${input.testemunhas.length})`,
+    );
+  }
+  input.testemunhas.forEach((t, i) => {
+    const quem = t.nome.trim() || `Testemunha ${i + 1}`;
+    if (!t.nome.trim()) erros.push(`Nome da testemunha ${i + 1} (Configurações)`);
+    if (!t.cpf.trim()) erros.push(`CPF da testemunha ${quem} (Configurações)`);
+    if (!t.email.trim()) erros.push(`E-mail da testemunha ${quem} (Configurações)`);
+    if (!t.celular.trim()) erros.push(`Celular da testemunha ${quem} (Configurações)`);
+  });
   if (!input.responsavel.nome.trim()) erros.push("Nome do responsável financeiro");
   if (!input.responsavel.cpf.trim()) erros.push("CPF do responsável financeiro");
   if (!input.responsavel.email.trim()) erros.push("E-mail do responsável financeiro (signatário)");
@@ -422,6 +465,34 @@ export function validarContrato(input: MontarContratoInput): string[] {
   if (!input.mensalidade.vencimento) erros.push("Dia de vencimento da mensalidade");
   if (input.material && !(input.material.valorTotal > 0)) erros.push("Valor do material");
   return erros;
+}
+
+/**
+ * Os 4 signatários da ZapSign, na ordem CONTRATANTE, CONTRATADO, TESTEMUNHA 1 e
+ * TESTEMUNHA 2. Pressupõe `validarContrato` sem pendências: nenhum contato
+ * recebe fallback (o e-mail institucional da unidade nunca assina).
+ */
+export function signatariosContrato(input: MontarContratoInput): SignatarioContrato[] {
+  const { colegio: c, responsavel: r } = input;
+  return [
+    { papel: "CONTRATANTE", nome: r.nome, email: r.email, telefone: r.telefone, cpf: r.cpf },
+    {
+      papel: "CONTRATADO",
+      nome: c.representanteNome,
+      email: c.representanteEmail,
+      telefone: c.representanteCelular,
+      cpf: c.representanteCpf,
+    },
+    ...input.testemunhas.map(
+      (t, i): SignatarioContrato => ({
+        papel: PAPEIS_SIGNATARIOS[2 + i] ?? "TESTEMUNHA 2",
+        nome: t.nome,
+        email: t.email,
+        telefone: t.celular,
+        cpf: t.cpf,
+      }),
+    ),
+  ];
 }
 
 export function nomeArquivoContrato(doc: ContratoMatriculaDocumento): string {

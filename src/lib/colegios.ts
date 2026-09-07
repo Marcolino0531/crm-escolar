@@ -28,6 +28,8 @@ export type ColegioRow = {
   representante_nome: string;
   representante_oab: string;
   representante_cpf: string;
+  representante_email: string;
+  representante_celular: string;
   observacao: string;
   logo_path: string | null;
   updated_at: string;
@@ -64,6 +66,16 @@ export const COLEGIO_CAMPOS: {
     mascara: "cpf",
   },
   {
+    key: "representante_email",
+    label: "E-mail pessoal do representante legal (assinatura do contrato)",
+    placeholder: "nome@email.com",
+  },
+  {
+    key: "representante_celular",
+    label: "Celular pessoal do representante legal (assinatura do contrato)",
+    placeholder: "(31) 99999-9999",
+  },
+  {
     key: "representante_oab",
     label: "OAB-MG do representante (Termo de Confissão de Dívida)",
     placeholder: "000.000",
@@ -92,6 +104,8 @@ export function colegioVazio(unidade: string): ColegioRow {
     representante_nome: "",
     representante_oab: "",
     representante_cpf: "",
+    representante_email: "",
+    representante_celular: "",
     observacao: "",
     logo_path: null,
     updated_at: "",

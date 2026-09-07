@@ -40,6 +40,7 @@ import {
 } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { DadosColegios } from "@/components/documentos/DadosColegios";
+import { TestemunhasContrato } from "@/components/documentos/TestemunhasContrato";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listManagedUsers,
@@ -103,6 +104,9 @@ function SettingsPage() {
         {canView("documentos") && (
           <TabsContent value="colegios" className="mt-4">
             <DadosColegios podeEditar={canEdit("documentos")} />
+            <div className="mt-8 border-t pt-6">
+              <TestemunhasContrato podeEditar={canEdit("documentos")} />
+            </div>
           </TabsContent>
         )}
         {isAdmin && (

@@ -25,19 +25,26 @@ export type SignatarioPersistido = {
   email: string;
   telefone: string;
   cpf: string;
+  /** CONTRATANTE, CONTRATADO, TESTEMUNHA 1/2 (contratos); ausente na POC. */
+  papel?: string;
   status: string;
   sign_url: string | null;
   signed_at: string | null;
   times_viewed: number;
 };
 
-export function signatarioDoSigner(s: ZapSignSignerResposta, cpf: string): SignatarioPersistido {
+export function signatarioDoSigner(
+  s: ZapSignSignerResposta,
+  cpf: string,
+  papel?: string,
+): SignatarioPersistido {
   return {
     token: s.token ?? null,
     nome: s.name,
     email: s.email ?? "",
     telefone: s.phone_number ? `${s.phone_country ?? ""}${s.phone_number}` : "",
     cpf,
+    ...(papel ? { papel } : {}),
     status: s.status,
     sign_url: s.sign_url ?? null,
     signed_at: s.signed_at ?? null,
@@ -56,8 +63,8 @@ function primeiraAssinaturaCompleta(doc: { status: string; signers?: ZapSignSign
 
 /**
  * Atualiza status/signatários do documento local a partir de uma resposta da
- * ZapSign (detalhe ou callback). Preserva o CPF informado na criação, pois a
- * API não o devolve.
+ * ZapSign (detalhe ou callback). Preserva o CPF e o papel informados na
+ * criação, pois a API não os devolve.
  */
 export async function aplicarEstadoDocumento(
   zapsignToken: string,
@@ -80,7 +87,7 @@ export async function aplicarEstadoDocumento(
   const signatarios = (doc.signers ?? []).map((s) => {
     const antes =
       anteriores.find((a) => a.token === s.token) ?? anteriores.find((a) => a.nome === s.name);
-    return signatarioDoSigner(s, antes?.cpf ?? "");
+    return signatarioDoSigner(s, antes?.cpf ?? "", antes?.papel);
   });
 
   const assinadoEm = atual.assinado_em ?? primeiraAssinaturaCompleta(doc);
