@@ -129,6 +129,12 @@ import {
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { getResendConfig, sendEmail } from "@/lib/agenda.email";
 import { emailValido } from "@/lib/imposto-renda-lote";
+import {
+  carregarExtrasRematricula,
+  registrarExtrasFinalizacao,
+  type ExtrasRematricula,
+} from "@/lib/rematricula-extras.functions";
+import { CATEGORIAS_EXTRAS_REMATRICULA } from "@/lib/rematricula-extras";
 
 const LOG_TAG = "[rematricula]";
 
@@ -769,6 +775,9 @@ export interface DadosRematricula {
   mensalidade?: MensalidadeVigente | null;
   material?: MaterialRematricula;
   matricula?: MatriculaRematricula;
+  // Extras (Lanche da Manhã, Almoço, …) do ano letivo da rematrícula; null sem
+  // ano letivo configurado.
+  extras?: ExtrasRematricula | null;
   // Envio final ("Finalizar Matrícula") já feito pelo responsável.
   enviadaEm?: string | null;
 }
@@ -848,11 +857,14 @@ export const dadosRematricula = createServerFn({ method: "POST" })
 
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
-    const [responsaveis, mensalidade, material, escolha, escolhaMatricula, envio] =
+    const [responsaveis, mensalidade, material, extras, escolha, escolhaMatricula, envio] =
       await Promise.all([
         buscarResponsaveis(sessao.unidade, sessao.alunoId, responsavelFinanceiroId),
         buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
         materialDaSerie(sessao.unidade, serieAlvo),
+        anoLetivo
+          ? carregarExtrasRematricula(sessao.unidade, sessao.alunoId, aluno.nome, anoLetivo)
+          : Promise.resolve(null),
         supabaseAdmin
           .from("rematricula_escolhas" as never)
           .select("parcelas, updated_at, status")
@@ -908,6 +920,7 @@ export const dadosRematricula = createServerFn({ method: "POST" })
           : null,
       },
       matricula: montarMatricula(serieAlvo, escolhaMatricula.data ?? null),
+      extras,
       enviadaEm: envio.data?.enviada_em ?? null,
     };
   });
@@ -1325,6 +1338,7 @@ const FinalizarSchema = z.object({
     parcelas: z.number().int().min(1).max(5),
     primeiroVencimento: z.string().max(10),
   }),
+  extras: z.array(z.enum(CATEGORIAS_EXTRAS_REMATRICULA)).max(10).default([]),
 });
 
 export interface FinalizarRematriculaResult {
@@ -1436,6 +1450,24 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
     if (envio.error) {
       console.error(`${LOG_TAG} falha ao registrar o envio: ${envio.error.message}`);
       return { ok: false, erro: "Não foi possível enviar sua matrícula. Tente novamente." };
+    }
+
+    // Extras: grava a seleção final e só SINALIZA divergências (Sponte × seleção
+    // × Diário do ano) para a secretaria; nenhum sistema externo é alterado.
+    // Falha aqui não desfaz a matrícula já registrada.
+    if (anoLetivo) {
+      try {
+        await registrarExtrasFinalizacao({
+          unidade: sessao.unidade,
+          alunoId: sessao.alunoId,
+          alunoNome: aluno.nome,
+          anoLetivo,
+          serie: serieAlvo,
+          selecionadas: data.extras,
+        });
+      } catch (e) {
+        console.error(`${LOG_TAG} falha ao registrar os extras: ${String(e)}`);
+      }
     }
     return { ok: true, enviadaEm: agora };
   });
