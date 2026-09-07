@@ -7,6 +7,7 @@
 
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { statusZapSignRecusado } from "@/lib/contrato-cancelamento";
 import type {
   ZapSignAmbiente,
   ZapSignDocResposta,
@@ -18,6 +19,7 @@ import type {
 export const T_DOCS = "zapsign_documentos" as never;
 export const T_EVENTOS = "zapsign_eventos" as never;
 export const T_WEBHOOKS = "zapsign_webhooks" as never;
+export const T_CONTRATOS = "contratos_matricula" as never;
 
 export type SignatarioPersistido = {
   token: string | null;
@@ -73,13 +75,14 @@ export async function aplicarEstadoDocumento(
 ): Promise<{ documentoId: string | null }> {
   const { data: atual } = await supabaseAdmin
     .from(T_DOCS)
-    .select("id, signatarios, assinado_em")
+    .select("id, signatarios, assinado_em, recusado_em")
     .eq("zapsign_token", zapsignToken)
     .eq("ambiente", ambiente)
     .maybeSingle<{
       id: string;
       signatarios: SignatarioPersistido[] | null;
       assinado_em: string | null;
+      recusado_em: string | null;
     }>();
   if (!atual) return { documentoId: null };
 
@@ -91,17 +94,38 @@ export async function aplicarEstadoDocumento(
   });
 
   const assinadoEm = atual.assinado_em ?? primeiraAssinaturaCompleta(doc);
+  const agora = new Date().toISOString();
+
+  const valores: Record<string, unknown> = {
+    status: doc.status,
+    signatarios: signatarios.length ? signatarios : anteriores,
+    assinado_em: assinadoEm,
+    ultima_atualizacao_em: doc.last_update_at ?? agora,
+  };
+  if (doc.open_id !== undefined) valores.zapsign_open_id = doc.open_id;
+  if (statusZapSignRecusado(doc.status)) {
+    valores.recusado_em = atual.recusado_em ?? doc.last_update_at ?? agora;
+  }
 
   await supabaseAdmin
     .from(T_DOCS)
-    .update({
-      status: doc.status,
-      signatarios: signatarios.length ? signatarios : anteriores,
-      assinado_em: assinadoEm,
-      ultima_atualizacao_em: doc.last_update_at ?? new Date().toISOString(),
-      zapsign_open_id: doc.open_id ?? null,
-    } as never)
+    .update(valores as never)
     .eq("id", atual.id);
+
+  // Documento recusado (pelo School Hub ou direto no painel da ZapSign)
+  // encerra o contrato de matrícula vinculado; quem cancelou pela tela já
+  // gravou motivo/autor antes e este passo não os sobrescreve.
+  if (statusZapSignRecusado(doc.status)) {
+    await supabaseAdmin
+      .from(T_CONTRATOS)
+      .update({
+        status: "cancelado",
+        cancelado_em: valores.recusado_em,
+        updated_at: agora,
+      } as never)
+      .eq("zapsign_documento_id", atual.id)
+      .eq("status", "enviado");
+  }
   return { documentoId: atual.id };
 }
 
@@ -128,9 +152,18 @@ export async function registrarCallback(
   const eventType = typeof payload.event_type === "string" ? payload.event_type : "";
   const token = typeof payload.token === "string" ? payload.token : null;
 
+  // Callbacks como `doc_refused` podem vir sem a lista de signatários; o
+  // status do documento é aplicado mesmo assim (os signatários gravados ficam).
   let documentoId: string | null = null;
-  if (token && typeof payload.status === "string" && Array.isArray(payload.signers)) {
-    const r = await aplicarEstadoDocumento(token, payload as ZapSignDocResposta, ambiente);
+  if (token && typeof payload.status === "string") {
+    const r = await aplicarEstadoDocumento(
+      token,
+      {
+        ...payload,
+        signers: Array.isArray(payload.signers) ? payload.signers : [],
+      } as ZapSignDocResposta,
+      ambiente,
+    );
     documentoId = r.documentoId;
   } else if (token) {
     const { data } = await supabaseAdmin

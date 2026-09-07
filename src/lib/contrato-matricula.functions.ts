@@ -57,20 +57,32 @@ import {
   hojeBRT,
 } from "@/lib/rematricula.functions";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
-import { criarDocumentoPdf, criarWebhook, zapsignConfigurado } from "@/lib/zapsign.server";
 import {
+  criarDocumentoPdf,
+  criarWebhook,
+  recusarDocumento,
+  zapsignConfigurado,
+} from "@/lib/zapsign.server";
+import {
+  aplicarEstadoDocumento,
   signatarioDoSigner,
   T_DOCS,
+  T_EVENTOS,
   T_WEBHOOKS,
   type SignatarioPersistido,
 } from "@/lib/zapsign.persist";
+import {
+  contratoCancelavel,
+  EVENTO_DOC_RECUSADO,
+  validarMotivoCancelamento,
+} from "@/lib/contrato-cancelamento";
 import { emailValido } from "@/lib/imposto-renda-lote";
 
 const T_CONTRATOS = "contratos_matricula" as never;
 const AMBIENTE = "producao" as const;
 const LOG_TAG = "[contrato-matricula]";
 
-export type StatusContratoMatricula = "pendente" | "gerando" | "enviado" | "erro";
+export type StatusContratoMatricula = "pendente" | "gerando" | "enviado" | "erro" | "cancelado";
 
 /** Situação individual de cada signatário, na ordem enviada à ZapSign. */
 export interface SignatarioContratoStatus {
@@ -106,6 +118,9 @@ export interface ContratoPendente {
     erro: string;
     enviadoEm: string;
     enviadoPor: string;
+    canceladoEm: string;
+    canceladoPor: string;
+    cancelamentoMotivo: string;
     zapsign: {
       status: string;
       /** Link do CONTRATANTE (responsável financeiro). */
@@ -153,7 +168,7 @@ interface ContratoRow {
   aluno_id: string;
   ano_letivo: number;
   numero_contrato: string;
-  status: "gerando" | "enviado" | "erro";
+  status: StatusContratoMatricula;
   responsavel_nome: string;
   responsavel_email: string;
   campos: Partial<CamposContrato> | null;
@@ -161,6 +176,9 @@ interface ContratoRow {
   enviado_em: string | null;
   enviado_por_nome: string;
   zapsign_documento_id: string | null;
+  cancelado_em: string | null;
+  cancelado_por_nome: string;
+  cancelamento_motivo: string;
 }
 
 interface DocRow {
@@ -253,7 +271,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
         supabaseAdmin
           .from(T_CONTRATOS)
           .select(
-            "id, unidade, aluno_id, ano_letivo, numero_contrato, status, responsavel_nome, responsavel_email, campos, erro, enviado_em, enviado_por_nome, zapsign_documento_id",
+            "id, unidade, aluno_id, ano_letivo, numero_contrato, status, responsavel_nome, responsavel_email, campos, erro, enviado_em, enviado_por_nome, zapsign_documento_id, cancelado_em, cancelado_por_nome, cancelamento_motivo",
           )
           .eq("unidade", unidade)
           .order("aluno_id", { ascending: true }),
@@ -311,6 +329,9 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
               erro: c.erro,
               enviadoEm: c.enviado_em ?? "",
               enviadoPor: c.enviado_por_nome,
+              canceladoEm: c.cancelado_em ?? "",
+              canceladoPor: c.cancelado_por_nome ?? "",
+              cancelamentoMotivo: c.cancelamento_motivo ?? "",
               zapsign: doc
                 ? {
                     status: doc.status,
@@ -668,7 +689,18 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
 
     const chave = { unidade, alunoId, anoLetivo };
     const numero = numeroContrato(unidade, alunoId, anoLetivo);
-    await gravarContrato(chave, { numero_contrato: numero, status: "gerando", erro: "" });
+    // Um contrato cancelado libera a geração de outro: a linha volta ao estado
+    // inicial (o documento recusado permanece em zapsign_documentos).
+    await gravarContrato(chave, {
+      numero_contrato: numero,
+      status: "gerando",
+      erro: "",
+      zapsign_documento_id: null,
+      cancelado_em: null,
+      cancelado_por: null,
+      cancelado_por_nome: "",
+      cancelamento_motivo: "",
+    });
 
     try {
       const { pdfBase64, contrato, input, fin, signatarios } = await montarPdfContrato(
@@ -754,6 +786,138 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
       );
       return { ok: false, erro, numero };
     }
+  });
+
+const CancelarSchema = z.object({
+  contratoId: z.string().uuid(),
+  motivo: z.string(),
+  notificarSignatarios: z.boolean(),
+});
+
+export interface CancelarContratoResult {
+  ok: boolean;
+  erro?: string;
+  numero?: string;
+}
+
+/**
+ * Cancela o documento na ZapSign (`POST /refuse/`, irreversível) e reflete o
+ * cancelamento em zapsign_documentos e contratos_matricula. Nunca usa o
+ * DELETE da API (soft delete que deixa o link de assinatura ativo).
+ */
+export const cancelarContratoMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => CancelarSchema.parse(input))
+  .handler(async ({ data, context }): Promise<CancelarContratoResult> => {
+    const nomeUsuario = await exigirPermissaoRematricula(context.userId, true);
+    const erroMotivo = validarMotivoCancelamento(data.motivo);
+    if (erroMotivo) return { ok: false, erro: erroMotivo };
+
+    const { data: contrato } = await supabaseAdmin
+      .from(T_CONTRATOS)
+      .select("id, unidade, numero_contrato, status, zapsign_documento_id")
+      .eq("id", data.contratoId)
+      .maybeSingle<{
+        id: string;
+        unidade: string;
+        numero_contrato: string;
+        status: string;
+        zapsign_documento_id: string | null;
+      }>();
+    if (!contrato) return { ok: false, erro: "Contrato não encontrado." };
+    if (!(await unidadePermitida(context.userId, contrato.unidade))) {
+      return { ok: false, erro: "Sem permissão para esta unidade." };
+    }
+    if (!contrato.zapsign_documento_id) {
+      return { ok: false, erro: "Este contrato não tem documento na ZapSign." };
+    }
+
+    const { data: doc } = await supabaseAdmin
+      .from(T_DOCS)
+      .select("id, zapsign_token, status, ambiente")
+      .eq("id", contrato.zapsign_documento_id)
+      .eq("ambiente", AMBIENTE)
+      .maybeSingle<{ id: string; zapsign_token: string; status: string; ambiente: string }>();
+    if (!doc) return { ok: false, erro: "Documento da ZapSign não encontrado localmente." };
+    if (!contratoCancelavel(contrato.status, doc.status)) {
+      return {
+        ok: false,
+        erro: `Contrato ${contrato.numero_contrato} não pode ser cancelado (status ${contrato.status} / ZapSign ${doc.status}).`,
+        numero: contrato.numero_contrato,
+      };
+    }
+
+    const motivo = data.motivo.trim();
+    const r = await recusarDocumento({
+      ambiente: AMBIENTE,
+      docToken: doc.zapsign_token,
+      motivo,
+      notificarSignatarios: data.notificarSignatarios,
+    });
+    if (!r.ok) {
+      console.error(`${LOG_TAG} cancelar ${contrato.numero_contrato}: ${r.erro}`);
+      return {
+        ok: false,
+        erro: `ZapSign recusou o cancelamento: ${r.erro}`,
+        numero: contrato.numero_contrato,
+      };
+    }
+
+    const agora = new Date().toISOString();
+    await supabaseAdmin
+      .from(T_CONTRATOS)
+      .update({
+        status: "cancelado",
+        cancelado_em: agora,
+        cancelado_por: context.userId,
+        cancelado_por_nome: nomeUsuario,
+        cancelamento_motivo: motivo,
+        updated_at: agora,
+      } as never)
+      .eq("id", contrato.id);
+    await supabaseAdmin
+      .from(T_DOCS)
+      .update({ recusa_motivo: motivo, recusado_por_nome: nomeUsuario } as never)
+      .eq("id", doc.id);
+
+    // A resposta do /refuse/ pode não trazer o documento completo; o status
+    // local é forçado para "refused" e o webhook doc_refused confirma depois.
+    const status =
+      r.dados && typeof r.dados.status === "string" && r.dados.status ? r.dados.status : "refused";
+    await aplicarEstadoDocumento(
+      doc.zapsign_token,
+      {
+        ...(r.dados ?? {}),
+        token: doc.zapsign_token,
+        status,
+        signers: Array.isArray(r.dados?.signers) ? r.dados.signers : [],
+        last_update_at: agora,
+      } as Parameters<typeof aplicarEstadoDocumento>[1],
+      AMBIENTE,
+    );
+
+    await supabaseAdmin
+      .from(T_EVENTOS)
+      .insert({
+        documento_id: doc.id,
+        zapsign_token: doc.zapsign_token,
+        event_type: `school_hub_${EVENTO_DOC_RECUSADO}`,
+        status_documento: status,
+        sandbox: false,
+        payload: {
+          origem: "school-hub",
+          usuario: nomeUsuario,
+          motivo,
+          notificar_signatarios: data.notificarSignatarios,
+          resposta: r.dados ?? null,
+        },
+        payload_hash: `school-hub:${doc.id}:${agora}`,
+      } as never)
+      .then(({ error }) => {
+        if (error) console.error(`${LOG_TAG} evento de cancelamento: ${error.message}`);
+      });
+
+    return { ok: true, numero: contrato.numero_contrato };
   });
 
 export interface RegistrarWebhookProducaoResult {
