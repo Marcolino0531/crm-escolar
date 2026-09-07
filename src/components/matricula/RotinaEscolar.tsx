@@ -22,6 +22,7 @@ import { ROTULO_TURNO, TURNOS_TURMA, type TurnoTurma } from "@/lib/matricula-tur
 import {
   TODOS_OS_TURNOS,
   perguntaFrequenciaParcial,
+  serveJantar,
   type TurnosDisponiveis,
 } from "@/lib/rematricula-matricula";
 
@@ -39,6 +40,7 @@ export function RotinaEscolar({
   perguntarDataInicio = true,
   frequenciaParcialPorSerie = false,
   turnos = TODOS_OS_TURNOS,
+  embutido = false,
   onChange,
 }: {
   rotina: RotinaForm;
@@ -56,11 +58,14 @@ export function RotinaEscolar({
   // Turnos que existem de fato para a série (CEC/CEC Baby); o Horário Estendido
   // é sempre oferecido.
   turnos?: TurnosDisponiveis;
+  // Dentro de um card que já tem moldura própria.
+  embutido?: boolean;
   onChange: (r: RotinaForm) => void;
 }) {
   const ativos = diasAtivosRotina(rotina);
   const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
   const mostrarFrequenciaParcial = !frequenciaParcialPorSerie || perguntaFrequenciaParcial(serie);
+  const refeicoes = MEALS.filter((meal) => meal.key !== "dinner" || serveJantar(serie));
 
   const definirHorario = (dia: Weekday, horario: HorarioDia) =>
     onChange({ ...rotina, horarios: { ...rotina.horarios, [dia]: horario } });
@@ -75,7 +80,7 @@ export function RotinaEscolar({
     WEEKDAYS.find((d) => d.value === dia)?.long ?? String(dia);
 
   return (
-    <section className="space-y-5 rounded-lg border p-4">
+    <section className={embutido ? "space-y-5" : "space-y-5 rounded-lg border p-4"}>
       <div>
         <h2 className="font-medium">{titulo}</h2>
         <p className="text-xs text-muted-foreground">{descricao}</p>
@@ -284,7 +289,7 @@ export function RotinaEscolar({
               </tr>
             </thead>
             <tbody>
-              {MEALS.map((meal) => (
+              {refeicoes.map((meal) => (
                 <tr key={meal.key} className="border-t">
                   <td className="py-2 pr-2">{meal.label}</td>
                   {DIAS_UTEIS.map((dia) => (
