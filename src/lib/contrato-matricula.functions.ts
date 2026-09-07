@@ -336,7 +336,7 @@ async function carregarLogoServidor(logoPath: string | null): Promise<LogoRecibo
 async function extrasDoAluno(
   unidade: string,
   alunoId: string,
-  hoje: string,
+  anoLetivo: number,
 ): Promise<ExtrasContrato> {
   const r = await coletarTitulosAluno(unidade, alunoId);
   if (r.error) throw new Error(`Falha ao ler o contas a receber no Sponte: ${r.error}`);
@@ -349,7 +349,7 @@ async function extrasDoAluno(
       situacao: t.situacao,
       quitada: t.quitada,
     })),
-    hoje,
+    anoLetivo,
   );
 }
 
@@ -445,7 +445,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
       const [responsaveis, mensalidade, extras, logo] = await Promise.all([
         buscarResponsaveisComFinanceiro(unidade, alunoId),
         buscarMensalidadeVigente(unidade, alunoId),
-        extrasDoAluno(unidade, alunoId, hoje),
+        extrasDoAluno(unidade, alunoId, anoLetivo),
         carregarLogoServidor(colegio.logo_path),
       ]);
       const fin = responsaveis.find((r) => r.financeiro);
