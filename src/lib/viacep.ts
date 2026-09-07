@@ -37,3 +37,19 @@ export async function buscarEnderecoPorCep(cep: string): Promise<EnderecoViaCep 
     return null;
   }
 }
+
+// Completa a UF de cadastros que já têm CEP mas vieram sem Estado (o Sponte não
+// devolve a UF do aluno nem do responsável). Quem não tem CEP, ou cujo CEP o
+// ViaCEP não conhece, fica como está. As consultas rodam em paralelo.
+export async function completarUfPeloCep<T extends { cep: string; uf: string }>(
+  itens: T[],
+  buscar: (cep: string) => Promise<EnderecoViaCep | null> = buscarEnderecoPorCep,
+): Promise<T[]> {
+  return Promise.all(
+    itens.map(async (item) => {
+      if (item.uf.trim() || item.cep.replace(/\D/g, "").length !== 8) return item;
+      const achado = await buscar(item.cep);
+      return achado?.uf ? { ...item, uf: achado.uf.toUpperCase() } : item;
+    }),
+  );
+}
