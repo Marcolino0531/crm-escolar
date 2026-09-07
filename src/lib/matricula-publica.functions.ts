@@ -132,7 +132,7 @@ export const materialMatriculaPublica = createServerFn({ method: "POST" })
     const serie = serieCalculada(data.dataNascimento, data.anoLetivo);
     if (!serie) return vazio;
 
-    const material = await materialAnualDaSerie(data.unidade, serie);
+    const material = await materialAnualDaSerie(data.unidade, serie, data.anoLetivo);
     if (!material) return { ...vazio, serie };
 
     return {
@@ -658,7 +658,7 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
     // O valor do material é lido do banco pela unidade + série do servidor: a
     // escolha do responsável só é exigida quando existe valor cadastrado.
-    const materialConfig = await materialAnualDaSerie(form.unidade, serie);
+    const materialConfig = await materialAnualDaSerie(form.unidade, serie, form.anoLetivo);
     const erros = {
       ...validarMatriculaForm(form, hojeSaoPaulo(), UNIDADES_SPONTE),
       ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),

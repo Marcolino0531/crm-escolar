@@ -16,6 +16,7 @@ import {
   TITULO_CONTRATO,
   type ParagrafoModelo,
 } from "@/lib/contrato-matricula-modelo";
+import { rotulosItensMaterial, type ItemMaterial } from "@/lib/rematricula";
 
 export const CAMPOS_CONTRATO = [
   "NumeroContrato",
@@ -238,7 +239,8 @@ export interface MensalidadeContrato {
 }
 
 export interface MaterialContrato {
-  itens: string[];
+  /** Itens inclusos (nome + volumes) cadastrados para unidade × ano × série. */
+  itens: ItemMaterial[];
   valorTotal: number;
   parcelas: number;
 }
@@ -347,7 +349,10 @@ export function montarCamposContrato(input: MontarContratoInput): CamposContrato
     ValorMensalidadeComDesconto: numeroBR(comDesconto),
     ValorMensalidadeComDescontoExtenso: valorPorExtenso(comDesconto),
     DiaVencimentoMensalidade: diaDoISO(mensalidade.vencimento),
-    ListaMaterialPedagogicoSelecionado: material ? listarComE(material.itens) : TEXTO_SEM_MATERIAL,
+    ListaMaterialPedagogicoSelecionado:
+      material && material.itens.length
+        ? listarComE(rotulosItensMaterial(material.itens))
+        : TEXTO_SEM_MATERIAL,
     ValorTotalMaterialPedagogico: material ? numeroBR(material.valorTotal) : "0,00",
     NumeroParcelasMaterialPedagogico: material ? String(material.parcelas) : "0",
     ListaExtrasSelecionados: extras.lista,

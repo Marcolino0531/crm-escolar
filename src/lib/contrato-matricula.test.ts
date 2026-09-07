@@ -86,7 +86,10 @@ function entrada(over: Partial<MontarContratoInput> = {}): MontarContratoInput {
     matricula: { valor: 1250.5, parcelas: 3, primeiroVencimento: "2026-10-10" },
     mensalidade: { valor: 2000, descontoPercentual: 30, vencimento: "2026-10-10" },
     material: {
-      itens: ["Coleção Principal (Bernoulli)", "Robótica"],
+      itens: [
+        { nome: "Coleção Principal (Bernoulli)", quantidade: 4 },
+        { nome: "Robótica", quantidade: 1 },
+      ],
       valorTotal: 3439.1,
       parcelas: 8,
     },
@@ -264,7 +267,7 @@ describe("montarCamposContrato — valores monetários", () => {
 
   it("material: lista, total e parcelas", () => {
     expect(campos.ListaMaterialPedagogicoSelecionado).toBe(
-      "Coleção Principal (Bernoulli) e Robótica",
+      "Coleção Principal (Bernoulli) — 4 volumes e Robótica — 1 volume",
     );
     expect(campos.ValorTotalMaterialPedagogico).toBe("3.439,10");
     expect(campos.NumeroParcelasMaterialPedagogico).toBe("8");

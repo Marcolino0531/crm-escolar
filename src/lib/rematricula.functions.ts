@@ -58,6 +58,7 @@ import {
   urlLinkRematricula,
   validarLinkMagico,
   vencimentosMaterialPelasMensalidades,
+  type ItemMaterial,
   type MensalidadeVigente,
   type ParcelaMaterial,
   type ParcelaMensalidade,
@@ -824,7 +825,7 @@ export interface MaterialRematricula {
   valorAnual: number;
   serie: string;
   anoLetivo: number | null;
-  itens: string[];
+  itens: ItemMaterial[];
   reajuste: ReajusteMaterial | null;
   texto: string;
   opcoes: ParcelamentoPrimeira[];
@@ -913,18 +914,42 @@ function montarMatricula(
   };
 }
 
+// Valor anual do material da série SÓ no ano letivo informado — sem valor
+// daquele ano, o material não é oferecido (nunca cai para outro ano).
 export async function materialDaSerie(
   unidade: string,
   serie: string,
+  anoLetivo: number | null,
 ): Promise<{ valorAnual: number; serieCadastrada: string } | null> {
+  if (!anoLetivo) return null;
   const { data } = await supabaseAdmin
     .from("material_pedagogico_series" as never)
     .select("serie, valor_anual")
     .eq("unidade", unidade)
+    .eq("ano_letivo", anoLetivo)
     .eq("serie_chave", chaveSerie(serie))
     .maybeSingle<{ serie: string; valor_anual: number }>();
   if (!data) return null;
   return { valorAnual: Number(data.valor_anual), serieCadastrada: data.serie };
+}
+
+// Itens inclusos no material da série, da mesma unidade × ano × série do valor.
+export async function itensMaterialDaSerie(
+  unidade: string,
+  serie: string,
+  anoLetivo: number | null,
+): Promise<ItemMaterial[]> {
+  if (!anoLetivo) return [];
+  const { data } = await supabaseAdmin
+    .from("material_pedagogico_itens" as never)
+    .select("nome_item, quantidade")
+    .eq("unidade", unidade)
+    .eq("ano_letivo", anoLetivo)
+    .eq("serie_chave", chaveSerie(serie))
+    .order("ordem")
+    .order("created_at");
+  const linhas = (data ?? []) as unknown as { nome_item: string; quantidade: number }[];
+  return linhas.map((l) => ({ nome: l.nome_item, quantidade: Number(l.quantidade) }));
 }
 
 export const dadosRematricula = createServerFn({ method: "POST" })
@@ -959,7 +984,7 @@ export const dadosRematricula = createServerFn({ method: "POST" })
         completarUfPeloCep(r),
       ),
       buscarMensalidadeVigente(sessao.unidade, sessao.alunoId, anoLetivo),
-      materialDaSerie(sessao.unidade, serieAlvo),
+      materialDaSerie(sessao.unidade, serieAlvo, anoLetivo),
       carregarExtrasRematricula(sessao.unidade, sessao.alunoId, aluno.nome, anoLetivo),
       valoresMatriculaDoAno(anoLetivo),
       supabaseAdmin
@@ -994,6 +1019,7 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       serie: material?.serieCadastrada || serieAlvo,
       anoLetivo,
       valorAnual: material?.valorAnual ?? 0,
+      itens: material ? await itensMaterialDaSerie(sessao.unidade, serieAlvo, anoLetivo) : [],
     });
 
     return {
@@ -1109,7 +1135,7 @@ export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" 
     // O valor vem do cadastro, relido agora — não do que a tela mandou.
     const anoLetivo = sessao.anoLetivo;
     const serieAlvo = serieRematricula(aluno, anoLetivo);
-    const material = await materialDaSerie(sessao.unidade, serieAlvo);
+    const material = await materialDaSerie(sessao.unidade, serieAlvo, anoLetivo);
     if (!material) {
       return {
         ok: false,
@@ -1472,7 +1498,7 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
           submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
         )
         .maybeSingle<LinhaRotinaFinalizacao>(),
-      materialDaSerie(sessao.unidade, serieAlvo),
+      materialDaSerie(sessao.unidade, serieAlvo, anoLetivo),
       supabaseAdmin
         .from("rematricula_escolhas" as never)
         .select("id")
@@ -3008,8 +3034,23 @@ export const lancarMatriculaRematriculaNoSponte = createServerFn({ method: "POST
 export interface MaterialSerieRegistro {
   id: string;
   unidade: string;
+  anoLetivo: number;
   serie: string;
+  serieChave: string;
   valorAnual: number;
+  atualizadoEm: string;
+  atualizadoPor: string;
+}
+
+export interface MaterialItemRegistro {
+  id: string;
+  unidade: string;
+  anoLetivo: number;
+  serie: string;
+  serieChave: string;
+  nome: string;
+  quantidade: number;
+  ordem: number;
   atualizadoEm: string;
   atualizadoPor: string;
 }
@@ -3035,14 +3076,19 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
     await exigirPermissaoMaterialPedagogico(context.userId, false);
     const { data, error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
-      .select("id, unidade, serie, valor_anual, updated_at, updated_by_nome")
+      .select(
+        "id, unidade, ano_letivo, serie, serie_chave, valor_anual, updated_at, updated_by_nome",
+      )
       .order("unidade")
+      .order("ano_letivo", { ascending: false })
       .order("serie");
     if (error) throw new Error(error.message);
     const linhas = (data ?? []) as unknown as {
       id: string;
       unidade: string;
+      ano_letivo: number;
       serie: string;
+      serie_chave: string;
       valor_anual: number;
       updated_at: string;
       updated_by_nome: string | null;
@@ -3050,7 +3096,9 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
     return linhas.map((r) => ({
       id: r.id,
       unidade: r.unidade,
+      anoLetivo: Number(r.ano_letivo),
       serie: r.serie,
+      serieChave: r.serie_chave,
       valorAnual: Number(r.valor_anual),
       atualizadoEm: r.updated_at,
       atualizadoPor: r.updated_by_nome ?? "",
@@ -3060,6 +3108,7 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
 const SalvarMaterialSerieSchema = z.object({
   id: z.string().uuid().nullable().optional(),
   unidade: z.string().trim().min(1, "Informe a unidade."),
+  anoLetivo: z.number().int().min(ANO_LETIVO_MIN).max(ANO_LETIVO_MAX),
   serie: z.string().trim().min(1, "Informe a série."),
   valorAnual: z.number().positive("O valor anual deve ser maior que zero."),
 });
@@ -3075,6 +3124,7 @@ export const salvarMaterialSerie = createServerFn({ method: "POST" })
 
     const registro = {
       unidade: data.unidade,
+      ano_letivo: data.anoLetivo,
       serie: data.serie,
       serie_chave: chaveSerie(data.serie),
       valor_anual: data.valorAnual,
@@ -3090,11 +3140,11 @@ export const salvarMaterialSerie = createServerFn({ method: "POST" })
           .eq("id", data.id)
       : await supabaseAdmin
           .from("material_pedagogico_series" as never)
-          .upsert(registro as never, { onConflict: "unidade,serie_chave" });
+          .upsert(registro as never, { onConflict: "unidade,ano_letivo,serie_chave" });
     if (error) {
       throw new Error(
         error.code === "23505"
-          ? "Já existe um valor cadastrado para esta unidade e série."
+          ? "Já existe um valor cadastrado para esta unidade, ano letivo e série."
           : error.message,
       );
     }
@@ -3108,6 +3158,128 @@ export const excluirMaterialSerie = createServerFn({ method: "POST" })
     await exigirPermissaoMaterialPedagogico(context.userId, true);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ─── Cadastro administrativo: itens inclusos no material ────────────────────
+//
+// Cada item pertence a uma combinação unidade × ano letivo × série — a mesma
+// do valor anual. É esta lista (nome + quantidade) que o portal e o contrato
+// exibem como "itens inclusos"; sem cadastro, nada é exibido.
+
+export const listarMaterialItens = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<MaterialItemRegistro[]> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const linhas = await selectAll<{
+      id: string;
+      unidade: string;
+      ano_letivo: number;
+      serie: string;
+      serie_chave: string;
+      nome_item: string;
+      quantidade: number;
+      ordem: number;
+      updated_at: string;
+      updated_by_nome: string | null;
+    }>(() =>
+      supabaseAdmin
+        .from("material_pedagogico_itens" as never)
+        .select(
+          "id, unidade, ano_letivo, serie, serie_chave, nome_item, quantidade, ordem, updated_at, updated_by_nome",
+        )
+        .order("unidade")
+        .order("ano_letivo", { ascending: false })
+        .order("serie_chave")
+        .order("ordem")
+        .order("created_at")
+        .order("id"),
+    );
+    return linhas.map((r) => ({
+      id: r.id,
+      unidade: r.unidade,
+      anoLetivo: Number(r.ano_letivo),
+      serie: r.serie,
+      serieChave: r.serie_chave,
+      nome: r.nome_item,
+      quantidade: Number(r.quantidade),
+      ordem: Number(r.ordem),
+      atualizadoEm: r.updated_at,
+      atualizadoPor: r.updated_by_nome ?? "",
+    }));
+  });
+
+const SalvarMaterialItemSchema = z.object({
+  id: z.string().uuid().nullable().optional(),
+  unidade: z.string().trim().min(1, "Informe a unidade."),
+  anoLetivo: z.number().int().min(ANO_LETIVO_MIN).max(ANO_LETIVO_MAX),
+  serie: z.string().trim().min(1, "Informe a série."),
+  nome: z.string().trim().min(1, "Informe o nome do item."),
+  quantidade: z.number().int().positive("A quantidade deve ser um inteiro maior que zero."),
+});
+
+export const salvarMaterialItem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SalvarMaterialItemSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    if (!UNIDADES_SPONTE.includes(data.unidade)) {
+      throw new Error("Unidade inválida.");
+    }
+    const serieChave = chaveSerie(data.serie);
+    const base = {
+      unidade: data.unidade,
+      ano_letivo: data.anoLetivo,
+      serie: data.serie,
+      serie_chave: serieChave,
+      nome_item: data.nome,
+      quantidade: data.quantidade,
+      updated_at: new Date().toISOString(),
+      updated_by: context.userId,
+      updated_by_nome: await nomeDoUsuario(context.userId),
+    };
+
+    let error;
+    if (data.id) {
+      ({ error } = await supabaseAdmin
+        .from("material_pedagogico_itens" as never)
+        .update(base as never)
+        .eq("id", data.id));
+    } else {
+      // Novo item entra no fim da lista da série.
+      const { data: ultimo } = await supabaseAdmin
+        .from("material_pedagogico_itens" as never)
+        .select("ordem")
+        .eq("unidade", data.unidade)
+        .eq("ano_letivo", data.anoLetivo)
+        .eq("serie_chave", serieChave)
+        .order("ordem", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ ordem: number }>();
+      ({ error } = await supabaseAdmin
+        .from("material_pedagogico_itens" as never)
+        .insert({ ...base, ordem: (ultimo?.ordem ?? 0) + 1 } as never));
+    }
+    if (error) {
+      throw new Error(
+        error.code === "23505"
+          ? "Já existe um item com este nome para esta unidade, ano letivo e série."
+          : error.message,
+      );
+    }
+    return { ok: true };
+  });
+
+export const excluirMaterialItem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    const { error } = await supabaseAdmin
+      .from("material_pedagogico_itens" as never)
       .delete()
       .eq("id", data.id);
     if (error) throw new Error(error.message);
