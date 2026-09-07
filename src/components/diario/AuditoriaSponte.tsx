@@ -15,6 +15,19 @@ import {
 } from "@/components/ui/table";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { executarAuditoriaDiario, listarAuditoriaDiario } from "@/lib/diario-auditoria.functions";
+import { listarDivergenciasExtras } from "@/lib/rematricula-extras.functions";
+import { ROTULO_TIPO_DIVERGENCIA, type TipoDivergenciaExtra } from "@/lib/rematricula-extras";
+
+const COR_TIPO: Record<TipoDivergenciaExtra, string> = {
+  inconsistente: "border-amber-300 bg-amber-50 text-amber-800",
+  remocao_pendente: "border-rose-300 bg-rose-50 text-rose-800",
+  lancamento_pendente: "border-sky-300 bg-sky-50 text-sky-800",
+};
+
+function brl(valor: number | null): string {
+  if (valor === null) return "a definir";
+  return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 type Props = { unidade: string | null; podeExecutar: boolean };
 
@@ -37,6 +50,13 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
     queryKey: ["diario_auditoria", unidade],
     enabled: unidade !== null,
     queryFn: async () => listar({ data: { unidade: unidade as string } }),
+  });
+
+  const listarDivergencias = useServerFn(listarDivergenciasExtras);
+  const divergencias = useQuery({
+    queryKey: ["rematricula_extras_divergencias", unidade],
+    enabled: unidade !== null,
+    queryFn: async () => listarDivergencias({ data: { unidade: unidade as string } }),
   });
 
   const rodar = useMutation({
@@ -142,6 +162,69 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
           </Table>
         </div>
       ) : null}
+
+      <section className="space-y-3 pt-4">
+        <div className="text-sm text-muted-foreground">
+          <h3 className="text-base font-semibold text-foreground">Divergências pós-rematrícula</h3>
+          <p className="mt-1">
+            Geradas ao “Finalizar Matrícula” no portal: comparam os extras lançados no Sponte para o
+            ano da rematrícula, o que o responsável deixou marcado e o plano do Diário do mesmo ano.
+            São só alertas — nada é alterado automaticamente no Sponte nem no Diário.
+          </p>
+        </div>
+        {divergencias.isLoading ? (
+          <Skeleton className="h-24 w-full rounded-2xl" />
+        ) : divergencias.isError ? (
+          <div className="rounded-2xl border border-destructive/40 bg-card p-4 text-sm text-destructive">
+            {divergencias.error instanceof Error
+              ? divergencias.error.message
+              : "Não foi possível carregar as divergências."}
+          </div>
+        ) : (divergencias.data ?? []).length === 0 ? (
+          <div className="flex items-center gap-2 rounded-2xl border border-border bg-card p-6 text-sm">
+            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+            Nenhuma divergência de extras registrada nas rematrículas finalizadas.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Aluno</TableHead>
+                  <TableHead>Unidade</TableHead>
+                  <TableHead>Ano</TableHead>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead className="text-right">Valor mensal</TableHead>
+                  <TableHead>Ação manual</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(divergencias.data ?? []).map((d) => (
+                  <TableRow key={d.id}>
+                    <TableCell className="font-medium">{d.aluno}</TableCell>
+                    <TableCell>{d.unidade}</TableCell>
+                    <TableCell>{d.anoLetivo}</TableCell>
+                    <TableCell>{d.categoria}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={COR_TIPO[d.tipo]}>
+                        {ROTULO_TIPO_DIVERGENCIA[d.tipo]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{brl(d.valor)}</TableCell>
+                    <TableCell className="max-w-md text-sm text-muted-foreground">
+                      {d.mensagem}
+                      <span className="block text-xs">
+                        Registrada em {dataHora(d.registradaEm)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

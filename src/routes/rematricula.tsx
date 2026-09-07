@@ -24,6 +24,7 @@ import {
 } from "@/lib/rematricula-matricula";
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
+import { CATEGORIAS_EXTRAS_REMATRICULA, type CategoriaExtra } from "@/lib/rematricula-extras";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ROTINA_FORM_VAZIA,
@@ -345,6 +346,7 @@ function RematriculaPage() {
   const [turnos, setTurnos] = useState<TurnosDisponiveis>(TODOS_OS_TURNOS);
   const [matParcelas, setMatParcelas] = useState<number>(1);
   const [matVencimento, setMatVencimento] = useState("");
+  const [extrasMarcados, setExtrasMarcados] = useState<CategoriaExtra[]>([]);
   const [errosEnvio, setErrosEnvio] = useState<Record<string, string>>({});
   const [enviadaEm, setEnviadaEm] = useState<string | null>(null);
 
@@ -405,6 +407,7 @@ function RematriculaPage() {
           setMatParcelas(portal.matricula.escolhaAtual?.parcelas ?? 1);
           setMatVencimento(portal.matricula.escolhaAtual?.primeiroVencimento ?? "");
         }
+        setExtrasMarcados(portal.extras?.selecionadas ?? []);
         setEnviadaEm(portal.enviadaEm ?? null);
         setEtapa("portal");
       } catch {
@@ -474,7 +477,11 @@ function RematriculaPage() {
   const enviarMatricula = useMutation({
     mutationFn: async () =>
       finalizar({
-        data: { token, matricula: { parcelas: matParcelas, primeiroVencimento: matVencimento } },
+        data: {
+          token,
+          matricula: { parcelas: matParcelas, primeiroVencimento: matVencimento },
+          extras: extrasMarcados,
+        },
       }),
     onSuccess: (res) => {
       if (!res.ok) {
@@ -533,6 +540,7 @@ function RematriculaPage() {
     ? limitesPrimeiroVencimento(matricula.dataPreenchimento)
     : null;
   const mensalidade = dados?.mensalidade;
+  const extras = dados?.extras ?? null;
 
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
@@ -848,6 +856,63 @@ function RematriculaPage() {
                 </p>
               )}
             </div>
+
+            {extras && (
+              <div className="rounded-lg border p-4">
+                <h2 className="mb-1 text-sm font-semibold">Extras</h2>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {extras.sponte.length > 0
+                    ? `Serviços já contratados para ${extras.anoLetivo} vêm marcados com o valor mensal atual. Desmarque o que não quiser manter ou marque um novo serviço.`
+                    : `Nenhum serviço extra contratado para ${extras.anoLetivo}. Se quiser, marque os que deseja contratar.`}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {CATEGORIAS_EXTRAS_REMATRICULA.map((categoria) => {
+                    const lancado = extras.sponte.find((e) => e.categoria === categoria);
+                    const marcado = extrasMarcados.includes(categoria);
+                    return (
+                      <label
+                        key={categoria}
+                        className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition ${
+                          marcado ? "border-primary bg-primary/10" : "hover:bg-muted/60"
+                        } ${enviadaEm ? "cursor-default opacity-70" : ""}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-primary"
+                            checked={marcado}
+                            disabled={!!enviadaEm}
+                            onChange={(e) =>
+                              setExtrasMarcados((atual) =>
+                                e.target.checked
+                                  ? CATEGORIAS_EXTRAS_REMATRICULA.filter(
+                                      (c) => c === categoria || atual.includes(c),
+                                    )
+                                  : atual.filter((c) => c !== categoria),
+                              )
+                            }
+                          />
+                          {categoria}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {extras.indisponivel && (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Não conseguimos consultar os serviços já contratados agora; marque os que deseja
+                    manter ou contratar.
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Alterações são conferidas pela secretaria após a finalização; nenhum lançamento é
+                  feito neste momento.
+                </p>
+              </div>
+            )}
 
             <div className="rounded-lg border p-4">
               <h2 className="mb-1 text-sm font-semibold">Material pedagógico</h2>
