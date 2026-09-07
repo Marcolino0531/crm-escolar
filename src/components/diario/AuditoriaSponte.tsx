@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
+import { BotaoReconferirExtras } from "@/components/rematricula/BotaoReconferirExtras";
 import { executarAuditoriaDiario, listarAuditoriaDiario } from "@/lib/diario-auditoria.functions";
 import { listarDivergenciasExtras } from "@/lib/rematricula-extras.functions";
 import { ROTULO_TIPO_DIVERGENCIA, type TipoDivergenciaExtra } from "@/lib/rematricula-extras";
@@ -169,7 +170,9 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
           <p className="mt-1">
             Geradas ao “Finalizar Matrícula” no portal: comparam os extras lançados no Sponte para o
             ano da rematrícula, o que o responsável deixou marcado e o plano do Diário do mesmo ano.
-            São só alertas — nada é alterado automaticamente no Sponte nem no Diário.
+            São só alertas — nada é alterado automaticamente no Sponte nem no Diário. Depois de
+            corrigir manualmente, use “Conferir novamente” para reler o Sponte e o Diário e
+            atualizar a lista.
           </p>
         </div>
         {divergencias.isLoading ? (
@@ -197,10 +200,11 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
                   <TableHead>Tipo</TableHead>
                   <TableHead className="text-right">Valor mensal</TableHead>
                   <TableHead>Ação manual</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(divergencias.data ?? []).map((d) => (
+                {(divergencias.data ?? []).map((d, i, lista) => (
                   <TableRow key={d.id}>
                     <TableCell className="font-medium">{d.aluno}</TableCell>
                     <TableCell>{d.unidade}</TableCell>
@@ -217,6 +221,19 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
                       <span className="block text-xs">
                         Registrada em {dataHora(d.registradaEm)}
                       </span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {(i === 0 ||
+                        lista[i - 1].alunoId !== d.alunoId ||
+                        lista[i - 1].anoLetivo !== d.anoLetivo) &&
+                        podeExecutar && (
+                          <BotaoReconferirExtras
+                            unidade={d.unidade}
+                            alunoId={d.alunoId}
+                            anoLetivo={d.anoLetivo}
+                            size="xs"
+                          />
+                        )}
                     </TableCell>
                   </TableRow>
                 ))}

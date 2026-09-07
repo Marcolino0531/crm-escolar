@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
+import { BotaoReconferirExtras } from "@/components/rematricula/BotaoReconferirExtras";
 import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
 import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedagogicoSeries";
 import { usePermissions, useSchool } from "@/lib/app-context";
@@ -148,6 +149,12 @@ function DialogoRevisao({
   onFechar: () => void;
 }) {
   const qc = useQueryClient();
+  // Lista mostrada no modal: começa na gravada no Finalizar e passa a refletir
+  // a última reconferência (Sponte + Diário lidos agora) sem recarregar a tela.
+  const [divergenciasAtuais, setDivergenciasAtuais] = useState<{
+    lista: readonly DivergenciaExtraAluno[];
+    reconferidaEm: string | null;
+  }>({ lista: divergencias, reconferidaEm: null });
   const carregarDetalhe = useServerFn(detalheAcompanhamentoRematricula);
   const carregarMatricula = useServerFn(detalheMatriculaRematricula);
   const efetivar = useServerFn(efetivarEscolhaRematricula);
@@ -168,6 +175,7 @@ function DialogoRevisao({
   const escolha = detalhe.data?.escolha ?? null;
   const matricula = detalheMatricula.data?.matricula ?? null;
   const anoLetivo = detalhe.data?.anoLetivo ?? escolha?.anoLetivo ?? matricula?.anoLetivo ?? null;
+  const anoExtras = divergencias[0]?.anoLetivo ?? anoLetivo;
 
   // Material pendente = ainda não aprovado. Matrícula pendente = não aprovada
   // OU aprovada sem cobrança no Sponte (relançamento após falha).
@@ -244,7 +252,30 @@ function DialogoRevisao({
           </p>
         ) : (
           <div className="space-y-4 text-sm">
-            <AvisoDivergenciasExtras divergencias={divergencias} detalhado />
+            {divergenciasAtuais.lista.length > 0 ? (
+              <AvisoDivergenciasExtras divergencias={divergenciasAtuais.lista} detalhado />
+            ) : divergenciasAtuais.reconferidaEm ? (
+              <p
+                className="flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900"
+                data-extras-ok
+              >
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Extras: tudo certo, sem pendências (conferido agora no Sponte e no Diário).
+              </p>
+            ) : null}
+            {anoExtras !== null &&
+              (divergenciasAtuais.lista.length > 0 || divergenciasAtuais.reconferidaEm) && (
+                <div className="flex justify-end">
+                  <BotaoReconferirExtras
+                    unidade={linha.unidade}
+                    alunoId={linha.alunoId}
+                    anoLetivo={anoExtras}
+                    onResultado={(r) =>
+                      setDivergenciasAtuais({ lista: r.divergencias, reconferidaEm: r.conferidoEm })
+                    }
+                  />
+                </div>
+              )}
             {matricula && <CardMatriculaRevisao matricula={matricula} anoLetivo={anoLetivo} />}
             {escolha && (
               <div className="rounded-md border p-3">

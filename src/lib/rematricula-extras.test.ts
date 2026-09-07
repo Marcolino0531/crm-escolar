@@ -5,6 +5,7 @@ import {
   divergenciasExtras,
   extrasDoSponteNoAno,
   normalizarSelecaoExtras,
+  reconferirDivergenciasExtras,
   validarExtrasContraRotinaSalva,
   validarRotinaExtras,
 } from "@/lib/rematricula-extras";
@@ -154,6 +155,102 @@ describe("divergenciasExtras — os três tipos", () => {
       ["Almoço", "remocao_pendente"],
       ["Lanche da Tarde", "inconsistente"],
     ]);
+  });
+});
+
+describe("reconferirDivergenciasExtras — Conferir novamente após a correção manual", () => {
+  // Escolha final do Ryan, gravada no Finalizar e imutável: Lanche da Manhã + Hora Extra.
+  const selecionadas = ["Lanche da Manhã", "Hora Extra"];
+
+  it("no Finalizar, o Sponte ainda tinha Almoço e Lanche da Tarde: 4 pendências", () => {
+    const d = reconferirDivergenciasExtras({
+      aluno: "Ryan",
+      anoLetivo: 2027,
+      titulos: ryan2027,
+      selecionadas,
+      diario: null,
+    });
+    expect(d.map((x) => `${x.categoria}:${x.tipo}`)).toEqual([
+      "Lanche da Manhã:lancamento_pendente",
+      "Almoço:remocao_pendente",
+      "Lanche da Tarde:remocao_pendente",
+      "Hora Extra:lancamento_pendente",
+    ]);
+  });
+
+  it("divergência antiga corrigida no Sponte e no Diário desaparece (lista vazia)", () => {
+    // Secretaria cancelou Almoço e Lanche da Tarde 2027 e lançou Lanche da Manhã e Hora Extra;
+    // no Diário, marcou o café da manhã e o horário estendido.
+    const titulosCorrigidos = [
+      ...recorrente("Mensalidade", 2027, 2134.25),
+      ...recorrente("Almoço", 2027, 100).map((t) => ({ ...t, situacao: "Cancelada" })),
+      ...recorrente("Lanche da Tarde", 2027, 150).map((t) => ({ ...t, situacao: "Cancelada" })),
+      ...recorrente("Lanche da Manhã", 2027, 80),
+      ...recorrente("Hora Extra", 2027, 160),
+      ...recorrente("Almoço", 2026, 92.5),
+    ];
+    const d = reconferirDivergenciasExtras({
+      aluno: "Ryan",
+      anoLetivo: 2027,
+      titulos: titulosCorrigidos,
+      selecionadas,
+      diario: new Set(["Lanche da Manhã", "Hora Extra"]),
+    });
+    expect(d).toEqual([]);
+  });
+
+  it("correção parcial: só o que ainda falta continua na lista", () => {
+    // Cancelou o Almoço e lançou a Hora Extra, mas esqueceu Lanche da Tarde e Lanche da Manhã.
+    const titulos = [
+      ...recorrente("Almoço", 2027, 100).map((t) => ({ ...t, situacao: "Cancelada" })),
+      ...recorrente("Lanche da Tarde", 2027, 150),
+      ...recorrente("Hora Extra", 2027, 160),
+    ];
+    const d = reconferirDivergenciasExtras({
+      aluno: "Ryan",
+      anoLetivo: 2027,
+      titulos,
+      selecionadas,
+      diario: new Set(["Lanche da Manhã", "Hora Extra"]),
+    });
+    expect(d.map((x) => `${x.categoria}:${x.tipo}`)).toEqual([
+      "Lanche da Manhã:lancamento_pendente",
+      "Lanche da Tarde:remocao_pendente",
+    ]);
+  });
+
+  it("nova divergência aparece: secretaria lançou Jantar por engano e esqueceu a Hora Extra no Diário", () => {
+    const titulos = [
+      ...recorrente("Lanche da Manhã", 2027, 80),
+      ...recorrente("Hora Extra", 2027, 160),
+      ...recorrente("Jantar", 2027, 120),
+    ];
+    const d = reconferirDivergenciasExtras({
+      aluno: "Ryan",
+      anoLetivo: 2027,
+      titulos,
+      selecionadas,
+      diario: new Set(["Lanche da Manhã"]),
+    });
+    expect(d).toEqual([
+      expect.objectContaining({ categoria: "Jantar", tipo: "remocao_pendente", valor: 120 }),
+      expect.objectContaining({ categoria: "Hora Extra", tipo: "inconsistente", valor: 160 }),
+    ]);
+  });
+
+  it("lançamento do ano errado não conta como corrigido (filtro pelo ano letivo)", () => {
+    const titulos = [
+      ...recorrente("Lanche da Manhã", 2026, 80),
+      ...recorrente("Hora Extra", 2026, 160),
+    ];
+    const d = reconferirDivergenciasExtras({
+      aluno: "Ryan",
+      anoLetivo: 2027,
+      titulos,
+      selecionadas,
+      diario: null,
+    });
+    expect(d.map((x) => x.tipo)).toEqual(["lancamento_pendente", "lancamento_pendente"]);
   });
 });
 

@@ -198,6 +198,42 @@ export function divergenciasExtras(entrada: {
   return saida;
 }
 
+/**
+ * "Conferir novamente": recalcula as divergências contra o estado ATUAL do
+ * Sponte (títulos do ano letivo) e do Diário, mantendo fixa a escolha final do
+ * responsável. Não usa o retrato congelado gravado no Finalizar.
+ */
+export function reconferirDivergenciasExtras(entrada: {
+  aluno: string;
+  anoLetivo: number;
+  titulos: readonly TituloParaExtras[];
+  selecionadas: readonly string[];
+  diario: ReadonlySet<CategoriaExtra> | null;
+}): DivergenciaExtra[] {
+  return divergenciasExtras({
+    aluno: entrada.aluno,
+    sponte: extrasDoSponteNoAno(entrada.titulos, entrada.anoLetivo),
+    selecionadas: normalizarSelecaoExtras(entrada.selecionadas),
+    diario: entrada.diario,
+  });
+}
+
+/** Texto do toast/aviso após o "Conferir novamente". */
+export function mensagemReconferencia(r: {
+  divergencias: readonly { categoria: CategoriaExtra }[];
+  semDiario: boolean;
+}): string {
+  if (r.divergencias.length === 0) {
+    return r.semDiario
+      ? "Tudo certo com o Sponte, sem pendências. O Diário do Aluno ainda não tem plano deste ano."
+      : "Tudo certo, sem pendências.";
+  }
+  const n = r.divergencias.length;
+  return `${n} pendência${n === 1 ? "" : "s"} ainda em aberto: ${r.divergencias
+    .map((d) => d.categoria)
+    .join(", ")}.`;
+}
+
 /** Valida e normaliza a seleção vinda do formulário (ignora repetidas/desconhecidas). */
 export function normalizarSelecaoExtras(itens: readonly string[]): CategoriaExtra[] {
   const marcadas = new Set<CategoriaExtra>();

@@ -18,6 +18,7 @@ import {
   divergenciasExtras,
   extrasDoSponteNoAno,
   normalizarSelecaoExtras,
+  reconferirDivergenciasExtras,
   type CategoriaExtra,
   type DivergenciaExtra,
   type ExtraSponte,
@@ -193,12 +194,22 @@ export async function registrarExtrasFinalizacao(entrada: {
     diario,
   });
 
+  await substituirDivergencias(entrada, divergencias, agora);
+  return divergencias;
+}
+
+/** Apaga e regrava as divergências do aluno/unidade/ano (só esta tabela). */
+async function substituirDivergencias(
+  alvo: { unidade: string; alunoId: string; alunoNome: string; anoLetivo: number },
+  divergencias: readonly DivergenciaExtra[],
+  agora: string,
+): Promise<void> {
   const { error: dErr } = await supabaseAdmin
     .from("rematricula_extras_divergencias" as never)
     .delete()
-    .eq("unidade", entrada.unidade)
-    .eq("aluno_id", entrada.alunoId)
-    .eq("ano_letivo", entrada.anoLetivo);
+    .eq("unidade", alvo.unidade)
+    .eq("aluno_id", alvo.alunoId)
+    .eq("ano_letivo", alvo.anoLetivo);
   if (dErr) throw new Error(dErr.message);
 
   if (divergencias.length > 0) {
@@ -206,10 +217,10 @@ export async function registrarExtrasFinalizacao(entrada: {
       .from("rematricula_extras_divergencias" as never)
       .insert(
         divergencias.map((d) => ({
-          unidade: entrada.unidade,
-          aluno_id: entrada.alunoId,
-          aluno_nome: entrada.alunoNome,
-          ano_letivo: entrada.anoLetivo,
+          unidade: alvo.unidade,
+          aluno_id: alvo.alunoId,
+          aluno_nome: alvo.alunoNome,
+          ano_letivo: alvo.anoLetivo,
           categoria: d.categoria,
           tipo: d.tipo,
           valor: d.valor,
@@ -219,7 +230,6 @@ export async function registrarExtrasFinalizacao(entrada: {
       );
     if (iErr) throw new Error(iErr.message);
   }
-  return divergencias;
 }
 
 // ─── Tela "Divergências pós-rematrícula" (aba Auditoria Sponte do Diário) ──
@@ -288,6 +298,117 @@ async function exigirPermissaoDiario(userId: string): Promise<void> {
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Você não tem permissão para ver as divergências da rematrícula.");
 }
+
+/** Quem pode agir no Diário ou aprovar rematrículas pode reconferir. */
+async function exigirPermissaoReconferir(userId: string): Promise<void> {
+  for (const modulo of ["rematricula", "diario"]) {
+    const { data, error } = await supabaseAdmin.rpc(
+      "can_edit_module" as never,
+      { _user_id: userId, _module: modulo } as never,
+    );
+    if (error) throw new Error(error.message);
+    if (data) return;
+  }
+  throw new Error("Você não tem permissão para reconferir as divergências de Extras.");
+}
+
+export interface ResultadoReconferencia {
+  alunoId: string;
+  unidade: string;
+  anoLetivo: number;
+  divergencias: DivergenciaExtraAluno[];
+  /** Diário sem plano do ano: só Sponte × escolha foram comparados. */
+  semDiario: boolean;
+  conferidoEm: string;
+}
+
+/**
+ * "Conferir novamente": lê o Sponte e o Diário AGORA, recalcula as divergências
+ * contra a escolha final gravada do responsável e substitui as linhas de
+ * `rematricula_extras_divergencias`. Não altera `rematricula_extras_escolhas`
+ * (nem `sponte_snapshot`, nem `selecionadas`).
+ */
+export const reconferirExtrasAluno = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        unidade: z.string().trim().min(1),
+        alunoId: z.string().trim().min(1),
+        anoLetivo: z.number().int(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ResultadoReconferencia> => {
+    await exigirPermissaoReconferir(context.userId);
+
+    const { data: escolha, error: eErr } = await supabaseAdmin
+      .from("rematricula_extras_escolhas" as never)
+      .select("aluno_nome, selecionadas, finalizada_em")
+      .eq("unidade", data.unidade)
+      .eq("aluno_id", data.alunoId)
+      .eq("ano_letivo", data.anoLetivo)
+      .maybeSingle<{ aluno_nome: string; selecionadas: string[]; finalizada_em: string | null }>();
+    if (eErr) throw new Error(eErr.message);
+    if (!escolha || !escolha.finalizada_em) {
+      throw new Error(
+        "Este aluno ainda não finalizou a rematrícula: não há escolha de Extras para conferir.",
+      );
+    }
+
+    const { data: material } = await supabaseAdmin
+      .from("rematricula_escolhas" as never)
+      .select("serie")
+      .eq("unidade", data.unidade)
+      .eq("aluno_id", data.alunoId)
+      .eq("ano_letivo", data.anoLetivo)
+      .maybeSingle<{ serie: string }>();
+
+    const [sponte, diario] = await Promise.all([
+      coletarTitulosAluno(data.unidade, data.alunoId),
+      categoriasDoDiarioDoAluno(data.unidade, data.alunoId, data.anoLetivo, material?.serie ?? ""),
+    ]);
+    if (sponte.error || sponte.indisponivel) {
+      throw new Error(
+        `Sponte indisponível: não foi possível conferir os títulos do aluno agora.${sponte.error ? ` (${sponte.error})` : ""}`,
+      );
+    }
+
+    const divergencias = reconferirDivergenciasExtras({
+      aluno: escolha.aluno_nome,
+      anoLetivo: data.anoLetivo,
+      titulos: sponte.titulos,
+      selecionadas: escolha.selecionadas ?? [],
+      diario,
+    });
+
+    const agora = new Date().toISOString();
+    await substituirDivergencias(
+      {
+        unidade: data.unidade,
+        alunoId: data.alunoId,
+        alunoNome: escolha.aluno_nome,
+        anoLetivo: data.anoLetivo,
+      },
+      divergencias,
+      agora,
+    );
+
+    return {
+      alunoId: data.alunoId,
+      unidade: data.unidade,
+      anoLetivo: data.anoLetivo,
+      divergencias: divergencias.map((d) => ({
+        alunoId: data.alunoId,
+        anoLetivo: data.anoLetivo,
+        categoria: d.categoria,
+        tipo: d.tipo,
+        valor: d.valor,
+      })),
+      semDiario: diario === null,
+      conferidoEm: agora,
+    };
+  });
 
 export const listarDivergenciasExtras = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
