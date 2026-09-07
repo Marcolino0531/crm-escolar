@@ -25,7 +25,8 @@ import type { RotinaForm } from "./matricula-form";
 import { addMesesYMD } from "./confissao-divida";
 import { chaveSerie, mensalidadesDeReferencia } from "./rematricula";
 import { turnoDaTurma, type TurnoTurma } from "./matricula-turma";
-import type { ParcelaAberta } from "./cantina";
+import { dataNoMes, diaVencimentoHabitual, type ParcelaAberta } from "./cantina";
+import { proximoDiaUtil } from "./billing-schedule";
 
 // ─── Segmento e valor ───────────────────────────────────────────────────────
 
@@ -204,7 +205,9 @@ export function validarPrimeiroVencimento(vencimento: string, dataPreenchimento:
 
 // 1ª parcela: exatamente a data escolhida pelo responsável. Da 2ª em diante: o
 // vencimento real da mensalidade do aluno no mês correspondente; sem
-// mensalidade naquele mês, o mesmo dia da 1ª parcela no mês seguinte.
+// mensalidade naquele mês (ex.: as do ano seguinte ainda não emitidas), o dia
+// habitual da mensalidade do aluno, rolado para o dia útil seguinte. Só sem
+// nenhuma mensalidade de referência é que vale o dia da 1ª parcela.
 export function vencimentosMatriculaPelasMensalidades<T extends ParcelaAberta>(
   mensalidades: readonly T[],
   primeiroVencimento: string,
@@ -216,16 +219,22 @@ export function vencimentosMatriculaPelasMensalidades<T extends ParcelaAberta>(
       `Número de parcelas da matrícula fora do intervalo (1 a ${MAX_PARCELAS_MATRICULA}).`,
     );
   }
+  const referencia = mensalidadesDeReferencia(mensalidades);
   const porMes = new Map<string, string>();
-  for (const p of mensalidadesDeReferencia(mensalidades)) {
+  for (const p of referencia) {
     const mes = p.vencimento.slice(0, 7);
     const atual = porMes.get(mes);
     if (!atual || p.vencimento < atual) porMes.set(mes, p.vencimento);
   }
+  const diaHabitual = diaVencimentoHabitual(referencia);
   const datas: string[] = [primeiroVencimento];
   for (let i = 1; i < parcelas; i++) {
     const nominal = addMesesYMD(primeiroVencimento, i);
-    datas.push(porMes.get(nominal.slice(0, 7)) ?? nominal);
+    const mes = nominal.slice(0, 7);
+    datas.push(
+      porMes.get(mes) ??
+        (diaHabitual === null ? nominal : proximoDiaUtil(dataNoMes(mes, diaHabitual))),
+    );
   }
   return datas;
 }
