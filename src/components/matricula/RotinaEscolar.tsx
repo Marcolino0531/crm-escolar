@@ -94,10 +94,13 @@ export function RotinaEscolar({
             type="date"
             className="sm:max-w-[220px]"
             value={rotina.dataInicio}
+            aria-invalid={!!erros["rotina.dataInicio"]}
             onChange={(e) => onChange({ ...rotina, dataInicio: e.target.value })}
           />
           {erros["rotina.dataInicio"] && (
-            <p className="text-xs text-destructive">{erros["rotina.dataInicio"]}</p>
+            <p data-erro className="text-xs text-destructive">
+              {erros["rotina.dataInicio"]}
+            </p>
           )}
         </div>
       )}
@@ -133,7 +136,9 @@ export function RotinaEscolar({
                 ))}
               </div>
               {erros["rotina.dias"] && (
-                <p className="text-xs text-destructive">{erros["rotina.dias"]}</p>
+                <p data-erro className="text-xs text-destructive">
+                  {erros["rotina.dias"]}
+                </p>
               )}
             </div>
           )}
@@ -192,7 +197,9 @@ export function RotinaEscolar({
             </span>
           </label>
           {erros["rotina.periodos"] && (
-            <p className="text-xs text-destructive">{erros["rotina.periodos"]}</p>
+            <p data-erro className="text-xs text-destructive">
+              {erros["rotina.periodos"]}
+            </p>
           )}
         </div>
 
@@ -218,7 +225,9 @@ export function RotinaEscolar({
               ))}
             </div>
             {erros["rotina.horarioCurricular"] && (
-              <p className="text-xs text-destructive">{erros["rotina.horarioCurricular"]}</p>
+              <p data-erro className="text-xs text-destructive">
+                {erros["rotina.horarioCurricular"]}
+              </p>
             )}
           </div>
         )}
@@ -238,6 +247,7 @@ export function RotinaEscolar({
                       id={`rotina-entrada-${dia}`}
                       type="time"
                       className="w-[120px]"
+                      aria-invalid={!!erros[`rotina.horario.${dia}`]}
                       value={horario.entrada}
                       onChange={(e) => definirHorario(dia, { ...horario, entrada: e.target.value })}
                     />
@@ -250,13 +260,16 @@ export function RotinaEscolar({
                       id={`rotina-saida-${dia}`}
                       type="time"
                       className="w-[120px]"
+                      aria-invalid={!!erros[`rotina.horario.${dia}`]}
                       value={horario.saida}
                       onChange={(e) => definirHorario(dia, { ...horario, saida: e.target.value })}
                     />
                   </div>
                 </div>
                 {erros[`rotina.horario.${dia}`] && (
-                  <p className="text-xs text-destructive">{erros[`rotina.horario.${dia}`]}</p>
+                  <p data-erro className="text-xs text-destructive">
+                    {erros[`rotina.horario.${dia}`]}
+                  </p>
                 )}
               </div>
             );
@@ -309,7 +322,9 @@ export function RotinaEscolar({
         </div>
 
         {erros["rotina.refeicoes"] && (
-          <p className="text-xs text-destructive">{erros["rotina.refeicoes"]}</p>
+          <p data-erro className="text-xs text-destructive">
+            {erros["rotina.refeicoes"]}
+          </p>
         )}
       </div>
     </section>
