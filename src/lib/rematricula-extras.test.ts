@@ -5,7 +5,9 @@ import {
   divergenciasExtras,
   extrasDoSponteNoAno,
   normalizarSelecaoExtras,
+  validarRotinaExtras,
 } from "@/lib/rematricula-extras";
+import { ROTINA_FORM_VAZIA, refeicoesVazias, type RotinaForm } from "@/lib/matricula-form";
 
 function parcela(categoria: string, vencimento: string, valor: number, situacao = "Pendente") {
   return { categoria, vencimento, valor, situacao };
@@ -160,5 +162,53 @@ describe("normalizarSelecaoExtras", () => {
       "Almoço",
       "Jantar",
     ]);
+  });
+});
+
+describe("validarRotinaExtras — rotina x pacotes mensais", () => {
+  const base: RotinaForm = { ...ROTINA_FORM_VAZIA, periodoManha: true };
+
+  it("aceita rotina e extras coerentes (Almoço com dias + Hora Extra com estendido)", () => {
+    const rotina: RotinaForm = {
+      ...base,
+      horarioEstendido: true,
+      refeicoes: { ...refeicoesVazias(), lunch: [1, 3] },
+    };
+    expect(validarRotinaExtras(rotina, ["Almoço", "Hora Extra"], "6º Ano")).toEqual({});
+  });
+
+  it("extra marcado sem dia na grade bloqueia", () => {
+    const erros = validarRotinaExtras(base, ["Almoço"], "6º Ano");
+    expect(Object.keys(erros)).toEqual(["extras.Almoço"]);
+  });
+
+  it("refeição com dia na grade sem o pacote marcado bloqueia", () => {
+    const rotina: RotinaForm = { ...base, refeicoes: { ...refeicoesVazias(), snack: [2] } };
+    const erros = validarRotinaExtras(rotina, [], "6º Ano");
+    expect(Object.keys(erros)).toEqual(["extras.Lanche da Tarde"]);
+  });
+
+  it("horário estendido sem Hora Extra marcada bloqueia, e vice-versa", () => {
+    expect(
+      Object.keys(validarRotinaExtras({ ...base, horarioEstendido: true }, [], "6º Ano")),
+    ).toEqual(["extras.Hora Extra"]);
+    expect(Object.keys(validarRotinaExtras(base, ["Hora Extra"], "6º Ano"))).toEqual([
+      "extras.Hora Extra",
+    ]);
+  });
+
+  it("dia marcado fora dos dias ativos (frequência parcial) não conta", () => {
+    const rotina: RotinaForm = {
+      ...base,
+      frequenciaParcial: true,
+      diasSelecionados: [1],
+      refeicoes: { ...refeicoesVazias(), lunch: [5] },
+    };
+    expect(validarRotinaExtras(rotina, [], "Maternal 1")).toEqual({});
+  });
+
+  it("Jantar fora da oferta da série é ignorado", () => {
+    const rotina: RotinaForm = { ...base, refeicoes: { ...refeicoesVazias(), dinner: [1] } };
+    expect(validarRotinaExtras(rotina, [], "6º Ano")).toEqual({});
   });
 });
