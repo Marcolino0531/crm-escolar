@@ -220,7 +220,7 @@ export function reconferirDivergenciasExtras(entrada: {
 
 /** Texto do toast/aviso após o "Conferir novamente". */
 export function mensagemReconferencia(r: {
-  divergencias: readonly { categoria: CategoriaExtra }[];
+  divergencias: readonly { categoria: string }[];
   semDiario: boolean;
 }): string {
   if (r.divergencias.length === 0) {

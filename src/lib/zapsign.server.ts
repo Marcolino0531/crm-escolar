@@ -168,6 +168,14 @@ export function telefoneParaZapSign(telefone: string | undefined): {
   return { phone_country: "55", phone_number: d };
 }
 
+/**
+ * Assinatura desenhada na tela + código de verificação enviado ao email do
+ * signatário. Quem só tem o link não consegue assinar sem acesso à caixa de
+ * entrada cadastrada; email e telefone ficam travados para o signatário não
+ * redirecionar o código.
+ */
+export const ZAPSIGN_AUTH_MODE = "assinaturaTela-tokenEmail";
+
 export function montarSigner(
   s: ZapSignSignatarioInput,
   ordemAtiva: boolean,
@@ -179,11 +187,13 @@ export function montarSigner(
     name: s.nome,
     email: s.email ?? "",
     ...tel,
-    auth_mode: "assinaturaTela",
+    auth_mode: ZAPSIGN_AUTH_MODE,
     // POC: link copiado da tela. Contrato real: a ZapSign emaila o signatário.
     send_automatic_email: enviarEmail,
     send_automatic_whatsapp: false,
     lock_name: true,
+    lock_email: true,
+    lock_phone: Boolean(tel.phone_number),
   };
   if (cpf) {
     signer.require_document = true;
@@ -213,6 +223,14 @@ export async function criarDocumentoPdf(
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
   const ambiente = input.ambiente ?? "sandbox";
   const enviarEmail = input.enviarEmailAoSignatario ?? false;
+  const semEmail = input.signatarios.find((s) => !(s.email ?? "").trim());
+  if (semEmail) {
+    return {
+      ok: false,
+      status: 0,
+      erro: `Signatário "${semEmail.nome}" sem email: a verificação por código exige o email cadastrado.`,
+    };
+  }
   return zapsignFetch<ZapSignDocResposta>(ambiente, "/docs/", {
     method: "POST",
     body: {
@@ -246,7 +264,7 @@ export async function criarTemplateDocx(
       first_signer: {
         blank_email: false,
         blank_phone: true,
-        auth_mode: "assinaturaTela",
+        auth_mode: ZAPSIGN_AUTH_MODE,
         require_selfie_photo: false,
         require_document_photo: false,
         selfie_validation_type: "",
