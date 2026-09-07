@@ -139,6 +139,10 @@ import {
   type ExtrasRematricula,
 } from "@/lib/rematricula-extras.functions";
 import { CATEGORIAS_EXTRAS_REMATRICULA } from "@/lib/rematricula-extras";
+import {
+  divergenciasExtrasDaUnidade,
+  type DivergenciaExtraAluno,
+} from "@/lib/rematricula-extras.functions";
 
 const LOG_TAG = "[rematricula]";
 
@@ -1930,6 +1934,7 @@ export interface AcompanhamentoRematriculaResult {
   acessos: AcessoAcompanhamento[];
   envios: EnvioAcompanhamento[];
   cadastroAlterados: { unidade: string; alunoId: string }[];
+  divergenciasExtras: DivergenciaExtraAluno[];
   error?: string;
 }
 
@@ -1941,7 +1946,7 @@ const UnidadeSchema = z.object({ unidade: z.string().min(1) });
 export async function carregarAcompanhamentoUnidade(
   unidade: string,
 ): Promise<AcompanhamentoRematriculaResult> {
-  const [ativos, escolhas, acessos, envios, auditoria] = await Promise.all([
+  const [ativos, escolhas, acessos, envios, auditoria, divergenciasExtras] = await Promise.all([
     alunosAtivosDaUnidade(unidade),
     selectAll<EscolhaRow>(() =>
       supabaseAdmin
@@ -1963,6 +1968,7 @@ export async function carregarAcompanhamentoUnidade(
       .select("aluno_id")
       .eq("unidade", unidade)
       .eq("resultado", "gravado"),
+    divergenciasExtrasDaUnidade(unidade),
   ]);
 
   const linhas = escolhas;
@@ -2004,6 +2010,7 @@ export async function carregarAcompanhamentoUnidade(
       enviadaEm: e.enviada_em,
     })),
     cadastroAlterados: [...alterados].map((alunoId) => ({ unidade, alunoId })),
+    divergenciasExtras,
     error: ativos.error,
   };
 }
@@ -2024,6 +2031,7 @@ export const acompanhamentoRematricula = createServerFn({ method: "POST" })
         acessos: [],
         envios: [],
         cadastroAlterados: [],
+        divergenciasExtras: [],
         error: "Sem permissão para esta unidade.",
       };
     }

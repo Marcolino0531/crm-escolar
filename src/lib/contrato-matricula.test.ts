@@ -18,6 +18,7 @@ import {
 import { MODELO_CONTRATO } from "@/lib/contrato-matricula-modelo";
 
 const HOJE = "2026-09-14";
+const ANO = 2026;
 
 function titulo(over: Partial<TituloExtras>): TituloExtras {
   return {
@@ -77,7 +78,7 @@ function entrada(over: Partial<MontarContratoInput> = {}): MontarContratoInput {
         titulo({ categoria: "Hora Extra", valor: 350 }),
         titulo({ categoria: "Almoço", valor: 420.5 }),
       ],
-      HOJE,
+      ANO,
     ),
     hojeISO: HOJE,
     ...over,
@@ -97,7 +98,7 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
         titulo({ categoria: "Jantar", valor: 380 }),
         titulo({ categoria: "Recarga Cantina", valor: 50 }),
       ],
-      HOJE,
+      ANO,
     );
     expect(r.categorias).toEqual([
       "Hora Extra",
@@ -110,7 +111,7 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
     expect(r.lista).toBe("Hora Extra, Lanche da Manhã, Almoço, Lanche da Tarde e Jantar");
   });
 
-  it("não repete categoria: uma parcela vigente por categoria entra na soma", () => {
+  it("não repete categoria: a primeira parcela do ano por categoria entra na soma", () => {
     const r = extrasDoContrato(
       [
         titulo({ categoria: "Almoço", vencimento: "2026-09-10", valor: 400 }),
@@ -118,22 +119,60 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
         titulo({ categoria: "Almoço", vencimento: "2026-11-10", valor: 420 }),
         titulo({ categoria: "Jantar", vencimento: "2026-10-10", valor: 380 }),
       ],
-      HOJE,
+      ANO,
     );
     expect(r.categorias).toEqual(["Almoço", "Jantar"]);
-    expect(r.valorMensal).toBe(800);
+    expect(r.valorMensal).toBe(780);
     expect(r.lista).toBe("Almoço e Jantar");
   });
 
-  it("usa a parcela mais recente quando só há vencidas (fim de ano)", () => {
+  it("usa a primeira parcela do ano letivo, mesmo já vencida", () => {
     const r = extrasDoContrato(
       [
         titulo({ categoria: "Hora Extra", vencimento: "2026-06-10", valor: 300 }),
         titulo({ categoria: "Hora Extra", vencimento: "2026-08-10", valor: 330 }),
       ],
-      "2026-12-20",
+      ANO,
     );
-    expect(r.valorMensal).toBe(330);
+    expect(r.valorMensal).toBe(300);
+  });
+
+  it("só entram títulos do ano letivo do contrato (caso Ryan: Hora Extra quitada de 2025 fora)", () => {
+    const r = extrasDoContrato(
+      [
+        titulo({
+          categoria: "Hora Extra",
+          vencimento: "2025-03-10",
+          valor: 160,
+          situacao: "Quitada",
+          quitada: true,
+        }),
+        titulo({
+          categoria: "Hora Extra",
+          vencimento: "2025-04-10",
+          valor: 160,
+          situacao: "Quitada",
+          quitada: true,
+        }),
+        titulo({ categoria: "Almoço", vencimento: "2026-10-10", valor: 90 }),
+        titulo({ categoria: "Almoço", vencimento: "2027-02-05", valor: 100 }),
+        titulo({ categoria: "Almoço", vencimento: "2027-03-05", valor: 100 }),
+        titulo({ categoria: "Lanche da Tarde", vencimento: "2027-02-05", valor: 150 }),
+      ],
+      2027,
+    );
+    expect(r.categorias).toEqual(["Almoço", "Lanche da Tarde"]);
+    expect(r.valorMensal).toBe(250);
+    expect(r.lista).toBe("Almoço e Lanche da Tarde");
+
+    const r2026 = extrasDoContrato(
+      [
+        titulo({ categoria: "Almoço", vencimento: "2026-10-10", valor: 90 }),
+        titulo({ categoria: "Almoço", vencimento: "2027-02-05", valor: 100 }),
+      ],
+      2026,
+    );
+    expect(r2026.valorMensal).toBe(90);
   });
 
   it("ignora parcelas canceladas/estornadas e valores zerados", () => {
@@ -143,7 +182,7 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
         titulo({ categoria: "Almoço", valor: 0 }),
         titulo({ categoria: "Hora Extra", situacao: "Estornada" }),
       ],
-      HOJE,
+      ANO,
     );
     expect(r.categorias).toEqual([]);
     expect(r.valorMensal).toBe(0);
@@ -151,12 +190,12 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
   });
 
   it("casa a categoria sem depender de acento/caixa", () => {
-    const r = extrasDoContrato([titulo({ categoria: "LANCHE DA MANHA", valor: 90 })], HOJE);
+    const r = extrasDoContrato([titulo({ categoria: "LANCHE DA MANHA", valor: 90 })], ANO);
     expect(r.categorias).toEqual(["Lanche da Manhã"]);
   });
 
   it("fallback exato quando não há extras", () => {
-    expect(extrasDoContrato([], HOJE).lista).toBe(
+    expect(extrasDoContrato([], ANO).lista).toBe(
       "Não há serviços extras contratados nesta rematrícula.",
     );
   });
@@ -164,7 +203,7 @@ describe("extrasDoContrato (retrato do contas a receber do Sponte)", () => {
   it("soma em centavos sem erro de ponto flutuante", () => {
     const r = extrasDoContrato(
       [titulo({ categoria: "Almoço", valor: 0.1 }), titulo({ categoria: "Jantar", valor: 0.2 })],
-      HOJE,
+      ANO,
     );
     expect(r.valorMensal).toBe(0.3);
   });
@@ -257,9 +296,7 @@ describe("montarContratoMatricula — texto do modelo", () => {
     expect(texto).toContain(
       "MENSALIDADE: R$2.000,00, com desconto de 30% aplicado, resultando no valor mensal de R$1.400,00 (mil e quatrocentos reais)",
     );
-    expect(texto).toContain(
-      "EXTRAS: Hora Extra e Almoço (podendo incluir Hora Extra, Lanche da Manhã, Lanche da Tarde, Almoço e/ou Jantar), no valor mensal total de R$770,50",
-    );
+    expect(texto).toContain("EXTRAS: Hora Extra e Almoço, no valor mensal total de R$770,50");
     expect(texto).not.toContain("este bloco é substituído por");
     expect(doc.fecho).toBe("Belo Horizonte, 14 de setembro de 2026.");
   });
@@ -275,7 +312,7 @@ describe("montarContratoMatricula — texto do modelo", () => {
 
   it("sem material e sem extras: blocos trocados pelos textos de fallback", () => {
     const doc = montarContratoMatricula(
-      entrada({ material: null, extras: extrasDoContrato([], HOJE) }),
+      entrada({ material: null, extras: extrasDoContrato([], ANO) }),
     );
     const texto = doc.paragrafos.map((p) => p.texto).join("\n");
     expect(texto).toContain(`MATERIAL PEDAGÓGICO: ${TEXTO_SEM_MATERIAL}`);
@@ -298,7 +335,7 @@ describe("montarContratoMatricula — texto do modelo", () => {
 
   it("os extras do documento são um retrato: mudar o Sponte depois não altera o contrato montado", () => {
     const titulos = [titulo({ categoria: "Almoço", valor: 400 })];
-    const doc = montarContratoMatricula(entrada({ extras: extrasDoContrato(titulos, HOJE) }));
+    const doc = montarContratoMatricula(entrada({ extras: extrasDoContrato(titulos, ANO) }));
     titulos.push(titulo({ categoria: "Jantar", valor: 380 }));
     expect(doc.campos.ListaExtrasSelecionados).toBe("Almoço");
     expect(doc.campos.ValorTotalExtrasMensal).toBe("400,00");

@@ -25,7 +25,11 @@ import {
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
 import { rolarParaPrimeiroErro } from "@/lib/rolar-para-erro";
-import { categoriasExtrasOferecidas, type CategoriaExtra } from "@/lib/rematricula-extras";
+import {
+  categoriasExtrasOferecidas,
+  validarRotinaExtras,
+  type CategoriaExtra,
+} from "@/lib/rematricula-extras";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ROTINA_FORM_VAZIA,
@@ -974,6 +978,11 @@ function RematriculaPage() {
                 onChange={(nova) => {
                   setRotina(nova);
                   setRotinaSalva("");
+                  setErrosEnvio((atual) =>
+                    Object.fromEntries(
+                      Object.entries(atual).filter(([k]) => !k.startsWith("extras.")),
+                    ),
+                  );
                 }}
               />
               <Button
@@ -1019,35 +1028,51 @@ function RematriculaPage() {
                     {categoriasOferecidas.map((categoria) => {
                       const lancado = extras.sponte.find((e) => e.categoria === categoria);
                       const marcado = extrasMarcados.includes(categoria);
+                      const erroExtra = errosEnvio[`extras.${categoria}`];
                       return (
-                        <label
-                          key={categoria}
-                          className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition ${
-                            marcado ? "border-primary bg-primary/10" : "hover:bg-muted/60"
-                          } ${enviadaEm ? "cursor-default opacity-70" : ""}`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-primary"
-                              checked={marcado}
-                              disabled={!!enviadaEm}
-                              onChange={(e) =>
-                                setExtrasMarcados((atual) =>
-                                  e.target.checked
-                                    ? categoriasOferecidas.filter(
-                                        (c) => c === categoria || atual.includes(c),
-                                      )
-                                    : atual.filter((c) => c !== categoria),
-                                )
-                              }
-                            />
-                            {categoria}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
-                          </span>
-                        </label>
+                        <div key={categoria} className="space-y-1">
+                          <label
+                            className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition ${
+                              erroExtra
+                                ? "border-destructive"
+                                : marcado
+                                  ? "border-primary bg-primary/10"
+                                  : "hover:bg-muted/60"
+                            } ${enviadaEm ? "cursor-default opacity-70" : ""}`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-primary"
+                                checked={marcado}
+                                disabled={!!enviadaEm}
+                                aria-invalid={erroExtra ? true : undefined}
+                                onChange={(e) => {
+                                  setExtrasMarcados((atual) =>
+                                    e.target.checked
+                                      ? categoriasOferecidas.filter(
+                                          (c) => c === categoria || atual.includes(c),
+                                        )
+                                      : atual.filter((c) => c !== categoria),
+                                  );
+                                  setErrosEnvio((atual) => {
+                                    const { [`extras.${categoria}`]: _, ...resto } = atual;
+                                    return resto;
+                                  });
+                                }}
+                              />
+                              {categoria}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
+                            </span>
+                          </label>
+                          {erroExtra && (
+                            <p data-erro className="text-xs text-destructive">
+                              {erroExtra}
+                            </p>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -1103,6 +1128,15 @@ function RematriculaPage() {
                       if (!conferirFinanceiro()) {
                         setErro(
                           "Complete e salve os dados obrigatórios do responsável financeiro antes de finalizar.",
+                        );
+                        rolarParaPrimeiroErro();
+                        return;
+                      }
+                      const errosExtras = validarRotinaExtras(rotina, extrasMarcados, aluno.serie);
+                      if (Object.keys(errosExtras).length > 0) {
+                        setErrosEnvio(errosExtras);
+                        setErro(
+                          "Rotina Escolar e Extras não estão de acordo. Confira os itens destacados.",
                         );
                         rolarParaPrimeiroErro();
                         return;

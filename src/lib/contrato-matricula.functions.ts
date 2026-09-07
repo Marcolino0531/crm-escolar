@@ -39,6 +39,10 @@ import {
 import { gerarPdfContratoMatricula } from "@/lib/contrato-matricula-pdf";
 import { itensMaterialInclusos } from "@/lib/rematricula";
 import {
+  divergenciasExtrasDaUnidade,
+  type DivergenciaExtraAluno,
+} from "@/lib/rematricula-extras.functions";
+import {
   BASE_URL_PORTAL,
   buscarAlunoPorId,
   buscarMensalidadeVigente,
@@ -68,6 +72,8 @@ export interface ContratoPendente {
   matricula: { valor: number; parcelas: number; primeiroVencimento: string } | null;
   /** Material pedagógico escolhido no portal (null = série sem material). */
   material: { valorAnual: number; parcelas: number } | null;
+  /** Divergências de Extras gravadas no Finalizar (ação manual pendente no Sponte/Diário). */
+  divergenciasExtras: DivergenciaExtraAluno[];
   /** Retrato do último contrato gerado (se houver). */
   contrato: {
     id: string;
@@ -175,7 +181,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
       return { ...base, itens: [], error: "Sem permissão para esta unidade." };
     }
 
-    const [envios, matriculas, escolhas, contratos] = await Promise.all([
+    const [envios, matriculas, escolhas, contratos, divergencias] = await Promise.all([
       selectAll<EnvioRow>(() =>
         supabaseAdmin
           .from("rematricula_envios" as never)
@@ -207,6 +213,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
           .eq("unidade", unidade)
           .order("aluno_id", { ascending: true }),
       ),
+      divergenciasExtrasDaUnidade(unidade),
     ]);
 
     const docIds = contratos.map((c) => c.zapsign_documento_id).filter((d): d is string => !!d);
@@ -245,6 +252,9 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
             }
           : null,
         material: esc ? { valorAnual: Number(esc.valor_anual), parcelas: esc.parcelas } : null,
+        divergenciasExtras: divergencias.filter(
+          (d) => d.alunoId === e.aluno_id && d.anoLetivo === anoLetivo,
+        ),
         contrato: c
           ? {
               id: c.id,
@@ -336,7 +346,7 @@ async function carregarLogoServidor(logoPath: string | null): Promise<LogoRecibo
 async function extrasDoAluno(
   unidade: string,
   alunoId: string,
-  hoje: string,
+  anoLetivo: number,
 ): Promise<ExtrasContrato> {
   const r = await coletarTitulosAluno(unidade, alunoId);
   if (r.error) throw new Error(`Falha ao ler o contas a receber no Sponte: ${r.error}`);
@@ -349,7 +359,7 @@ async function extrasDoAluno(
       situacao: t.situacao,
       quitada: t.quitada,
     })),
-    hoje,
+    anoLetivo,
   );
 }
 
@@ -384,6 +394,163 @@ async function gravarContrato(
   if (error) throw new Error(`Falha ao gravar o contrato: ${error.message}`);
   return data.id;
 }
+
+interface PdfContratoMontado {
+  pdfBase64: string;
+  contrato: ReturnType<typeof montarContratoMatricula>;
+  input: MontarContratoInput;
+  fin: Awaited<ReturnType<typeof buscarResponsaveisComFinanceiro>>[number];
+}
+
+/**
+ * Lê Sponte + escolhas do portal, valida e renderiza o PDF do contrato.
+ * Não grava nada nem fala com a ZapSign — serve tanto para a prévia quanto
+ * para o envio real.
+ */
+async function montarPdfContrato(
+  unidade: string,
+  alunoId: string,
+  anoLetivo: number,
+  numero: string,
+): Promise<PdfContratoMontado> {
+  const hoje = hojeBRT();
+  const [matricula, escolha, aluno, colegio] = await Promise.all([
+    supabaseAdmin
+      .from("rematricula_matricula_escolhas" as never)
+      .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
+      .eq("unidade", unidade)
+      .eq("aluno_id", alunoId)
+      .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
+    supabaseAdmin
+      .from("rematricula_escolhas" as never)
+      .select("valor_anual, parcelas")
+      .eq("unidade", unidade)
+      .eq("aluno_id", alunoId)
+      .maybeSingle<Omit<EscolhaRow, "aluno_id">>(),
+    buscarAlunoPorId(unidade, alunoId),
+    colegioDaUnidade(unidade),
+  ]);
+  if (!matricula.data) throw new Error("Matrícula não encontrada para este aluno.");
+  if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
+
+  // Respeita a troca de responsável financeiro feita no portal de rematrícula.
+  const [responsaveis, mensalidade, extras, logo] = await Promise.all([
+    buscarResponsaveisComFinanceiro(unidade, alunoId),
+    buscarMensalidadeVigente(unidade, alunoId),
+    extrasDoAluno(unidade, alunoId, anoLetivo),
+    carregarLogoServidor(colegio.logo_path),
+  ]);
+  const fin = responsaveis.find((r) => r.financeiro);
+  if (!fin) throw new Error("Responsável financeiro não encontrado no Sponte.");
+  if (!emailValido(fin.email)) {
+    throw new Error("O responsável financeiro não tem email válido no Sponte.");
+  }
+  if (!mensalidade) throw new Error("Mensalidade vigente não encontrada no Sponte.");
+
+  const serie = matricula.data.serie;
+  const input: MontarContratoInput = {
+    numeroContrato: numero,
+    anoLetivo,
+    colegio: {
+      unidade,
+      razaoSocial: colegio.razao_social,
+      nomeFantasia: colegio.nome_fantasia,
+      cnpj: colegio.cnpj,
+      endereco: colegio.endereco,
+      numero: colegio.numero,
+      complemento: colegio.complemento,
+      bairro: colegio.bairro,
+      cidade: colegio.cidade,
+      uf: colegio.uf,
+      cep: colegio.cep,
+      email: colegio.email,
+      representanteNome: colegio.representante_nome ?? "",
+      representanteCpf: colegio.representante_cpf ?? "",
+    },
+    responsavel: {
+      nome: fin.nome,
+      cpf: fin.cpf,
+      email: fin.email,
+      telefone: fin.telefone,
+      endereco: fin.endereco,
+      numero: fin.numero,
+      complemento: fin.complemento,
+      bairro: fin.bairro,
+      cidade: fin.cidade,
+      uf: fin.uf,
+      cep: fin.cep,
+    },
+    alunoNome: aluno.nome || matricula.data.aluno_nome,
+    serie,
+    matricula: {
+      valor: Number(matricula.data.valor),
+      parcelas: matricula.data.parcelas,
+      primeiroVencimento: matricula.data.primeiro_vencimento,
+    },
+    mensalidade: {
+      valor: mensalidade.valor,
+      descontoPercentual: mensalidade.descontoPercentual,
+      vencimento: mensalidade.vencimento,
+    },
+    material: escolha.data
+      ? {
+          itens: itensMaterialInclusos(unidade, serie),
+          valorTotal: Number(escolha.data.valor_anual),
+          parcelas: escolha.data.parcelas,
+        }
+      : null,
+    extras,
+    hojeISO: hoje,
+  };
+
+  const pendencias = validarContrato(input);
+  if (pendencias.length) throw new Error(pendencias.join(" "));
+
+  const contrato = montarContratoMatricula(input);
+  const colegioRecibo = paraColegioRecibo(colegio);
+  const pdf = await gerarPdfContratoMatricula(
+    contrato,
+    {
+      colegio: colegioRecibo,
+      enderecoColegio: enderecoLinha(colegioRecibo),
+      contatoColegio: [colegio.telefone, colegio.email].filter(Boolean).join(" · "),
+    },
+    logo,
+  );
+  const pdfBase64 = pdfParaBase64(pdf);
+  return { pdfBase64, contrato, input, fin };
+}
+
+export interface PreviaContratoResult {
+  ok: boolean;
+  erro?: string;
+  numero?: string;
+  nomeArquivo?: string;
+  pdfBase64?: string;
+}
+
+export const previaContratoMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => GerarSchema.parse(input))
+  .handler(async ({ data, context }): Promise<PreviaContratoResult> => {
+    await exigirPermissaoRematricula(context.userId, false);
+    const { unidade, alunoId, anoLetivo } = data;
+    if (!(await unidadePermitida(context.userId, unidade))) {
+      return { ok: false, erro: "Sem permissão para esta unidade." };
+    }
+    const numero = numeroContrato(unidade, alunoId, anoLetivo);
+    try {
+      const { pdfBase64, input } = await montarPdfContrato(unidade, alunoId, anoLetivo, numero);
+      return {
+        ok: true,
+        numero,
+        nomeArquivo: `PREVIA Contrato de Matrícula ${anoLetivo} - ${input.alunoNome} (${unidade}).pdf`,
+        pdfBase64,
+      };
+    } catch (e) {
+      return { ok: false, erro: e instanceof Error ? e.message : "Falha desconhecida.", numero };
+    }
+  });
 
 export interface GerarContratoResult {
   ok: boolean;
@@ -421,111 +588,12 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
     await gravarContrato(chave, { numero_contrato: numero, status: "gerando", erro: "" });
 
     try {
-      const hoje = hojeBRT();
-      const [matricula, escolha, aluno, colegio] = await Promise.all([
-        supabaseAdmin
-          .from("rematricula_matricula_escolhas" as never)
-          .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
-          .eq("unidade", unidade)
-          .eq("aluno_id", alunoId)
-          .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
-        supabaseAdmin
-          .from("rematricula_escolhas" as never)
-          .select("valor_anual, parcelas")
-          .eq("unidade", unidade)
-          .eq("aluno_id", alunoId)
-          .maybeSingle<Omit<EscolhaRow, "aluno_id">>(),
-        buscarAlunoPorId(unidade, alunoId),
-        colegioDaUnidade(unidade),
-      ]);
-      if (!matricula.data) throw new Error("Matrícula não encontrada para este aluno.");
-      if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
-
-      // Respeita a troca de responsável financeiro feita no portal de rematrícula.
-      const [responsaveis, mensalidade, extras, logo] = await Promise.all([
-        buscarResponsaveisComFinanceiro(unidade, alunoId),
-        buscarMensalidadeVigente(unidade, alunoId),
-        extrasDoAluno(unidade, alunoId, hoje),
-        carregarLogoServidor(colegio.logo_path),
-      ]);
-      const fin = responsaveis.find((r) => r.financeiro);
-      if (!fin) throw new Error("Responsável financeiro não encontrado no Sponte.");
-      if (!emailValido(fin.email)) {
-        throw new Error("O responsável financeiro não tem email válido no Sponte.");
-      }
-      if (!mensalidade) throw new Error("Mensalidade vigente não encontrada no Sponte.");
-
-      const serie = matricula.data.serie;
-      const input: MontarContratoInput = {
-        numeroContrato: numero,
+      const { pdfBase64, contrato, input, fin } = await montarPdfContrato(
+        unidade,
+        alunoId,
         anoLetivo,
-        colegio: {
-          unidade,
-          razaoSocial: colegio.razao_social,
-          nomeFantasia: colegio.nome_fantasia,
-          cnpj: colegio.cnpj,
-          endereco: colegio.endereco,
-          numero: colegio.numero,
-          complemento: colegio.complemento,
-          bairro: colegio.bairro,
-          cidade: colegio.cidade,
-          uf: colegio.uf,
-          cep: colegio.cep,
-          email: colegio.email,
-          representanteNome: colegio.representante_nome ?? "",
-          representanteCpf: colegio.representante_cpf ?? "",
-        },
-        responsavel: {
-          nome: fin.nome,
-          cpf: fin.cpf,
-          email: fin.email,
-          telefone: fin.telefone,
-          endereco: fin.endereco,
-          numero: fin.numero,
-          complemento: fin.complemento,
-          bairro: fin.bairro,
-          cidade: fin.cidade,
-          uf: fin.uf,
-          cep: fin.cep,
-        },
-        alunoNome: aluno.nome || matricula.data.aluno_nome,
-        serie,
-        matricula: {
-          valor: Number(matricula.data.valor),
-          parcelas: matricula.data.parcelas,
-          primeiroVencimento: matricula.data.primeiro_vencimento,
-        },
-        mensalidade: {
-          valor: mensalidade.valor,
-          descontoPercentual: mensalidade.descontoPercentual,
-          vencimento: mensalidade.vencimento,
-        },
-        material: escolha.data
-          ? {
-              itens: itensMaterialInclusos(unidade, serie),
-              valorTotal: Number(escolha.data.valor_anual),
-              parcelas: escolha.data.parcelas,
-            }
-          : null,
-        extras,
-        hojeISO: hoje,
-      };
-
-      const pendencias = validarContrato(input);
-      if (pendencias.length) throw new Error(pendencias.join(" "));
-
-      const contrato = montarContratoMatricula(input);
-      const colegioRecibo = paraColegioRecibo(colegio);
-      const pdf = await gerarPdfContratoMatricula(
-        contrato,
-        {
-          colegio: colegioRecibo,
-          enderecoColegio: enderecoLinha(colegioRecibo),
-          contatoColegio: [colegio.telefone, colegio.email].filter(Boolean).join(" · "),
-        },
-        logo,
+        numero,
       );
-      const pdfBase64 = pdfParaBase64(pdf);
 
       const nomeDoc = `Contrato de Matrícula ${anoLetivo} - ${input.alunoNome} (${unidade})`;
       const r = await criarDocumentoPdf({

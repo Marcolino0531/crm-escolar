@@ -249,6 +249,37 @@ type DivergenciaRow = {
   created_at: string;
 };
 
+export interface DivergenciaExtraAluno {
+  alunoId: string;
+  anoLetivo: number;
+  categoria: string;
+  tipo: TipoDivergenciaExtra;
+  valor: number | null;
+}
+
+/** Divergências gravadas no último Finalizar de cada aluno da unidade (sem
+ *  filtro de permissão — quem chama já validou o acesso à unidade). */
+export async function divergenciasExtrasDaUnidade(
+  unidade: string,
+): Promise<DivergenciaExtraAluno[]> {
+  const rows = await selectAll<
+    Pick<DivergenciaRow, "aluno_id" | "ano_letivo" | "categoria" | "tipo" | "valor">
+  >(() =>
+    supabaseAdmin
+      .from("rematricula_extras_divergencias" as never)
+      .select("aluno_id, ano_letivo, categoria, tipo, valor")
+      .eq("unidade", unidade)
+      .order("created_at"),
+  );
+  return rows.map((r) => ({
+    alunoId: r.aluno_id,
+    anoLetivo: r.ano_letivo,
+    categoria: r.categoria,
+    tipo: r.tipo,
+    valor: r.valor === null ? null : Number(r.valor),
+  }));
+}
+
 async function exigirPermissaoDiario(userId: string): Promise<void> {
   const { data, error } = await supabaseAdmin.rpc(
     "can_view_module" as never,

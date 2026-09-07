@@ -128,20 +128,21 @@ function centavos(valor: number): number {
 }
 
 /**
- * Extras vigentes lidos do contas a receber: por categoria aceita, a parcela
- * com vencimento mais próximo ainda por vencer (ou a mais recente, se não há
- * futura) dá o valor mensal daquela categoria. Parcelas canceladas/estornadas
- * e categorias fora da lista são ignoradas. Retrato do momento da geração.
+ * Extras do ano letivo do contrato lidos do contas a receber: por categoria
+ * aceita, a primeira parcela com vencimento naquele ano dá o valor mensal.
+ * Parcelas de outros anos, canceladas/estornadas e categorias fora da lista
+ * são ignoradas. Retrato do momento da geração.
  */
 export function extrasDoContrato(
   titulos: readonly TituloExtras[],
-  hojeISO: string,
+  anoLetivo: number,
 ): ExtrasContrato {
-  const hoje = hojeISO.slice(0, 10);
+  const prefixo = `${anoLetivo}-`;
   const porCategoria = new Map<string, TituloExtras[]>();
   for (const t of titulos) {
     const cat = categoriaExtra(t.categoria);
     if (!cat || t.valor <= 0 || !t.vencimento || tituloCancelado(t)) continue;
+    if (!t.vencimento.startsWith(prefixo)) continue;
     const lista = porCategoria.get(cat) ?? [];
     lista.push(t);
     porCategoria.set(cat, lista);
@@ -152,13 +153,9 @@ export function extrasDoContrato(
   for (const cat of CATEGORIAS_EXTRAS) {
     const lista = porCategoria.get(cat);
     if (!lista?.length) continue;
-    const futuras = lista
-      .filter((t) => t.vencimento >= hoje)
-      .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
-    const vigente =
-      futuras[0] ?? [...lista].sort((a, b) => b.vencimento.localeCompare(a.vencimento))[0];
+    const primeira = [...lista].sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
     categorias.push(cat);
-    totalCentavos += centavos(vigente.valor);
+    totalCentavos += centavos(primeira.valor);
   }
 
   return {

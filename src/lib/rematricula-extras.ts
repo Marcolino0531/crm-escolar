@@ -11,8 +11,8 @@
 //
 // A comparação só sinaliza: nada é alterado no Sponte nem no Diário.
 
-import type { MealPlan, SchedulePlan } from "@/lib/diario";
-import type { SegmentoSerie } from "@/lib/matricula-form";
+import type { MealKey, MealPlan, SchedulePlan } from "@/lib/diario";
+import { diasAtivosRotina, type RotinaForm, type SegmentoSerie } from "@/lib/matricula-form";
 import {
   CATEGORIA_HORA_EXTRA,
   CATEGORIA_POR_REFEICAO,
@@ -199,4 +199,48 @@ export function normalizarSelecaoExtras(itens: readonly string[]): CategoriaExtr
     if (cat) marcadas.add(cat);
   }
   return CATEGORIAS_EXTRAS_REMATRICULA.filter((c) => marcadas.has(c));
+}
+
+/**
+ * Coerência entre a grade de rotina (dia a dia) e os pacotes mensais de Extras,
+ * conferida ao finalizar: um extra marcado precisa de pelo menos um dia na
+ * rotina correspondente e uma refeição com dia marcado precisa do pacote
+ * correspondente marcado. Hora Extra corresponde ao Horário Estendido.
+ * Retorna erros indexados por `extras.<categoria>` para destaque na tela.
+ */
+export function validarRotinaExtras(
+  rotina: RotinaForm,
+  extrasMarcados: readonly CategoriaExtra[],
+  serie: string,
+): Record<string, string> {
+  const erros: Record<string, string> = {};
+  const oferecidas = categoriasExtrasOferecidas(serie);
+  const dias = diasAtivosRotina(rotina);
+  const marcadas = new Set(extrasMarcados);
+
+  const naRotina = (categoria: CategoriaExtra): boolean => {
+    if (categoria === CATEGORIA_HORA_EXTRA) return rotina.horarioEstendido;
+    const meal = (Object.keys(CATEGORIA_POR_REFEICAO) as MealKey[]).find(
+      (k) => CATEGORIA_POR_REFEICAO[k] === categoria,
+    );
+    if (!meal || rotina.semRefeicoes) return false;
+    return rotina.refeicoes[meal].some((d) => dias.includes(d));
+  };
+
+  for (const categoria of oferecidas) {
+    const marcada = marcadas.has(categoria);
+    const temDia = naRotina(categoria);
+    if (marcada && !temDia) {
+      erros[`extras.${categoria}`] =
+        categoria === CATEGORIA_HORA_EXTRA
+          ? "Hora Extra está marcada em Extras, mas a rotina não está em Horário Estendido. Ajuste a rotina ou desmarque o extra."
+          : `${categoria} está marcado em Extras, mas não tem nenhum dia marcado na grade de refeições. Marque os dias ou desmarque o extra.`;
+    } else if (!marcada && temDia) {
+      erros[`extras.${categoria}`] =
+        categoria === CATEGORIA_HORA_EXTRA
+          ? "A rotina está em Horário Estendido, mas Hora Extra não está marcada em Extras. Marque o extra ou ajuste a rotina."
+          : `${categoria} tem dias marcados na grade de refeições, mas não está marcado em Extras. Marque o extra ou desmarque os dias.`;
+    }
+  }
+  return erros;
 }

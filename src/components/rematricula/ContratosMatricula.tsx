@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { AlertTriangle, ExternalLink, FileSignature, Loader2 } from "lucide-react";
+import { AlertTriangle, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
+import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,9 +22,23 @@ import { formatarBRL } from "@/lib/rematricula";
 import {
   gerarEnviarContratoMatricula,
   listarContratosMatricula,
+  previaContratoMatricula,
   registrarWebhookContratos,
   type ContratoPendente,
 } from "@/lib/contrato-matricula.functions";
+
+function abrirPdfBase64(base64: string, nomeArquivo: string) {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const aba = window.open(url, "_blank", "noopener");
+  if (!aba) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivo;
+    a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 function formatarDataHora(iso: string): string {
   if (!iso) return "—";
@@ -81,9 +96,11 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
   const { schools, selected } = useSchool();
   const listar = useServerFn(listarContratosMatricula);
   const gerar = useServerFn(gerarEnviarContratoMatricula);
+  const previa = useServerFn(previaContratoMatricula);
   const registrarWebhook = useServerFn(registrarWebhookContratos);
   const [busca, setBusca] = useState("");
   const [gerandoChave, setGerandoChave] = useState<string | null>(null);
+  const [previaChave, setPreviaChave] = useState<string | null>(null);
 
   const unidadeAtiva = useMemo(() => unidadeDaSelecao(selected, schools), [selected, schools]);
   const unidades = useMemo(
@@ -147,6 +164,23 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
     },
     onError: (e: Error) => toast.error(e.message),
     onSettled: () => setGerandoChave(null),
+  });
+
+  // Só renderiza o PDF: nada vai para a ZapSign nem para o banco.
+  const previaMutation = useMutation({
+    mutationFn: async (item: ContratoPendente) => {
+      setPreviaChave(`${item.unidade}|${item.alunoId}|${item.anoLetivo}`);
+      return previa({
+        data: { unidade: item.unidade, alunoId: item.alunoId, anoLetivo: item.anoLetivo },
+      });
+    },
+    onSuccess: (res) => {
+      if (res.ok && res.pdfBase64) {
+        abrirPdfBase64(res.pdfBase64, res.nomeArquivo ?? `previa-${res.numero}.pdf`);
+      } else toast.error(res.erro ?? "Falha ao gerar a prévia.", { duration: 12000 });
+    },
+    onError: (e: Error) => toast.error(e.message),
+    onSettled: () => setPreviaChave(null),
   });
 
   const webhookMutation = useMutation({
@@ -245,6 +279,9 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                         {item.serie || "—"} · {item.anoLetivo} · finalizada{" "}
                         {formatarDataHora(item.enviadaEm)}
                       </p>
+                      {!enviado && (
+                        <AvisoDivergenciasExtras divergencias={item.divergenciasExtras} />
+                      )}
                     </TableCell>
                     <TableCell>
                       {item.contrato?.responsavelNome ? (
@@ -309,20 +346,35 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                         ) : null
                       ) : (
                         podeEditar && (
-                          <Button
-                            size="sm"
-                            onClick={() => gerarMutation.mutate(item)}
-                            disabled={
-                              gerarMutation.isPending || !producaoConfigurada || !item.matricula
-                            }
-                          >
-                            {gerando ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <FileSignature className="mr-2 h-4 w-4" />
-                            )}
-                            Gerar e enviar contrato
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => previaMutation.mutate(item)}
+                              disabled={previaMutation.isPending || !item.matricula}
+                            >
+                              {previaChave === chave ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Eye className="mr-2 h-4 w-4" />
+                              )}
+                              Gerar prévia
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => gerarMutation.mutate(item)}
+                              disabled={
+                                gerarMutation.isPending || !producaoConfigurada || !item.matricula
+                              }
+                            >
+                              {gerando ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileSignature className="mr-2 h-4 w-4" />
+                              )}
+                              Gerar e enviar contrato
+                            </Button>
+                          </div>
                         )
                       )}
                     </TableCell>
