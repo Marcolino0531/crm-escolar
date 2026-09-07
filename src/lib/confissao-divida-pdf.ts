@@ -248,9 +248,7 @@ export async function gerarPdfTermoConfissao(
 
   y = linhaAssinatura(doc, y, termo.colegio.razaoSocial || termo.colegio.nomeFantasia, [
     "CREDOR",
-    [termo.representanteNome, termo.representanteOab ? `OAB-MG ${termo.representanteOab}` : ""]
-      .filter(Boolean)
-      .join(" · "),
+    termo.representanteNome,
   ]);
 
   if (termo.testemunhas.length > 0) {

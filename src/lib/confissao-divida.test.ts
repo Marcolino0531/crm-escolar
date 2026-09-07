@@ -4,9 +4,11 @@ import {
   addMesesYMD,
   calcularParcelasBlocos,
   linhaAluno,
+  montarTermoConfissao,
   totalDosBlocos,
   totalParcelasTermo,
   vencimentoSugeridoProximoBloco,
+  validarTermoConfissao,
   type BlocoParcelamento,
 } from "@/lib/confissao-divida";
 
@@ -146,5 +148,81 @@ describe("linhaAluno", () => {
     expect(linhaAluno({ alunoId: "672", matricula: "", nome: "Bento Silva" })).toBe(
       "672 – BENTO SILVA",
     );
+  });
+});
+
+describe("representante legal do CREDOR (sem OAB)", () => {
+  const colegio = {
+    unidade: "CEC",
+    razaoSocial: "Centro Educacional Ltda",
+    nomeFantasia: "CEC",
+    cnpj: "00.000.000/0001-00",
+    inscricaoMunicipal: "",
+    endereco: "Rua A",
+    numero: "1",
+    complemento: "",
+    bairro: "Centro",
+    cidade: "Belo Horizonte",
+    uf: "MG",
+    cep: "30000-000",
+    telefone: "",
+    email: "",
+    site: "",
+    assinanteNome: "",
+    assinanteCargo: "",
+    observacao: "",
+    representanteNome: "Sérgio Marcolino",
+    representanteOab: "123.456",
+  };
+  const devedor = {
+    id: "d1",
+    nome: "Maria Silva",
+    cpf: "529.982.247-25",
+    dataNascimento: "",
+    endereco: "Rua B",
+    numero: "2",
+    complemento: "",
+    bairro: "Bairro",
+    cidade: "Belo Horizonte",
+    uf: "MG",
+    cep: "30000-000",
+    email: "",
+    telefone: "",
+    solidario: false,
+    origem: "manual" as const,
+  };
+
+  it("abertura segue o padrão do Contrato de Matrícula e não cita OAB", () => {
+    const termo = montarTermoConfissao({
+      numero: 1,
+      dataDocumento: "2026-08-29",
+      colegio,
+      alunos: [{ alunoId: "1", matricula: "1", nome: "Aluno" }],
+      devedores: [devedor],
+      testemunhas: [],
+      anoLetivo: "2026",
+      formaPagamento: "boleto",
+      valorTotal: 100,
+      parcelas: [{ numero: 1, valor: 100, vencimento: "2026-09-10" }],
+    });
+    expect(termo.abertura).toContain(
+      "neste presente ato por seu representante legal, Sérgio Marcolino, assinante ao final",
+    );
+    expect(termo.abertura).not.toMatch(/OAB/);
+  });
+
+  it("validação exige só o nome do representante, sem mencionar OAB", () => {
+    const erros = validarTermoConfissao({
+      colegio: { ...colegio, representanteNome: "" },
+      alunos: [{ alunoId: "1", matricula: "1", nome: "Aluno" }],
+      devedores: [devedor],
+      anoLetivo: "2026",
+      formaPagamento: "boleto",
+      blocos: [{ id: "b1", quantidade: 1, valorParcela: 100, primeiroVencimento: "2026-09-10" }],
+      dataDocumento: "2026-08-29",
+    });
+    const erro = erros.find((e) => /Representante Legal/.test(e));
+    expect(erro).toBeDefined();
+    expect(erro).not.toMatch(/OAB/);
   });
 });

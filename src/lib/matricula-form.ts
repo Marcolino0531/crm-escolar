@@ -56,6 +56,13 @@ export function formatarCpf(v: string): string {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 
+export function formatarCelular(v: string): string {
+  const d = soDigitos(v).slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 export function formatarCep(v: string): string {
   const d = soDigitos(v).slice(0, 8);
   return d.length <= 5 ? d : `${d.slice(0, 5)}-${d.slice(5)}`;

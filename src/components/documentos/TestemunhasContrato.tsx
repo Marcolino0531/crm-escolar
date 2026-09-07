@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
-import { formatarCpf } from "@/lib/matricula-form";
+import { formatarCelular, formatarCpf } from "@/lib/matricula-form";
 import { formatarDataBR } from "@/lib/recibos";
 
 export type TestemunhaRow = {
@@ -122,7 +122,12 @@ function FormularioTestemunha({
             placeholder={campo.placeholder}
             disabled={!podeEditar}
             onChange={(e) => {
-              const valor = campo.key === "cpf" ? formatarCpf(e.target.value) : e.target.value;
+              const valor =
+                campo.key === "cpf"
+                  ? formatarCpf(e.target.value)
+                  : campo.key === "celular"
+                    ? formatarCelular(e.target.value)
+                    : e.target.value;
               setForm((prev) => ({ ...prev, [campo.key]: valor }));
             }}
           />

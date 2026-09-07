@@ -298,19 +298,13 @@ export interface MontarTermoInput {
 }
 
 function textoAbertura(input: MontarTermoInput, g: Genero): string {
-  const representante = juntar(
-    [
-      input.colegio.representanteNome?.trim(),
-      input.colegio.representanteOab?.trim()
-        ? `OAB-MG ${input.colegio.representanteOab.trim()}`
-        : "",
-    ],
-    ", ",
-  );
+  const representante = input.colegio.representanteNome?.trim() ?? "";
   const qualificacoes = input.devedores.map(qualificacaoDevedor).join("; e ");
   return (
     `${qualificacaoCredor(input.colegio)}, doravante denominado **CREDOR**` +
-    (representante ? `, REPRESENTADO por ${representante}` : "") +
+    (representante
+      ? `, neste presente ato por seu representante legal, ${representante}, assinante ao final`
+      : "") +
     `, e de outro lado, ${g.denominado} ${g.devedor}, ${qualificacoes}, ` +
     "resolvem celebrar entre si o presente Termo de Confissão de Dívida e outras avenças, " +
     "conforme disposições abaixo:"
@@ -532,9 +526,7 @@ export function validarTermoConfissao(input: {
     erros.push("Cadastre o CNPJ do colégio em Configurações → Dados dos Colégios.");
   }
   if (!input.colegio?.representanteNome?.trim()) {
-    erros.push(
-      "Cadastre quem representa o CREDOR em Configurações → Dados dos Colégios (nome e OAB).",
-    );
+    erros.push("Cadastre o Representante Legal do CREDOR em Configurações → Dados dos Colégios.");
   }
   if (input.alunos.length === 0) erros.push("Selecione ao menos um aluno.");
   if (input.devedores.length === 0) {

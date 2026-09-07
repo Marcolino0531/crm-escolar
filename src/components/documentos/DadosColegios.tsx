@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
 import { COLEGIO_CAMPOS, DOCUMENTOS_BUCKET, useColegios, type ColegioRow } from "@/lib/colegios";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
-import { formatarCpf } from "@/lib/matricula-form";
+import { formatarCelular, formatarCpf } from "@/lib/matricula-form";
 import { formatarDataBR } from "@/lib/recibos";
 
 // Cadastro das unidades (dados usados nos documentos oficiais). Vive em
@@ -159,7 +159,11 @@ function FormularioColegio({ colegio, podeEditar }: { colegio: ColegioRow; podeE
               className="h-9"
               onChange={(e) => {
                 const valor =
-                  campo.mascara === "cpf" ? formatarCpf(e.target.value) : e.target.value;
+                  campo.mascara === "cpf"
+                    ? formatarCpf(e.target.value)
+                    : campo.mascara === "celular"
+                      ? formatarCelular(e.target.value)
+                      : e.target.value;
                 setForm((prev) => ({ ...prev, [campo.key]: valor }));
               }}
             />
