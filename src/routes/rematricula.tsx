@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { capitalizarPrimeiraLetra } from "@/lib/name-format";
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -155,6 +156,10 @@ function CamposContato({
               if (chave === "cep") void aoMudarCep(e.target.value);
               else onChange(chave, e.target.value);
             }}
+            onBlur={(e) => {
+              if (chave === "complementoEndereco")
+                onChange(chave, capitalizarPrimeiraLetra(e.target.value));
+            }}
           />
         </div>
       ))}
@@ -241,6 +246,10 @@ function BlocoResponsavel({
             if (chave === "cep") void aoMudarCep(e.target.value);
             else if (chave === "estado") onChange(chave, e.target.value.toUpperCase());
             else onChange(chave, e.target.value);
+          }}
+          onBlur={(e) => {
+            if (chave === "complementoEndereco")
+              onChange(chave, capitalizarPrimeiraLetra(e.target.value));
           }}
         />
         {erroCampo && (
@@ -735,8 +744,8 @@ function RematriculaPage() {
               </div>
               <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Corrija o endereço se algo estiver desatualizado. Nome e CPF só a secretaria altera.
-                Os campos com * são obrigatórios para o responsável financeiro.
+                Corrija o endereço se algo estiver desatualizado. Nome e CPF apenas a secretaria
+                altera. Os campos com * são obrigatórios para o responsável financeiro.
               </p>
             </div>
 
@@ -1120,9 +1129,11 @@ function RematriculaPage() {
                               />
                               {categoria}
                             </span>
-                            <span className="text-xs text-muted-foreground">
-                              {lancado ? `${formatarBRL(lancado.valorMensal)}/mês` : "novo"}
-                            </span>
+                            {lancado && (
+                              <span className="text-xs text-muted-foreground">
+                                {formatarBRL(lancado.valorMensal)}/mês
+                              </span>
+                            )}
                           </label>
                           {erroExtra && (
                             <p data-erro className="text-xs text-destructive">
@@ -1140,8 +1151,8 @@ function RematriculaPage() {
                     </p>
                   )}
                   <p className="mt-3 text-xs text-muted-foreground">
-                    Alterações são conferidas pela secretaria após a finalização; nenhum lançamento
-                    é feito neste momento.
+                    O valor dos Extras contratados será informado no Contrato de Matrícula, enviado
+                    após a finalização.
                   </p>
                 </div>
               )}

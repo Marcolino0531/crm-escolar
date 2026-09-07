@@ -16,3 +16,12 @@ export function toTitleCase(input: string | null | undefined): string {
     })
     .join(" ");
 }
+
+// Só a primeira letra do texto em maiúsculo, o resto como foi digitado
+// ("apto 302" → "Apto 302", "casa B" → "Casa B"). Para complementos de
+// endereço, onde Title Case atrapalharia siglas e números de bloco.
+export function capitalizarPrimeiraLetra(input: string | null | undefined): string {
+  if (!input) return "";
+  const texto = input.trim();
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}

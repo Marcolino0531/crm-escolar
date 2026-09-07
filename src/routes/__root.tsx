@@ -445,6 +445,12 @@ function AppShell() {
           icon: ClipboardList,
           label: "Matrículas",
         }),
+        ...item(showRematricula, {
+          kind: "item",
+          to: "/rematricula-acompanhamento",
+          icon: GraduationCap,
+          label: "Rematrícula",
+        }),
         ...item(showOnboarding, {
           kind: "item",
           to: "/onboarding",
@@ -510,12 +516,6 @@ function AppShell() {
           to: "/cantina",
           icon: UtensilsCrossed,
           label: "Cantina",
-        }),
-        ...item(showRematricula, {
-          kind: "item",
-          to: "/rematricula-acompanhamento",
-          icon: GraduationCap,
-          label: "Rematrícula",
         }),
         ...item(showCobranca, {
           kind: "item",
