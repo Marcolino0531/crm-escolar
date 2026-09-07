@@ -20,11 +20,12 @@ function garantirEspaco(doc: Doc, y: number, necessario: number): number {
 function paragrafo(doc: Doc, texto: string, y: number, negrito = false): number {
   doc.setFont("helvetica", negrito ? "bold" : "normal");
   const linhas = doc.splitTextToSize(texto, CONTEUDO) as string[];
-  for (const linha of linhas) {
+  linhas.forEach((linha, i) => {
     y = garantirEspaco(doc, y, ALTURA_LINHA);
-    doc.text(linha, MARGEM, y, { align: "justify", maxWidth: CONTEUDO });
+    const ultima = i === linhas.length - 1;
+    doc.text(linha, MARGEM, y, ultima ? undefined : { align: "justify", maxWidth: CONTEUDO });
     y += ALTURA_LINHA;
-  }
+  });
   doc.setFont("helvetica", "normal");
   return y;
 }
