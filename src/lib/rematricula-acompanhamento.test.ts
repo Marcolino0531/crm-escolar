@@ -7,6 +7,7 @@ import {
   ordenarAcompanhamento,
   type AcessoAcompanhamento,
   type AlunoAtivoAcompanhamento,
+  type EnvioAcompanhamento,
   type EscolhaAcompanhamento,
 } from "./rematricula-acompanhamento";
 
@@ -49,10 +50,17 @@ const acessos: AcessoAcompanhamento[] = [
   { unidade: "CEC", alunoId: "2", ultimoAcessoEm: "2026-08-21T09:00:00.000Z" },
 ];
 
+// Carla e Davi clicaram em Finalizar Matrícula; Elisa só confirmou o material.
+const envios: EnvioAcompanhamento[] = [
+  { unidade: "CEC", alunoId: "3", enviadaEm: "2026-08-20T11:00:00.000Z" },
+  { unidade: "CEC", alunoId: "4", enviadaEm: "2026-08-20T11:00:00.000Z" },
+];
+
 const linhas = montarLinhasAcompanhamento({
   alunos,
   escolhas,
   acessos,
+  envios,
   cadastroAlterados: [{ unidade: "CEC", alunoId: "3" }],
 });
 
@@ -64,7 +72,25 @@ describe("linhas de acompanhamento da rematrícula", () => {
     expect(porNome.get("Bruno")!.status).toBe("em_andamento");
     expect(porNome.get("Carla")!.status).toBe("aguardando_aprovacao");
     expect(porNome.get("Davi")!.status).toBe("rematriculado");
-    expect(porNome.get("Elisa")!.status).toBe("aguardando_aprovacao");
+    // Escolha de parcelamento salva sem o envio final é só progresso parcial.
+    expect(porNome.get("Elisa")!.status).toBe("em_andamento");
+  });
+
+  it("confirmar o material não conta como respondido; só o Finalizar Matrícula conta", () => {
+    const antes = contadoresAcompanhamento(linhas);
+    expect(antes.responderam).toBe(2);
+    const depois = montarLinhasAcompanhamento({
+      alunos,
+      escolhas,
+      acessos,
+      envios: [
+        ...envios,
+        { unidade: "Núcleo Belvedere", alunoId: "1", enviadaEm: "2026-08-22T10:00:00.000Z" },
+      ],
+      cadastroAlterados: [],
+    });
+    expect(depois.find((l) => l.nome === "Elisa")!.status).toBe("aguardando_aprovacao");
+    expect(contadoresAcompanhamento(depois).responderam).toBe(3);
   });
 
   it("mostra o parcelamento escolhido e o indicador de dado cadastral alterado", () => {
@@ -83,7 +109,7 @@ describe("linhas de acompanhamento da rematrícula", () => {
     expect(ordenarAcompanhamento(linhas).map((l) => l.status)).toEqual([
       "nao_iniciado",
       "em_andamento",
-      "aguardando_aprovacao",
+      "em_andamento",
       "aguardando_aprovacao",
       "rematriculado",
     ]);

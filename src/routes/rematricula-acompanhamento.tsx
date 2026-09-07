@@ -260,6 +260,7 @@ function RematriculaAcompanhamentoPage() {
           alunos: c.data.alunos,
           escolhas: c.data.escolhas,
           acessos: c.data.acessos,
+          envios: c.data.envios,
           cadastroAlterados: c.data.cadastroAlterados,
         })
       : [],

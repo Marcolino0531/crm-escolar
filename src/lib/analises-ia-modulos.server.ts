@@ -129,7 +129,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     const { alvo, avisos } = unidadesSponte(filtro.unidades);
     if (alvo.length === 0) return { linhas: [], avisos };
 
-    const [config, escolhas, acessos] = await Promise.all([
+    const [config, escolhas, acessos, envios] = await Promise.all([
       supabaseAdmin
         .from("rematricula_config" as never)
         .select("ano_letivo")
@@ -144,9 +144,14 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
         .from("rematricula_acessos" as never)
         .select("unidade, aluno_id")
         .in("unidade", alvo),
+      supabaseAdmin
+        .from("rematricula_envios" as never)
+        .select("unidade, aluno_id")
+        .in("unidade", alvo),
     ]);
     if (escolhas.error) throw new Error(escolhas.error.message);
     if (acessos.error) throw new Error(acessos.error.message);
+    if (envios.error) throw new Error(envios.error.message);
 
     const anoConfigurado =
       ((config.data ?? null) as unknown as { ano_letivo: number } | null)?.ano_letivo ?? null;
@@ -173,6 +178,9 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     const chave = (unidade: string, alunoId: string) => `${unidade}::${alunoId}`;
     const acessou = new Set(
       ((acessos.data ?? []) as unknown as AcessoRow[]).map((a) => chave(a.unidade, a.aluno_id)),
+    );
+    const enviou = new Set(
+      ((envios.data ?? []) as unknown as AcessoRow[]).map((e) => chave(e.unidade, e.aluno_id)),
     );
     const escolhaPorAluno = new Map<string, EscolhaAcompanhamento>();
     for (const r of (escolhas.data ?? []) as unknown as EscolhaRow[]) {
@@ -203,7 +211,11 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
         const escolha = escolhaPorAluno.get(chave(unidade, aluno.alunoId)) ?? null;
         linhas.push({
           unidade,
-          status: statusAcompanhamento(escolha, acessou.has(chave(unidade, aluno.alunoId))),
+          status: statusAcompanhamento(
+            escolha,
+            acessou.has(chave(unidade, aluno.alunoId)),
+            enviou.has(chave(unidade, aluno.alunoId)),
+          ),
           parcelas: escolha?.parcelas ?? null,
           valorAnual: escolha ? escolha.valorAnual : null,
           anoLetivo: escolha?.anoLetivo ?? anoAlvo,
