@@ -231,3 +231,69 @@ export function contadoresAcompanhamento(
     aguardandoAprovacao: linhas.filter((l) => l.status === "aguardando_aprovacao").length,
   };
 }
+
+// ─── Revisar e Aprovar: dois lançamentos independentes no Sponte ─────────────
+//
+// Material Pedagógico e Matrícula são planos distintos no Sponte. A aprovação
+// dispara os dois em paralelo e cada um responde por si: o erro de um NUNCA
+// esconde o sucesso do outro, e cada resultado vira um toast separado.
+
+export interface ResultadoLancamentoSponte {
+  ok: boolean;
+  erro?: string;
+  lancadaNoSponte?: boolean;
+  sponteContaReceberId?: string;
+  sponteErro?: string;
+}
+
+export interface MensagemLancamento {
+  tipo: "sucesso" | "erro";
+  texto: string;
+}
+
+export interface ResumoLancamentosRevisao {
+  mensagens: MensagemLancamento[];
+  /** Algum lançamento chegou ao Sponte (a tela deve recarregar o acompanhamento). */
+  algumSucesso: boolean;
+  /** Tudo o que foi tentado chegou ao Sponte (o modal pode fechar). */
+  tudoOk: boolean;
+}
+
+function mensagemDe(
+  rotulo: string,
+  r: ResultadoLancamentoSponte | Error | null,
+): MensagemLancamento | null {
+  if (r === null) return null;
+  if (r instanceof Error) return { tipo: "erro", texto: `${rotulo}: ${r.message}` };
+  if (!r.ok) {
+    return { tipo: "erro", texto: `${rotulo}: ${r.erro ?? "não foi possível aprovar."}` };
+  }
+  if (r.lancadaNoSponte) {
+    return {
+      tipo: r.sponteErro ? "erro" : "sucesso",
+      texto: r.sponteErro
+        ? `${rotulo} lançado no Sponte (conta ${r.sponteContaReceberId || "sem número"}), mas com pendência: ${r.sponteErro}`
+        : `${rotulo} lançado no Sponte (conta a receber ${r.sponteContaReceberId || "sem número"}).`,
+    };
+  }
+  return {
+    tipo: "erro",
+    texto: `${rotulo} aprovado, mas NÃO foi lançado no Sponte: ${r.sponteErro ?? "falha desconhecida"}`,
+  };
+}
+
+/** `null` = lançamento não tentado (o aluno não tem aquela escolha). */
+export function resumirLancamentosRevisao(entrada: {
+  material: ResultadoLancamentoSponte | Error | null;
+  matricula: ResultadoLancamentoSponte | Error | null;
+}): ResumoLancamentosRevisao {
+  const itens = [
+    mensagemDe("Material Pedagógico", entrada.material),
+    mensagemDe("Matrícula", entrada.matricula),
+  ].filter((m): m is MensagemLancamento => m !== null);
+  return {
+    mensagens: itens,
+    algumSucesso: itens.some((m) => m.tipo === "sucesso"),
+    tudoOk: itens.length > 0 && itens.every((m) => m.tipo === "sucesso"),
+  };
+}

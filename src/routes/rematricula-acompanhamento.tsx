@@ -39,6 +39,7 @@ import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedag
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
+import { formatarDataBR } from "@/lib/rematricula-matricula";
 import {
   STATUS_ACOMPANHAMENTO_LABEL,
   contadoresAcompanhamento,
@@ -46,14 +47,20 @@ import {
   filtrarPorStatus,
   montarLinhasAcompanhamento,
   ordenarAcompanhamento,
+  resumirLancamentosRevisao,
   turmasAcompanhamento,
   type LinhaAcompanhamento,
+  type ResultadoLancamentoSponte,
   type StatusAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
 import {
   acompanhamentoRematricula,
   detalheAcompanhamentoRematricula,
+  detalheMatriculaRematricula,
   efetivarEscolhaRematricula,
+  efetivarMatriculaRematricula,
+  lancarMatriculaRematriculaNoSponte,
+  type MatriculaSolicitacao,
 } from "@/lib/rematricula.functions";
 import type { DivergenciaExtraAluno } from "@/lib/rematricula-extras.functions";
 
@@ -75,6 +82,62 @@ const CORES_STATUS: Record<StatusAcompanhamento, string> = {
 
 // Revisão antes do lançamento: a secretaria confere o que o responsável escolheu
 // e as correções cadastrais registradas, e só então o material é criado no Sponte.
+function CardMatriculaRevisao({
+  matricula,
+  anoLetivo,
+}: {
+  matricula: MatriculaSolicitacao;
+  anoLetivo: number | null;
+}) {
+  const lancada = !!matricula.sponteContaReceberId;
+  return (
+    <div className="rounded-md border p-3">
+      <p className="font-medium">
+        {lancada ? "Matrícula já lançada no Sponte" : "Matrícula que será lançada"}
+      </p>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted-foreground">Valor</dt>
+          <dd>{formatarBRL(matricula.valor)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Parcelas</dt>
+          <dd>
+            {matricula.parcelas}x de {formatarBRL(matricula.valorParcela)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">1ª parcela</dt>
+          <dd>
+            {formatarBRL(matricula.valorPrimeiraParcela)} em{" "}
+            {formatarDataBR(matricula.primeiroVencimento)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Ano letivo</dt>
+          <dd>{matricula.anoLetivo ?? anoLetivo ?? "não configurado"}</dd>
+        </div>
+        {lancada && (
+          <div>
+            <dt className="text-xs text-muted-foreground">Conta a receber</dt>
+            <dd>{matricula.sponteContaReceberId}</dd>
+          </div>
+        )}
+      </dl>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Categoria <strong>Matrícula</strong>, plano separado do material. As demais parcelas vencem
+        no dia da mensalidade do aluno.
+      </p>
+      {matricula.sponteErro && (
+        <p className="mt-2 flex items-start gap-1 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          Tentativa anterior falhou: {matricula.sponteErro}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DialogoRevisao({
   linha,
   divergencias,
@@ -86,41 +149,81 @@ function DialogoRevisao({
 }) {
   const qc = useQueryClient();
   const carregarDetalhe = useServerFn(detalheAcompanhamentoRematricula);
+  const carregarMatricula = useServerFn(detalheMatriculaRematricula);
   const efetivar = useServerFn(efetivarEscolhaRematricula);
+  const efetivarMatricula = useServerFn(efetivarMatriculaRematricula);
+  const relancarMatricula = useServerFn(lancarMatriculaRematriculaNoSponte);
 
   const detalhe = useQuery({
     queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId],
     queryFn: async () =>
       carregarDetalhe({ data: { unidade: linha.unidade, alunoId: linha.alunoId } }),
   });
+  const detalheMatricula = useQuery({
+    queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId],
+    queryFn: async () =>
+      carregarMatricula({ data: { unidade: linha.unidade, alunoId: linha.alunoId } }),
+  });
+
+  const escolha = detalhe.data?.escolha ?? null;
+  const matricula = detalheMatricula.data?.matricula ?? null;
+  const anoLetivo = detalhe.data?.anoLetivo ?? escolha?.anoLetivo ?? matricula?.anoLetivo ?? null;
+
+  // Material pendente = ainda não aprovado. Matrícula pendente = não aprovada
+  // OU aprovada sem cobrança no Sponte (relançamento após falha).
+  const materialPendente = escolha && escolha.status === "pendente_lancamento" ? escolha : null;
+  const matriculaPendente =
+    matricula &&
+    (matricula.status === "pendente_lancamento" ||
+      (matricula.status === "efetivada" && !matricula.sponteContaReceberId))
+      ? matricula
+      : null;
+
+  const tentar = async (
+    fn: () => Promise<ResultadoLancamentoSponte>,
+  ): Promise<ResultadoLancamentoSponte | Error> => {
+    try {
+      return await fn();
+    } catch (e) {
+      return e instanceof Error ? e : new Error(String(e));
+    }
+  };
 
   const aprovar = useMutation({
-    mutationFn: async (id: string) => efetivar({ data: { id } }),
-    onSuccess: (res) => {
-      if (!res.ok) {
-        toast.error(res.erro ?? "Não foi possível aprovar.");
-        return;
+    mutationFn: async () => {
+      const [material, mat] = await Promise.all([
+        materialPendente ? tentar(() => efetivar({ data: { id: materialPendente.id } })) : null,
+        matriculaPendente
+          ? tentar(() =>
+              matriculaPendente.status === "pendente_lancamento"
+                ? efetivarMatricula({ data: { id: matriculaPendente.id } })
+                : relancarMatricula({ data: { id: matriculaPendente.id } }),
+            )
+          : null,
+      ]);
+      return resumirLancamentosRevisao({ material, matricula: mat });
+    },
+    onSuccess: (resumo) => {
+      for (const m of resumo.mensagens) {
+        if (m.tipo === "sucesso") toast.success(m.texto);
+        else toast.error(m.texto, { duration: 12000 });
       }
-      if (res.lancadaNoSponte) {
-        toast.success(
-          `Material lançado no Sponte (conta a receber ${res.sponteContaReceberId || "sem número"}).`,
-        );
-      } else {
-        toast.error(
-          `Solicitação aprovada, mas o material NÃO foi lançado no Sponte: ${
-            res.sponteErro ?? "falha desconhecida"
-          }`,
-          { duration: 12000 },
-        );
+      if (resumo.algumSucesso) {
+        void qc.invalidateQueries({ queryKey: ["rematricula_acompanhamento"] });
+        void qc.invalidateQueries({
+          queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId],
+        });
+        void qc.invalidateQueries({
+          queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId],
+        });
       }
-      void qc.invalidateQueries({ queryKey: ["rematricula_acompanhamento"] });
-      onFechar();
+      if (resumo.tudoOk) onFechar();
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const escolha = detalhe.data?.escolha ?? null;
-  const anoLetivo = detalhe.data?.anoLetivo ?? escolha?.anoLetivo ?? null;
+  const carregando = detalhe.isLoading || detalheMatricula.isLoading;
+  const nadaParaAprovar = !materialPendente && !matriculaPendente;
 
   return (
     <Dialog open onOpenChange={(aberto) => !aberto && onFechar()}>
@@ -133,57 +236,60 @@ function DialogoRevisao({
           </DialogDescription>
         </DialogHeader>
 
-        {detalhe.isLoading ? (
+        {carregando ? (
           <Skeleton className="h-40 w-full" />
-        ) : !escolha ? (
+        ) : !escolha && !matricula ? (
           <p className="text-sm text-muted-foreground">
             A escolha deste aluno não está mais disponível. Recarregue a tela.
           </p>
         ) : (
           <div className="space-y-4 text-sm">
             <AvisoDivergenciasExtras divergencias={divergencias} detalhado />
-            <div className="rounded-md border p-3">
-              <p className="font-medium">Material pedagógico que será lançado</p>
-              <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
-                <div>
-                  <dt className="text-xs text-muted-foreground">Série</dt>
-                  <dd>{escolha.serie || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Valor anual</dt>
-                  <dd>{formatarBRL(escolha.valorAnual)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Parcelas</dt>
-                  <dd>
-                    {escolha.parcelas}x de {formatarBRL(escolha.valorParcela)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">1ª parcela</dt>
-                  <dd>{formatarBRL(escolha.valorPrimeiraParcela)}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Ano letivo de referência</dt>
-                  <dd>{anoLetivo ?? "não configurado"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-muted-foreground">Escolhido em</dt>
-                  <dd>{formatarDataHora(escolha.solicitadaEm)}</dd>
-                </div>
-              </dl>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Categoria <strong>Material Pedagógico</strong>. Cada parcela vence no mesmo dia da
-                mensalidade do aluno, mês a mês, a partir da primeira mensalidade em aberto de{" "}
-                {anoLetivo ?? "—"} — sem ajuste de feriado. A sobra de centavos fica na 1ª parcela.
-              </p>
-            </div>
-
-            {escolha.sponteErro && (
-              <p className="flex items-start gap-1 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                Tentativa anterior falhou: {escolha.sponteErro}
-              </p>
+            {matricula && <CardMatriculaRevisao matricula={matricula} anoLetivo={anoLetivo} />}
+            {escolha && (
+              <div className="rounded-md border p-3">
+                <p className="font-medium">Material pedagógico que será lançado</p>
+                <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Série</dt>
+                    <dd>{escolha.serie || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Valor anual</dt>
+                    <dd>{formatarBRL(escolha.valorAnual)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Parcelas</dt>
+                    <dd>
+                      {escolha.parcelas}x de {formatarBRL(escolha.valorParcela)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">1ª parcela</dt>
+                    <dd>{formatarBRL(escolha.valorPrimeiraParcela)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Ano letivo de referência</dt>
+                    <dd>{anoLetivo ?? "não configurado"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Escolhido em</dt>
+                    <dd>{formatarDataHora(escolha.solicitadaEm)}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Categoria <strong>Material Pedagógico</strong>. Cada parcela vence no mesmo dia da
+                  mensalidade do aluno, mês a mês, a partir da primeira mensalidade em aberto de{" "}
+                  {anoLetivo ?? "—"} — sem ajuste de feriado. A sobra de centavos fica na 1ª
+                  parcela.
+                </p>
+                {escolha.sponteErro && (
+                  <p className="mt-2 flex items-start gap-1 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    Tentativa anterior falhou: {escolha.sponteErro}
+                  </p>
+                )}
+              </div>
             )}
 
             <div className="rounded-md border p-3">
@@ -218,8 +324,8 @@ function DialogoRevisao({
           </Button>
           <Button
             className="gap-2"
-            disabled={!escolha || aprovar.isPending}
-            onClick={() => escolha && aprovar.mutate(escolha.id)}
+            disabled={carregando || nadaParaAprovar || aprovar.isPending}
+            onClick={() => aprovar.mutate()}
           >
             {aprovar.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
