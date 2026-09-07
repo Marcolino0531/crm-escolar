@@ -24,6 +24,7 @@ import {
 } from "@/lib/rematricula-matricula";
 import { CHAVE_SESSAO_REMATRICULA } from "@/lib/rematricula-sessao";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
+import { rolarParaPrimeiroErro } from "@/lib/rolar-para-erro";
 import { categoriasExtrasOferecidas, type CategoriaExtra } from "@/lib/rematricula-extras";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
@@ -226,7 +227,11 @@ function BlocoResponsavel({
             else onChange(chave, e.target.value);
           }}
         />
-        {erroCampo && <p className="text-xs text-destructive">{erroCampo}</p>}
+        {erroCampo && (
+          <p data-erro className="text-xs text-destructive">
+            {erroCampo}
+          </p>
+        )}
       </div>
     );
   };
@@ -338,6 +343,14 @@ function RematriculaPage() {
     setErrosResp(novos);
     return Object.keys(novos).length === 0;
   };
+
+  // Erros do envio final vindos do servidor: destaca o que dá para destacar
+  // (cadastro do financeiro campo a campo) e rola até o primeiro campo com erro.
+  const destacarErrosEnvio = (erros: Record<string, string>) => {
+    setErrosEnvio(erros);
+    if (erros["responsavel"]) conferirFinanceiro();
+    rolarParaPrimeiroErro();
+  };
   const [cadastroSalvo, setCadastroSalvo] = useState("");
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
   const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
@@ -405,7 +418,10 @@ function RematriculaPage() {
         setSalvo(!!portal.material?.escolhaAtual);
         if (portal.matricula) {
           setMatParcelas(portal.matricula.escolhaAtual?.parcelas ?? 1);
-          setMatVencimento(portal.matricula.escolhaAtual?.primeiroVencimento ?? "");
+          // A data só reaparece depois do envio final; antes disso o campo começa vazio.
+          setMatVencimento(
+            portal.enviadaEm ? (portal.matricula.escolhaAtual?.primeiroVencimento ?? "") : "",
+          );
         }
         {
           const oferecidas = categoriasExtrasOferecidas(portal.aluno?.serie ?? "");
@@ -490,7 +506,7 @@ function RematriculaPage() {
       }),
     onSuccess: (res) => {
       if (!res.ok) {
-        setErrosEnvio(res.erros ?? {});
+        destacarErrosEnvio(res.erros ?? {});
         setErro(res.erro ?? "Não foi possível enviar sua matrícula.");
         return;
       }
@@ -679,6 +695,7 @@ function RematriculaPage() {
                 onClick={() => {
                   if (!conferirFinanceiro()) {
                     setErro("Complete os dados obrigatórios do responsável financeiro.");
+                    rolarParaPrimeiroErro();
                     return;
                   }
                   enviarCadastro.mutate();
@@ -691,6 +708,11 @@ function RematriculaPage() {
                 <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
                   <CheckCircle2 className="h-4 w-4" />
                   {cadastroSalvo}
+                </p>
+              )}
+              {errosEnvio["responsavel"] && (
+                <p data-erro className="mt-3 text-xs text-destructive">
+                  {errosEnvio["responsavel"]}
                 </p>
               )}
             </div>
@@ -733,7 +755,7 @@ function RematriculaPage() {
                       ))}
                     </div>
                     {errosEnvio["matricula.parcelas"] && (
-                      <p className="mt-2 text-xs text-destructive">
+                      <p data-erro className="mt-2 text-xs text-destructive">
                         {errosEnvio["matricula.parcelas"]}
                       </p>
                     )}
@@ -753,6 +775,7 @@ function RematriculaPage() {
                     min={limitesVencimento.minimo}
                     max={limitesVencimento.maximo}
                     disabled={!!enviadaEm}
+                    aria-invalid={!!errosEnvio["matricula.primeiroVencimento"]}
                     value={matVencimento}
                     onChange={(e) => {
                       setMatVencimento(e.target.value);
@@ -770,15 +793,14 @@ function RematriculaPage() {
                     {formatarDataBR(limitesVencimento.maximo)}.
                   </p>
                   {errosEnvio["matricula.primeiroVencimento"] && (
-                    <p className="text-xs text-destructive">
+                    <p data-erro className="text-xs text-destructive">
                       {errosEnvio["matricula.primeiroVencimento"]}
                     </p>
                   )}
                 </div>
                 {!matricula.somenteAVista && (
                   <p className="mt-3 text-xs text-muted-foreground">
-                    As demais parcelas (2ª em diante) vencem no mesmo dia da mensalidade do aluno em
-                    cada mês, como no parcelamento do material pedagógico.
+                    As demais parcelas (2ª em diante) vencem no mesmo dia da mensalidade do aluno.
                   </p>
                 )}
               </div>
@@ -867,8 +889,8 @@ function RematriculaPage() {
                     <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
                       <CheckCircle2 className="h-4 w-4" />
                       Registramos sua escolha de {parcelas}x. A secretaria vai revisar e, depois da
-                      conferência, emitir os boletos do material — eles não são gerados neste
-                      momento.
+                      conferência, os boletos do material serão enviados junto com a mensalidade, a
+                      partir de fevereiro.
                     </p>
                   )}
                 </>
@@ -879,7 +901,9 @@ function RematriculaPage() {
                 </p>
               )}
               {errosEnvio["material"] && (
-                <p className="mt-2 text-xs text-destructive">{errosEnvio["material"]}</p>
+                <p data-erro className="mt-2 text-xs text-destructive">
+                  {errosEnvio["material"]}
+                </p>
               )}
             </div>
 
@@ -914,6 +938,7 @@ function RematriculaPage() {
                   setErrosRotina(encontrados);
                   if (!formValido(encontrados)) {
                     setErro("Confira os campos destacados da rotina.");
+                    rolarParaPrimeiroErro();
                     return;
                   }
                   enviarRotina.mutate();
@@ -929,7 +954,9 @@ function RematriculaPage() {
                 </p>
               )}
               {errosEnvio["rotina"] && (
-                <p className="mt-2 text-xs text-destructive">{errosEnvio["rotina"]}</p>
+                <p data-erro className="mt-2 text-xs text-destructive">
+                  {errosEnvio["rotina"]}
+                </p>
               )}
               {extras && (
                 <div className="mt-6 border-t pt-5">
@@ -1021,12 +1048,14 @@ function RematriculaPage() {
                       if (erroVencimento) {
                         setErrosEnvio({ "matricula.primeiroVencimento": erroVencimento });
                         setErro("Confira a data de vencimento da matrícula.");
+                        rolarParaPrimeiroErro();
                         return;
                       }
                       if (!conferirFinanceiro()) {
                         setErro(
                           "Complete e salve os dados obrigatórios do responsável financeiro antes de finalizar.",
                         );
+                        rolarParaPrimeiroErro();
                         return;
                       }
                       enviarMatricula.mutate();
