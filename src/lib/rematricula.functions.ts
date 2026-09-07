@@ -11,6 +11,7 @@
 // lançamento (InsertPlano + UpdateParcela) na tela interna. Já a correção
 // cadastral (endereço, celular, email) sincroniza na hora, com auditoria.
 
+import { completarUfPeloCep } from "@/lib/viacep";
 import { createHash, randomBytes } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -210,10 +211,11 @@ export interface AlunoSponteRematricula {
   complemento: string;
   bairro: string;
   cidade: string;
+  uf: string;
 }
 
 // O GetAlunos do Sponte não devolve a UF do aluno (a tag existe no WSDL, mas
-// nunca vem na resposta); o Estado é deduzido do CEP no portal.
+// nunca vem na resposta); dadosRematricula completa pelo CEP via ViaCEP.
 function lerAluno(node: string, unidade: string): AlunoSponteRematricula {
   const turma = parseXmlValue(node, "TurmaAtual");
   return {
@@ -233,6 +235,7 @@ function lerAluno(node: string, unidade: string): AlunoSponteRematricula {
     complemento: parseXmlValue(node, "ComplementoEndereco"),
     bairro: parseXmlValue(node, "Bairro"),
     cidade: parseXmlValue(node, "Cidade"),
+    uf: parseXmlValue(node, "Estado") || parseXmlValue(node, "UF"),
   };
 }
 
@@ -888,19 +891,22 @@ export const dadosRematricula = createServerFn({ method: "POST" })
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
-    const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
-    if (!aluno) {
+    const alunoSponte = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
+    if (!alunoSponte) {
       return {
         ok: false,
         erro: "Não conseguimos ler os dados do aluno agora. Tente novamente em alguns minutos.",
       };
     }
+    const [aluno] = await completarUfPeloCep([alunoSponte]);
 
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
     const [responsaveis, mensalidade, material, extras, escolha, escolhaMatricula, envio] =
       await Promise.all([
-        buscarResponsaveisComFinanceiro(sessao.unidade, sessao.alunoId),
+        buscarResponsaveisComFinanceiro(sessao.unidade, sessao.alunoId).then((r) =>
+          completarUfPeloCep(r),
+        ),
         buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
         materialDaSerie(sessao.unidade, serieAlvo),
         anoLetivo
