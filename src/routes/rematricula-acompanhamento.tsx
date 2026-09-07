@@ -141,10 +141,12 @@ function CardMatriculaRevisao({
 
 function DialogoRevisao({
   linha,
+  anoLetivo,
   divergencias,
   onFechar,
 }: {
   linha: LinhaAcompanhamento;
+  anoLetivo: number;
   divergencias: readonly DivergenciaExtraAluno[];
   onFechar: () => void;
 }) {
@@ -161,21 +163,18 @@ function DialogoRevisao({
   const efetivarMatricula = useServerFn(efetivarMatriculaRematricula);
   const relancarMatricula = useServerFn(lancarMatriculaRematriculaNoSponte);
 
+  const chave = { unidade: linha.unidade, alunoId: linha.alunoId, anoLetivo };
   const detalhe = useQuery({
-    queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId],
-    queryFn: async () =>
-      carregarDetalhe({ data: { unidade: linha.unidade, alunoId: linha.alunoId } }),
+    queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId, anoLetivo],
+    queryFn: async () => carregarDetalhe({ data: chave }),
   });
   const detalheMatricula = useQuery({
-    queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId],
-    queryFn: async () =>
-      carregarMatricula({ data: { unidade: linha.unidade, alunoId: linha.alunoId } }),
+    queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId, anoLetivo],
+    queryFn: async () => carregarMatricula({ data: chave }),
   });
 
   const escolha = detalhe.data?.escolha ?? null;
   const matricula = detalheMatricula.data?.matricula ?? null;
-  const anoLetivo = detalhe.data?.anoLetivo ?? escolha?.anoLetivo ?? matricula?.anoLetivo ?? null;
-  const anoExtras = divergencias[0]?.anoLetivo ?? anoLetivo;
 
   // Material pendente = ainda não aprovado. Matrícula pendente = não aprovada
   // OU aprovada sem cobrança no Sponte (relançamento após falha).
@@ -219,10 +218,10 @@ function DialogoRevisao({
       if (resumo.algumSucesso) {
         void qc.invalidateQueries({ queryKey: ["rematricula_acompanhamento"] });
         void qc.invalidateQueries({
-          queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId],
+          queryKey: ["rematricula_detalhe", linha.unidade, linha.alunoId, anoLetivo],
         });
         void qc.invalidateQueries({
-          queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId],
+          queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId, anoLetivo],
         });
       }
       if (resumo.tudoOk) onFechar();
@@ -263,19 +262,18 @@ function DialogoRevisao({
                 Extras: tudo certo, sem pendências (conferido agora no Sponte e no Diário).
               </p>
             ) : null}
-            {anoExtras !== null &&
-              (divergenciasAtuais.lista.length > 0 || divergenciasAtuais.reconferidaEm) && (
-                <div className="flex justify-end">
-                  <BotaoReconferirExtras
-                    unidade={linha.unidade}
-                    alunoId={linha.alunoId}
-                    anoLetivo={anoExtras}
-                    onResultado={(r) =>
-                      setDivergenciasAtuais({ lista: r.divergencias, reconferidaEm: r.conferidoEm })
-                    }
-                  />
-                </div>
-              )}
+            {(divergenciasAtuais.lista.length > 0 || divergenciasAtuais.reconferidaEm) && (
+              <div className="flex justify-end">
+                <BotaoReconferirExtras
+                  unidade={linha.unidade}
+                  alunoId={linha.alunoId}
+                  anoLetivo={anoLetivo}
+                  onResultado={(r) =>
+                    setDivergenciasAtuais({ lista: r.divergencias, reconferidaEm: r.conferidoEm })
+                  }
+                />
+              </div>
+            )}
             {matricula && <CardMatriculaRevisao matricula={matricula} anoLetivo={anoLetivo} />}
             {escolha && (
               <div className="rounded-md border p-3">
@@ -380,6 +378,8 @@ function RematriculaAcompanhamentoPage() {
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusAcompanhamento>("todos");
   const [filtroTurma, setFiltroTurma] = useState<string>("todas");
   const [revisando, setRevisando] = useState<LinhaAcompanhamento | null>(null);
+  // Campanha exibida. null = a aberta mais recente (decidida no servidor).
+  const [anoEscolhido, setAnoEscolhido] = useState<number | null>(null);
 
   // Isolamento por unidade: com uma unidade selecionada no topo só ela é
   // consultada; em "Todas as Unidades" ficam as unidades permitidas ao usuário.
@@ -391,12 +391,15 @@ function RematriculaAcompanhamentoPage() {
 
   const consultas = useQueries({
     queries: unidades.map((unidade) => ({
-      queryKey: ["rematricula_acompanhamento", unidade],
-      queryFn: async () => carregar({ data: { unidade } }),
+      queryKey: ["rematricula_acompanhamento", unidade, anoEscolhido],
+      queryFn: async () => carregar({ data: { unidade, anoLetivo: anoEscolhido ?? undefined } }),
     })),
   });
 
   const carregando = consultas.some((c) => c.isLoading);
+  const primeira = consultas.find((c) => c.data)?.data;
+  const anoLetivo = primeira?.anoLetivo ?? null;
+  const campanhas = primeira?.campanhas ?? [];
   const erros = consultas
     .map((c) => c.data?.error)
     .filter((e): e is string => Boolean(e))
@@ -499,6 +502,22 @@ function RematriculaAcompanhamentoPage() {
           )}
 
           <div className="flex flex-wrap items-center gap-3">
+            <Select
+              value={anoLetivo ? String(anoLetivo) : ""}
+              onValueChange={(v) => setAnoEscolhido(Number(v))}
+              disabled={campanhas.length === 0}
+            >
+              <SelectTrigger className="w-56" aria-label="Campanha">
+                <SelectValue placeholder="Campanha" />
+              </SelectTrigger>
+              <SelectContent>
+                {campanhas.map((c) => (
+                  <SelectItem key={c.anoLetivo} value={String(c.anoLetivo)}>
+                    Rematrícula {c.anoLetivo} {c.aberta ? "(aberta)" : "(fechada)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
               placeholder="Buscar por aluno"
               className="max-w-xs"
@@ -620,9 +639,10 @@ function RematriculaAcompanhamentoPage() {
         </TabsContent>
       </Tabs>
 
-      {revisando && (
+      {revisando && anoLetivo !== null && (
         <DialogoRevisao
           linha={revisando}
+          anoLetivo={anoLetivo}
           divergencias={divergenciasPorAluno.get(`${revisando.unidade}-${revisando.alunoId}`) ?? []}
           onFechar={() => setRevisando(null)}
         />

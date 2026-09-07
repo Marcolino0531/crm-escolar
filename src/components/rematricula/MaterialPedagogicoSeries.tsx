@@ -4,9 +4,17 @@ import { useServerFn } from "@tanstack/react-start";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -21,72 +29,249 @@ import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { parseBRLNumber } from "@/lib/currency";
 import { formatarBRL, opcoesParcelamentoMaterial, rotuloParcelamento } from "@/lib/rematricula";
 import {
+  ROTULO_SEGMENTO_MATRICULA,
+  SEGMENTOS_MATRICULA,
+  mensagemPendenciasCampanha,
+  type SegmentoMatricula,
+} from "@/lib/rematricula-matricula";
+import {
+  alterarCampanhaRematricula,
+  anosLetivosDiario,
   excluirMaterialSerie,
+  listarCampanhasRematricula,
   listarMaterialSeries,
-  obterAnoLetivoRematricula,
-  salvarAnoLetivoRematricula,
+  listarValoresMatricula,
+  prepararCampanhaRematricula,
   salvarAnoVigenteDiario,
   salvarMaterialSerie,
+  salvarValorMatricula,
   type MaterialSerieRegistro,
 } from "@/lib/rematricula.functions";
 
-// Ano letivo para o qual o formulário de rematrícula ativo aponta (em 2026 a
-// escola configura 2027). É esse ano que define qual mensalidade em aberto do
-// aluno ancora o vencimento da 1ª parcela do material no lançamento.
-function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
+// Campanhas de rematrícula por ano letivo. Cada ano tem a sua linha: o portal
+// público /rematricula/{ano} só aceita acesso com a campanha daquele ano aberta,
+// e abrir exige o valor da Matrícula cadastrado para todos os segmentos.
+function CampanhasRematricula({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
-  const obter = useServerFn(obterAnoLetivoRematricula);
-  const salvar = useServerFn(salvarAnoLetivoRematricula);
-  const salvarVigente = useServerFn(salvarAnoVigenteDiario);
-  const [ano, setAno] = useState("");
-  const [anoVigente, setAnoVigente] = useState("");
+  const listar = useServerFn(listarCampanhasRematricula);
+  const preparar = useServerFn(prepararCampanhaRematricula);
+  const alterar = useServerFn(alterarCampanhaRematricula);
+  const [novoAno, setNovoAno] = useState("");
 
-  const config = useQuery({
-    queryKey: ["rematricula_ano_letivo"],
-    queryFn: async () => obter({ data: undefined }),
+  const campanhas = useQuery({
+    queryKey: ["rematricula_campanhas"],
+    queryFn: async () => listar({ data: undefined }),
   });
 
-  const gravar = useMutation({
-    mutationFn: async () => salvar({ data: { anoLetivo: Number(ano) } }),
+  const invalidar = () => {
+    void qc.invalidateQueries({ queryKey: ["rematricula_campanhas"] });
+    void qc.invalidateQueries({ queryKey: ["rematricula_acompanhamento"] });
+    void qc.invalidateQueries({ queryKey: ["diario_anos_letivos"] });
+  };
+
+  const criar = useMutation({
+    mutationFn: async () => preparar({ data: { anoLetivo: Number(novoAno) } }),
     onSuccess: () => {
-      toast.success("Ano letivo de referência atualizado.");
-      setAno("");
-      void qc.invalidateQueries({ queryKey: ["rematricula_ano_letivo"] });
+      toast.success(`Campanha de ${novoAno} preparada (fechada). Cadastre os valores e abra.`);
+      setNovoAno("");
+      invalidar();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível preparar."),
   });
 
-  const gravarVigente = useMutation({
-    mutationFn: async () => salvarVigente({ data: { anoVigente: Number(anoVigente) } }),
-    onSuccess: () => {
-      toast.success("Ano vigente atualizado. O Diário do Aluno passa a abrir nesse ano.");
-      setAnoVigente("");
-      void qc.invalidateQueries({ queryKey: ["rematricula_ano_letivo"] });
-      void qc.invalidateQueries({ queryKey: ["diario_anos_letivos"] });
+  const mudar = useMutation({
+    mutationFn: async (args: { anoLetivo: number; aberta: boolean }) => alterar({ data: args }),
+    onSuccess: (_r, args) => {
+      toast.success(
+        args.aberta
+          ? `Campanha de ${args.anoLetivo} aberta. O portal /rematricula/${args.anoLetivo} já aceita acessos.`
+          : `Campanha de ${args.anoLetivo} fechada. Links desse ano deixam de dar acesso.`,
+      );
+      invalidar();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Não foi possível alterar.", {
+        duration: 10000,
+      }),
   });
-
-  const atual = config.data?.anoLetivo ?? null;
-  const vigente = config.data?.anoVigente ?? null;
 
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="text-sm font-semibold">Ano Letivo de Referência</h3>
+      <h3 className="text-sm font-semibold">Campanhas de Rematrícula</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        {atual
-          ? `A rematrícula em andamento é para ${atual}. A 1ª parcela do material vence junto da primeira mensalidade em aberto de ${atual}.`
-          : "Ainda não configurado. Sem ele a secretaria não consegue lançar o material no Sponte."}
-        {config.data?.atualizadoEm
-          ? ` Última alteração: ${new Date(config.data.atualizadoEm).toLocaleDateString("pt-BR")}${
-              config.data.atualizadoPor ? ` · ${config.data.atualizadoPor}` : ""
-            }.`
-          : ""}
+        Uma campanha por ano letivo. O responsável só entra pelo link se a campanha do ano estiver
+        aberta; escolhas, links e contratos ficam guardados pelo ano da campanha.
       </p>
+      {campanhas.isLoading ? (
+        <Skeleton className="mt-3 h-20 w-full" />
+      ) : (
+        <ul className="mt-3 space-y-2" data-campanhas>
+          {(campanhas.data ?? []).map((c) => {
+            const pendencia = mensagemPendenciasCampanha(c.anoLetivo, c.pendencias);
+            return (
+              <li
+                key={c.anoLetivo}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
+              >
+                <div>
+                  <p className="text-sm font-medium">
+                    Rematrícula {c.anoLetivo}{" "}
+                    <Badge variant={c.aberta ? "default" : "secondary"}>
+                      {c.aberta ? "Aberta" : "Fechada"}
+                    </Badge>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {c.atualizadoEm
+                      ? `Alterada em ${new Date(c.atualizadoEm).toLocaleDateString("pt-BR")}${
+                          c.atualizadoPor ? ` · ${c.atualizadoPor}` : ""
+                        }.`
+                      : ""}
+                  </p>
+                  {pendencia && !c.aberta && (
+                    <p className="mt-1 text-xs text-amber-700">{pendencia}</p>
+                  )}
+                </div>
+                {podeEditar && (
+                  <Button
+                    size="sm"
+                    variant={c.aberta ? "outline" : "default"}
+                    disabled={mudar.isPending || (!c.aberta && pendencia !== null)}
+                    onClick={() => mudar.mutate({ anoLetivo: c.anoLetivo, aberta: !c.aberta })}
+                  >
+                    {mudar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {c.aberta ? "Fechar campanha" : "Abrir campanha"}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+          {campanhas.data?.length === 0 && (
+            <li className="text-xs text-muted-foreground">Nenhuma campanha cadastrada.</li>
+          )}
+        </ul>
+      )}
       {podeEditar && (
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">Ano</Label>
+            <Label className="text-[11px] text-muted-foreground">Novo ano</Label>
+            <Input
+              className="h-9 w-28"
+              inputMode="numeric"
+              placeholder={String(new Date().getFullYear() + 1)}
+              value={novoAno}
+              onChange={(e) => setNovoAno(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            />
+          </div>
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled={novoAno.length !== 4 || criar.isPending}
+            onClick={() => criar.mutate()}
+          >
+            {criar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Preparar campanha
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Valor da Matrícula por segmento e ano letivo (antes fixo no código). O portal
+// usa o valor do ano da campanha em que o responsável está; sem valor para o
+// segmento do aluno, a campanha do ano não abre.
+function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const listar = useServerFn(listarValoresMatricula);
+  const salvar = useServerFn(salvarValorMatricula);
+  const [ano, setAno] = useState("");
+  const [segmento, setSegmento] = useState<SegmentoMatricula>("infantil_fundamental_1");
+  const [valor, setValor] = useState("");
+
+  const valores = useQuery({
+    queryKey: ["rematricula_matricula_valores"],
+    queryFn: async () => listar({ data: undefined }),
+  });
+
+  const gravar = useMutation({
+    mutationFn: async () =>
+      salvar({ data: { anoLetivo: Number(ano), segmento, valor: parseBRLNumber(valor) } }),
+    onSuccess: () => {
+      toast.success("Valor da Matrícula salvo.");
+      setValor("");
+      void qc.invalidateQueries({ queryKey: ["rematricula_matricula_valores"] });
+      void qc.invalidateQueries({ queryKey: ["rematricula_campanhas"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
+  return (
+    <div className="rounded-lg border p-4">
+      <h3 className="text-sm font-semibold">Valor da Matrícula por segmento e ano</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Valor cobrado na Matrícula (parcelável de setembro a janeiro) conforme a série que o aluno
+        vai cursar no ano letivo. Precisa existir para os dois segmentos antes de abrir a campanha.
+      </p>
+      {valores.isLoading ? (
+        <Skeleton className="mt-3 h-20 w-full" />
+      ) : (
+        <div className="mt-3 rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ano letivo</TableHead>
+                <TableHead>Segmento</TableHead>
+                <TableHead className="text-right">Valor</TableHead>
+                <TableHead>Atualizado</TableHead>
+                {podeEditar && <TableHead className="w-12" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(valores.data ?? []).map((v) => (
+                <TableRow key={`${v.anoLetivo}-${v.segmento}`}>
+                  <TableCell>{v.anoLetivo}</TableCell>
+                  <TableCell>{ROTULO_SEGMENTO_MATRICULA[v.segmento]}</TableCell>
+                  <TableCell className="text-right">{formatarBRL(v.valor)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {new Date(v.atualizadoEm).toLocaleDateString("pt-BR")}
+                    {v.atualizadoPor ? ` · ${v.atualizadoPor}` : ""}
+                  </TableCell>
+                  {podeEditar && (
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Editar"
+                        onClick={() => {
+                          setAno(String(v.anoLetivo));
+                          setSegmento(v.segmento);
+                          setValor(v.valor.toFixed(2).replace(".", ","));
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+              {valores.data?.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={podeEditar ? 5 : 4}
+                    className="text-center text-muted-foreground"
+                  >
+                    Nenhum valor cadastrado.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {podeEditar && (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Ano letivo</Label>
             <Input
               className="h-9 w-28"
               inputMode="numeric"
@@ -95,21 +280,77 @@ function AnoLetivoReferencia({ podeEditar }: { podeEditar: boolean }) {
               onChange={(e) => setAno(e.target.value.replace(/\D/g, "").slice(0, 4))}
             />
           </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Segmento</Label>
+            <Select value={segmento} onValueChange={(v) => setSegmento(v as SegmentoMatricula)}>
+              <SelectTrigger className="h-9 w-72">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SEGMENTOS_MATRICULA.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {ROTULO_SEGMENTO_MATRICULA[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Valor (R$)</Label>
+            <Input
+              className="h-9 w-36"
+              inputMode="decimal"
+              placeholder="0,00"
+              value={valor}
+              onChange={(e) => setValor(e.target.value)}
+            />
+          </div>
           <Button
             className="gap-2"
-            disabled={ano.length !== 4 || gravar.isPending}
+            disabled={ano.length !== 4 || !valor.trim() || gravar.isPending}
             onClick={() => gravar.mutate()}
           >
             {gravar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Salvar ano letivo
+            Salvar valor
           </Button>
         </div>
       )}
+    </div>
+  );
+}
 
-      <h3 className="mt-5 text-sm font-semibold">Ano Vigente (Diário do Aluno)</h3>
+// Ano vigente do Diário do Aluno: configuração administrativa única, separada
+// das campanhas de rematrícula.
+function AnoVigenteDiario({ podeEditar }: { podeEditar: boolean }) {
+  const qc = useQueryClient();
+  const obter = useServerFn(anosLetivosDiario);
+  const salvarVigente = useServerFn(salvarAnoVigenteDiario);
+  const [anoVigente, setAnoVigente] = useState("");
+
+  const config = useQuery({
+    queryKey: ["diario_anos_letivos"],
+    queryFn: async () => obter({ data: undefined }),
+  });
+
+  const gravarVigente = useMutation({
+    mutationFn: async () => salvarVigente({ data: { anoVigente: Number(anoVigente) } }),
+    onSuccess: () => {
+      toast.success("Ano vigente atualizado. O Diário do Aluno passa a abrir nesse ano.");
+      setAnoVigente("");
+      void qc.invalidateQueries({ queryKey: ["diario_anos_letivos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
+  const vigente = config.data?.anoVigente ?? null;
+  const rematricula = config.data?.anoRematricula ?? null;
+
+  return (
+    <div className="rounded-lg border p-4">
+      <h3 className="text-sm font-semibold">Ano Vigente (Diário do Aluno)</h3>
       <p className="mt-1 text-xs text-muted-foreground">
         {vigente
-          ? `O Diário do Aluno abre e registra refeições/entrada-saída pelo plano de ${vigente}. A rotina preenchida na rematrícula fica guardada em ${atual ?? "ano da rematrícula"} sem mexer no ano vigente.`
+          ? `O Diário do Aluno abre e registra refeições/entrada-saída pelo plano de ${vigente}. A rotina preenchida na rematrícula fica guardada no ano da campanha${rematricula ? ` (${rematricula})` : ""} sem mexer no ano vigente.`
           : "Carregando…"}
       </p>
       {podeEditar && (
@@ -207,7 +448,9 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
 
   return (
     <div className="space-y-6">
-      <AnoLetivoReferencia podeEditar={podeEditar} />
+      <CampanhasRematricula podeEditar={podeEditar} />
+      <ValoresMatricula podeEditar={podeEditar} />
+      <AnoVigenteDiario podeEditar={podeEditar} />
       {podeEditar && !unidade && <SelecioneUnidade acao="O cadastro do material pedagógico" />}
       {podeEditar && unidade && (
         <div className="rounded-lg border p-4">

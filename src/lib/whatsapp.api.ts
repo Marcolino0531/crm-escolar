@@ -102,6 +102,7 @@ import {
   type StatusExecucao,
 } from "@/lib/billing-cron-runs";
 import { montarLinhasAcompanhamento } from "@/lib/rematricula-acompanhamento";
+import { urlPortalRematricula } from "@/lib/rematricula";
 import {
   chaveLembrete,
   contarPorTemplate,
@@ -1349,11 +1350,13 @@ async function runCronRematricula(hoje: string, opcoes: OpcoesRotina = {}): Prom
     }
   }
 
+  // O lembrete é da campanha aberta mais recente; sem campanha aberta não há
+  // o que lembrar (e o link enviado precisa apontar para um ano acessível).
   const anoLetivo = await anoLetivoConfigurado();
   if (!anoLetivo) {
     return {
       status: "sem_envio",
-      motivo: "ano letivo de referência da rematrícula não configurado",
+      motivo: "nenhuma campanha de rematrícula aberta",
     };
   }
 
@@ -1361,7 +1364,7 @@ async function runCronRematricula(hoje: string, opcoes: OpcoesRotina = {}): Prom
   const selecionados: LembreteRematricula[] = [];
   const errosUnidade: string[] = [];
   for (const unidade of unidades) {
-    const dados = await carregarAcompanhamentoUnidade(unidade);
+    const dados = await carregarAcompanhamentoUnidade(unidade, anoLetivo);
     if (dados.error) {
       errosUnidade.push(`${unidade}: ${dados.error}`);
       continue;
@@ -1467,7 +1470,7 @@ async function dispararLembreteRematricula(
     aluno: d.alunoNome,
     unidade: d.unidade,
     anoLetivo,
-    link: `${BASE_URL_PORTAL}/rematricula`,
+    link: urlPortalRematricula(BASE_URL_PORTAL, Number(anoLetivo)),
   };
   const base = {
     responsavel_name: d.responsavelNome || "",

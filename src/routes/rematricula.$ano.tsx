@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { capitalizarPrimeiraLetra } from "@/lib/name-format";
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { CheckCircle2, Copy, GraduationCap, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,10 @@ import {
   validarResponsavelFinanceiro,
   type DadosResponsavelValidacao,
   type ParcelamentoPrimeira,
+  anoLetivoDaUrl,
+  mensagemMensalidadeAusente,
+  mensagemSessaoDeOutroAno,
+  mensagemCampanhaIndisponivel,
 } from "@/lib/rematricula";
 import {
   TODOS_OS_TURNOS,
@@ -53,19 +57,20 @@ import {
   solicitarLinkRematricula,
   type DadosRematricula,
   type ResponsavelRematricula,
+  campanhaPublicaRematricula,
 } from "@/lib/rematricula.functions";
 
 const OG_TITULO = "Rematrícula — School Hub";
 const OG_DESCRICAO = "Confirme a rematrícula do(a) aluno(a) e escolha o parcelamento do material.";
 
-export const Route = createFileRoute("/rematricula")({
+export const Route = createFileRoute("/rematricula/$ano")({
   head: () => ({
     meta: [
       { title: OG_TITULO },
       { name: "description", content: OG_DESCRICAO },
       { property: "og:title", content: OG_TITULO },
       { property: "og:description", content: OG_DESCRICAO },
-      { property: "og:url", content: "https://schoolhubbr.vercel.app/rematricula" },
+      { property: "og:url", content: "https://schoolhubbr.vercel.app/rematricula/2027" },
       { property: "og:type", content: "website" },
     ],
   }),
@@ -361,6 +366,14 @@ function validarFinanceiro(
 // devolvido pelo servidor tem validade curta e vive em sessionStorage — a aba
 // fechada já perde o acesso, e nada vai para localStorage.
 function RematriculaPage() {
+  // Ano da campanha vem da URL; nada aqui lê uma configuração global de ano.
+  const { ano } = Route.useParams();
+  const anoLetivo = anoLetivoDaUrl(ano);
+  const consultarCampanha = useServerFn(campanhaPublicaRematricula);
+  const campanha = useQuery({
+    queryKey: ["rematricula_campanha_publica", ano],
+    queryFn: async () => consultarCampanha({ data: { ano } }),
+  });
   const pedirLink = useServerFn(solicitarLinkRematricula);
   const carregar = useServerFn(dadosRematricula);
   const salvar = useServerFn(salvarEscolhaMaterialRematricula);
@@ -448,7 +461,10 @@ function RematriculaPage() {
   const [enviadaEm, setEnviadaEm] = useState<string | null>(null);
 
   const solicitar = useMutation({
-    mutationFn: async () => pedirLink({ data: { cpf } }),
+    mutationFn: async () => {
+      if (anoLetivo === null) throw new Error(mensagemCampanhaIndisponivel(null, "inexistente"));
+      return pedirLink({ data: { cpf, anoLetivo } });
+    },
     onSuccess: (res) => {
       if (!res.ok) {
         setAviso("");
@@ -477,6 +493,13 @@ function RematriculaPage() {
         if (!portal.ok) {
           sessionStorage.removeItem(CHAVE_SESSAO_REMATRICULA);
           setErro(portal.erro ?? "Sua sessão expirou. Informe o CPF para receber um novo link.");
+          return;
+        }
+        // A sessão é de um ano; aberta em outra URL, não vale — o responsável
+        // pede um novo link para o ano desta página.
+        if (portal.anoLetivo !== anoLetivo) {
+          sessionStorage.removeItem(CHAVE_SESSAO_REMATRICULA);
+          setErro(mensagemSessaoDeOutroAno(portal.anoLetivo ?? null, anoLetivo));
           return;
         }
         setToken(guardado);
@@ -524,7 +547,7 @@ function RematriculaPage() {
     return () => {
       ativo = false;
     };
-  }, [carregar]);
+  }, [anoLetivo, carregar]);
 
   // Sugestão inicial da rotina: só um envio anterior do próprio responsável.
   // Sem envio, a grade abre em branco (não herda o Diário do Aluno).
@@ -649,13 +672,44 @@ function RematriculaPage() {
   const extras = dados?.extras ?? null;
   const categoriasOferecidas = categoriasExtrasOferecidas(aluno?.serie ?? "");
 
+  const anoCampanha = campanha.data?.ok ? campanha.data.anoLetivo : null;
+  if (anoCampanha === null || anoLetivo === null) {
+    return (
+      <div className="min-h-screen bg-muted/40 px-4 py-10">
+        <div className="mx-auto w-full max-w-md rounded-xl border bg-background p-6 shadow-sm">
+          <div className="mb-6 flex items-center gap-3">
+            <GraduationCap className="h-6 w-6 text-primary" />
+            <h1 className="text-lg font-semibold">Rematrícula{anoLetivo ? ` ${anoLetivo}` : ""}</h1>
+          </div>
+          {campanha.isLoading ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando…
+            </p>
+          ) : campanha.isError ? (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              Não foi possível verificar a campanha agora. Tente novamente em instantes.
+            </p>
+          ) : (
+            <p
+              className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              data-campanha-indisponivel
+            >
+              {campanha.data?.mensagem ?? mensagemCampanhaIndisponivel(anoLetivo, "inexistente")}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
       <div className="mx-auto w-full max-w-3xl rounded-xl border bg-background p-6 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
           <GraduationCap className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-lg font-semibold">Rematrícula</h1>
+            <h1 className="text-lg font-semibold">Rematrícula {anoLetivo}</h1>
             <p className="text-sm text-muted-foreground">
               Revise os dados, confira a mensalidade e escolha o parcelamento do material.
             </p>
@@ -925,7 +979,7 @@ function RematriculaPage() {
             )}
 
             <div className="rounded-lg border p-4">
-              <h2 className="mb-3 text-sm font-semibold">Mensalidade vigente</h2>
+              <h2 className="mb-3 text-sm font-semibold">Mensalidade vigente de {anoLetivo}</h2>
               {mensalidade ? (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <CampoLeitura label="Valor" valor={formatarBRL(mensalidade.valor)} />
@@ -948,8 +1002,8 @@ function RematriculaPage() {
                   />
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">
-                  Não encontramos a mensalidade vigente no sistema da escola. Fale com a secretaria.
+                <p className="text-sm text-muted-foreground" data-mensalidade-ausente>
+                  {mensagemMensalidadeAusente(anoLetivo)}
                 </p>
               )}
             </div>

@@ -12,6 +12,13 @@ import {
   corpoEmailRematricula,
   MENSAGEM_LINK_ENVIADO,
   mascararEmail,
+  mensalidadeVigente,
+  urlPortalRematricula,
+  anoLetivoDaUrl,
+  situacaoCampanha,
+  mensagemCampanhaIndisponivel,
+  mensagemMensalidadeAusente,
+  mensagemSessaoDeOutroAno,
   mensagemLinkEnviadoPara,
   resultadoEnvioLink,
   MENSAGEM_FALHA_ENVIO_LINK,
@@ -147,12 +154,15 @@ describe("link mágico de acesso", () => {
     expect(validarLinkMagico(link({ expiraEm: null }), agora).ok).toBe(false);
   });
 
-  it("monta a URL de verificação do portal", () => {
-    expect(urlLinkRematricula("https://schoolhubbr.vercel.app", "abc123")).toBe(
-      "https://schoolhubbr.vercel.app/rematricula/verificar?token=abc123",
+  it("monta a URL de verificação do portal com o ano da campanha", () => {
+    expect(urlLinkRematricula("https://schoolhubbr.vercel.app", 2027, "abc123")).toBe(
+      "https://schoolhubbr.vercel.app/rematricula/2027/verificar?token=abc123",
     );
-    expect(urlLinkRematricula("https://schoolhubbr.vercel.app/", "abc123")).toContain(
-      "/rematricula/verificar?token=abc123",
+    expect(urlLinkRematricula("https://schoolhubbr.vercel.app/", 2028, "abc123")).toContain(
+      "/rematricula/2028/verificar?token=abc123",
+    );
+    expect(urlPortalRematricula("https://schoolhubbr.vercel.app/", 2027)).toBe(
+      "https://schoolhubbr.vercel.app/rematricula/2027",
     );
   });
 
@@ -789,5 +799,83 @@ describe("validarResponsavelFinanceiro", () => {
       "2026-09-10",
     );
     expect(Object.keys(erros).sort()).toEqual(["cep", "cpf", "dataNascimento", "email"]);
+  });
+});
+
+describe("campanha por ano na URL (/rematricula/$ano)", () => {
+  it("lê o ano da URL só quando são 4 dígitos plausíveis", () => {
+    expect(anoLetivoDaUrl("2027")).toBe(2027);
+    expect(anoLetivoDaUrl("verificar")).toBeNull();
+    expect(anoLetivoDaUrl("27")).toBeNull();
+    expect(anoLetivoDaUrl("")).toBeNull();
+  });
+
+  it("campanha aberta, fechada e inexistente", () => {
+    expect(situacaoCampanha({ anoLetivo: 2027, aberta: true })).toBe("aberta");
+    expect(situacaoCampanha({ anoLetivo: 2027, aberta: false })).toBe("fechada");
+    expect(situacaoCampanha(null)).toBe("inexistente");
+  });
+
+  it("mensagens claras para ano inexistente, campanha fechada e URL sem ano", () => {
+    expect(mensagemCampanhaIndisponivel(2029, "inexistente")).toBe(
+      "Não há campanha de rematrícula para 2029. Confira o link enviado pela escola ou fale com a secretaria.",
+    );
+    expect(mensagemCampanhaIndisponivel(2027, "fechada")).toBe(
+      "A rematrícula para 2027 não está aberta no momento. Fale com a secretaria.",
+    );
+    expect(mensagemCampanhaIndisponivel(null, "inexistente")).toContain(
+      "Use o link enviado pela escola",
+    );
+  });
+
+  it("sessão de um ano aberta na URL de outro ano pede novo link do ano da URL", () => {
+    expect(mensagemSessaoDeOutroAno(2027, 2028)).toBe(
+      "Seu acesso é da rematrícula de 2027, e esta página é a de 2028. Informe o CPF para receber um link de 2028.",
+    );
+  });
+
+  it("mensalidade ausente cita o ano da URL", () => {
+    expect(mensagemMensalidadeAusente(2028)).toContain("mensalidade de 2028 ainda não foi lançada");
+  });
+});
+
+describe("mensalidadeVigente filtra estritamente pelo ano da URL", () => {
+  const parcela = (vencimento: string, valor: number, bolsa = "") => ({
+    categoria: "Mensalidade",
+    vencimento,
+    valor,
+    bolsaAssociada: bolsa,
+  });
+  const parcelas = [
+    parcela("2026-10-10", 1500, "Bolsa Funcionário - 30,00%"),
+    parcela("2026-12-10", 1500),
+    { categoria: "Material Pedagógico", vencimento: "2027-02-10", valor: 900, bolsaAssociada: "" },
+  ];
+
+  it("2027 sem mensalidade lançada devolve null, mesmo com mensalidade de 2026 no Sponte", () => {
+    expect(mensalidadeVigente(parcelas, 2027, "2026-09-20T12:00:00.000Z")).toBeNull();
+  });
+
+  it("2027 com mensalidade lançada ignora as de 2026 e pega a próxima a vencer do ano", () => {
+    const com2027 = [...parcelas, parcela("2027-03-10", 1700), parcela("2027-02-10", 1700)];
+    const res = mensalidadeVigente(com2027, 2027, "2026-09-20T12:00:00.000Z");
+    expect(res?.valor).toBe(1700);
+    expect(res?.vencimento).toBe("2027-02-10");
+    expect(res?.descontoPercentual).toBe(0);
+  });
+
+  it("2026 na URL pega a de 2026 (com desconto) e nunca a de 2027", () => {
+    const com2027 = [...parcelas, parcela("2027-02-10", 1700)];
+    const res = mensalidadeVigente(com2027, 2026, "2026-09-20T12:00:00.000Z");
+    expect(res?.valor).toBe(1500);
+    expect(res?.vencimento).toBe("2026-10-10");
+    expect(res?.descontoPercentual).toBe(30);
+  });
+
+  it("todas do ano já vencidas: usa a mais recente do próprio ano, sem sair dele", () => {
+    const res = mensalidadeVigente(parcelas, 2026, "2027-06-01T12:00:00.000Z");
+    expect(res?.vencimento).toBe("2026-12-10");
+    expect(mensalidadeVigente(parcelas, 2028, "2027-06-01T12:00:00.000Z")).toBeNull();
+    expect(mensalidadeVigente(parcelas, 2029, "2027-06-01T12:00:00.000Z")).toBeNull();
   });
 });
