@@ -66,7 +66,7 @@ function entrada(): MontarContratoInput {
           quitada: false,
         },
       ],
-      "2026-09-20",
+      2026,
     ),
     hojeISO: "2026-09-20",
   };
