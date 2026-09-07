@@ -393,6 +393,10 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
     expect(chaveSerie("3º Ano")).toBe(chaveSerie("3 ano"));
     expect(chaveSerie("1º Período")).toBe(chaveSerie("1o periodo"));
     expect(chaveSerie(" Maternal  II ")).toBe("maternal ii");
+    // Código do curso do Sponte na frente não muda a série.
+    expect(chaveSerie("04 / 1º Período")).toBe("1 periodo");
+    expect(chaveSerie("03 / Maternal 3")).toBe(chaveSerie("Maternal 3"));
+    expect(chaveSerie("07 - 2º Ano")).toBe("2 ano");
   });
 });
 
