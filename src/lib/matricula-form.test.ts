@@ -11,6 +11,9 @@ import {
   formatarCep,
   formatarCelular,
   formatarCpf,
+  formatarDataBr,
+  formatarHora,
+  dataBrParaIso,
   formValido,
   GENEROS_MATRICULA,
   inicioJanelaLimite,
@@ -94,6 +97,26 @@ describe("máscaras", () => {
     expect(formatarCelular("31999998888")).toBe("(31) 99999-8888");
     expect(formatarCelular("(31) 99999-8888999")).toBe("(31) 99999-8888");
     expect(formatarCelular("abc31x9")).toBe("(31) 9");
+  });
+
+  it("formata hora HH:MM sem completar sozinha (Safari não sugere valor)", () => {
+    expect(formatarHora("")).toBe("");
+    expect(formatarHora("1")).toBe("1");
+    expect(formatarHora("12")).toBe("12");
+    expect(formatarHora("123")).toBe("12:3");
+    expect(formatarHora("1230")).toBe("12:30");
+    expect(formatarHora("12:305")).toBe("12:30");
+  });
+
+  it("formata data DD/MM/AAAA e converte só quando completa e válida", () => {
+    expect(formatarDataBr("1")).toBe("1");
+    expect(formatarDataBr("1503")).toBe("15/03");
+    expect(formatarDataBr("15032027")).toBe("15/03/2027");
+    expect(formatarDataBr("150320279")).toBe("15/03/2027");
+    expect(dataBrParaIso("15/03/2027")).toBe("2027-03-15");
+    expect(dataBrParaIso("15/03/202")).toBe("");
+    expect(dataBrParaIso("31/02/2027")).toBe("");
+    expect(dataBrParaIso("")).toBe("");
   });
 
   it("formata CEP", () => {

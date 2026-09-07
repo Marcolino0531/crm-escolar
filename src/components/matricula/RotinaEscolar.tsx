@@ -12,6 +12,7 @@ import {
   DIAS_UTEIS,
   HORARIOS_PADRAO,
   diasAtivosRotina,
+  formatarHora,
   segmentoDaSerie,
   selecionarPeriodo,
   type ErrosForm,
@@ -245,11 +246,16 @@ export function RotinaEscolar({
                     </Label>
                     <Input
                       id={`rotina-entrada-${dia}`}
-                      type="time"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="--:--"
+                      maxLength={5}
                       className="w-[120px]"
                       aria-invalid={!!erros[`rotina.horario.${dia}`]}
                       value={horario.entrada}
-                      onChange={(e) => definirHorario(dia, { ...horario, entrada: e.target.value })}
+                      onChange={(e) =>
+                        definirHorario(dia, { ...horario, entrada: formatarHora(e.target.value) })
+                      }
                     />
                   </div>
                   <div className="space-y-1">
@@ -258,11 +264,16 @@ export function RotinaEscolar({
                     </Label>
                     <Input
                       id={`rotina-saida-${dia}`}
-                      type="time"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="--:--"
+                      maxLength={5}
                       className="w-[120px]"
                       aria-invalid={!!erros[`rotina.horario.${dia}`]}
                       value={horario.saida}
-                      onChange={(e) => definirHorario(dia, { ...horario, saida: e.target.value })}
+                      onChange={(e) =>
+                        definirHorario(dia, { ...horario, saida: formatarHora(e.target.value) })
+                      }
                     />
                   </div>
                 </div>
