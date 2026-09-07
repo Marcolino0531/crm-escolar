@@ -36,7 +36,9 @@ import {
 } from "@/lib/matricula-form";
 import {
   dadosRematricula,
+  definirResponsavelFinanceiroRematricula,
   finalizarRematricula,
+  type FinalizarRematriculaResult,
   rotinaRematricula,
   salvarEscolhaMaterialRematricula,
   salvarRotinaRematricula,
@@ -180,11 +182,15 @@ function BlocoResponsavel({
   edicao,
   erros,
   onChange,
+  onDefinirFinanceiro,
+  trocandoFinanceiro,
 }: {
   resp: ResponsavelRematricula;
   edicao: EdicaoResponsavel;
   erros: ErrosResponsavel;
   onChange: (chave: keyof EdicaoResponsavel, valor: string) => void;
+  onDefinirFinanceiro: () => void;
+  trocandoFinanceiro: boolean;
 }) {
   const [buscandoCep, setBuscandoCep] = useState(false);
   const obrigatorio = resp.financeiro;
@@ -240,10 +246,22 @@ function BlocoResponsavel({
     <div className="rounded-lg border p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">{resp.parentesco || "Responsável"}</h3>
-        {resp.financeiro && (
+        {resp.financeiro ? (
           <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
             Responsável financeiro
           </span>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="ml-auto h-7 text-xs"
+            disabled={trocandoFinanceiro}
+            onClick={onDefinirFinanceiro}
+          >
+            {trocandoFinanceiro && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+            Definir como financeiro
+          </Button>
         )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -313,6 +331,7 @@ function RematriculaPage() {
   const carregarRotina = useServerFn(rotinaRematricula);
   const guardarRotina = useServerFn(salvarRotinaRematricula);
   const finalizar = useServerFn(finalizarRematricula);
+  const definirFinanceiro = useServerFn(definirResponsavelFinanceiroRematricula);
 
   const [etapa, setEtapa] = useState<Etapa>("cpf");
   const [cpf, setCpf] = useState("");
@@ -344,13 +363,37 @@ function RematriculaPage() {
     return Object.keys(novos).length === 0;
   };
 
-  // Erros do envio final vindos do servidor: destaca o que dá para destacar
-  // (cadastro do financeiro campo a campo) e rola até o primeiro campo com erro.
-  const destacarErrosEnvio = (erros: Record<string, string>) => {
-    setErrosEnvio(erros);
-    if (erros["responsavel"]) conferirFinanceiro();
+  // Erros do envio final vindos do servidor: o cadastro do financeiro chega
+  // campo a campo (pelo que está salvo no Sponte) e vai para o responsável certo;
+  // depois rola até o primeiro campo com erro.
+  const destacarErrosEnvio = (res: FinalizarRematriculaResult) => {
+    setErrosEnvio(res.erros ?? {});
+    if (res.errosResponsavel) {
+      setErrosResp({ [res.errosResponsavel.responsavelId]: res.errosResponsavel.erros });
+    } else if (res.erros?.["responsavel"]) {
+      conferirFinanceiro();
+    }
     rolarParaPrimeiroErro();
   };
+
+  const trocarFinanceiro = useMutation({
+    mutationFn: async (responsavelId: string) =>
+      definirFinanceiro({ data: { token, responsavelId } }),
+    onSuccess: (res) => {
+      if (!res.ok || !res.responsaveis) {
+        setErro(res.erro ?? "Não foi possível trocar o responsável financeiro.");
+        return;
+      }
+      setErro("");
+      setErrosResp({});
+      setErrosEnvio((atual) => {
+        const { responsavel: _r, ...resto } = atual;
+        return resto;
+      });
+      setDados((atual) => (atual ? { ...atual, responsaveis: res.responsaveis! } : atual));
+    },
+    onError: () => setErro("Não foi possível trocar o responsável financeiro agora."),
+  });
   const [cadastroSalvo, setCadastroSalvo] = useState("");
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
   const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
@@ -506,7 +549,7 @@ function RematriculaPage() {
       }),
     onSuccess: (res) => {
       if (!res.ok) {
-        destacarErrosEnvio(res.erros ?? {});
+        destacarErrosEnvio(res);
         setErro(res.erro ?? "Não foi possível enviar sua matrícula.");
         return;
       }
@@ -682,8 +725,14 @@ function RematriculaPage() {
                       }));
                       setCadastroSalvo("");
                     }}
+                    onDefinirFinanceiro={() => trocarFinanceiro.mutate(r.responsavelId)}
+                    trocandoFinanceiro={trocarFinanceiro.isPending}
                   />
                 ))}
+                <p className="text-xs text-muted-foreground">
+                  Use “Definir como financeiro” para trocar quem responde pelas mensalidades; os
+                  campos com * passam a ser exigidos só desse responsável.
+                </p>
               </div>
             )}
 

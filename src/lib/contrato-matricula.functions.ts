@@ -42,8 +42,7 @@ import {
   BASE_URL_PORTAL,
   buscarAlunoPorId,
   buscarMensalidadeVigente,
-  buscarResponsaveis,
-  buscarResponsavelFinanceiroId,
+  buscarResponsaveisComFinanceiro,
   exigirPermissaoRematricula,
   hojeBRT,
 } from "@/lib/rematricula.functions";
@@ -442,9 +441,9 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
       if (!matricula.data) throw new Error("Matrícula não encontrada para este aluno.");
       if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
 
-      const financeiroId = await buscarResponsavelFinanceiroId(unidade, alunoId);
+      // Respeita a troca de responsável financeiro feita no portal de rematrícula.
       const [responsaveis, mensalidade, extras, logo] = await Promise.all([
-        buscarResponsaveis(unidade, alunoId, financeiroId),
+        buscarResponsaveisComFinanceiro(unidade, alunoId),
         buscarMensalidadeVigente(unidade, alunoId),
         extrasDoAluno(unidade, alunoId, hoje),
         carregarLogoServidor(colegio.logo_path),

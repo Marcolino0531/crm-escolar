@@ -26,7 +26,10 @@ import {
   MENSAGEM_LINK_ENVIADO,
   MENSAGEM_LINK_INVALIDO,
   MENSAGEM_SESSAO_EXPIRADA,
-  validarResponsavelFinanceiro,
+  responsavelFinanceiroEfetivo,
+  validarFinanceiroEntreResponsaveis,
+  mensagemErroFinanceiro,
+  type ErroResponsavelFinanceiro,
   anoLetivoValido,
   apresentacaoMaterial,
   assuntoEmailRematricula,
@@ -60,6 +63,7 @@ import {
 import {
   type AcessoAcompanhamento,
   type AlunoAtivoAcompanhamento,
+  type EnvioAcompanhamento,
   type EscolhaAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
 import {
@@ -323,37 +327,71 @@ export async function buscarResponsavelFinanceiroId(
   }
 }
 
-// Campos que o Sponte precisa ter para o contrato do responsável financeiro.
-// Estado fica fora: UpdateResponsaveis2 não grava UF, então ele é conferido só
-// no portal (ViaCEP), sem bloquear aqui.
+// Troca de responsável financeiro feita no portal (prevalece sobre o Sponte).
+async function financeiroEscolhidoNoPortal(unidade: string, alunoId: string): Promise<string> {
+  const { data } = await supabaseAdmin
+    .from("rematricula_responsavel_financeiro" as never)
+    .select("responsavel_id")
+    .eq("unidade", unidade)
+    .eq("aluno_id", alunoId)
+    .maybeSingle<{ responsavel_id: string }>();
+  return data?.responsavel_id ?? "";
+}
+
+// Responsáveis do aluno com a flag `financeiro` já resolvida: a escolha do
+// portal vale se apontar para alguém que ainda é responsável; senão, o Sponte.
+// É a mesma leitura do portal, do envio final e do Contrato de Matrícula.
+export async function buscarResponsaveisComFinanceiro(
+  unidade: string,
+  alunoId: string,
+): Promise<ResponsavelRematricula[]> {
+  const [sponteId, escolhido] = await Promise.all([
+    buscarResponsavelFinanceiroId(unidade, alunoId),
+    financeiroEscolhidoNoPortal(unidade, alunoId),
+  ]);
+  const lista = await buscarResponsaveis(unidade, alunoId, sponteId);
+  const efetivo = responsavelFinanceiroEfetivo(
+    lista.map((r) => r.responsavelId),
+    sponteId,
+    escolhido,
+  );
+  const comFlag = lista.map((r) => ({ ...r, financeiro: r.responsavelId === efetivo }));
+  comFlag.sort(
+    (a, b) => Number(b.financeiro) - Number(a.financeiro) || a.nome.localeCompare(b.nome),
+  );
+  return comFlag;
+}
+
+// Cadastro que o Sponte precisa ter para o contrato — só do responsável
+// financeiro. Estado fica fora: UpdateResponsaveis2 não grava UF, então ele é
+// conferido só no portal (ViaCEP), sem bloquear aqui.
 async function erroCadastroFinanceiro(
   unidade: string,
   alunoId: string,
   hoje: string,
-): Promise<string | null> {
-  const financeiroId = await buscarResponsavelFinanceiroId(unidade, alunoId);
-  const responsaveis = await buscarResponsaveis(unidade, alunoId, financeiroId);
-  const fin = responsaveis.find((r) => r.financeiro);
-  if (!fin) return "Não encontramos o responsável financeiro do aluno. Fale com a secretaria.";
-  const erros = validarResponsavelFinanceiro(
-    {
-      nome: fin.nome,
-      cpf: fin.cpf,
-      dataNascimento: fin.dataNascimento,
-      celular: fin.telefone,
-      email: fin.email,
-      cep: fin.cep,
-      endereco: fin.endereco,
-      numeroEndereco: fin.numero,
-      bairro: fin.bairro,
-      cidade: fin.cidade,
-      estado: fin.uf || "--",
-    },
+): Promise<ErroResponsavelFinanceiro | "sem_financeiro" | null> {
+  const responsaveis = await buscarResponsaveisComFinanceiro(unidade, alunoId);
+  if (!responsaveis.some((r) => r.financeiro)) return "sem_financeiro";
+  return validarFinanceiroEntreResponsaveis(
+    responsaveis.map((r) => ({
+      responsavelId: r.responsavelId,
+      parentesco: r.parentesco,
+      financeiro: r.financeiro,
+      nome: r.nome,
+      cpf: r.cpf,
+      dataNascimento: r.dataNascimento,
+      celular: r.telefone,
+      email: r.email,
+      cep: r.cep,
+      endereco: r.endereco,
+      numeroEndereco: r.numero,
+      bairro: r.bairro,
+      cidade: r.cidade,
+      estado: r.uf,
+    })),
     hoje,
+    ["estado"],
   );
-  const pendentes = Object.values(erros);
-  if (pendentes.length === 0) return null;
-  return `Complete os dados do responsável financeiro e salve antes de finalizar: ${pendentes.join(" ")}`;
 }
 
 export async function buscarResponsaveis(
@@ -850,16 +888,11 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const responsavelFinanceiroId = await buscarResponsavelFinanceiroId(
-      sessao.unidade,
-      sessao.alunoId,
-    );
-
     const anoLetivo = await anoLetivoConfigurado();
     const serieAlvo = serieRematricula(aluno, anoLetivo);
     const [responsaveis, mensalidade, material, extras, escolha, escolhaMatricula, envio] =
       await Promise.all([
-        buscarResponsaveis(sessao.unidade, sessao.alunoId, responsavelFinanceiroId),
+        buscarResponsaveisComFinanceiro(sessao.unidade, sessao.alunoId),
         buscarMensalidadeVigente(sessao.unidade, sessao.alunoId),
         materialDaSerie(sessao.unidade, serieAlvo),
         anoLetivo
@@ -923,6 +956,55 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       extras,
       enviadaEm: envio.data?.enviada_em ?? null,
     };
+  });
+
+const DefinirFinanceiroSchema = z.object({
+  token: z.string().min(16),
+  responsavelId: z.string().min(1),
+});
+
+export interface DefinirFinanceiroResult {
+  ok: boolean;
+  erro?: string;
+  responsaveis?: ResponsavelRematricula[];
+}
+
+// O próprio responsável logado troca quem é o financeiro, sem aprovação da
+// secretaria. Só aceita alguém que já é responsável do aluno no Sponte; a troca
+// fica no School Hub (o Sponte não é alterado) e vale para a obrigatoriedade de
+// cadastro, para o envio final e para o Contrato de Matrícula.
+export const definirResponsavelFinanceiroRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => DefinirFinanceiroSchema.parse(input))
+  .handler(async ({ data }): Promise<DefinirFinanceiroResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const atuais = await buscarResponsaveisComFinanceiro(sessao.unidade, sessao.alunoId);
+    if (!atuais.some((r) => r.responsavelId === data.responsavelId)) {
+      return { ok: false, erro: "Este responsável não está no cadastro do aluno." };
+    }
+    const { error } = await supabaseAdmin
+      .from("rematricula_responsavel_financeiro" as never)
+      .upsert(
+        {
+          unidade: sessao.unidade,
+          aluno_id: sessao.alunoId,
+          responsavel_id: data.responsavelId,
+          updated_at: new Date().toISOString(),
+        } as never,
+        { onConflict: "unidade,aluno_id" },
+      );
+    if (error) {
+      console.error(`${LOG_TAG} falha ao trocar o responsável financeiro: ${error.message}`);
+      return {
+        ok: false,
+        erro: "Não foi possível trocar o responsável financeiro. Tente novamente.",
+      };
+    }
+    const responsaveis = atuais
+      .map((r) => ({ ...r, financeiro: r.responsavelId === data.responsavelId }))
+      .sort((a, b) => Number(b.financeiro) - Number(a.financeiro) || a.nome.localeCompare(b.nome));
+    return { ok: true, responsaveis };
   });
 
 const EscolhaSchema = z.object({
@@ -1287,6 +1369,9 @@ export interface FinalizarRematriculaResult {
   ok: boolean;
   erro?: string;
   erros?: Record<string, string>;
+  // Campo a campo do responsável financeiro (pelo cadastro salvo no Sponte),
+  // para o portal destacar o campo certo do responsável certo.
+  errosResponsavel?: ErroResponsavelFinanceiro;
   enviadaEm?: string;
 }
 
@@ -1337,12 +1422,19 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
     ]);
     if (!rotina.data) erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
     const erroFinanceiro = await erroCadastroFinanceiro(sessao.unidade, sessao.alunoId, hoje);
-    if (erroFinanceiro) erros["responsavel"] = erroFinanceiro;
+    let errosResponsavel: ErroResponsavelFinanceiro | undefined;
+    if (erroFinanceiro === "sem_financeiro") {
+      erros["responsavel"] =
+        "Não encontramos o responsável financeiro do aluno. Fale com a secretaria.";
+    } else if (erroFinanceiro) {
+      erros["responsavel"] = mensagemErroFinanceiro(erroFinanceiro);
+      errosResponsavel = erroFinanceiro;
+    }
     if (material && !escolhaMaterial.data) {
       erros["material"] = "Confirme o parcelamento do Material Pedagógico antes de finalizar.";
     }
     if (Object.keys(erros).length > 0) {
-      return { ok: false, erros, erro: "Confira os campos destacados." };
+      return { ok: false, erros, errosResponsavel, erro: "Confira os campos destacados." };
     }
 
     if (existente.data && existente.data.status !== "pendente_lancamento") {
@@ -1836,6 +1928,7 @@ export interface AcompanhamentoRematriculaResult {
   alunos: AlunoAtivoAcompanhamento[];
   escolhas: EscolhaAcompanhamento[];
   acessos: AcessoAcompanhamento[];
+  envios: EnvioAcompanhamento[];
   cadastroAlterados: { unidade: string; alunoId: string }[];
   error?: string;
 }
@@ -1848,7 +1941,7 @@ const UnidadeSchema = z.object({ unidade: z.string().min(1) });
 export async function carregarAcompanhamentoUnidade(
   unidade: string,
 ): Promise<AcompanhamentoRematriculaResult> {
-  const [ativos, escolhas, acessos, auditoria] = await Promise.all([
+  const [ativos, escolhas, acessos, envios, auditoria] = await Promise.all([
     alunosAtivosDaUnidade(unidade),
     selectAll<EscolhaRow>(() =>
       supabaseAdmin
@@ -1860,6 +1953,10 @@ export async function carregarAcompanhamentoUnidade(
     supabaseAdmin
       .from("rematricula_acessos" as never)
       .select("unidade, aluno_id, ultimo_acesso_em")
+      .eq("unidade", unidade),
+    supabaseAdmin
+      .from("rematricula_envios" as never)
+      .select("unidade, aluno_id, enviada_em")
       .eq("unidade", unidade),
     supabaseAdmin
       .from("rematricula_cadastro_auditoria" as never)
@@ -1901,6 +1998,11 @@ export async function carregarAcompanhamentoUnidade(
       alunoId: a.aluno_id,
       ultimoAcessoEm: a.ultimo_acesso_em,
     })),
+    envios: ((envios.data ?? []) as unknown as EnvioRow[]).map((e) => ({
+      unidade: e.unidade,
+      alunoId: e.aluno_id,
+      enviadaEm: e.enviada_em,
+    })),
     cadastroAlterados: [...alterados].map((alunoId) => ({ unidade, alunoId })),
     error: ativos.error,
   };
@@ -1920,6 +2022,7 @@ export const acompanhamentoRematricula = createServerFn({ method: "POST" })
         alunos: [],
         escolhas: [],
         acessos: [],
+        envios: [],
         cadastroAlterados: [],
         error: "Sem permissão para esta unidade.",
       };
@@ -1932,6 +2035,12 @@ interface AcessoRow {
   unidade: string;
   aluno_id: string;
   ultimo_acesso_em: string;
+}
+
+interface EnvioRow {
+  unidade: string;
+  aluno_id: string;
+  enviada_em: string;
 }
 
 export interface AlteracaoCadastralRematricula {

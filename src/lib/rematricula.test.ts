@@ -37,6 +37,9 @@ import {
   validarLinkMagico,
   type LinkMagico,
   validarResponsavelFinanceiro,
+  responsavelFinanceiroEfetivo,
+  validarFinanceiroEntreResponsaveis,
+  mensagemErroFinanceiro,
 } from "@/lib/rematricula";
 import type { ParcelaAberta } from "@/lib/cantina";
 import { isDiaUtil, isFeriadoNacional } from "@/lib/billing-schedule";
@@ -654,6 +657,96 @@ describe("vencimentos do material pelas mensalidades", () => {
   it("recusa vencimentos em quantidade diferente das parcelas e data inválida", () => {
     expect(() => cronogramaMaterialFaseB(1000, 3, ["2027-01-10"])).toThrow();
     expect(() => vencimentosMaterialPelasMensalidades(mensalidades, "10/01/2027", 3)).toThrow();
+  });
+});
+
+describe("responsável financeiro escolhido no portal", () => {
+  const ids = ["10", "20"];
+
+  it("a troca feita no portal prevalece sobre o Sponte", () => {
+    expect(responsavelFinanceiroEfetivo(ids, "10", "20")).toBe("20");
+  });
+
+  it("sem troca (ou troca para alguém que não é mais responsável) vale o Sponte", () => {
+    expect(responsavelFinanceiroEfetivo(ids, "10", null)).toBe("10");
+    expect(responsavelFinanceiroEfetivo(ids, "10", "")).toBe("10");
+    expect(responsavelFinanceiroEfetivo(ids, "10", "99")).toBe("10");
+  });
+});
+
+describe("validarFinanceiroEntreResponsaveis (só o financeiro tem obrigatoriedade)", () => {
+  const mae = {
+    responsavelId: "10",
+    parentesco: "Mãe",
+    nome: "Maria Silva",
+    cpf: "529.982.247-25",
+    dataNascimento: "1985-04-10",
+    celular: "(31) 99999-8888",
+    email: "maria@exemplo.com",
+    cep: "30140-071",
+    endereco: "Rua da Bahia",
+    numeroEndereco: "1000",
+    bairro: "Centro",
+    cidade: "Belo Horizonte",
+    estado: "MG",
+  };
+  // Pai com Estado (e mais coisas) em branco — o caso real do Ryan.
+  const pai = {
+    ...mae,
+    responsavelId: "20",
+    parentesco: "Pai",
+    nome: "José Silva",
+    cpf: "",
+    email: "",
+    estado: "",
+  };
+  const hoje = "2026-09-10";
+
+  it("Estado vazio do pai não bloqueia quando a mãe é a financeira", () => {
+    const r = validarFinanceiroEntreResponsaveis(
+      [
+        { ...mae, financeiro: true },
+        { ...pai, financeiro: false },
+      ],
+      hoje,
+    );
+    expect(r).toBeNull();
+  });
+
+  it("ao trocar o financeiro para o pai, a obrigatoriedade passa para ele e sai da mãe", () => {
+    const r = validarFinanceiroEntreResponsaveis(
+      [
+        { ...mae, financeiro: false, estado: "" },
+        { ...pai, financeiro: true },
+      ],
+      hoje,
+    );
+    expect(r?.responsavelId).toBe("20");
+    expect(r?.parentesco).toBe("Pai");
+    expect(Object.keys(r!.erros).sort()).toEqual(["cpf", "email", "estado"]);
+    expect(mensagemErroFinanceiro(r!)).toBe(
+      "Complete os dados do responsável financeiro (Pai) e salve antes de finalizar: " +
+        "CPF é obrigatório. Email é obrigatório. Estado é obrigatório.",
+    );
+  });
+
+  it("o servidor ignora Estado (o Sponte não guarda UF) e continua exigindo o resto", () => {
+    const soEstado = validarFinanceiroEntreResponsaveis(
+      [{ ...mae, financeiro: true, estado: "" }],
+      hoje,
+      ["estado"],
+    );
+    expect(soEstado).toBeNull();
+    const semCpf = validarFinanceiroEntreResponsaveis(
+      [{ ...mae, financeiro: true, estado: "", cpf: "" }],
+      hoje,
+      ["estado"],
+    );
+    expect(Object.keys(semCpf!.erros)).toEqual(["cpf"]);
+  });
+
+  it("sem responsável financeiro não há o que validar", () => {
+    expect(validarFinanceiroEntreResponsaveis([{ ...pai, financeiro: false }], hoje)).toBeNull();
   });
 });
 

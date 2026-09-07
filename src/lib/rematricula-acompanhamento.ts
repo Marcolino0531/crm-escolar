@@ -63,6 +63,12 @@ export interface AcessoAcompanhamento {
   ultimoAcessoEm: string;
 }
 
+export interface EnvioAcompanhamento {
+  unidade: string;
+  alunoId: string;
+  enviadaEm: string;
+}
+
 export interface LinhaAcompanhamento {
   alunoId: string;
   nome: string;
@@ -88,17 +94,20 @@ export function chaveAluno(unidade: string, alunoId: string): string {
   return `${unidade}::${alunoId}`;
 }
 
-// 'efetivada' é a linha que a secretaria já reivindicou mas cujo título ainda
-// não existe no Sponte (ou cujo lançamento falhou): continua pendente de
-// aprovação para a tela, nunca "Rematriculado".
+// Só o "Finalizar Matrícula" (envio final) muda o status para aguardando
+// aprovação: confirmar o parcelamento do material ou salvar a rotina é
+// progresso parcial e conta como "em andamento". 'efetivada' é a linha que a
+// secretaria já reivindicou mas cujo título ainda não existe no Sponte (ou cujo
+// lançamento falhou): continua pendente de aprovação, nunca "Rematriculado".
 export function statusAcompanhamento(
   escolha: EscolhaAcompanhamento | null,
   acessou: boolean,
+  enviada: boolean,
 ): StatusAcompanhamento {
-  if (escolha) {
-    return escolha.status === "lancada" ? "rematriculado" : "aguardando_aprovacao";
+  if (enviada) {
+    return escolha?.status === "lancada" ? "rematriculado" : "aguardando_aprovacao";
   }
-  return acessou ? "em_andamento" : "nao_iniciado";
+  return acessou || escolha ? "em_andamento" : "nao_iniciado";
 }
 
 function rotuloParcelamento(escolha: EscolhaAcompanhamento | null): string {
@@ -119,8 +128,11 @@ export function montarLinhasAcompanhamento(entrada: {
   alunos: readonly AlunoAtivoAcompanhamento[];
   escolhas: readonly EscolhaAcompanhamento[];
   acessos: readonly AcessoAcompanhamento[];
+  envios: readonly EnvioAcompanhamento[];
   cadastroAlterados: readonly { unidade: string; alunoId: string }[];
 }): LinhaAcompanhamento[] {
+  const porEnvio = new Map<string, string>();
+  for (const e of entrada.envios) porEnvio.set(chaveAluno(e.unidade, e.alunoId), e.enviadaEm);
   const porEscolha = new Map<string, EscolhaAcompanhamento>();
   for (const e of entrada.escolhas) porEscolha.set(chaveAluno(e.unidade, e.alunoId), e);
   const porAcesso = new Map<string, string>();
@@ -133,8 +145,9 @@ export function montarLinhasAcompanhamento(entrada: {
     const escolha = porEscolha.get(chave) ?? null;
     const acesso = porAcesso.get(chave) ?? null;
     // "Última atualização" é a última vez que o responsável mexeu no formulário:
-    // vale a mais recente entre o acesso e a escolha.
-    const atualizadoEm = [escolha?.atualizadoEm, acesso]
+    // vale a mais recente entre o acesso, a escolha e o envio final.
+    const envio = porEnvio.get(chave) ?? null;
+    const atualizadoEm = [escolha?.atualizadoEm, acesso, envio]
       .filter((d): d is string => Boolean(d))
       .sort()
       .pop();
@@ -143,7 +156,7 @@ export function montarLinhasAcompanhamento(entrada: {
       nome: aluno.nome,
       unidade: aluno.unidade,
       turma: aluno.turma,
-      status: statusAcompanhamento(escolha, acesso !== null),
+      status: statusAcompanhamento(escolha, acesso !== null, envio !== null),
       atualizadoEm: atualizadoEm ?? null,
       parcelamento: rotuloParcelamento(escolha),
       cadastroAlterado: alterados.has(chave),
@@ -200,8 +213,8 @@ export function ordenarAcompanhamento(
   });
 }
 
-// "Já respondeu" é quem confirmou o parcelamento (pendente de aprovação ou já
-// lançado). Quem só abriu o portal e não confirmou continua como não respondido,
+// "Já respondeu" é quem clicou em Finalizar Matrícula (pendente de aprovação ou
+// já lançado). Quem só abriu o portal ou salvou parte continua como não respondido,
 // porque é dele que a escola precisa cobrar retorno.
 export function respondeu(linha: LinhaAcompanhamento): boolean {
   return linha.status === "aguardando_aprovacao" || linha.status === "rematriculado";

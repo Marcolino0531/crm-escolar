@@ -817,3 +817,53 @@ export function validarResponsavelFinanceiro(
   }
   return erros;
 }
+
+// Quem é o responsável financeiro: a troca feita no portal prevalece sobre o
+// Sponte, desde que aponte para um responsável que ainda exista no cadastro do
+// aluno; caso contrário vale o ResponsavelFinanceiroID do Sponte.
+export function responsavelFinanceiroEfetivo(
+  responsavelIds: readonly string[],
+  sponteFinanceiroId: string,
+  escolhidoNoPortal: string | null | undefined,
+): string {
+  if (escolhidoNoPortal && responsavelIds.includes(escolhidoNoPortal)) return escolhidoNoPortal;
+  return sponteFinanceiroId;
+}
+
+export interface ResponsavelParaValidacao extends DadosResponsavelValidacao {
+  responsavelId: string;
+  parentesco: string;
+  financeiro: boolean;
+}
+
+export interface ErroResponsavelFinanceiro {
+  responsavelId: string;
+  parentesco: string;
+  erros: Partial<Record<keyof DadosResponsavelValidacao, string>>;
+}
+
+// Valida SOMENTE o responsável financeiro: os demais nunca têm campo
+// obrigatório. `ignorar` retira campos que a fonte consultada não guarda (ex.:
+// o Sponte não grava UF, então o servidor confere Estado só pelo portal).
+export function validarFinanceiroEntreResponsaveis(
+  responsaveis: readonly ResponsavelParaValidacao[],
+  hojeYMD: string,
+  ignorar: readonly (keyof DadosResponsavelValidacao)[] = [],
+): ErroResponsavelFinanceiro | null {
+  const fin = responsaveis.find((r) => r.financeiro);
+  if (!fin) return null;
+  const erros = validarResponsavelFinanceiro(fin, hojeYMD);
+  for (const campo of ignorar) delete erros[campo];
+  if (Object.keys(erros).length === 0) return null;
+  return { responsavelId: fin.responsavelId, parentesco: fin.parentesco, erros };
+}
+
+// Mensagem do banner: nomeia o responsável e cada campo pendente, para o pai
+// saber de quem é o dado que falta.
+export function mensagemErroFinanceiro(erro: ErroResponsavelFinanceiro): string {
+  const quem = erro.parentesco
+    ? `responsável financeiro (${erro.parentesco})`
+    : "responsável financeiro";
+  const pendentes = Object.values(erro.erros).join(" ");
+  return `Complete os dados do ${quem} e salve antes de finalizar: ${pendentes}`;
+}
