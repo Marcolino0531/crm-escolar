@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
 import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedagogicoSeries";
 import { usePermissions, useSchool } from "@/lib/app-context";
@@ -54,6 +55,7 @@ import {
   detalheAcompanhamentoRematricula,
   efetivarEscolhaRematricula,
 } from "@/lib/rematricula.functions";
+import type { DivergenciaExtraAluno } from "@/lib/rematricula-extras.functions";
 
 export const Route = createFileRoute("/rematricula-acompanhamento")({
   component: RematriculaAcompanhamentoPage,
@@ -73,7 +75,15 @@ const CORES_STATUS: Record<StatusAcompanhamento, string> = {
 
 // Revisão antes do lançamento: a secretaria confere o que o responsável escolheu
 // e as correções cadastrais registradas, e só então o material é criado no Sponte.
-function DialogoRevisao({ linha, onFechar }: { linha: LinhaAcompanhamento; onFechar: () => void }) {
+function DialogoRevisao({
+  linha,
+  divergencias,
+  onFechar,
+}: {
+  linha: LinhaAcompanhamento;
+  divergencias: readonly DivergenciaExtraAluno[];
+  onFechar: () => void;
+}) {
   const qc = useQueryClient();
   const carregarDetalhe = useServerFn(detalheAcompanhamentoRematricula);
   const efetivar = useServerFn(efetivarEscolhaRematricula);
@@ -131,6 +141,7 @@ function DialogoRevisao({ linha, onFechar }: { linha: LinhaAcompanhamento; onFec
           </p>
         ) : (
           <div className="space-y-4 text-sm">
+            <AvisoDivergenciasExtras divergencias={divergencias} detalhado />
             <div className="rounded-md border p-3">
               <p className="font-medium">Material pedagógico que será lançado</p>
               <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
@@ -265,6 +276,17 @@ function RematriculaAcompanhamentoPage() {
         })
       : [],
   );
+
+  const divergenciasPorAluno = useMemo(() => {
+    const mapa = new Map<string, DivergenciaExtraAluno[]>();
+    for (const c of consultas) {
+      for (const d of c.data?.divergenciasExtras ?? []) {
+        const chave = `${c.data?.unidade}-${d.alunoId}`;
+        mapa.set(chave, [...(mapa.get(chave) ?? []), d]);
+      }
+    }
+    return mapa;
+  }, [consultas]);
 
   // Base dos cards: mesma coleção da tabela antes do filtro de status, para os
   // contadores nunca contradizerem o que a secretaria vê ao filtrar.
@@ -419,6 +441,9 @@ function RematriculaAcompanhamentoPage() {
                         <Badge variant="secondary" className={CORES_STATUS[l.status]}>
                           {STATUS_ACOMPANHAMENTO_LABEL[l.status]}
                         </Badge>
+                        <AvisoDivergenciasExtras
+                          divergencias={divergenciasPorAluno.get(`${l.unidade}-${l.alunoId}`) ?? []}
+                        />
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {formatarDataHora(l.atualizadoEm)}
@@ -458,7 +483,13 @@ function RematriculaAcompanhamentoPage() {
         </TabsContent>
       </Tabs>
 
-      {revisando && <DialogoRevisao linha={revisando} onFechar={() => setRevisando(null)} />}
+      {revisando && (
+        <DialogoRevisao
+          linha={revisando}
+          divergencias={divergenciasPorAluno.get(`${revisando.unidade}-${revisando.alunoId}`) ?? []}
+          onFechar={() => setRevisando(null)}
+        />
+      )}
     </div>
   );
 }

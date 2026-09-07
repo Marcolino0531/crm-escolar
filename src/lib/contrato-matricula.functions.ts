@@ -39,6 +39,10 @@ import {
 import { gerarPdfContratoMatricula } from "@/lib/contrato-matricula-pdf";
 import { itensMaterialInclusos } from "@/lib/rematricula";
 import {
+  divergenciasExtrasDaUnidade,
+  type DivergenciaExtraAluno,
+} from "@/lib/rematricula-extras.functions";
+import {
   BASE_URL_PORTAL,
   buscarAlunoPorId,
   buscarMensalidadeVigente,
@@ -68,6 +72,8 @@ export interface ContratoPendente {
   matricula: { valor: number; parcelas: number; primeiroVencimento: string } | null;
   /** Material pedagógico escolhido no portal (null = série sem material). */
   material: { valorAnual: number; parcelas: number } | null;
+  /** Divergências de Extras gravadas no Finalizar (ação manual pendente no Sponte/Diário). */
+  divergenciasExtras: DivergenciaExtraAluno[];
   /** Retrato do último contrato gerado (se houver). */
   contrato: {
     id: string;
@@ -175,7 +181,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
       return { ...base, itens: [], error: "Sem permissão para esta unidade." };
     }
 
-    const [envios, matriculas, escolhas, contratos] = await Promise.all([
+    const [envios, matriculas, escolhas, contratos, divergencias] = await Promise.all([
       selectAll<EnvioRow>(() =>
         supabaseAdmin
           .from("rematricula_envios" as never)
@@ -207,6 +213,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
           .eq("unidade", unidade)
           .order("aluno_id", { ascending: true }),
       ),
+      divergenciasExtrasDaUnidade(unidade),
     ]);
 
     const docIds = contratos.map((c) => c.zapsign_documento_id).filter((d): d is string => !!d);
@@ -245,6 +252,9 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
             }
           : null,
         material: esc ? { valorAnual: Number(esc.valor_anual), parcelas: esc.parcelas } : null,
+        divergenciasExtras: divergencias.filter(
+          (d) => d.alunoId === e.aluno_id && d.anoLetivo === anoLetivo,
+        ),
         contrato: c
           ? {
               id: c.id,
