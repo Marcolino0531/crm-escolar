@@ -42,6 +42,7 @@ import {
   previaContratoMatricula,
   registrarWebhookContratos,
   type ContratoPendente,
+  type SignatarioContratoStatus,
 } from "@/lib/contrato-matricula.functions";
 
 function abrirPdfBase64(base64: string, nomeArquivo: string) {
@@ -159,6 +160,54 @@ function DialogoCancelamento({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const SIGNER_LABEL: Record<string, string> = {
+  new: "Aguardando",
+  link_opened: "Abriu o link",
+  signed: "Assinou",
+  refused: "Recusou",
+};
+
+// Um bloco por signatário (CONTRATANTE, CONTRATADO, TESTEMUNHA 1 e 2): quem já
+// assinou, quem falta e o link individual de cada um.
+function Signatarios({ signatarios }: { signatarios: SignatarioContratoStatus[] }) {
+  if (signatarios.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-left">
+      {signatarios.map((s, i) => {
+        const assinou = s.status === "signed";
+        const recusou = s.status === "refused";
+        return (
+          <li key={`${s.papel}-${i}`} className="flex flex-wrap items-center gap-x-2 text-xs">
+            <span className="font-medium">{s.papel}</span>
+            <span className="text-muted-foreground">{s.nome}</span>
+            <Badge
+              className={
+                assinou
+                  ? "bg-emerald-100 text-emerald-800"
+                  : recusou
+                    ? "bg-red-100 text-red-800"
+                    : "bg-amber-100 text-amber-900"
+              }
+            >
+              {SIGNER_LABEL[s.status] ?? s.status}
+            </Badge>
+            {!assinou && s.signUrl && (
+              <a
+                href={s.signUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center text-primary underline-offset-2 hover:underline"
+              >
+                <ExternalLink className="mr-1 h-3 w-3" /> Link
+              </a>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -287,8 +336,12 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
       });
     },
     onSuccess: (res) => {
-      if (res.ok) toast.success(`Contrato ${res.numero} enviado para assinatura.`);
-      else toast.error(res.erro ?? "Falha ao gerar o contrato.", { duration: 12000 });
+      if (res.ok) {
+        const n = res.signatarios?.length ?? 0;
+        toast.success(
+          `Contrato ${res.numero} enviado para assinatura${n ? ` (${n} signatários)` : ""}.`,
+        );
+      } else toast.error(res.erro ?? "Falha ao gerar o contrato.", { duration: 12000 });
       void qc.invalidateQueries({ queryKey: ["contratos_matricula"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -490,17 +543,9 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {enviado ? (
-                        <div className="flex justify-end gap-2">
-                          {item.contrato?.zapsign?.signUrl && (
-                            <Button asChild size="sm" variant="ghost">
-                              <a
-                                href={item.contrato.zapsign.signUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <ExternalLink className="mr-1 h-4 w-4" /> Link de assinatura
-                              </a>
-                            </Button>
+                        <div className="flex flex-col items-end gap-2">
+                          {item.contrato?.zapsign && (
+                            <Signatarios signatarios={item.contrato.zapsign.signatarios} />
                           )}
                           {podeEditar && cancelavel && (
                             <Button

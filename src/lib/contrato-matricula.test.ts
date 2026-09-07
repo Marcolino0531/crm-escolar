@@ -10,6 +10,7 @@ import {
   numeroBR,
   numeroContrato,
   preencherModelo,
+  signatariosContrato,
   validarContrato,
   valorComDesconto,
   type MontarContratoInput,
@@ -50,7 +51,23 @@ function entrada(over: Partial<MontarContratoInput> = {}): MontarContratoInput {
       email: "contato@cec.com.br",
       representanteNome: "Maria Diretora",
       representanteCpf: "111.222.333-44",
+      representanteEmail: "maria.diretora@gmail.com",
+      representanteCelular: "31988887777",
     },
+    testemunhas: [
+      {
+        nome: "Márcia Regina Ribeiro Marcolino",
+        cpf: "631.466.656-20",
+        email: "marcia@email.com",
+        celular: "31977776666",
+      },
+      {
+        nome: "Anna Clara Marcolino Ribeiro",
+        cpf: "157.432.546-99",
+        email: "anna@email.com",
+        celular: "31966665555",
+      },
+    ],
     responsavel: {
       nome: "João da Silva",
       cpf: "123.456.789-00",
@@ -320,7 +337,7 @@ describe("montarContratoMatricula — texto do modelo", () => {
     expect(texto).not.toContain("no valor total de R$0,00");
   });
 
-  it("assinaturas: contratante, contratado (CPF do representante) e testemunhas fixas", () => {
+  it("assinaturas: contratante, contratado (CPF do representante) e testemunhas cadastradas", () => {
     const doc = montarContratoMatricula(entrada());
     expect(doc.assinaturas.map((a) => a.nome)).toEqual([
       "João da Silva",
@@ -354,6 +371,78 @@ describe("validarContrato / numeroContrato / preencherModelo", () => {
       "Mensalidade vigente no Sponte",
     ]);
     expect(validarContrato(entrada())).toEqual([]);
+  });
+
+  it("bloqueia sem e-mail ou celular pessoal do representante legal (sem fallback)", () => {
+    const e = entrada();
+    e.colegio.representanteEmail = "";
+    e.colegio.representanteCelular = "   ";
+    expect(validarContrato(e)).toEqual([
+      "E-mail do representante legal (Dados dos Colégios)",
+      "Celular do representante legal (Dados dos Colégios)",
+    ]);
+  });
+
+  it("bloqueia e nomeia a testemunha sem contato", () => {
+    const e = entrada();
+    e.testemunhas[0].email = "";
+    e.testemunhas[1].celular = "";
+    expect(validarContrato(e)).toEqual([
+      "E-mail da testemunha Márcia Regina Ribeiro Marcolino (Configurações)",
+      "Celular da testemunha Anna Clara Marcolino Ribeiro (Configurações)",
+    ]);
+  });
+
+  it("exige exatamente duas testemunhas ativas", () => {
+    const e = entrada();
+    e.testemunhas = [e.testemunhas[0]];
+    expect(validarContrato(e)).toEqual([
+      "Duas testemunhas ativas (Configurações → Testemunhas do contrato; há 1)",
+    ]);
+  });
+});
+
+describe("signatariosContrato", () => {
+  it("monta os 4 signatários com papel, contato pessoal e CPF de cada um", () => {
+    expect(signatariosContrato(entrada())).toEqual([
+      {
+        papel: "CONTRATANTE",
+        nome: "João da Silva",
+        email: "joao@email.com",
+        telefone: "31999990000",
+        cpf: "123.456.789-00",
+      },
+      {
+        papel: "CONTRATADO",
+        nome: "Maria Diretora",
+        email: "maria.diretora@gmail.com",
+        telefone: "31988887777",
+        cpf: "111.222.333-44",
+      },
+      {
+        papel: "TESTEMUNHA 1",
+        nome: "Márcia Regina Ribeiro Marcolino",
+        email: "marcia@email.com",
+        telefone: "31977776666",
+        cpf: "631.466.656-20",
+      },
+      {
+        papel: "TESTEMUNHA 2",
+        nome: "Anna Clara Marcolino Ribeiro",
+        email: "anna@email.com",
+        telefone: "31966665555",
+        cpf: "157.432.546-99",
+      },
+    ]);
+  });
+
+  it("o representante nunca usa o e-mail/telefone institucional da unidade", () => {
+    const e = entrada();
+    e.colegio.email = "contato@cec.com.br";
+    const contratado = signatariosContrato(e)[1];
+    expect(contratado.email).not.toBe("contato@cec.com.br");
+    expect(contratado.email).toBe(e.colegio.representanteEmail);
+    expect(contratado.telefone).toBe(e.colegio.representanteCelular);
   });
 
   it("número do contrato por unidade/aluno/ano", () => {

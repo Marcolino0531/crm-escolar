@@ -30,7 +30,23 @@ function entrada(): MontarContratoInput {
       email: "baby@cec.com.br",
       representanteNome: "Ana Representante",
       representanteCpf: "222.333.444-55",
+      representanteEmail: "ana@email.com",
+      representanteCelular: "31977770000",
     },
+    testemunhas: [
+      {
+        nome: "Márcia Regina Ribeiro Marcolino",
+        cpf: "631.466.656-20",
+        email: "m@e.com",
+        celular: "319",
+      },
+      {
+        nome: "Anna Clara Marcolino Ribeiro",
+        cpf: "157.432.546-99",
+        email: "a@e.com",
+        celular: "319",
+      },
+    ],
     responsavel: {
       nome: "Carla Souza",
       cpf: "987.654.321-00",
