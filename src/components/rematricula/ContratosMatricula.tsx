@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { AlertTriangle, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
+import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -278,6 +279,9 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                         {item.serie || "—"} · {item.anoLetivo} · finalizada{" "}
                         {formatarDataHora(item.enviadaEm)}
                       </p>
+                      {!enviado && (
+                        <AvisoDivergenciasExtras divergencias={item.divergenciasExtras} />
+                      )}
                     </TableCell>
                     <TableCell>
                       {item.contrato?.responsavelNome ? (
