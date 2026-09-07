@@ -70,6 +70,28 @@ export function formatarCelular(v: string): string {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
+/** Máscara HH:MM digitada em campo de texto (sem o seletor nativo do navegador). */
+export function formatarHora(v: string): string {
+  const d = soDigitos(v).slice(0, 4);
+  return d.length <= 2 ? d : `${d.slice(0, 2)}:${d.slice(2)}`;
+}
+
+/** Máscara DD/MM/AAAA digitada em campo de texto. */
+export function formatarDataBr(v: string): string {
+  const d = soDigitos(v).slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+}
+
+/** "DD/MM/AAAA" completa e válida → "AAAA-MM-DD"; senão "". */
+export function dataBrParaIso(v: string): string {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v.trim());
+  if (!m) return "";
+  const iso = `${m[3]}-${m[2]}-${m[1]}`;
+  return dataValida(iso) ? iso : "";
+}
+
 export function formatarCep(v: string): string {
   const d = soDigitos(v).slice(0, 8);
   return d.length <= 5 ? d : `${d.slice(0, 5)}-${d.slice(5)}`;
@@ -537,8 +559,13 @@ export function validarRotinaForm(
   if (rotina.horarioEstendido) {
     for (const dia of ativos) {
       const h = rotina.horarios[dia];
-      if (!h || !horarioValido(h.entrada) || !horarioValido(h.saida)) {
+      if (!h || (h.entrada.trim() === "" && h.saida.trim() === "")) {
         erros[`rotina.horario.${dia}`] = "Informe os horários de entrada e saída.";
+        continue;
+      }
+      if (!horarioValido(h.entrada) || !horarioValido(h.saida)) {
+        erros[`rotina.horario.${dia}`] =
+          "Horário incompleto ou inválido: digite os 4 dígitos no formato HH:MM.";
         continue;
       }
       if (minutos(h.saida) <= minutos(h.entrada))

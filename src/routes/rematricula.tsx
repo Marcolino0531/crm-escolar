@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, GraduationCap, Loader2, Mail, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Copy, GraduationCap, Loader2, Mail, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,7 +33,9 @@ import {
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ROTINA_FORM_VAZIA,
+  dataBrParaIso,
   formValido,
+  formatarDataBr,
   validarRotinaForm,
   type ErrosForm,
   type RotinaForm,
@@ -119,9 +121,11 @@ const CAMPOS_CONTATO: { chave: keyof EdicaoContato; label: string }[] = [
 function CamposContato({
   edicao,
   onChange,
+  ocultar = [],
 }: {
   edicao: EdicaoContato;
   onChange: (chave: keyof EdicaoContato, valor: string) => void;
+  ocultar?: (keyof EdicaoContato)[];
 }) {
   const [buscandoCep, setBuscandoCep] = useState(false);
 
@@ -139,7 +143,7 @@ function CamposContato({
 
   return (
     <>
-      {CAMPOS_CONTATO.map(({ chave, label }) => (
+      {CAMPOS_CONTATO.filter(({ chave }) => !ocultar.includes(chave)).map(({ chave, label }) => (
         <div key={chave} className="space-y-1">
           <Label className="text-xs text-muted-foreground">
             {label}
@@ -186,6 +190,7 @@ function BlocoResponsavel({
   edicao,
   erros,
   onChange,
+  onCopiarEnderecoDoAluno,
   onDefinirFinanceiro,
   trocandoFinanceiro,
 }: {
@@ -193,6 +198,7 @@ function BlocoResponsavel({
   edicao: EdicaoResponsavel;
   erros: ErrosResponsavel;
   onChange: (chave: keyof EdicaoResponsavel, valor: string) => void;
+  onCopiarEnderecoDoAluno?: () => void;
   onDefinirFinanceiro: () => void;
   trocandoFinanceiro: boolean;
 }) {
@@ -274,6 +280,24 @@ function BlocoResponsavel({
         {campo("dataNascimento", "Data de nascimento", { type: "date" })}
         {campo("celular", "Celular")}
         {campo("email", "Email")}
+        {onCopiarEnderecoDoAluno && (
+          <div className="sm:col-span-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={onCopiarEnderecoDoAluno}
+            >
+              <Copy className="mr-1 h-3 w-3" />
+              Usar o mesmo endereço do aluno
+            </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Copia CEP, endereço, número, complemento, bairro e cidade do aluno para este
+              responsável (substitui o que estiver preenchido; os campos continuam editáveis).
+            </p>
+          </div>
+        )}
         {campo("cep", "CEP", { sufixo: buscandoCep ? " — buscando endereço…" : "" })}
         {campo("endereco", "Endereço")}
         {campo("numeroEndereco", "Número")}
@@ -409,6 +433,7 @@ function RematriculaPage() {
   const [turnos, setTurnos] = useState<TurnosDisponiveis>(TODOS_OS_TURNOS);
   const [matParcelas, setMatParcelas] = useState<number>(1);
   const [matVencimento, setMatVencimento] = useState("");
+  const [matVencimentoTexto, setMatVencimentoTexto] = useState("");
   const [extrasMarcados, setExtrasMarcados] = useState<CategoriaExtra[]>([]);
   const [errosEnvio, setErrosEnvio] = useState<Record<string, string>>({});
   const [enviadaEm, setEnviadaEm] = useState<string | null>(null);
@@ -700,6 +725,7 @@ function RematriculaPage() {
                 {contatoAluno && (
                   <CamposContato
                     edicao={contatoAluno}
+                    ocultar={["celular", "email"]}
                     onChange={(chave, valor) => {
                       setContatoAluno((atual) => (atual ? { ...atual, [chave]: valor } : atual));
                       setCadastroSalvo("");
@@ -709,8 +735,8 @@ function RematriculaPage() {
               </div>
               <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Corrija endereço, celular e email se algo estiver desatualizado. Nome e CPF só a
-                secretaria altera. Os campos com * são obrigatórios para o responsável financeiro.
+                Corrija o endereço se algo estiver desatualizado. Nome e CPF só a secretaria altera.
+                Os campos com * são obrigatórios para o responsável financeiro.
               </p>
             </div>
 
@@ -733,6 +759,30 @@ function RematriculaPage() {
                       }));
                       setCadastroSalvo("");
                     }}
+                    onCopiarEnderecoDoAluno={
+                      contatoAluno
+                        ? () => {
+                            const base = contatoAluno;
+                            setContatoResp((atual) => {
+                              const antes = atual[r.responsavelId] ?? edicaoDoResponsavel(r);
+                              return {
+                                ...atual,
+                                [r.responsavelId]: {
+                                  ...antes,
+                                  cep: base.cep,
+                                  endereco: base.endereco,
+                                  numeroEndereco: base.numeroEndereco,
+                                  complementoEndereco: base.complementoEndereco,
+                                  bairro: base.bairro,
+                                  cidade: base.cidade,
+                                  estado: aluno?.uf || antes.estado,
+                                },
+                              };
+                            });
+                            setCadastroSalvo("");
+                          }
+                        : undefined
+                    }
                     onDefinirFinanceiro={() => trocarFinanceiro.mutate(r.responsavelId)}
                     trocandoFinanceiro={trocarFinanceiro.isPending}
                   />
@@ -826,16 +876,18 @@ function RematriculaPage() {
                   </Label>
                   <Input
                     id="matricula-vencimento"
-                    type="date"
-                    lang="pt-BR"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="--/--/----"
+                    maxLength={10}
                     className="sm:max-w-[220px]"
-                    min={limitesVencimento.minimo}
-                    max={limitesVencimento.maximo}
                     disabled={!!enviadaEm}
                     aria-invalid={!!errosEnvio["matricula.primeiroVencimento"]}
-                    value={matVencimento}
+                    value={matVencimentoTexto}
                     onChange={(e) => {
-                      setMatVencimento(e.target.value);
+                      const texto = formatarDataBr(e.target.value);
+                      setMatVencimentoTexto(texto);
+                      setMatVencimento(dataBrParaIso(texto));
                       setErrosEnvio((atual) =>
                         Object.fromEntries(
                           Object.entries(atual).filter(
@@ -1120,10 +1172,10 @@ function RematriculaPage() {
                     disabled={enviarMatricula.isPending || !matricula}
                     onClick={() => {
                       if (!matricula) return;
-                      const erroVencimento = validarPrimeiroVencimento(
-                        matVencimento,
-                        matricula.dataPreenchimento,
-                      );
+                      const erroVencimento =
+                        matVencimentoTexto.trim() !== "" && matVencimento === ""
+                          ? "Data incompleta ou inválida: digite os 8 dígitos no formato DD/MM/AAAA."
+                          : validarPrimeiroVencimento(matVencimento, matricula.dataPreenchimento);
                       if (erroVencimento) {
                         setErrosEnvio({ "matricula.primeiroVencimento": erroVencimento });
                         setErro("Confira a data de vencimento da matrícula.");

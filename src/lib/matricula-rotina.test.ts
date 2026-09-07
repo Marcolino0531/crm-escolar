@@ -83,6 +83,21 @@ describe("validarRotinaForm", () => {
     expect(erros["rotina.periodos"]).toBeDefined();
   });
 
+  it("horário estendido com dígitos faltando (ex.: 12:3) é recusado com mensagem própria", () => {
+    const base = rotinaCompleta();
+    const incompleto = validarRotinaForm(
+      rotinaCompleta({ horarios: { ...base.horarios, 2: { entrada: "12:3", saida: "17:30" } } }),
+      INFANTIL,
+    );
+    expect(incompleto["rotina.horario.2"]).toMatch(/HH:MM/);
+
+    const vazio = validarRotinaForm(
+      rotinaCompleta({ horarios: { ...base.horarios, 3: { entrada: "", saida: "" } } }),
+      INFANTIL,
+    );
+    expect(vazio["rotina.horario.3"]).toBe("Informe os horários de entrada e saída.");
+  });
+
   it("não cobra horário digitado quando o período é o fixo do colégio", () => {
     const erros = validarRotinaForm(
       rotinaCompleta({ horarioEstendido: false, periodoManha: true, horarios: {} }),
