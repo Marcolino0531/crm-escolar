@@ -9,7 +9,14 @@
 // vem do banco e a decisão de recusar é tomada aqui.
 
 import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE, calcularIdadeEscolar } from "@/lib/crm/mecCutoff";
-import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
+import {
+  MEALS,
+  WEEKDAYS,
+  type MealKey,
+  type MealPlanRow,
+  type ScheduleRow,
+  type Weekday,
+} from "@/lib/diario";
 import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { parcelasMaterialValida } from "@/lib/rematricula";
@@ -612,6 +619,30 @@ export function montarRotinaPersistida(rotina: RotinaForm, serie: string): Rotin
     semRefeicoes: rotina.semRefeicoes,
     refeicoes,
   };
+}
+
+/** Linhas do Diário (refeições + horários) equivalentes à rotina persistida. */
+export function linhasDiarioDaRotina(
+  studentId: string,
+  anoLetivo: number,
+  dados: RotinaPersistida,
+): { refeicoes: MealPlanRow[]; horarios: ScheduleRow[] } {
+  const refeicoes: MealPlanRow[] = [];
+  for (const meal of Object.keys(dados.refeicoes) as MealKey[]) {
+    for (const weekday of dados.refeicoes[meal]) {
+      refeicoes.push({ student_id: studentId, meal, weekday, ano_letivo: anoLetivo });
+    }
+  }
+  const horarios: ScheduleRow[] = dados.horarios
+    .filter((h) => h.entrada && h.saida)
+    .map((h) => ({
+      student_id: studentId,
+      weekday: h.weekday,
+      entry: h.entrada,
+      exit: h.saida,
+      ano_letivo: anoLetivo,
+    }));
+  return { refeicoes, horarios };
 }
 
 /** Rotina já cadastrada (Diário do Aluno ou envio anterior), como vem do banco. */

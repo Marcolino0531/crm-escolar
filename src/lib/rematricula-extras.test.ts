@@ -5,6 +5,7 @@ import {
   divergenciasExtras,
   extrasDoSponteNoAno,
   normalizarSelecaoExtras,
+  validarExtrasContraRotinaSalva,
   validarRotinaExtras,
 } from "@/lib/rematricula-extras";
 import { ROTINA_FORM_VAZIA, refeicoesVazias, type RotinaForm } from "@/lib/matricula-form";
@@ -162,6 +163,50 @@ describe("normalizarSelecaoExtras", () => {
       "Almoço",
       "Jantar",
     ]);
+  });
+});
+
+describe("validarExtrasContraRotinaSalva — extras x rotina gravada no servidor", () => {
+  // Caso real: a tela tinha Lanche da Manhã marcado, mas a versão SALVA (a que
+  // foi para o Diário) ainda estava com "nenhuma refeição".
+  const salvaSemRefeicoes = {
+    diasAtivos: [1, 2, 3, 4, 5],
+    horarioEstendido: true,
+    semRefeicoes: true,
+    refeicoes: {},
+  };
+
+  it("bloqueia Lanche da Manhã marcado em Extras quando a rotina salva não tem refeição", () => {
+    const erros = validarExtrasContraRotinaSalva(
+      salvaSemRefeicoes,
+      ["Lanche da Manhã", "Hora Extra"],
+      "1º Período",
+    );
+    expect(Object.keys(erros)).toEqual(["extras.Lanche da Manhã"]);
+  });
+
+  it("aceita quando a rotina salva tem os dias da refeição e o estendido", () => {
+    expect(
+      validarExtrasContraRotinaSalva(
+        { ...salvaSemRefeicoes, semRefeicoes: false, refeicoes: { breakfast: [1, 2, 3, 4, 5] } },
+        ["Lanche da Manhã", "Hora Extra"],
+        "1º Período",
+      ),
+    ).toEqual({});
+  });
+
+  it("ignora dias gravados fora dos dias ativos e refeição sem pacote bloqueia", () => {
+    const erros = validarExtrasContraRotinaSalva(
+      {
+        diasAtivos: [2, 4],
+        horarioEstendido: false,
+        semRefeicoes: false,
+        refeicoes: { lunch: [1], snack: [2] },
+      },
+      [],
+      "6º Ano",
+    );
+    expect(Object.keys(erros)).toEqual(["extras.Lanche da Tarde"]);
   });
 });
 

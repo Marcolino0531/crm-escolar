@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
+  linhasDiarioDaRotina,
   montarPayloadMatricula,
   montarRotinaPersistida,
   periodoSelecionado,
@@ -239,6 +240,33 @@ describe("montarRotinaPersistida", () => {
     ]);
     expect(salvo.refeicoes.lunch).toEqual([2, 4]);
     expect(salvo.refeicoes.snack).toEqual([2, 4]);
+  });
+
+  it("refeições marcadas em dias específicos chegam ao Diário junto com o horário", () => {
+    const salvo = montarRotinaPersistida(
+      rotinaCompleta({
+        refeicoes: { breakfast: [1, 2, 3, 4, 5], lunch: [], snack: [3], dinner: [] },
+      }),
+      INFANTIL,
+    );
+    const linhas = linhasDiarioDaRotina("aluno-1", 2027, salvo);
+    expect(linhas.horarios).toHaveLength(5);
+    expect(linhas.horarios[0]).toEqual({
+      student_id: "aluno-1",
+      weekday: 1,
+      entry: "07:20",
+      exit: "11:50",
+      ano_letivo: 2027,
+    });
+    expect(linhas.refeicoes).toEqual([
+      ...[1, 2, 3, 4, 5].map((weekday) => ({
+        student_id: "aluno-1",
+        meal: "breakfast",
+        weekday,
+        ano_letivo: 2027,
+      })),
+      { student_id: "aluno-1", meal: "snack", weekday: 3, ano_letivo: 2027 },
+    ]);
   });
 
   it("zera a grade quando a família marca 'não vou contratar nenhuma refeição'", () => {

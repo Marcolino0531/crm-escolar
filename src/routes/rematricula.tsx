@@ -402,6 +402,9 @@ function RematriculaPage() {
   const [rotina, setRotina] = useState<RotinaForm>({ ...ROTINA_FORM_VAZIA });
   const [errosRotina, setErrosRotina] = useState<ErrosForm>({});
   const [rotinaSalva, setRotinaSalva] = useState("");
+  // Editou a rotina depois do último "Salvar": o servidor só conhece a versão
+  // salva, então o envio final fica bloqueado até salvar de novo.
+  const [rotinaAlterada, setRotinaAlterada] = useState(false);
   const [rotinaSugerida, setRotinaSugerida] = useState(false);
   const [turnos, setTurnos] = useState<TurnosDisponiveis>(TODOS_OS_TURNOS);
   const [matParcelas, setMatParcelas] = useState<number>(1);
@@ -521,6 +524,7 @@ function RematriculaPage() {
       }
       setErro("");
       setErrosRotina({});
+      setRotinaAlterada(false);
       setRotinaSalva("Rotina do próximo ano letivo registrada.");
     },
     onError: () => setErro("Não foi possível salvar a rotina agora. Tente novamente."),
@@ -978,6 +982,7 @@ function RematriculaPage() {
                 onChange={(nova) => {
                   setRotina(nova);
                   setRotinaSalva("");
+                  setRotinaAlterada(true);
                   setErrosEnvio((atual) =>
                     Object.fromEntries(
                       Object.entries(atual).filter(([k]) => !k.startsWith("extras.")),
@@ -1129,6 +1134,15 @@ function RematriculaPage() {
                         setErro(
                           "Complete e salve os dados obrigatórios do responsável financeiro antes de finalizar.",
                         );
+                        rolarParaPrimeiroErro();
+                        return;
+                      }
+                      if (rotinaAlterada) {
+                        setErrosEnvio({
+                          rotina:
+                            'Você alterou a Rotina Escolar e ainda não salvou. Clique em "Salvar rotina escolar" antes de finalizar.',
+                        });
+                        setErro("Salve a Atualização da Rotina Escolar antes de finalizar.");
                         rolarParaPrimeiroErro();
                         return;
                       }
