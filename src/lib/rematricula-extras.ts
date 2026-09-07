@@ -11,8 +11,15 @@
 //
 // A comparação só sinaliza: nada é alterado no Sponte nem no Diário.
 
-import type { MealKey, MealPlan, SchedulePlan } from "@/lib/diario";
-import { diasAtivosRotina, type RotinaForm, type SegmentoSerie } from "@/lib/matricula-form";
+import type { MealKey, MealPlan, SchedulePlan, Weekday } from "@/lib/diario";
+import {
+  DIAS_UTEIS,
+  diasAtivosRotina,
+  refeicoesVazias,
+  ROTINA_FORM_VAZIA,
+  type RotinaForm,
+  type SegmentoSerie,
+} from "@/lib/matricula-form";
 import {
   CATEGORIA_HORA_EXTRA,
   CATEGORIA_POR_REFEICAO,
@@ -243,4 +250,42 @@ export function validarRotinaExtras(
     }
   }
   return erros;
+}
+
+/** Rotina como está gravada (`student_routine`), fonte do Diário e da cobrança. */
+export interface RotinaSalvaParaExtras {
+  diasAtivos: readonly number[];
+  horarioEstendido: boolean;
+  semRefeicoes: boolean;
+  refeicoes: Partial<Record<MealKey, readonly number[]>>;
+}
+
+/**
+ * Mesma regra de `validarRotinaExtras`, mas contra a rotina SALVA no servidor —
+ * o que a tela ainda não salvou não conta. Assim os extras finalizados nunca
+ * divergem do que foi espelhado no Diário do Aluno.
+ */
+export function validarExtrasContraRotinaSalva(
+  salva: RotinaSalvaParaExtras,
+  extrasMarcados: readonly CategoriaExtra[],
+  serie: string,
+): Record<string, string> {
+  const dias = salva.diasAtivos.filter((d): d is Weekday => DIAS_UTEIS.includes(d as Weekday));
+  const refeicoes = refeicoesVazias();
+  if (!salva.semRefeicoes) {
+    for (const meal of Object.keys(refeicoes) as MealKey[]) {
+      refeicoes[meal] = (salva.refeicoes[meal] ?? []).filter((d): d is Weekday =>
+        dias.includes(d as Weekday),
+      );
+    }
+  }
+  const rotina: RotinaForm = {
+    ...ROTINA_FORM_VAZIA,
+    frequenciaParcial: dias.length < DIAS_UTEIS.length,
+    diasSelecionados: dias,
+    horarioEstendido: salva.horarioEstendido,
+    semRefeicoes: salva.semRefeicoes,
+    refeicoes,
+  };
+  return validarRotinaExtras(rotina, extrasMarcados, serie);
 }

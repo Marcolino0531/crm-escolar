@@ -69,6 +69,7 @@ import {
 import {
   REFEICOES_ROTINA,
   ROTINA_FORM_VAZIA,
+  linhasDiarioDaRotina,
   montarRotinaPersistida,
   rotinaDoPlanoExistente,
   validarRotinaForm,
@@ -76,7 +77,7 @@ import {
   type RotinaPersistida,
   type RotinaForm,
 } from "@/lib/matricula-form";
-import type { MealKey, MealPlanRow, ScheduleRow, Weekday } from "@/lib/diario";
+import type { MealKey, Weekday } from "@/lib/diario";
 import {
   TODOS_OS_TURNOS,
   cronogramaMatricula,
@@ -138,7 +139,10 @@ import {
   registrarExtrasFinalizacao,
   type ExtrasRematricula,
 } from "@/lib/rematricula-extras.functions";
-import { CATEGORIAS_EXTRAS_REMATRICULA } from "@/lib/rematricula-extras";
+import {
+  CATEGORIAS_EXTRAS_REMATRICULA,
+  validarExtrasContraRotinaSalva,
+} from "@/lib/rematricula-extras";
 import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
@@ -1139,6 +1143,14 @@ interface LinhaRotinaSalva {
   origem: string;
 }
 
+interface LinhaRotinaFinalizacao {
+  id: string;
+  dias_ativos: number[] | null;
+  horario_estendido: boolean | null;
+  sem_refeicoes: boolean | null;
+  refeicoes: Record<string, number[]> | null;
+}
+
 function planoDaRotinaSalva(linha: LinhaRotinaSalva): PlanoRotinaExistente {
   const refeicoes: { meal: MealKey; weekday: Weekday }[] = [];
   for (const meal of REFEICOES_ROTINA) {
@@ -1182,21 +1194,7 @@ async function espelharRotinaNoDiario(
     .maybeSingle<{ id: string }>();
   if (!aluno) return;
 
-  const refeicoes: MealPlanRow[] = [];
-  for (const meal of Object.keys(dados.refeicoes) as MealKey[]) {
-    for (const weekday of dados.refeicoes[meal]) {
-      refeicoes.push({ student_id: aluno.id, meal, weekday, ano_letivo: anoLetivo });
-    }
-  }
-  const horarios: ScheduleRow[] = dados.horarios
-    .filter((h) => h.entrada && h.saida)
-    .map((h) => ({
-      student_id: aluno.id,
-      weekday: h.weekday,
-      entry: h.entrada,
-      exit: h.saida,
-      ano_letivo: anoLetivo,
-    }));
+  const { refeicoes, horarios } = linhasDiarioDaRotina(aluno.id, anoLetivo, dados);
 
   for (const [tabela, linhas] of [
     ["diario_meal_plans", refeicoes],
@@ -1404,12 +1402,12 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
     const [rotina, material, escolhaMaterial, existente] = await Promise.all([
       supabaseAdmin
         .from("student_routine" as never)
-        .select("id")
+        .select("id, dias_ativos, horario_estendido, sem_refeicoes, refeicoes")
         .eq(
           "submission_id",
           submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
         )
-        .maybeSingle<{ id: string }>(),
+        .maybeSingle<LinhaRotinaFinalizacao>(),
       materialDaSerie(sessao.unidade, serieAlvo),
       supabaseAdmin
         .from("rematricula_escolhas" as never)
@@ -1424,7 +1422,27 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         .eq("aluno_id", sessao.alunoId)
         .maybeSingle<{ status: StatusEscolhaRematricula }>(),
     ]);
-    if (!rotina.data) erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
+    if (!rotina.data) {
+      erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
+    } else {
+      // Extras conferidos contra a rotina SALVA (a que foi para o Diário), não
+      // contra o que a tela ainda tem em memória.
+      const errosExtras = validarExtrasContraRotinaSalva(
+        {
+          diasAtivos: rotina.data.dias_ativos ?? [],
+          horarioEstendido: rotina.data.horario_estendido ?? false,
+          semRefeicoes: rotina.data.sem_refeicoes ?? false,
+          refeicoes: rotina.data.refeicoes ?? {},
+        },
+        data.extras,
+        aluno.serie,
+      );
+      if (Object.keys(errosExtras).length > 0) {
+        Object.assign(erros, errosExtras);
+        erros["rotina"] =
+          "A Rotina Escolar salva não está de acordo com os Extras. Salve a rotina novamente antes de finalizar.";
+      }
+    }
     const erroFinanceiro = await erroCadastroFinanceiro(sessao.unidade, sessao.alunoId, hoje);
     let errosResponsavel: ErroResponsavelFinanceiro | undefined;
     if (erroFinanceiro === "sem_financeiro") {
