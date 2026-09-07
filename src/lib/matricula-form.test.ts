@@ -9,6 +9,7 @@ import {
   emailValido,
   excedeuLimitePorIp,
   formatarCep,
+  formatarCelular,
   formatarCpf,
   formValido,
   GENEROS_MATRICULA,
@@ -84,6 +85,15 @@ describe("máscaras", () => {
   it("descarta dígitos além do CPF e caracteres não numéricos", () => {
     expect(formatarCpf("529.982.247-25999")).toBe("529.982.247-25");
     expect(formatarCpf("abc529def982")).toBe("529.982");
+  });
+
+  it("formata celular como (dd) xxxxx-xxxx progressivamente", () => {
+    expect(formatarCelular("31")).toBe("31");
+    expect(formatarCelular("3199")).toBe("(31) 99");
+    expect(formatarCelular("3199999")).toBe("(31) 99999");
+    expect(formatarCelular("31999998888")).toBe("(31) 99999-8888");
+    expect(formatarCelular("(31) 99999-8888999")).toBe("(31) 99999-8888");
+    expect(formatarCelular("abc31x9")).toBe("(31) 9");
   });
 
   it("formata CEP", () => {

@@ -40,7 +40,7 @@ export const COLEGIO_CAMPOS: {
   key: keyof ColegioRow;
   label: string;
   placeholder?: string;
-  mascara?: "cpf";
+  mascara?: "cpf" | "celular";
 }[] = [
   { key: "razao_social", label: "Razão social" },
   { key: "nome_fantasia", label: "Nome fantasia" },
@@ -74,11 +74,7 @@ export const COLEGIO_CAMPOS: {
     key: "representante_celular",
     label: "Celular pessoal do representante legal (assinatura do contrato)",
     placeholder: "(31) 99999-9999",
-  },
-  {
-    key: "representante_oab",
-    label: "OAB-MG do representante (Termo de Confissão de Dívida)",
-    placeholder: "000.000",
+    mascara: "celular",
   },
 ];
 
