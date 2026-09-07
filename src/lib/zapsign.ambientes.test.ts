@@ -5,8 +5,10 @@ vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: {} }));
 import { ambienteDaAssinatura } from "@/lib/zapsign.api";
 import {
   ZAPSIGN_PROD_BASE,
+  ZAPSIGN_AUTH_MODE,
   ZAPSIGN_SANDBOX_BASE,
   criarDocumentoPdf,
+  montarSigner,
   recusarDocumento,
   zapsignConfigurado,
   zapsignWebhookSegredo,
@@ -59,6 +61,44 @@ describe("ZapSign — separação sandbox × produção", () => {
     expect(body.disable_signer_emails).toBe(false);
     expect(body.signers[0].send_automatic_email).toBe(true);
     expect(body.signers[0].require_document_data.document_number).toBe("12345678900");
+  });
+
+  it("todo signatário exige código por email além da assinatura na tela, com email e telefone travados", async () => {
+    expect(ZAPSIGN_AUTH_MODE).toBe("assinaturaTela-tokenEmail");
+    const signers = [
+      { nome: "Financeiro", email: "fin@x.com", telefone: "(31) 98888-7777", cpf: "1" },
+      { nome: "Representante", email: "rep@x.com", telefone: "(31) 97777-6666" },
+      { nome: "Testemunha 1", email: "t1@x.com" },
+      { nome: "Testemunha 2", email: "t2@x.com", telefone: "" },
+    ].map((s) => montarSigner(s, false, true));
+    for (const s of signers) {
+      expect(s.auth_mode).toBe("assinaturaTela-tokenEmail");
+      expect(s.auth_mode).not.toBe("assinaturaTela");
+      expect(s.lock_email).toBe(true);
+      expect(s.lock_name).toBe(true);
+      expect(s.send_automatic_email).toBe(true);
+    }
+    expect(signers[0].lock_phone).toBe(true);
+    expect(signers[2].lock_phone).toBe(false);
+
+    await criarDocumentoPdf({ ...docInput, ambiente: "producao", enviarEmailAoSignatario: true });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as { signers: { auth_mode: string }[] };
+    expect(body.signers.map((s) => s.auth_mode)).toEqual(["assinaturaTela-tokenEmail"]);
+  });
+
+  it("signatário sem email não vai à ZapSign: o código de verificação não teria para onde ir", async () => {
+    const r = await criarDocumentoPdf({
+      ...docInput,
+      ambiente: "producao",
+      signatarios: [
+        { nome: "Financeiro", email: "fin@x.com" },
+        { nome: "Anna Clara", email: "  " },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.erro).toContain("Anna Clara");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("sem ambiente informado continua no sandbox (POC intacta)", async () => {
