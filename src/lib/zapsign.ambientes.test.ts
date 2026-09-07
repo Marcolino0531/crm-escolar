@@ -7,6 +7,7 @@ import {
   ZAPSIGN_PROD_BASE,
   ZAPSIGN_SANDBOX_BASE,
   criarDocumentoPdf,
+  recusarDocumento,
   zapsignConfigurado,
   zapsignWebhookSegredo,
 } from "@/lib/zapsign.server";
@@ -83,6 +84,38 @@ describe("ZapSign — separação sandbox × produção", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(zapsignConfigurado("producao")).toBe(false);
     expect(zapsignConfigurado("sandbox")).toBe(true);
+  });
+
+  it("cancelamento usa POST /refuse/ (nunca DELETE) com doc_token, rejected_reason, notify_signer e User-Agent", async () => {
+    await recusarDocumento({
+      ambiente: "producao",
+      docToken: "tok-doc",
+      motivo: "Valor errado",
+      notificarSignatarios: false,
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${ZAPSIGN_PROD_BASE}/refuse/`);
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tok-prod");
+    expect(headers["User-Agent"]).toBe("School Hub");
+    expect(JSON.parse(String(init.body))).toEqual({
+      doc_token: "tok-doc",
+      rejected_reason: "Valor errado",
+      notify_signer: false,
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: "t2", status: "refused" }), { status: 200 }),
+    );
+    await recusarDocumento({ docToken: "t2", motivo: "Teste", notificarSignatarios: true });
+    const [url2, init2] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url2).toBe(`${ZAPSIGN_SANDBOX_BASE}/refuse/`);
+    expect((init2.headers as Record<string, string>).Authorization).toBe("Bearer tok-sandbox");
+    expect(JSON.parse(String(init2.body)).notify_signer).toBe(true);
+    expect(fetchMock.mock.calls.some(([, i]) => (i as RequestInit).method === "DELETE")).toBe(
+      false,
+    );
   });
 
   it("segredo do webhook difere por ambiente e identifica a origem do callback", () => {

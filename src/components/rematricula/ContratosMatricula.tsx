@@ -2,11 +2,22 @@ import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { AlertTriangle, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
+import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -20,6 +31,12 @@ import { useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
 import {
+  contratoCancelavel,
+  MOTIVO_CANCELAMENTO_MAX,
+  validarMotivoCancelamento,
+} from "@/lib/contrato-cancelamento";
+import {
+  cancelarContratoMatricula,
   gerarEnviarContratoMatricula,
   listarContratosMatricula,
   previaContratoMatricula,
@@ -53,9 +70,97 @@ function formatarData(iso: string): string {
 const ZAPSIGN_LABEL: Record<string, string> = {
   pending: "Aguardando assinatura",
   signed: "Assinado",
-  refused: "Recusado",
+  refused: "Cancelado",
   expired: "Expirado",
 };
+
+function DialogoCancelamento({
+  item,
+  pendente,
+  onFechar,
+  onConfirmar,
+}: {
+  item: ContratoPendente | null;
+  pendente: boolean;
+  onFechar: () => void;
+  onConfirmar: (dados: { motivo: string; notificarSignatarios: boolean }) => void;
+}) {
+  const [motivo, setMotivo] = useState("");
+  const [notificar, setNotificar] = useState(true);
+  const erroMotivo = validarMotivoCancelamento(motivo);
+  const aberto = item !== null;
+
+  function fechar() {
+    if (pendente) return;
+    setMotivo("");
+    setNotificar(true);
+    onFechar();
+  }
+
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => !o && fechar()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancelar documento na ZapSign</DialogTitle>
+          <DialogDescription>
+            Contrato {item?.contrato?.numero} · {item?.alunoNome || `AlunoID ${item?.alunoId}`}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Ação irreversível: o documento fica marcado como recusado na ZapSign, os links de
+            assinatura deixam de valer e não é possível reativá-lo. Para assinar de novo será
+            preciso gerar e enviar um novo contrato.
+          </span>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="motivo-cancelamento">Motivo do cancelamento (obrigatório)</Label>
+          <Textarea
+            id="motivo-cancelamento"
+            value={motivo}
+            maxLength={MOTIVO_CANCELAMENTO_MAX}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Ex.: contrato gerado com valor de mensalidade errado"
+            aria-invalid={motivo.length > 0 && erroMotivo !== null}
+          />
+          {motivo.length > 0 && erroMotivo && <p className="text-xs text-red-600">{erroMotivo}</p>}
+        </div>
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="notificar-signatarios"
+            checked={notificar}
+            onCheckedChange={(v) => setNotificar(v === true)}
+          />
+          <div className="space-y-1">
+            <Label htmlFor="notificar-signatarios">Avisar os signatários por e-mail</Label>
+            <p className="text-xs text-muted-foreground">
+              Desmarque se vai gerar outro contrato em seguida e não quer que o responsável receba o
+              aviso de cancelamento.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={fechar} disabled={pendente}>
+            Voltar
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={pendente || erroMotivo !== null}
+            onClick={() => onConfirmar({ motivo, notificarSignatarios: notificar })}
+          >
+            {pendente ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Ban className="mr-2 h-4 w-4" />
+            )}
+            Cancelar documento
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function StatusContrato({ item }: { item: ContratoPendente }) {
   const c = item.contrato;
@@ -70,11 +175,32 @@ function StatusContrato({ item }: { item: ContratoPendente }) {
     );
   }
   const z = c.zapsign;
+  if (c.status === "cancelado") {
+    return (
+      <div className="space-y-1">
+        <Badge className="bg-slate-200 text-slate-800">Cancelado</Badge>
+        <p className="text-xs text-muted-foreground">
+          {c.numero} · cancelado {formatarDataHora(c.canceladoEm)}
+          {c.canceladoPor ? ` por ${c.canceladoPor}` : " na ZapSign"}
+        </p>
+        {c.cancelamentoMotivo && (
+          <p className="max-w-xs text-xs text-muted-foreground">Motivo: {c.cancelamentoMotivo}</p>
+        )}
+      </div>
+    );
+  }
   const assinado = z?.status === "signed";
+  const recusado = z?.status === "refused";
   return (
     <div className="space-y-1">
       <Badge
-        className={assinado ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}
+        className={
+          assinado
+            ? "bg-emerald-100 text-emerald-800"
+            : recusado
+              ? "bg-slate-200 text-slate-800"
+              : "bg-amber-100 text-amber-900"
+        }
       >
         {z ? (ZAPSIGN_LABEL[z.status] ?? z.status) : "Contrato enviado"}
       </Badge>
@@ -98,7 +224,9 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
   const gerar = useServerFn(gerarEnviarContratoMatricula);
   const previa = useServerFn(previaContratoMatricula);
   const registrarWebhook = useServerFn(registrarWebhookContratos);
+  const cancelar = useServerFn(cancelarContratoMatricula);
   const [busca, setBusca] = useState("");
+  const [cancelando, setCancelando] = useState<ContratoPendente | null>(null);
   const [gerandoChave, setGerandoChave] = useState<string | null>(null);
   const [previaChave, setPreviaChave] = useState<string | null>(null);
 
@@ -149,6 +277,7 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
   const pendentes = itens.filter((i) => !i.contrato || i.contrato.status === "erro").length;
   const enviados = itens.filter((i) => i.contrato?.status === "enviado").length;
   const assinados = itens.filter((i) => i.contrato?.zapsign?.status === "signed").length;
+  const cancelados = itens.filter((i) => i.contrato?.status === "cancelado").length;
 
   const gerarMutation = useMutation({
     mutationFn: async (item: ContratoPendente) => {
@@ -183,6 +312,21 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
     onSettled: () => setPreviaChave(null),
   });
 
+  const cancelarMutation = useMutation({
+    mutationFn: async (dados: { motivo: string; notificarSignatarios: boolean }) => {
+      if (!cancelando?.contrato) throw new Error("Contrato não selecionado.");
+      return cancelar({ data: { contratoId: cancelando.contrato.id, ...dados } });
+    },
+    onSuccess: (res) => {
+      if (res.ok) {
+        toast.success(`Documento do contrato ${res.numero} cancelado na ZapSign.`);
+        setCancelando(null);
+      } else toast.error(res.erro ?? "Falha ao cancelar o documento.", { duration: 12000 });
+      void qc.invalidateQueries({ queryKey: ["contratos_matricula"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const webhookMutation = useMutation({
     mutationFn: async () => registrarWebhook(),
     onSuccess: (res) => {
@@ -196,7 +340,13 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <DialogoCancelamento
+        item={cancelando}
+        pendente={cancelarMutation.isPending}
+        onFechar={() => setCancelando(null)}
+        onConfirmar={(dados) => cancelarMutation.mutate(dados)}
+      />
+      <div className="grid gap-4 sm:grid-cols-4">
         <div className="rounded-lg border p-4">
           <p className="text-xs text-muted-foreground">Pendentes de contrato</p>
           <p className="text-2xl font-semibold">{pendentes}</p>
@@ -208,6 +358,10 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
         <div className="rounded-lg border p-4">
           <p className="text-xs text-muted-foreground">Assinados</p>
           <p className="text-2xl font-semibold">{assinados}</p>
+        </div>
+        <div className="rounded-lg border p-4">
+          <p className="text-xs text-muted-foreground">Cancelados</p>
+          <p className="text-2xl font-semibold">{cancelados}</p>
         </div>
       </div>
 
@@ -271,6 +425,9 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                 const chave = `${item.unidade}|${item.alunoId}|${item.anoLetivo}`;
                 const gerando = gerandoChave === chave;
                 const enviado = item.contrato?.status === "enviado";
+                const cancelavel =
+                  item.contrato !== null &&
+                  contratoCancelavel(item.contrato.status, item.contrato.zapsign?.status ?? null);
                 return (
                   <TableRow key={chave}>
                     <TableCell>
@@ -333,17 +490,30 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {enviado ? (
-                        item.contrato?.zapsign?.signUrl ? (
-                          <Button asChild size="sm" variant="ghost">
-                            <a
-                              href={item.contrato.zapsign.signUrl}
-                              target="_blank"
-                              rel="noreferrer"
+                        <div className="flex justify-end gap-2">
+                          {item.contrato?.zapsign?.signUrl && (
+                            <Button asChild size="sm" variant="ghost">
+                              <a
+                                href={item.contrato.zapsign.signUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <ExternalLink className="mr-1 h-4 w-4" /> Link de assinatura
+                              </a>
+                            </Button>
+                          )}
+                          {podeEditar && cancelavel && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-700"
+                              onClick={() => setCancelando(item)}
+                              disabled={cancelarMutation.isPending}
                             >
-                              <ExternalLink className="mr-1 h-4 w-4" /> Link de assinatura
-                            </a>
-                          </Button>
-                        ) : null
+                              <Ban className="mr-1 h-4 w-4" /> Cancelar documento
+                            </Button>
+                          )}
+                        </div>
                       ) : (
                         podeEditar && (
                           <div className="flex justify-end gap-2">

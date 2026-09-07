@@ -13,6 +13,7 @@
 // criar webhook).
 
 import { createHash } from "node:crypto";
+import { corpoRecusaZapSign } from "@/lib/contrato-cancelamento";
 
 export const ZAPSIGN_SANDBOX_BASE = "https://sandbox.api.zapsign.com.br/api/v1";
 export const ZAPSIGN_PROD_BASE = "https://api.zapsign.com.br/api/v1";
@@ -128,6 +129,7 @@ async function zapsignFetch<T>(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         Accept: "application/json",
+        "User-Agent": "School Hub",
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
@@ -289,6 +291,29 @@ export async function detalharDocumento(
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
   return zapsignFetch<ZapSignDocResposta>(ambiente, `/docs/${encodeURIComponent(docToken)}/`, {
     method: "GET",
+  });
+}
+
+export type RecusarDocumentoInput = {
+  ambiente?: ZapSignAmbiente;
+  docToken: string;
+  motivo: string;
+  notificarSignatarios: boolean;
+};
+
+/**
+ * Cancela de fato um documento em andamento (`POST /refuse/`): status vira
+ * "refused", o PDF ganha a marca d'água "Documento recusado" e a ZapSign
+ * dispara o webhook `doc_refused`. Irreversível. Não confundir com
+ * `DELETE /docs/{token}/`, que é só soft delete (o link de assinatura
+ * pendente continua acessível) — por isso o DELETE não é usado aqui.
+ */
+export async function recusarDocumento(
+  input: RecusarDocumentoInput,
+): Promise<ZapSignResultado<ZapSignDocResposta>> {
+  return zapsignFetch<ZapSignDocResposta>(input.ambiente ?? "sandbox", "/refuse/", {
+    method: "POST",
+    body: corpoRecusaZapSign(input.docToken, input),
   });
 }
 
