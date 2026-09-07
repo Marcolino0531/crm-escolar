@@ -10,8 +10,11 @@
 //   4. Dados dos Colégios da MESMA unidade (razão social, CNPJ, representante
 //      legal e CPF, logo) — nunca de outra unidade;
 //   5. montagem + validação dos campos do modelo, PDF com a logo da unidade;
-//   6. upload na ZapSign em PRODUÇÃO (ZAPSIGN_PROD_TOKEN) com o responsável
-//      financeiro como único signatário;
+//   6. upload na ZapSign em PRODUÇÃO (ZAPSIGN_PROD_TOKEN) com 4 signatários:
+//      responsável financeiro (CONTRATANTE), representante legal da unidade
+//      (CONTRATADO, e-mail/celular pessoais de Dados dos Colégios) e as duas
+//      testemunhas ativas (cadastro global em Configurações). Sem contato de
+//      qualquer um deles o contrato não é gerado — não há fallback;
 //   7. só então grava zapsign_documentos (ambiente 'producao', poc = false) e
 //      marca o contrato como 'enviado'. Qualquer falha antes disso deixa o
 //      contrato em 'erro' com a mensagem, e a matrícula continua pendente.
@@ -31,10 +34,13 @@ import {
   extrasDoContrato,
   montarContratoMatricula,
   numeroContrato,
+  signatariosContrato,
   validarContrato,
   type CamposContrato,
   type ExtrasContrato,
   type MontarContratoInput,
+  type SignatarioContrato,
+  type TestemunhaContrato,
 } from "@/lib/contrato-matricula";
 import { gerarPdfContratoMatricula } from "@/lib/contrato-matricula-pdf";
 import { itensMaterialInclusos } from "@/lib/rematricula";
@@ -52,7 +58,12 @@ import {
 } from "@/lib/rematricula.functions";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
 import { criarDocumentoPdf, criarWebhook, zapsignConfigurado } from "@/lib/zapsign.server";
-import { signatarioDoSigner, T_DOCS, T_WEBHOOKS } from "@/lib/zapsign.persist";
+import {
+  signatarioDoSigner,
+  T_DOCS,
+  T_WEBHOOKS,
+  type SignatarioPersistido,
+} from "@/lib/zapsign.persist";
 import { emailValido } from "@/lib/imposto-renda-lote";
 
 const T_CONTRATOS = "contratos_matricula" as never;
@@ -60,6 +71,16 @@ const AMBIENTE = "producao" as const;
 const LOG_TAG = "[contrato-matricula]";
 
 export type StatusContratoMatricula = "pendente" | "gerando" | "enviado" | "erro";
+
+/** Situação individual de cada signatário, na ordem enviada à ZapSign. */
+export interface SignatarioContratoStatus {
+  papel: string;
+  nome: string;
+  email: string;
+  status: string;
+  signUrl: string;
+  assinadoEm: string;
+}
 
 export interface ContratoPendente {
   unidade: string;
@@ -85,7 +106,13 @@ export interface ContratoPendente {
     erro: string;
     enviadoEm: string;
     enviadoPor: string;
-    zapsign: { status: string; signUrl: string; assinadoEm: string } | null;
+    zapsign: {
+      status: string;
+      /** Link do CONTRATANTE (responsável financeiro). */
+      signUrl: string;
+      assinadoEm: string;
+      signatarios: SignatarioContratoStatus[];
+    } | null;
   } | null;
 }
 
@@ -140,7 +167,25 @@ interface DocRow {
   id: string;
   status: string;
   assinado_em: string | null;
-  signatarios: { sign_url: string | null }[] | null;
+  signatarios: SignatarioPersistido[] | null;
+}
+
+export function signatariosDoDocumento(
+  signatarios: SignatarioPersistido[] | null | undefined,
+): SignatarioContratoStatus[] {
+  return (signatarios ?? []).map((s, i) => ({
+    papel: s.papel ?? (i === 0 ? "CONTRATANTE" : `Signatário ${i + 1}`),
+    nome: s.nome,
+    email: s.email,
+    status: s.status,
+    signUrl: s.sign_url ?? "",
+    assinadoEm: s.signed_at ?? "",
+  }));
+}
+
+function linkContratante(signatarios: SignatarioPersistido[] | null | undefined): string {
+  const lista = signatarios ?? [];
+  return (lista.find((s) => s.papel === "CONTRATANTE") ?? lista[0])?.sign_url ?? "";
 }
 
 const UnidadeSchema = z.object({ unidade: z.string().min(1) });
@@ -269,8 +314,9 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
               zapsign: doc
                 ? {
                     status: doc.status,
-                    signUrl: doc.signatarios?.[0]?.sign_url ?? "",
+                    signUrl: linkContratante(doc.signatarios),
                     assinadoEm: doc.assinado_em ?? "",
+                    signatarios: signatariosDoDocumento(doc.signatarios),
                   }
                 : null,
             }
@@ -373,6 +419,29 @@ async function colegioDaUnidade(unidade: string): Promise<ColegioRow> {
   return data;
 }
 
+interface TestemunhaRow {
+  nome: string;
+  cpf: string;
+  email: string;
+  celular: string;
+}
+
+/** As testemunhas ATIVAS do cadastro global, na ordem em que assinam. */
+async function testemunhasAtivas(): Promise<TestemunhaContrato[]> {
+  const { data, error } = await supabaseAdmin
+    .from("contrato_testemunhas" as never)
+    .select("nome, cpf, email, celular")
+    .eq("ativa", true)
+    .order("ordem", { ascending: true });
+  if (error) throw new Error(`Falha ao ler as testemunhas do contrato: ${error.message}`);
+  return ((data ?? []) as unknown as TestemunhaRow[]).map((t) => ({
+    nome: t.nome ?? "",
+    cpf: t.cpf ?? "",
+    email: t.email ?? "",
+    celular: t.celular ?? "",
+  }));
+}
+
 async function gravarContrato(
   chave: { unidade: string; alunoId: string; anoLetivo: number },
   valores: Record<string, unknown>,
@@ -400,6 +469,7 @@ interface PdfContratoMontado {
   contrato: ReturnType<typeof montarContratoMatricula>;
   input: MontarContratoInput;
   fin: Awaited<ReturnType<typeof buscarResponsaveisComFinanceiro>>[number];
+  signatarios: SignatarioContrato[];
 }
 
 /**
@@ -414,7 +484,7 @@ async function montarPdfContrato(
   numero: string,
 ): Promise<PdfContratoMontado> {
   const hoje = hojeBRT();
-  const [matricula, escolha, aluno, colegio] = await Promise.all([
+  const [matricula, escolha, aluno, colegio, testemunhas] = await Promise.all([
     supabaseAdmin
       .from("rematricula_matricula_escolhas" as never)
       .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
@@ -429,6 +499,7 @@ async function montarPdfContrato(
       .maybeSingle<Omit<EscolhaRow, "aluno_id">>(),
     buscarAlunoPorId(unidade, alunoId),
     colegioDaUnidade(unidade),
+    testemunhasAtivas(),
   ]);
   if (!matricula.data) throw new Error("Matrícula não encontrada para este aluno.");
   if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
@@ -466,6 +537,8 @@ async function montarPdfContrato(
       email: colegio.email,
       representanteNome: colegio.representante_nome ?? "",
       representanteCpf: colegio.representante_cpf ?? "",
+      representanteEmail: colegio.representante_email ?? "",
+      representanteCelular: colegio.representante_celular ?? "",
     },
     responsavel: {
       nome: fin.nome,
@@ -500,11 +573,19 @@ async function montarPdfContrato(
         }
       : null,
     extras,
+    testemunhas,
     hojeISO: hoje,
   };
 
   const pendencias = validarContrato(input);
-  if (pendencias.length) throw new Error(pendencias.join(" "));
+  if (pendencias.length) throw new Error(`Faltam dados para o contrato: ${pendencias.join("; ")}.`);
+  const signatarios = signatariosContrato(input);
+  const semEmailValido = signatarios.find((s) => !emailValido(s.email));
+  if (semEmailValido) {
+    throw new Error(
+      `E-mail inválido para assinatura: ${semEmailValido.papel} (${semEmailValido.nome}): "${semEmailValido.email}".`,
+    );
+  }
 
   const contrato = montarContratoMatricula(input);
   const colegioRecibo = paraColegioRecibo(colegio);
@@ -518,7 +599,7 @@ async function montarPdfContrato(
     logo,
   );
   const pdfBase64 = pdfParaBase64(pdf);
-  return { pdfBase64, contrato, input, fin };
+  return { pdfBase64, contrato, input, fin, signatarios };
 }
 
 export interface PreviaContratoResult {
@@ -556,7 +637,9 @@ export interface GerarContratoResult {
   ok: boolean;
   erro?: string;
   numero?: string;
+  /** Link do CONTRATANTE (responsável financeiro). */
   signUrl?: string;
+  signatarios?: SignatarioContratoStatus[];
 }
 
 export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
@@ -588,7 +671,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
     await gravarContrato(chave, { numero_contrato: numero, status: "gerando", erro: "" });
 
     try {
-      const { pdfBase64, contrato, input, fin } = await montarPdfContrato(
+      const { pdfBase64, contrato, input, fin, signatarios } = await montarPdfContrato(
         unidade,
         alunoId,
         anoLetivo,
@@ -600,7 +683,12 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
         ambiente: AMBIENTE,
         nome: nomeDoc,
         pdfBase64,
-        signatarios: [{ nome: fin.nome, email: fin.email, telefone: fin.telefone, cpf: fin.cpf }],
+        signatarios: signatarios.map((s) => ({
+          nome: s.nome,
+          email: s.email,
+          telefone: s.telefone,
+          cpf: s.cpf,
+        })),
         externalId: `contrato-matricula:${numero}`,
         ordemSequencial: false,
         enviarEmailAoSignatario: true,
@@ -620,14 +708,18 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
           zapsign_open_id: r.dados.open_id ?? null,
           external_id: `contrato-matricula:${numero}`,
           status: r.dados.status,
-          signatarios: (r.dados.signers ?? []).map((s) => signatarioDoSigner(s, fin.cpf)),
+          // A ZapSign devolve os signers na ordem enviada; o papel/CPF vêm do
+          // que montamos (a API não os devolve).
+          signatarios: (r.dados.signers ?? []).map((s, i) =>
+            signatarioDoSigner(s, signatarios[i]?.cpf ?? "", signatarios[i]?.papel),
+          ),
           enviado_em: agora,
           resposta_criacao: r.dados,
           created_by: context.userId,
           created_by_nome: nomeUsuario,
         } as never)
         .select("id, signatarios")
-        .single<{ id: string; signatarios: { sign_url: string | null }[] }>();
+        .single<{ id: string; signatarios: SignatarioPersistido[] }>();
       if (erroDoc) {
         throw new Error(
           `Documento criado na ZapSign (${r.dados.token}) mas falhou ao gravar localmente: ${erroDoc.message}`,
@@ -648,7 +740,12 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
         enviado_por: context.userId,
         enviado_por_nome: nomeUsuario,
       });
-      return { ok: true, numero, signUrl: doc.signatarios?.[0]?.sign_url ?? "" };
+      return {
+        ok: true,
+        numero,
+        signUrl: linkContratante(doc.signatarios),
+        signatarios: signatariosDoDocumento(doc.signatarios),
+      };
     } catch (e) {
       const erro = e instanceof Error ? e.message : "Falha desconhecida.";
       console.error(`${LOG_TAG} ${numero}: ${erro}`);
