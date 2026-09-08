@@ -13,6 +13,7 @@ import {
   Tags,
   FileSpreadsheet,
   UtensilsCrossed,
+  UserCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -60,6 +61,13 @@ import {
   type NotificacaoReuniao,
 } from "@/lib/agenda-notifications";
 import { isDiaUtil } from "@/lib/billing-schedule";
+import {
+  avisosExperienciaPendentes,
+  mensagemAvisoExperiencia,
+  type AvisoLido,
+  type FuncionarioExperiencia,
+  type MarcoExperiencia,
+} from "@/lib/rh-experiencia-notifications";
 
 type Notification = {
   id: string;
@@ -176,6 +184,8 @@ export function NotificationsBell() {
   const canColoniaFin = canView("colonia_financeiro");
   const canExtrato = canView("financeiro_dashboard");
   const canConciliacao = canView("financeiro_conciliacao");
+  const canRh = canView("rh");
+  const canRhEdit = canEdit("rh");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
   const canCobranca = canEdit("financeiro_cobranca");
@@ -627,6 +637,75 @@ export function NotificationsBell() {
   const pendenciasCategoria: PendenciaMensal[] = pendenciasFinanceiras?.categorizacao ?? [];
   const pendenciasFaturamento: PendenciaMensal[] = pendenciasFinanceiras?.conciliacao ?? [];
 
+  // --- RH: fim do período de experiência (45 e 90 dias). Calculado na hora a
+  // partir da data de admissão dos funcionários ativos; fica na lista até ser
+  // marcado como lido (por funcionário e por marco). ---
+  const { data: experiencia } = useQuery({
+    queryKey: ["rh_experiencia_avisos", today],
+    enabled: !!userId && canRh,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const [funcionarios, lidos] = await Promise.all([
+        fetchAllRows<{
+          id: string;
+          nome_completo: string;
+          data_admissao: string | null;
+          data_rescisao: string | null;
+        }>(
+          (from, to) =>
+            supabase
+              .from("funcionarios")
+              .select("id, nome_completo, data_admissao, data_rescisao")
+              .is("data_rescisao", null)
+              .not("data_admissao", "is", null)
+              .order("id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<
+              PagedRows<{
+                id: string;
+                nome_completo: string;
+                data_admissao: string | null;
+                data_rescisao: string | null;
+              }>
+            >,
+        ),
+        fetchAllRows<{ funcionario_id: string; marco: number }>(
+          (from, to) =>
+            supabase
+              .from("rh_experiencia_notificacoes_lidas" as never)
+              .select("funcionario_id, marco")
+              .order("funcionario_id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<
+              PagedRows<{ funcionario_id: string; marco: number }>
+            >,
+        ),
+      ]);
+      const lista: FuncionarioExperiencia[] = funcionarios.map((f) => ({
+        id: f.id,
+        nome: f.nome_completo,
+        dataAdmissao: f.data_admissao,
+        dataRescisao: f.data_rescisao,
+      }));
+      const lidas: AvisoLido[] = lidos.map((l) => ({
+        funcionarioId: l.funcionario_id,
+        marco: l.marco as MarcoExperiencia,
+      }));
+      return avisosExperienciaPendentes(lista, lidas, today);
+    },
+  });
+  const avisosExperiencia = experiencia ?? [];
+
+  const marcarExperienciaLida = useMutation({
+    mutationFn: async (aviso: { funcionarioId: string; marco: MarcoExperiencia }) => {
+      const { error } = await supabase.from("rh_experiencia_notificacoes_lidas" as never).insert({
+        funcionario_id: aviso.funcionarioId,
+        marco: aviso.marco,
+        lido_por: userId,
+      } as never);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rh_experiencia_avisos"] }),
+  });
+
   const markRead = useMutation({
     mutationFn: async (ids: string[]) => {
       if (ids.length === 0) return;
@@ -684,7 +763,8 @@ export function NotificationsBell() {
       !canColoniaFin &&
       !canExtrato &&
       !canCantina &&
-      !canConciliacao)
+      !canConciliacao &&
+      !canRh)
   )
     return null;
 
@@ -717,6 +797,7 @@ export function NotificationsBell() {
     plannerDue.length +
     pendenciasCategoria.length +
     pendenciasFaturamento.length +
+    avisosExperiencia.length +
     (alertaBoletos ? 1 : 0) +
     (alertaCron ? 1 : 0);
 
@@ -996,6 +1077,47 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* RH: véspera dos 45 e 90 dias de experiência; some só ao marcar como lido. */}
+          {canRh && avisosExperiencia.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Recursos Humanos
+              </div>
+              {avisosExperiencia.map((a) => (
+                <div
+                  key={`exp-${a.funcionarioId}-${a.marco}`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <UserCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <Link to="/rh" className="min-w-0 flex-1 font-medium">
+                    <div>{mensagemAvisoExperiencia(a, today)}</div>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      Fim do período de experiência em {formatDateBR(a.dataMarco)} — decidir
+                      efetivação
+                    </span>
+                  </Link>
+                  {canRhEdit && (
+                    <button
+                      type="button"
+                      title="Marcar como lido"
+                      aria-label="Marcar como lido"
+                      onClick={() =>
+                        marcarExperienciaLida.mutate({
+                          funcionarioId: a.funcionarioId,
+                          marco: a.marco,
+                        })
+                      }
+                      disabled={marcarExperienciaLida.isPending}
+                      className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
+                    >
+                      <Check className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Extrato Bancário: transações sem categoria (1 aviso por colégio/mês). */}
           {pendenciasCategoria.length > 0 && (
             <div>
@@ -1213,6 +1335,7 @@ export function NotificationsBell() {
             plannerDue.length === 0 &&
             pendenciasCategoria.length === 0 &&
             pendenciasFaturamento.length === 0 &&
+            avisosExperiencia.length === 0 &&
             !alertaBoletos &&
             !alertaCron && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
