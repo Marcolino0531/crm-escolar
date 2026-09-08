@@ -25,6 +25,7 @@ import {
 } from "./cantina";
 import { addMesesYMD } from "./confissao-divida";
 import { proximoDiaUtil } from "./billing-schedule";
+import { parcelasVencidas } from "./billing-debt";
 import {
   cepCompletoValido,
   cpfCompletoValido,
@@ -927,4 +928,30 @@ export function mensagemErroFinanceiro(erro: ErroResponsavelFinanceiro): string 
     : "responsável financeiro";
   const pendentes = Object.values(erro.erros).join(" ");
   return `Complete os dados do ${quem} e salve antes de finalizar: ${pendentes}`;
+}
+
+// Bloqueio do portal por inadimplência: qualquer parcela VENCIDA (estritamente
+// antes de hoje) com saldo em aberto impede a rematrícula. Parcelas em aberto
+// dentro do prazo não bloqueiam. Reaproveita o filtro da cobrança automática
+// (billing-debt) para não ter duas definições de "vencida" no sistema.
+export function bloqueioInadimplencia(
+  parcelas: readonly Pick<ParcelaAberta, "vencimento" | "saldo" | "quitada">[],
+  nomeAluno: string,
+  hojeYMD: string,
+): string | null {
+  const vencidas = parcelasVencidas(
+    parcelas.filter((p) => !p.quitada),
+    hojeYMD,
+  );
+  if (vencidas.length === 0) return null;
+  return mensagemBloqueioInadimplencia(nomeAluno);
+}
+
+export function mensagemBloqueioInadimplencia(nomeAluno: string): string {
+  const quem = nomeAluno.trim() || "o(a) aluno(a)";
+  return (
+    `Identificamos uma pendência financeira em aberto para ${quem} no momento. ` +
+    "Para liberar a rematrícula, é necessário regularizar essas parcelas antes de continuar. " +
+    "Entre em contato com a secretaria financeira do colégio para mais informações ou para negociar o pagamento."
+  );
 }

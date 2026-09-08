@@ -3,6 +3,7 @@ import {
   MAX_LINKS_POR_JANELA,
   MENSAGEM_LINK_INVALIDO,
   anoLetivoValido,
+  bloqueioInadimplencia,
   cronogramaMaterialFaseB,
   opcoesParcelamentoMaterialPrimeira,
   parcelamentoMaterialPrimeira,
@@ -912,5 +913,41 @@ describe("mensalidadeVigente filtra estritamente pelo ano da URL", () => {
     expect(res?.vencimento).toBe("2026-12-10");
     expect(mensalidadeVigente(parcelas, 2028, "2027-06-01T12:00:00.000Z")).toBeNull();
     expect(mensalidadeVigente(parcelas, 2029, "2027-06-01T12:00:00.000Z")).toBeNull();
+  });
+});
+
+describe("bloqueio do portal por inadimplência", () => {
+  const HOJE = "2026-09-08";
+  const parcela = (vencimento: string, saldo = 1500, quitada = false) => ({
+    vencimento,
+    saldo,
+    quitada,
+  });
+
+  it("aluno sem pendência carrega o formulário (sem bloqueio)", () => {
+    expect(bloqueioInadimplencia([], "Ryan", HOJE)).toBeNull();
+    expect(
+      bloqueioInadimplencia(
+        [parcela("2026-08-10", 0), parcela("2026-07-10", 1500, true)],
+        "Ryan",
+        HOJE,
+      ),
+    ).toBeNull();
+  });
+
+  it("parcela vencida em aberto bloqueia com a mensagem de pendência nomeando o aluno", () => {
+    const msg = bloqueioInadimplencia(
+      [parcela("2026-10-10"), parcela("2026-08-10")],
+      "Ryan Kleber Braga de Morais",
+      HOJE,
+    );
+    expect(msg).toContain("pendência financeira em aberto para Ryan Kleber Braga de Morais");
+    expect(msg).toContain("secretaria financeira");
+  });
+
+  it("parcela em aberto ainda no prazo (inclusive vencendo hoje) não bloqueia", () => {
+    expect(
+      bloqueioInadimplencia([parcela("2026-09-08"), parcela("2026-10-10")], "Ryan", HOJE),
+    ).toBeNull();
   });
 });

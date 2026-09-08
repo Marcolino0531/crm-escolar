@@ -29,6 +29,7 @@ import {
   MENSAGEM_SESSAO_EXPIRADA,
   responsavelFinanceiroEfetivo,
   validarFinanceiroEntreResponsaveis,
+  bloqueioInadimplencia,
   mensagemErroFinanceiro,
   type ErroResponsavelFinanceiro,
   anoLetivoValido,
@@ -966,6 +967,14 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       };
     }
     const [aluno] = await completarUfPeloCep([alunoSponte]);
+
+    // Inadimplência: parcela vencida em aberto no Sponte bloqueia o portal. Se o
+    // Sponte não responder, não bloqueia (não dá para afirmar pendência).
+    const titulosBloqueio = await coletarTitulosAluno(sessao.unidade, sessao.alunoId);
+    if (!titulosBloqueio.indisponivel && !titulosBloqueio.error) {
+      const bloqueio = bloqueioInadimplencia(titulosBloqueio.titulos, aluno.nome, hojeBRT());
+      if (bloqueio) return { ok: false, erro: bloqueio };
+    }
 
     // Ano da campanha gravado na sessão (vindo do link), nunca a config global.
     const anoLetivo = sessao.anoLetivo;
