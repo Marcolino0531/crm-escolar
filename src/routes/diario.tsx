@@ -14,6 +14,7 @@ import {
   QrCode,
   Loader2,
   ShieldAlert,
+  Tags,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -21,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
+import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import {
   Accordion,
@@ -288,6 +290,11 @@ function DiarioPage() {
               <ShieldAlert className="mr-1.5 h-4 w-4" /> Auditoria Sponte
             </TabsTrigger>
           )}
+          {podeEditar && (
+            <TabsTrigger value="precos">
+              <Tags className="mr-1.5 h-4 w-4" /> Tabela de Preços
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="registro" className="space-y-4">
@@ -381,6 +388,15 @@ function DiarioPage() {
             <AuditoriaSponte
               unidade={unidadeDaSelecao(selected, schools)}
               podeExecutar={podeEditar}
+            />
+          </TabsContent>
+        )}
+        {podeEditar && (
+          <TabsContent value="precos">
+            <TabelaPrecos
+              unidade={unidadeDaSelecao(selected, schools)}
+              anoVigente={anoVigente}
+              podeEditar={podeEditar}
             />
           </TabsContent>
         )}
