@@ -21,20 +21,22 @@ export function minutosDoDia(data: Date): number {
   return data.getHours() * 60 + data.getMinutes();
 }
 
-// Minutos de hora extra de uma ponta do dia, já descontada a tolerância.
-// Entrada: cobra o que passar de 15 min antes do horário contratado.
-// Saída: cobra o que passar de 30 min depois do horário contratado.
+// Minutos de hora extra de uma ponta do dia. A tolerância é um limiar, não um
+// desconto: dentro dela não cobra nada; fora dela cobra o tempo total até o
+// horário contratado (15 min antes na entrada, 30 min depois na saída).
 export function minutosHoraExtra(
   direcao: DirecaoRegistro,
   horarioRegistradoMin: number,
   dia: NonNullable<DaySchedule>,
 ): number {
   if (direcao === "entrada") {
-    const limite = hhmmParaMinutos(dia.entry) - TOLERANCIA_ENTRADA_MIN;
-    return Math.max(0, limite - horarioRegistradoMin);
+    const contratado = hhmmParaMinutos(dia.entry);
+    if (horarioRegistradoMin >= contratado - TOLERANCIA_ENTRADA_MIN) return 0;
+    return contratado - horarioRegistradoMin;
   }
-  const limite = hhmmParaMinutos(dia.exit) + TOLERANCIA_SAIDA_MIN;
-  return Math.max(0, horarioRegistradoMin - limite);
+  const contratado = hhmmParaMinutos(dia.exit);
+  if (horarioRegistradoMin <= contratado + TOLERANCIA_SAIDA_MIN) return 0;
+  return horarioRegistradoMin - contratado;
 }
 
 export type AvaliacaoRegistro = {

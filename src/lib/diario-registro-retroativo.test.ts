@@ -100,14 +100,14 @@ describe("entrada/saída retroativa", () => {
   });
 
   it("hora extra usa o horário contratado do dia da semana da data escolhida, não o de hoje", () => {
-    // Saída 18h15 na segunda (contratado 17:30 + 30 min) => 15 min.
+    // Saída 18h15 na segunda (contratado 17:30, fora da tolerância de 30 min) => 45 min.
     const seg = avaliarRegistro(plano, "saida", instanteDaPonta(SEGUNDA, "18:15", AGORA)!);
-    expect(seg).toMatchObject({ temHorario: true, minutos: 15, cobra: true });
-    // A mesma hora em hoje (quinta, contratado até 12:00) => 5h45 de excedente.
+    expect(seg).toMatchObject({ temHorario: true, minutos: 45, cobra: true });
+    // A mesma hora em hoje (quinta, contratado até 12:00) => 6h15 desde o contratado.
     const qui = avaliarRegistro(plano, "saida", instanteDaPonta(HOJE, "18:15", AGORA)!);
-    expect(qui.minutos).toBe(6 * 60 + 15 - 30);
-    // Entrada 12h30 na segunda (13:00 − 15 min) => 15 min; em terça (sem horário) => conferência manual.
-    expect(avaliarRegistro(plano, "entrada", instanteEm(SEGUNDA, "12:30")).minutos).toBe(15);
+    expect(qui.minutos).toBe(6 * 60 + 15);
+    // Entrada 12h30 na segunda (13:00, fora da tolerância de 15 min) => 30 min; em terça (sem horário) => conferência manual.
+    expect(avaliarRegistro(plano, "entrada", instanteEm(SEGUNDA, "12:30")).minutos).toBe(30);
     expect(avaliarRegistro(plano, "entrada", instanteEm("2026-09-08", "12:30"))).toMatchObject({
       temHorario: false,
       minutos: null,
@@ -166,7 +166,7 @@ describe("hora manual também hoje", () => {
       6: null,
     };
     expect(avaliarRegistro(schedule, "entrada", em!).minutos).toBe(0);
-    expect(avaliarRegistro(schedule, "entrada", instanteDaPonta(HOJE, "07:20")!).minutos).toBe(25);
+    expect(avaliarRegistro(schedule, "entrada", instanteDaPonta(HOJE, "07:20")!).minutos).toBe(40);
   });
 });
 
