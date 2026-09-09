@@ -28,11 +28,11 @@ import {
   type ItemFaturamento,
   type PendenciaAluno,
   type StatusFaturamento,
+  proximoVencimentoExtrasDiario,
 } from "@/lib/diario-faturamento";
 import { precosExtrasDoAno } from "@/lib/diario-precos.functions";
 import type { TabelaPrecos } from "@/lib/diario-precos";
 import type { MealKey } from "@/lib/diario";
-import { primeiroVencimentoMaterial } from "@/lib/rematricula";
 import { coletarTitulosAluno, inserirPlanoSponte } from "@/lib/sponte.functions";
 import { selectAll } from "@/lib/supabase-paginate";
 
@@ -351,9 +351,9 @@ async function lancarNoSponte(
     return { ok: true, faturamentoId: f.id, lancadoNoSponte: false, sponteErro: erro };
   }
 
-  // Vencimento: a próxima mensalidade em aberto do aluno (mesmo critério do
-  // Material Pedagógico).
-  const { vencimento } = primeiroVencimentoMaterial(titulos.titulos, hojeYMD);
+  // Vencimento: sempre no mês seguinte ao do faturamento, no dia habitual do
+  // aluno (o boleto do mês corrente já foi enviado às famílias).
+  const { vencimento } = proximoVencimentoExtrasDiario(titulos.titulos, hojeYMD);
 
   const inserido = await inserirPlanoSponte({
     unidade: f.unidade,

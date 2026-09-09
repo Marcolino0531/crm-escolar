@@ -10,6 +10,7 @@ import {
   podeCancelar,
   podeFaturar,
   podeIsentar,
+  proximoVencimentoExtrasDiario,
   registroCancelamento,
   statusConsumoExtra,
   ROTULO_STATUS_CONSUMO,
@@ -372,5 +373,59 @@ describe("cancelar faturamento lançado — volta para pendente sem apagar o his
       cancelado_por_nome: "Diretor",
     });
     expect(ROTULO_STATUS_CONSUMO.cancelado).toBe("Cancelado");
+  });
+});
+
+describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
+  const parcela = (
+    vencimento: string,
+    quitada = false,
+    categoria = "Mensalidade",
+    saldo = 1200,
+  ) => ({
+    contaReceberID: `c-${vencimento}`,
+    numeroBoleto: "1",
+    numeroParcela: "1",
+    vencimento,
+    categoria,
+    saldo,
+    quitada,
+  });
+
+  it("mensalidade do mês corrente em aberto: mesmo assim cai no mês seguinte (Stella)", () => {
+    const r = proximoVencimentoExtrasDiario(
+      [parcela("2026-08-10", true), parcela("2026-09-10"), parcela("2026-10-10")],
+      "2026-09-08",
+    );
+    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" }); // 10/10/2026 é sábado
+  });
+
+  it("mensalidade do mês corrente já quitada: cai no mês seguinte (Tom, não regride)", () => {
+    const r = proximoVencimentoExtrasDiario(
+      [parcela("2026-08-05", true), parcela("2026-09-05", true), parcela("2026-10-05")],
+      "2026-09-08",
+    );
+    expect(r).toEqual({ vencimento: "2026-10-05", origem: "dia_habitual" });
+  });
+
+  it("ignora a mensalidade futura mais próxima como referência (só o dia habitual conta)", () => {
+    // Próxima em aberto é 20/09 (ainda neste mês) — não pode ser o vencimento.
+    const r = proximoVencimentoExtrasDiario([parcela("2026-09-20")], "2026-09-08");
+    expect(r.vencimento.startsWith("2026-10-")).toBe(true);
+  });
+
+  it("dezembro vira janeiro do ano seguinte", () => {
+    const r = proximoVencimentoExtrasDiario([parcela("2026-12-10")], "2026-12-15");
+    expect(r.vencimento).toBe("2027-01-11"); // 10/01/2027 é domingo
+  });
+
+  it("sem mensalidade de referência usa o dia padrão no mês seguinte", () => {
+    const r = proximoVencimentoExtrasDiario([], "2026-09-08");
+    expect(r.origem).toBe("padrao");
+    expect(r.vencimento).toBe("2026-10-05");
+    // Recarga de cantina não serve de referência de dia.
+    expect(
+      proximoVencimentoExtrasDiario([parcela("2026-09-22", false, "Cantina")], "2026-09-08").origem,
+    ).toBe("padrao");
   });
 });
