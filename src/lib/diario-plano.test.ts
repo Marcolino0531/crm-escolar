@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  anosDoSeletor,
   emptyPlan,
   emptySchedule,
   groupMealPlans,
@@ -169,5 +170,13 @@ describe("fetchAllRows — leitura além do teto de 1000 linhas do PostgREST", (
         error: { message: "RLS" } as never,
       })),
     ).rejects.toThrow("RLS");
+  });
+});
+
+describe("anosDoSeletor", () => {
+  it("oferece só o vigente, o seguinte e o da rematrícula (sem o ano anterior)", () => {
+    expect(anosDoSeletor(2026, 2027)).toEqual([2026, 2027]);
+    expect(anosDoSeletor(2026, 2028)).toEqual([2026, 2027, 2028]);
+    expect(anosDoSeletor(2026, null)).toEqual([2026, 2027]);
   });
 });

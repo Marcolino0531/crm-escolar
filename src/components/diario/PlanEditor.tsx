@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -175,9 +176,13 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
           </TabsContent>
 
           <TabsContent value="schedule" className="space-y-2">
-            <p className="px-1 text-xs text-muted-foreground">
-              Chegadas antes da entrada ou saídas depois do horário gerarão cobrança de hora extra.
-            </p>
+            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+              <span>Horário contratado por dia</span>
+              <AjudaTooltip
+                rotulo="Como o horário é usado"
+                texto="Chegadas antes da entrada ou saídas depois do horário gerarão cobrança de hora extra."
+              />
+            </div>
             {WEEKDAYS.map((d) => {
               const day = scheduleDraft[d.value];
               const enabled = !!day;
