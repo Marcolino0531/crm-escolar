@@ -5,6 +5,9 @@ import {
   observacaoFaturamentoSponte,
   pendenciasPorAluno,
   podeFaturar,
+  podeIsentar,
+  statusConsumoExtra,
+  ROTULO_STATUS_CONSUMO,
   transicaoFaturamento,
   type EventoExtra,
 } from "@/lib/diario-faturamento";
@@ -174,5 +177,67 @@ describe("ciclo de vida — nunca duplica cobrança", () => {
   it("faturando antigo é considerado interrompido", () => {
     expect(faturandoInterrompido("2026-09-01T10:00:00Z", "2026-09-01T10:05:00Z")).toBe(false);
     expect(faturandoInterrompido("2026-09-01T10:00:00Z", "2026-09-01T10:11:00Z")).toBe(true);
+  });
+});
+
+describe("isenção de consumo extra", () => {
+  const precos = new Map([[2026, PRECOS_2026]]);
+
+  it("evento isento nunca entra nas pendências de faturamento", () => {
+    const isento = { ...refeicao("a1", "lunch"), isento: true };
+    const cobravel = refeicao("a1", "lunch");
+    const [p] = pendenciasPorAluno([isento, cobravel], precos);
+    expect(p?.eventIds).toEqual([cobravel.id]);
+    expect(p?.total).toBe(25);
+  });
+
+  it("aluno só com eventos isentos não gera pendência", () => {
+    const so = { ...horaExtra("a2", 60), isento: true };
+    expect(pendenciasPorAluno([so], precos)).toEqual([]);
+  });
+
+  it("não é possível isentar consumo que já tem faturamento_id", () => {
+    for (const st of ["faturando", "erro", "lancado"] as const) {
+      const t = podeIsentar({ isento: false, faturamentoId: "f1", faturamentoStatus: st });
+      expect(t.ok).toBe(false);
+      expect(t.erro).toMatch(/já entrou em um faturamento/);
+    }
+    expect(podeIsentar({ isento: false, faturamentoId: "f1", faturamentoStatus: null }).ok).toBe(
+      false,
+    );
+  });
+
+  it("consumo pendente pode ser isentado; já isento não repete", () => {
+    expect(podeIsentar({ isento: false, faturamentoId: null, faturamentoStatus: null })).toEqual({
+      ok: true,
+    });
+    expect(podeIsentar({ isento: true, faturamentoId: null, faturamentoStatus: null }).ok).toBe(
+      false,
+    );
+  });
+
+  it("status da aba Consumos Extras para cada combinação", () => {
+    expect(
+      statusConsumoExtra({ isento: false, faturamentoId: null, faturamentoStatus: null }),
+    ).toBe("pendente");
+    expect(
+      statusConsumoExtra({ isento: false, faturamentoId: "f", faturamentoStatus: "faturando" }),
+    ).toBe("faturando");
+    expect(
+      statusConsumoExtra({ isento: false, faturamentoId: "f", faturamentoStatus: "lancado" }),
+    ).toBe("lancado");
+    expect(
+      statusConsumoExtra({ isento: false, faturamentoId: "f", faturamentoStatus: "erro" }),
+    ).toBe("erro");
+    expect(statusConsumoExtra({ isento: true, faturamentoId: null, faturamentoStatus: null })).toBe(
+      "isento",
+    );
+    expect(ROTULO_STATUS_CONSUMO).toEqual({
+      pendente: "Pendente",
+      isento: "Isento",
+      faturando: "Faturando",
+      lancado: "Lançado",
+      erro: "Erro no lançamento",
+    });
   });
 });

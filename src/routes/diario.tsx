@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -22,6 +23,24 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
+import {
+  ROTULO_STATUS_CONSUMO,
+  podeIsentar,
+  statusConsumoExtra,
+  type StatusConsumoExtra,
+  type StatusFaturamento,
+} from "@/lib/diario-faturamento";
+import { isentarEventoDiario } from "@/lib/diario-faturamento.functions";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
 import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
 import { FaturamentoExtras } from "@/components/diario/FaturamentoExtras";
@@ -389,7 +408,11 @@ function DiarioPage() {
         </TabsContent>
 
         <TabsContent value="extras">
-          <ExtraChargesTab schoolFilterIds={schoolFilterIds} studentIndex={students} />
+          <ExtraChargesTab
+            schoolFilterIds={schoolFilterIds}
+            studentIndex={students}
+            podeEditar={podeEditar}
+          />
         </TabsContent>
         {podeEditar && (
           <TabsContent value="auditoria">
@@ -483,6 +506,19 @@ type ExtraEventRow = {
   reason: string | null;
   extra_minutes: number | null;
   created_at: string;
+  faturamento_id: string | null;
+  faturamento: { status: StatusFaturamento } | null;
+  isento: boolean;
+  isento_motivo: string;
+  isento_por_nome: string;
+};
+
+const COR_STATUS_CONSUMO: Record<StatusConsumoExtra, string> = {
+  pendente: "bg-amber-100 text-amber-800",
+  isento: "bg-slate-200 text-slate-700",
+  faturando: "bg-sky-100 text-sky-800",
+  lancado: "bg-emerald-100 text-emerald-800",
+  erro: "bg-rose-100 text-rose-800",
 };
 
 function duracaoHoraExtra(e: ExtraEventRow): string {
@@ -494,10 +530,30 @@ function duracaoHoraExtra(e: ExtraEventRow): string {
 function ExtraChargesTab({
   schoolFilterIds,
   studentIndex,
+  podeEditar,
 }: {
   schoolFilterIds: string[] | null;
   studentIndex: DiarioStudent[];
+  podeEditar: boolean;
 }) {
+  const qc = useQueryClient();
+  const isentar = useServerFn(isentarEventoDiario);
+  const [isentando, setIsentando] = useState<ExtraEventRow | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const isentarMut = useMutation({
+    mutationFn: (vars: { eventId: string; motivo: string }) => isentar({ data: vars }),
+    onSuccess: (r) => {
+      if (!r.ok) {
+        toast.error(r.erro ?? "Não foi possível isentar.");
+        return;
+      }
+      toast.success("Consumo isento — não será cobrado.");
+      setIsentando(null);
+      setMotivo("");
+      void qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const [from, setFrom] = useState(firstOfMonth.toISOString().slice(0, 10));
@@ -518,7 +574,9 @@ function ExtraChargesTab({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("diario_events" as never)
-        .select("id, student_id, event_type, meal, label, reason, extra_minutes, created_at")
+        .select(
+          "id, student_id, event_type, meal, label, reason, extra_minutes, created_at, faturamento_id, isento, isento_motivo, isento_por_nome, faturamento:diario_faturamentos(status)",
+        )
         .eq("extra_charge", true)
         .gte("created_at", `${from}T00:00:00`)
         .lte("created_at", `${to}T23:59:59`)
@@ -531,7 +589,17 @@ function ExtraChargesTab({
   });
 
   const exportCSV = () => {
-    const header = ["Data/Hora", "Aluno", "Turma", "Tipo", "Item", "Hora extra", "Motivo"];
+    const header = [
+      "Data/Hora",
+      "Aluno",
+      "Turma",
+      "Tipo",
+      "Item",
+      "Hora extra",
+      "Motivo",
+      "Faturamento",
+      "Motivo da isenção",
+    ];
     const lines = events.map((e) => {
       const info = nameById.get(e.student_id);
       const tipo = e.event_type === "meal" ? "Refeição" : "Hora extra";
@@ -547,6 +615,8 @@ function ExtraChargesTab({
         e.label,
         duracaoHoraExtra(e),
         e.reason ?? "",
+        ROTULO_STATUS_CONSUMO[statusConsumo(e)],
+        e.isento ? e.isento_motivo : "",
       ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
     });
     const csv = [header.join(","), ...lines.map((l) => l.join(","))].join("\n");
@@ -613,6 +683,13 @@ function ExtraChargesTab({
                 <th className="px-3 py-2 font-semibold">Item</th>
                 <th className="px-3 py-2 font-semibold">Hora extra</th>
                 <th className="px-3 py-2 font-semibold">Motivo</th>
+                <th className="px-3 py-2 font-semibold">
+                  <span className="inline-flex items-center gap-1">
+                    Faturamento
+                    <AjudaTooltip texto="Pendente: ainda não entrou em nenhum faturamento. Faturando/Lançado/Erro: situação do faturamento em que o consumo foi incluído (aba Faturamento). Isento: o diretor decidiu não cobrar; nunca entra em faturamento." />
+                  </span>
+                </th>
+                {podeEditar && <th className="px-3 py-2 font-semibold" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -645,6 +722,39 @@ function ExtraChargesTab({
                       {duracaoHoraExtra(e) || "—"}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{e.reason ?? "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <span
+                        title={
+                          e.isento
+                            ? `${e.isento_motivo}${e.isento_por_nome ? ` — ${e.isento_por_nome}` : ""}`
+                            : undefined
+                        }
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${COR_STATUS_CONSUMO[statusConsumo(e)]} ${e.isento ? "cursor-help" : ""}`}
+                      >
+                        {ROTULO_STATUS_CONSUMO[statusConsumo(e)]}
+                      </span>
+                      {e.isento && e.isento_motivo && (
+                        <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-muted-foreground">
+                          {e.isento_motivo}
+                        </div>
+                      )}
+                    </td>
+                    {podeEditar && (
+                      <td className="whitespace-nowrap px-3 py-2 text-right">
+                        {podeIsentar(paraConsumo(e)).ok && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setMotivo("");
+                              setIsentando(e);
+                            }}
+                          >
+                            Isentar
+                          </Button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -652,6 +762,55 @@ function ExtraChargesTab({
           </table>
         </div>
       )}
+
+      <Dialog open={isentando !== null} onOpenChange={(o) => !o && setIsentando(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Isentar consumo extra</DialogTitle>
+            <DialogDescription>
+              {isentando
+                ? `${nameById.get(isentando.student_id)?.name ?? "Aluno"} — ${isentando.meal ? MEAL_LABEL[isentando.meal] : isentando.label} em ${formatDateBR(isentando.created_at)}. Este consumo não será cobrado e não entrará em nenhum faturamento.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Motivo *</span>
+            <Textarea
+              value={motivo}
+              onChange={(ev) => setMotivo(ev.target.value)}
+              maxLength={300}
+              rows={3}
+              placeholder="Ex.: combinado com o responsável; bonificação da escola"
+            />
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsentando(null)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={motivo.trim().length < 3 || isentarMut.isPending}
+              onClick={() =>
+                isentando && isentarMut.mutate({ eventId: isentando.id, motivo: motivo.trim() })
+              }
+            >
+              {isentarMut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar isenção
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function paraConsumo(e: ExtraEventRow) {
+  return {
+    isento: e.isento,
+    faturamentoId: e.faturamento_id,
+    faturamentoStatus: e.faturamento?.status ?? null,
+  };
+}
+
+function statusConsumo(e: ExtraEventRow): StatusConsumoExtra {
+  return statusConsumoExtra(paraConsumo(e));
 }

@@ -20,6 +20,7 @@ import {
   observacaoFaturamentoSponte,
   pendenciasPorAluno,
   podeFaturar,
+  podeIsentar,
   transicaoFaturamento,
   type EventoExtra,
   type ItemFaturamento,
@@ -79,6 +80,7 @@ type EventRow = {
   meal: MealKey | null;
   extra_minutes: number | null;
   created_at: string;
+  isento: boolean;
 };
 
 function paraEvento(r: EventRow): EventoExtra {
@@ -89,6 +91,7 @@ function paraEvento(r: EventRow): EventoExtra {
     meal: r.meal,
     extraMinutes: r.extra_minutes,
     createdAt: r.created_at,
+    isento: r.isento,
   };
 }
 
@@ -103,15 +106,16 @@ async function alunosDaUnidade(schoolId: string): Promise<Map<string, StudentRow
   return new Map(alunos.map((a) => [a.id, a]));
 }
 
-// Eventos cobráveis ainda sem faturamento dos alunos informados.
+// Eventos cobráveis ainda sem faturamento (e não isentos) dos alunos informados.
 async function eventosPendentes(studentIds: readonly string[]): Promise<EventoExtra[]> {
   if (studentIds.length === 0) return [];
   const rows = await selectAll<EventRow>(() =>
     supabaseAdmin
       .from("diario_events" as never)
-      .select("id, student_id, event_type, meal, extra_minutes, created_at")
+      .select("id, student_id, event_type, meal, extra_minutes, created_at, isento")
       .in("student_id", studentIds)
       .eq("extra_charge", true)
+      .eq("isento", false)
       .is("faturamento_id", null)
       .order("created_at"),
   );
@@ -588,6 +592,58 @@ export const definirMinutosHoraExtraDiario = createServerFn({ method: "POST" })
     if (error) return { ok: false, erro: "Não foi possível gravar a duração." };
     if ((atualizadas ?? []).length === 0) {
       return { ok: false, erro: "Registro não encontrado ou já faturado." };
+    }
+    return { ok: true };
+  });
+
+const IsentarSchema = z.object({
+  eventId: z.string().uuid(),
+  motivo: z.string().trim().min(3, "Informe o motivo da isenção.").max(300),
+});
+
+// Isenta um consumo ainda pendente: o UPDATE condicional (faturamento_id IS
+// NULL, isento = false) é a trava contra isentar algo que acabou de ser
+// reivindicado por um faturamento.
+export const isentarEventoDiario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => IsentarSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
+    await exigirPermissaoDiario(context.userId, true);
+    const { data: atual, error: eSel } = await supabaseAdmin
+      .from("diario_events" as never)
+      .select("id, faturamento_id, isento")
+      .eq("id", data.eventId)
+      .eq("extra_charge", true)
+      .maybeSingle<{ id: string; faturamento_id: string | null; isento: boolean }>();
+    if (eSel) return { ok: false, erro: "Não foi possível localizar o consumo." };
+    if (!atual) return { ok: false, erro: "Consumo extra não encontrado." };
+    const t = podeIsentar({
+      isento: atual.isento,
+      faturamentoId: atual.faturamento_id,
+      faturamentoStatus: null,
+    });
+    if (!t.ok) return { ok: false, erro: t.erro };
+
+    const nome = await nomeDoUsuario(context.userId);
+    const { data: atualizadas, error } = await supabaseAdmin
+      .from("diario_events" as never)
+      .update({
+        isento: true,
+        isento_em: new Date().toISOString(),
+        isento_por: context.userId,
+        isento_por_nome: nome,
+        isento_motivo: data.motivo,
+      } as never)
+      .eq("id", data.eventId)
+      .eq("isento", false)
+      .is("faturamento_id", null)
+      .select("id");
+    if (error) return { ok: false, erro: "Não foi possível registrar a isenção." };
+    if ((atualizadas ?? []).length === 0) {
+      return {
+        ok: false,
+        erro: "Este consumo acabou de entrar em um faturamento ou já está isento.",
+      };
     }
     return { ok: true };
   });
