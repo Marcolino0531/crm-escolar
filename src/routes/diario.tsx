@@ -15,6 +15,7 @@ import {
   Loader2,
   ShieldAlert,
   Tags,
+  Receipt,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -23,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
 import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
+import { FaturamentoExtras } from "@/components/diario/FaturamentoExtras";
 import { formatarMinutos } from "@/lib/diario-hora-extra";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import {
@@ -296,6 +298,11 @@ function DiarioPage() {
               <Tags className="mr-1.5 h-4 w-4" /> Tabela de Preços
             </TabsTrigger>
           )}
+          {podeEditar && (
+            <TabsTrigger value="faturamento">
+              <Receipt className="mr-1.5 h-4 w-4" /> Faturamento
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="registro" className="space-y-4">
@@ -397,6 +404,14 @@ function DiarioPage() {
             <TabelaPrecos
               unidade={unidadeDaSelecao(selected, schools)}
               anoVigente={anoVigente}
+              podeEditar={podeEditar}
+            />
+          </TabsContent>
+        )}
+        {podeEditar && (
+          <TabsContent value="faturamento">
+            <FaturamentoExtras
+              unidade={unidadeDaSelecao(selected, schools)}
               podeEditar={podeEditar}
             />
           </TabsContent>
