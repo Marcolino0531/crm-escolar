@@ -30,11 +30,14 @@ describe("minutosHoraExtra — entrada (tolerância de 15 min antes)", () => {
   it("entrada 12h50 (dentro da tolerância) não gera minutos", () => {
     expect(minutosHoraExtra("entrada", hhmmParaMinutos("12:50"), DIA)).toBe(0);
   });
-  it("entrada 12h44 gera 1 minuto (só o excedente da tolerância)", () => {
-    expect(minutosHoraExtra("entrada", hhmmParaMinutos("12:44"), DIA)).toBe(1);
+  it("entrada 12h44 (fora da tolerância) cobra o total até o contratado: 16 min", () => {
+    expect(minutosHoraExtra("entrada", hhmmParaMinutos("12:44"), DIA)).toBe(16);
   });
-  it("entrada 12h00 gera 45 minutos", () => {
-    expect(minutosHoraExtra("entrada", hhmmParaMinutos("12:00"), DIA)).toBe(45);
+  it("entrada 12h00 gera 60 minutos (total, sem descontar a tolerância)", () => {
+    expect(minutosHoraExtra("entrada", hhmmParaMinutos("12:00"), DIA)).toBe(60);
+  });
+  it("caso da Alice: contratada 13h00, registrada 07h50 → 5h10 (310 min), não 4h55", () => {
+    expect(minutosHoraExtra("entrada", hhmmParaMinutos("07:50"), DIA)).toBe(310);
   });
   it("entrada depois do horário contratado não gera minutos", () => {
     expect(minutosHoraExtra("entrada", hhmmParaMinutos("13:20"), DIA)).toBe(0);
@@ -48,11 +51,11 @@ describe("minutosHoraExtra — saída (tolerância de 30 min depois)", () => {
   it("saída 17h50 (dentro da tolerância) não gera minutos", () => {
     expect(minutosHoraExtra("saida", hhmmParaMinutos("17:50"), DIA)).toBe(0);
   });
-  it("saída 18h01 gera 1 minuto", () => {
-    expect(minutosHoraExtra("saida", hhmmParaMinutos("18:01"), DIA)).toBe(1);
+  it("saída 18h01 (fora da tolerância) cobra o total desde o contratado: 31 min", () => {
+    expect(minutosHoraExtra("saida", hhmmParaMinutos("18:01"), DIA)).toBe(31);
   });
-  it("saída 19h00 gera 60 minutos", () => {
-    expect(minutosHoraExtra("saida", hhmmParaMinutos("19:00"), DIA)).toBe(60);
+  it("saída 19h00 gera 90 minutos (total, sem descontar a tolerância)", () => {
+    expect(minutosHoraExtra("saida", hhmmParaMinutos("19:00"), DIA)).toBe(90);
   });
   it("saída antes do horário contratado não gera minutos", () => {
     expect(minutosHoraExtra("saida", hhmmParaMinutos("17:00"), DIA)).toBe(0);
@@ -67,14 +70,14 @@ describe("os quatro casos do áudio (pontas independentes)", () => {
   it("nenhuma ponta registrada: 0 (chegou e saiu no contratado)", () => {
     expect(total(null, null)).toBe(0);
   });
-  it("só entrada antecipada (12h00): 45 min", () => {
-    expect(total("12:00", null)).toBe(45);
+  it("só entrada antecipada (12h00): 60 min", () => {
+    expect(total("12:00", null)).toBe(60);
   });
-  it("só saída atrasada (18h30): 30 min", () => {
-    expect(total(null, "18:30")).toBe(30);
+  it("só saída atrasada (18h30): 60 min", () => {
+    expect(total(null, "18:30")).toBe(60);
   });
-  it("as duas pontas (12h00 e 18h30): 75 min", () => {
-    expect(total("12:00", "18:30")).toBe(75);
+  it("as duas pontas (12h00 e 18h30): 120 min", () => {
+    expect(total("12:00", "18:30")).toBe(120);
   });
   it("entrada 12h45 e saída 18h00 (dentro das duas tolerâncias): 0", () => {
     expect(total("12:45", "18:00")).toBe(0);
@@ -90,11 +93,11 @@ describe("avaliarRegistro", () => {
       motivo: null,
     });
   });
-  it("além da tolerância: cobra os minutos excedentes e explica", () => {
+  it("além da tolerância: cobra o tempo total desde o contratado e explica", () => {
     const av = avaliarRegistro(plano, "saida", em("19:15"));
     expect(av.cobra).toBe(true);
-    expect(av.minutos).toBe(75);
-    expect(av.motivo).toBe("1h15 depois das 17:30 (tolerância de 30 min)");
+    expect(av.minutos).toBe(105);
+    expect(av.motivo).toBe("1h45 depois das 17:30 (tolerância de 30 min)");
   });
   it("dia sem horário contratado: cobra com minutos nulos (conferir manualmente)", () => {
     const domingo = new Date(2026, 8, 6, 15, 0);
