@@ -28,6 +28,7 @@ import {
   Camera,
   Check,
   X,
+  Trash2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
@@ -36,9 +37,11 @@ import {
   dataInicialDoModal,
   diaDaSemana,
   ehHoje,
+  horaSugerida,
   instanteDaPonta,
   instanteDaRefeicao,
   intervaloDoDia,
+  podeExcluirRegistro,
 } from "@/lib/diario-registro-retroativo";
 import { PlanEditor } from "@/components/diario/PlanEditor";
 import { StudentPhotoDialog } from "@/components/diario/StudentPhotoDialog";
@@ -89,12 +92,8 @@ type EventoDoDia = {
   extra_charge: boolean;
   extra_minutes: number | null;
   created_at: string;
+  faturamento_id: string | null;
 };
-
-function nowHHMM(): string {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
 
 function fmtHora(iso: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -122,9 +121,10 @@ export function StudentActionSheet({
     if (open) setSelectedDate(dataInicialDoModal());
   }, [open, student?.id]);
 
-  // Entrada/Saída em data passada pedem a hora exata antes de confirmar.
+  // Entrada/Saída sempre passam pelo campo de hora (sugerida = agora, editável).
   const [pontaForm, setPontaForm] = useState<DirecaoRegistro | null>(null);
   const [pontaHora, setPontaHora] = useState("");
+  const [excluindo, setExcluindo] = useState<EventoDoDia | null>(null);
 
   const { inicio, fim } = intervaloDoDia(selectedDate);
   const { data: eventosDoDia = [], isLoading: carregandoDia } = useQuery({
@@ -133,7 +133,9 @@ export function StudentActionSheet({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("diario_events" as never)
-        .select("id, event_type, label, direction, extra_charge, extra_minutes, created_at")
+        .select(
+          "id, event_type, label, direction, extra_charge, extra_minutes, created_at, faturamento_id",
+        )
         .eq("student_id", student!.id)
         .gte("created_at", inicio)
         .lte("created_at", fim)
@@ -223,6 +225,41 @@ export function StudentActionSheet({
     },
   });
 
+  const excluir = useMutation({
+    mutationFn: async (ev: EventoDoDia) => {
+      if (!student) throw new Error("Aluno não selecionado");
+      const regra = podeExcluirRegistro(ev);
+      if (!regra.ok) throw new Error(regra.erro);
+      const { data, error } = await supabase
+        .from("diario_events" as never)
+        .delete()
+        .eq("id", ev.id)
+        .eq("student_id", student.id)
+        .is("faturamento_id", null)
+        .select("id");
+      if (error) throw error;
+      if (!data || (data as unknown[]).length === 0) {
+        throw new Error(
+          "O registro não foi excluído: ele já entrou em um faturamento ou foi removido.",
+        );
+      }
+      return ev;
+    },
+    onSuccess: (ev) => {
+      toast.success("Registro excluído", {
+        description: `${ev.label} • ${student?.name}`,
+      });
+      qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
+      qc.invalidateQueries({ queryKey: ["diario_events_dia"] });
+      setExcluindo(null);
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Tente novamente.";
+      toast.error("Erro ao excluir", { description: msg });
+      setExcluindo(null);
+    },
+  });
+
   if (!student) return null;
 
   // O registro do dia a dia cobra pelo plano do ano vigente; em outro ano a tela
@@ -266,12 +303,7 @@ export function StudentActionSheet({
       toast.error("Você não tem permissão para registrar consumos.");
       return;
     }
-    if (hojeSelecionado) {
-      const em = instanteDaPonta(selectedDate, null);
-      if (em) registrarPonta(direcao, em);
-      return;
-    }
-    setPontaHora(nowHHMM());
+    setPontaHora(horaSugerida());
     setPontaForm(direcao);
   };
 
@@ -419,8 +451,8 @@ export function StudentActionSheet({
                       <LogOut className="h-5 w-5 flex-shrink-0 text-primary" />
                     )}
                     <span>
-                      {ROTULO_DIRECAO[pontaForm]} em {formatDateBR(selectedDate)} — informe o
-                      horário
+                      {ROTULO_DIRECAO[pontaForm]} em{" "}
+                      {hojeSelecionado ? "hoje" : formatDateBR(selectedDate)} — confira o horário
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -484,8 +516,8 @@ export function StudentActionSheet({
             </div>
             <p className="px-1 text-[11px] text-muted-foreground">
               Registre só a ponta que aconteceu fora do combinado. O que não for registrado vale
-              como no horário contratado.
-              {!hojeSelecionado && " Em data passada, Entrada/Saída pedem o horário exato."}
+              como no horário contratado. O horário vem preenchido com agora e pode ser ajustado
+              antes de confirmar.
             </p>
 
             <div className="mt-2 border-t border-border pt-3">
@@ -515,6 +547,32 @@ export function StudentActionSheet({
                         <span className={ev.extra_charge ? "text-amber-700" : "text-emerald-600"}>
                           {ev.extra_charge ? "Extra" : "Realizado"}
                         </span>
+                      )}
+                      {canEdit && (
+                        <button
+                          onClick={() => {
+                            const regra = podeExcluirRegistro(ev);
+                            if (!regra.ok) {
+                              toast.error("Não é possível excluir", { description: regra.erro });
+                              return;
+                            }
+                            setExcluindo(ev);
+                          }}
+                          disabled={excluir.isPending}
+                          aria-label={`Excluir ${ev.label}`}
+                          title={
+                            ev.faturamento_id
+                              ? "Já faturado — cancele o faturamento primeiro"
+                              : "Excluir registro"
+                          }
+                          className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-border transition disabled:opacity-60 ${
+                            ev.faturamento_id
+                              ? "cursor-not-allowed text-muted-foreground/50"
+                              : "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          }`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       )}
                     </li>
                   ))}
@@ -578,6 +636,39 @@ export function StudentActionSheet({
               className="h-12 w-full rounded-xl bg-amber-500 text-white hover:bg-amber-500/95"
             >
               Confirmar e registrar
+            </AlertDialogAction>
+            <AlertDialogCancel className="h-12 w-full rounded-xl">Cancelar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!excluindo} onOpenChange={(o) => !o && setExcluindo(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+              <Trash2 className="h-6 w-6 text-destructive" />
+            </div>
+            <AlertDialogTitle className="text-center">Excluir registro?</AlertDialogTitle>
+            <AlertDialogDescription className="text-center">
+              {excluindo && (
+                <>
+                  <span className="font-semibold text-foreground">{excluindo.label}</span>
+                  {excluindo.event_type === "checkinout" &&
+                    ` às ${fmtHora(excluindo.created_at)}`}{" "}
+                  de {student.name} em {formatDateBR(selectedDate)} será apagado de forma
+                  irreversível. Use só para registro feito por engano — para não cobrar um consumo
+                  que aconteceu, use "Isentar" em Consumos Extras.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+            <AlertDialogAction
+              onClick={() => excluindo && excluir.mutate(excluindo)}
+              disabled={excluir.isPending}
+              className="h-12 w-full rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
             </AlertDialogAction>
             <AlertDialogCancel className="h-12 w-full rounded-xl">Cancelar</AlertDialogCancel>
           </AlertDialogFooter>

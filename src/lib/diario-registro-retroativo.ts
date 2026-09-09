@@ -59,3 +59,23 @@ export function intervaloDoDia(ymd: string): { inicio: string; fim: string } {
   fim.setHours(23, 59, 59, 999);
   return { inicio: inicio.toISOString(), fim: fim.toISOString() };
 }
+
+// Hora sugerida no formulário de Entrada/Saída: o momento atual (HH:MM). É só
+// uma sugestão — a hora gravada é a que o usuário confirmar, em qualquer data.
+export function horaSugerida(agora = new Date()): string {
+  return `${String(agora.getHours()).padStart(2, "0")}:${String(agora.getMinutes()).padStart(2, "0")}`;
+}
+
+// Só um registro ainda não faturado pode ser excluído pelo modal. Se já entrou
+// num faturamento (em qualquer status), o diretor cancela o faturamento antes.
+export function podeExcluirRegistro(ev: {
+  faturamento_id: string | null;
+}): { ok: true } | { ok: false; erro: string } {
+  if (ev.faturamento_id) {
+    return {
+      ok: false,
+      erro: "Este registro já entrou em um faturamento. Cancele o faturamento na aba Faturamento antes de excluí-lo.",
+    };
+  }
+  return { ok: true };
+}
