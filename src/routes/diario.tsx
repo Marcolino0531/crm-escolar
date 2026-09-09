@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
 import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
+import { formatarMinutos } from "@/lib/diario-hora-extra";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import {
   Accordion,
@@ -465,8 +466,15 @@ type ExtraEventRow = {
   meal: MealKey | null;
   label: string;
   reason: string | null;
+  extra_minutes: number | null;
   created_at: string;
 };
+
+function duracaoHoraExtra(e: ExtraEventRow): string {
+  if (e.event_type === "meal") return "";
+  if (e.extra_minutes === null) return "Conferir";
+  return formatarMinutos(e.extra_minutes);
+}
 
 function ExtraChargesTab({
   schoolFilterIds,
@@ -495,7 +503,7 @@ function ExtraChargesTab({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("diario_events" as never)
-        .select("id, student_id, event_type, meal, label, reason, created_at")
+        .select("id, student_id, event_type, meal, label, reason, extra_minutes, created_at")
         .eq("extra_charge", true)
         .gte("created_at", `${from}T00:00:00`)
         .lte("created_at", `${to}T23:59:59`)
@@ -508,17 +516,23 @@ function ExtraChargesTab({
   });
 
   const exportCSV = () => {
-    const header = ["Data/Hora", "Aluno", "Turma", "Tipo", "Item", "Motivo"];
+    const header = ["Data/Hora", "Aluno", "Turma", "Tipo", "Item", "Hora extra", "Motivo"];
     const lines = events.map((e) => {
       const info = nameById.get(e.student_id);
-      const tipo = e.event_type === "meal" ? "Refeição" : "Entrada/Saída";
+      const tipo = e.event_type === "meal" ? "Refeição" : "Hora extra";
       const dt =
         e.event_type === "meal"
           ? formatDateBR(e.created_at)
           : new Date(e.created_at).toLocaleString("pt-BR");
-      return [dt, info?.name ?? "—", info?.className ?? "—", tipo, e.label, e.reason ?? ""].map(
-        (c) => `"${String(c).replace(/"/g, '""')}"`,
-      );
+      return [
+        dt,
+        info?.name ?? "—",
+        info?.className ?? "—",
+        tipo,
+        e.label,
+        duracaoHoraExtra(e),
+        e.reason ?? "",
+      ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
     });
     const csv = [header.join(","), ...lines.map((l) => l.join(","))].join("\n");
     const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8;" });
@@ -582,6 +596,7 @@ function ExtraChargesTab({
                 <th className="px-3 py-2 font-semibold">Data/Hora</th>
                 <th className="px-3 py-2 font-semibold">Aluno</th>
                 <th className="px-3 py-2 font-semibold">Item</th>
+                <th className="px-3 py-2 font-semibold">Hora extra</th>
                 <th className="px-3 py-2 font-semibold">Motivo</th>
               </tr>
             </thead>
@@ -610,6 +625,9 @@ function ExtraChargesTab({
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                         {e.meal ? MEAL_LABEL[e.meal] : e.label}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-xs font-medium text-foreground">
+                      {duracaoHoraExtra(e) || "—"}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{e.reason ?? "—"}</td>
                   </tr>

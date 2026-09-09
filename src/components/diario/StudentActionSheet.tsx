@@ -19,6 +19,7 @@ import {
   Cookie,
   Moon,
   LogIn,
+  LogOut,
   AlertTriangle,
   Settings2,
   UserCircle2,
@@ -33,10 +34,18 @@ import { StudentPhotoDialog } from "@/components/diario/StudentPhotoDialog";
 import {
   MEALS,
   isCoveredToday,
-  checkSchedule,
   type DiarioStudent,
   type MealKey,
+  type Weekday,
 } from "@/lib/diario";
+import {
+  ROTULO_DIRECAO,
+  TOLERANCIA_ENTRADA_MIN,
+  TOLERANCIA_SAIDA_MIN,
+  avaliarRegistro,
+  formatarMinutos,
+  type DirecaoRegistro,
+} from "@/lib/diario-hora-extra";
 
 const ICONS: Record<MealKey, React.ComponentType<{ className?: string }>> = {
   breakfast: Coffee,
@@ -55,7 +64,16 @@ type Props = {
   anoVigente: number | null;
 };
 
-type Pending = { key: MealKey | "checkinout"; label: string; charge: boolean };
+type Pending =
+  | { key: MealKey; label: string; charge: boolean }
+  | {
+      key: "checkinout";
+      direcao: DirecaoRegistro;
+      label: string;
+      charge: boolean;
+      minutos: number | null;
+      motivo: string | null;
+    };
 
 export function StudentActionSheet({
   student,
@@ -94,20 +112,29 @@ export function StudentActionSheet({
     mutationFn: async (p: Pending) => {
       if (!student) throw new Error("Aluno não selecionado");
       if (!userId) throw new Error("Sessão expirada");
-      const isMeal = p.key !== "checkinout";
-      const { error } = await supabase.from("diario_events" as never).insert({
-        student_id: student.id,
-        recorded_by: userId,
-        event_type: isMeal ? "meal" : "checkinout",
-        meal: isMeal ? (p.key as MealKey) : null,
-        label: p.label,
-        extra_charge: p.charge,
-        reason: p.charge
-          ? isMeal
-            ? "Sem plano contratado para esta refeição hoje"
-            : "Fora do horário contratado"
-          : null,
-      } as never);
+      const row =
+        p.key === "checkinout"
+          ? {
+              student_id: student.id,
+              recorded_by: userId,
+              event_type: "checkinout",
+              meal: null,
+              direction: p.direcao,
+              label: p.label,
+              extra_charge: p.charge,
+              extra_minutes: p.minutos,
+              reason: p.motivo,
+            }
+          : {
+              student_id: student.id,
+              recorded_by: userId,
+              event_type: "meal",
+              meal: p.key,
+              label: p.label,
+              extra_charge: p.charge,
+              reason: p.charge ? "Sem plano contratado para esta refeição hoje" : null,
+            };
+      const { error } = await supabase.from("diario_events" as never).insert(row as never);
       if (error) throw error;
       return p;
     },
@@ -115,8 +142,18 @@ export function StudentActionSheet({
       const isMeal = p.key !== "checkinout";
       const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
       const detalhe = isMeal ? "Realizado" : hora;
-      toast.success(`${p.label} registrado`, {
-        description: `${student?.name} • ${detalhe}${p.charge ? " • Cobrança extra gerada" : ""}`,
+      const extra =
+        p.key === "checkinout"
+          ? p.minutos
+            ? ` • Hora extra: ${formatarMinutos(p.minutos)}`
+            : p.charge
+              ? " • Sem horário contratado hoje"
+              : " • Dentro da tolerância"
+          : p.charge
+            ? " • Cobrança extra gerada"
+            : "";
+      toast.success(`${p.label} ${isMeal ? "registrado" : "registrada"}`, {
+        description: `${student?.name} • ${detalhe}${extra}`,
       });
       qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
       setPending(null);
@@ -148,8 +185,25 @@ export function StudentActionSheet({
     register.mutate({ key: meal, label, charge: false });
   };
 
-  const sched = checkSchedule(student.schedule);
-  const scheduleExtra = !sched.withinSchedule;
+  const hoje = student.schedule[new Date().getDay() as Weekday];
+
+  const handlePonta = (direcao: DirecaoRegistro) => {
+    if (!canEdit) {
+      toast.error("Você não tem permissão para registrar consumos.");
+      return;
+    }
+    const av = avaliarRegistro(student.schedule, direcao, new Date());
+    const p: Pending = {
+      key: "checkinout",
+      direcao,
+      label: ROTULO_DIRECAO[direcao],
+      charge: av.cobra,
+      minutos: av.minutos,
+      motivo: av.motivo,
+    };
+    if (av.cobra) setPending(p);
+    else register.mutate(p);
+  };
 
   return (
     <>
@@ -246,40 +300,42 @@ export function StudentActionSheet({
               );
             })}
 
-            <button
-              onClick={() => {
-                if (!canEdit) {
-                  toast.error("Você não tem permissão para registrar consumos.");
-                  return;
-                }
-                if (scheduleExtra) {
-                  setPending({ key: "checkinout", label: "Entrada / Saída", charge: true });
-                } else {
-                  register.mutate({ key: "checkinout", label: "Entrada / Saída", charge: false });
-                }
-              }}
-              disabled={register.isPending || !registroPermitido}
-              className={[
-                "mt-1 flex h-16 w-full items-center gap-4 rounded-2xl px-5 text-left text-base font-semibold transition-all active:scale-[0.98] disabled:opacity-60",
-                scheduleExtra
-                  ? "bg-amber-500 text-white shadow-sm"
-                  : "border border-border bg-card text-foreground hover:border-primary/40",
-              ].join(" ")}
-            >
-              <LogIn
-                className={["h-6 w-6 flex-shrink-0", scheduleExtra ? "" : "text-primary"].join(" ")}
-              />
-              <div className="flex flex-1 flex-col leading-tight">
-                <span>Registrar Entrada / Saída</span>
-                <span className="text-[11px] font-medium uppercase tracking-wide opacity-90">
-                  {sched.hasSchedule
-                    ? scheduleExtra
-                      ? `Fora do horário (${sched.today?.entry}–${sched.today?.exit}) · hora extra`
-                      : `Dentro do horário (${sched.today?.entry}–${sched.today?.exit})`
-                    : "Sem horário hoje · hora extra"}
-                </span>
-              </div>
-            </button>
+            <div className="mt-1 grid grid-cols-2 gap-2.5">
+              <button
+                onClick={() => handlePonta("entrada")}
+                disabled={register.isPending || !registroPermitido}
+                className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
+              >
+                <LogIn className="h-6 w-6 flex-shrink-0 text-primary" />
+                <div className="flex flex-1 flex-col leading-tight">
+                  <span>Registrar Entrada</span>
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {hoje
+                      ? `Contratada ${hoje.entry} · ${TOLERANCIA_ENTRADA_MIN} min de tolerância`
+                      : "Sem horário hoje · hora extra"}
+                  </span>
+                </div>
+              </button>
+              <button
+                onClick={() => handlePonta("saida")}
+                disabled={register.isPending || !registroPermitido}
+                className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
+              >
+                <LogOut className="h-6 w-6 flex-shrink-0 text-primary" />
+                <div className="flex flex-1 flex-col leading-tight">
+                  <span>Registrar Saída</span>
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {hoje
+                      ? `Contratada ${hoje.exit} · ${TOLERANCIA_SAIDA_MIN} min de tolerância`
+                      : "Sem horário hoje · hora extra"}
+                  </span>
+                </div>
+              </button>
+            </div>
+            <p className="px-1 text-[11px] text-muted-foreground">
+              Registre só a ponta que aconteceu fora do combinado. O que não for registrado vale
+              como no horário contratado.
+            </p>
 
             <button
               onClick={handleKeychain}
@@ -308,11 +364,27 @@ export function StudentActionSheet({
             <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
               <AlertTriangle className="h-6 w-6 text-amber-600" />
             </div>
-            <AlertDialogTitle className="text-center">Cobrança extra</AlertDialogTitle>
+            <AlertDialogTitle className="text-center">
+              {pending?.key === "checkinout" ? "Hora extra" : "Cobrança extra"}
+            </AlertDialogTitle>
             <AlertDialogDescription className="text-center">
-              <strong className="text-foreground">{student.name}</strong> não tem{" "}
-              <strong className="text-foreground">{pending?.label}</strong> contratado para este
-              momento. Registrar agora gerará uma cobrança extra para a família. Deseja continuar?
+              {pending?.key === "checkinout" ? (
+                <>
+                  <strong className="text-foreground">{pending.label}</strong> de{" "}
+                  <strong className="text-foreground">{student.name}</strong>:{" "}
+                  {pending.minutos === null
+                    ? "não há horário contratado hoje, então a duração da hora extra terá que ser conferida manualmente."
+                    : `${formatarMinutos(pending.minutos)} de hora extra além da tolerância.`}{" "}
+                  Registrar agora gerará cobrança para a família. Deseja continuar?
+                </>
+              ) : (
+                <>
+                  <strong className="text-foreground">{student.name}</strong> não tem{" "}
+                  <strong className="text-foreground">{pending?.label}</strong> contratado para este
+                  momento. Registrar agora gerará uma cobrança extra para a família. Deseja
+                  continuar?
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
