@@ -5,8 +5,10 @@ import {
   dataInicialDoModal,
   diaDaSemana,
   ehHoje,
+  horaSugerida,
   horaValida,
   instanteDaPonta,
+  podeExcluirRegistro,
   instanteDaRefeicao,
   instanteEm,
   intervaloDoDia,
@@ -136,5 +138,54 @@ describe("histórico do dia selecionado", () => {
     const meioDia = instanteEm(SEGUNDA, "12:00").toISOString();
     expect(meioDia >= inicio && meioDia <= fim).toBe(true);
     expect(instanteEm("2026-09-08", "00:00").toISOString() > fim).toBe(true);
+  });
+});
+
+describe("hora manual também hoje", () => {
+  it("horaSugerida é o agora em HH:MM (só sugestão, editável)", () => {
+    expect(horaSugerida(AGORA)).toBe("15:20");
+    expect(horaSugerida(new Date(2026, 8, 10, 7, 5))).toBe("07:05");
+  });
+
+  it("Entrada hoje com hora editada grava a hora digitada, não a do clique", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(AGORA); // clique às 15:20
+    const em = instanteDaPonta(HOJE, "07:50");
+    expect(em).not.toBeNull();
+    expect(em!.getHours()).toBe(7);
+    expect(em!.getMinutes()).toBe(50);
+    expect(ymdLocal(em!)).toBe(HOJE);
+    // Hora extra calculada pelo horário digitado (contratada 08:00, 15 min de tolerância → 0).
+    const schedule: SchedulePlan = {
+      0: null,
+      1: null,
+      2: null,
+      3: null,
+      4: { entry: "08:00", exit: "17:30" },
+      5: null,
+      6: null,
+    };
+    expect(avaliarRegistro(schedule, "entrada", em!).minutos).toBe(0);
+    expect(avaliarRegistro(schedule, "entrada", instanteDaPonta(HOJE, "07:20")!).minutos).toBe(25);
+  });
+});
+
+describe("excluir registro do histórico do dia", () => {
+  it("evento já faturado (ou em faturamento) é bloqueado", () => {
+    const r = podeExcluirRegistro({ faturamento_id: "fat-1" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.erro).toMatch(/faturamento/i);
+  });
+
+  it("evento pendente pode ser excluído e some do histórico", () => {
+    expect(podeExcluirRegistro({ faturamento_id: null })).toEqual({ ok: true });
+    const historico = [
+      { id: "a", faturamento_id: null },
+      { id: "b", faturamento_id: "fat-1" },
+    ];
+    const excluiveis = historico.filter((ev) => podeExcluirRegistro(ev).ok);
+    expect(excluiveis.map((e) => e.id)).toEqual(["a"]);
+    const depois = historico.filter((ev) => ev.id !== "a");
+    expect(depois.map((e) => e.id)).toEqual(["b"]);
   });
 });
