@@ -6,8 +6,11 @@ import {
   listarDatas,
   observacaoFaturamentoSponte,
   pendenciasPorAluno,
+  podeAbrirFaturamento,
+  podeCancelar,
   podeFaturar,
   podeIsentar,
+  registroCancelamento,
   statusConsumoExtra,
   ROTULO_STATUS_CONSUMO,
   transicaoFaturamento,
@@ -237,6 +240,11 @@ describe("ciclo de vida — nunca duplica cobrança", () => {
     expect(transicaoFaturamento("lancado", "lancar", false).ok).toBe(false);
   });
 
+  it("cancelado não relança nem aceita marcação manual", () => {
+    expect(transicaoFaturamento("cancelado", "lancar", true).ok).toBe(false);
+    expect(transicaoFaturamento("cancelado", "marcar_manual", false).ok).toBe(false);
+  });
+
   it("faturando antigo é considerado interrompido", () => {
     expect(faturandoInterrompido("2026-09-01T10:00:00Z", "2026-09-01T10:05:00Z")).toBe(false);
     expect(faturandoInterrompido("2026-09-01T10:00:00Z", "2026-09-01T10:11:00Z")).toBe(true);
@@ -301,6 +309,68 @@ describe("isenção de consumo extra", () => {
       faturando: "Faturando",
       lancado: "Lançado",
       erro: "Erro no lançamento",
+      cancelado: "Cancelado",
     });
+  });
+});
+
+describe("cancelar faturamento lançado — volta para pendente sem apagar o histórico", () => {
+  type Fat = {
+    id: string;
+    status: ReturnType<typeof registroCancelamento>["status"] | "lancado" | "erro" | "faturando";
+  };
+  type Ev = EventoExtra & { faturamentoId: string | null };
+  const pendentes = (evs: readonly Ev[]) =>
+    pendenciasPorAluno(
+      evs.filter((e) => e.faturamentoId === null),
+      new Map([[2026, PRECOS_2026]]),
+    );
+
+  it("só faturamento lançado pode ser cancelado; faturando/erro não mostram a ação", () => {
+    expect(podeCancelar("lancado")).toEqual({ ok: true });
+    expect(podeCancelar("faturando").ok).toBe(false);
+    expect(podeCancelar("erro").ok).toBe(false);
+    expect(podeCancelar("cancelado")).toEqual({
+      ok: false,
+      erro: "Este faturamento já foi cancelado.",
+    });
+  });
+
+  it("cancelar libera os eventos para 'Pendentes de faturar' e permite faturar o aluno de novo", () => {
+    const eventos: Ev[] = [
+      { ...refeicao("a", "lunch"), faturamentoId: "f1" },
+      { ...refeicao("a", "lunch", "2026-09-02"), faturamentoId: "f1" },
+    ];
+    const historico: Fat[] = [{ id: "f1", status: "lancado" }];
+    expect(pendentes(eventos)).toEqual([]);
+
+    // cancelamento: linha vira 'cancelado', eventos desvinculados
+    const t = podeCancelar(historico[0].status);
+    expect(t.ok).toBe(true);
+    const registro = registroCancelamento("u1", "Diretor", "2026-09-10T12:00:00.000Z");
+    historico[0] = { ...historico[0], ...registro };
+    for (const e of eventos) if (e.faturamentoId === "f1") e.faturamentoId = null;
+
+    const pend = pendentes(eventos);
+    expect(pend).toHaveLength(1);
+    expect(pend[0].eventIds).toEqual(eventos.map((e) => e.id));
+    expect(pend[0].total).toBe(50);
+    expect(podeFaturar(pend[0])).toBe(true);
+
+    // linha cancelada não ocupa a vaga do índice único (status NOT IN lancado/cancelado)
+    expect(historico).toHaveLength(1);
+    expect(podeAbrirFaturamento(historico.map((h) => h.status))).toBe(true);
+    expect(podeAbrirFaturamento(["lancado", "cancelado", "erro"])).toBe(false);
+    expect(podeAbrirFaturamento(["lancado", "faturando"])).toBe(false);
+  });
+
+  it("histórico registra quem cancelou e quando", () => {
+    expect(registroCancelamento("u1", "Diretor", "2026-09-10T12:00:00.000Z")).toEqual({
+      status: "cancelado",
+      cancelado_em: "2026-09-10T12:00:00.000Z",
+      cancelado_por: "u1",
+      cancelado_por_nome: "Diretor",
+    });
+    expect(ROTULO_STATUS_CONSUMO.cancelado).toBe("Cancelado");
   });
 });

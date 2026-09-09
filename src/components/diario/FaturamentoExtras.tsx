@@ -19,6 +19,7 @@ import {
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { descreverItem, type StatusFaturamento } from "@/lib/diario-faturamento";
 import {
+  cancelarFaturamentoDiario,
   definirMinutosHoraExtraDiario,
   faturarExtrasDiario,
   faturarTodosExtrasDiario,
@@ -50,12 +51,14 @@ const ROTULO_STATUS: Record<StatusFaturamento, string> = {
   faturando: "Em andamento",
   erro: "Falhou no Sponte",
   lancado: "Lançado",
+  cancelado: "Cancelado",
 };
 
 const COR_STATUS: Record<StatusFaturamento, string> = {
   faturando: "border-sky-300 bg-sky-50 text-sky-800",
   erro: "border-rose-300 bg-rose-50 text-rose-800",
   lancado: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  cancelado: "border-slate-300 bg-slate-50 text-slate-600",
 };
 
 function mensagemResultado(r: ResultadoFaturamento): void {
@@ -78,6 +81,7 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
   const faturarTodos = useServerFn(faturarTodosExtrasDiario);
   const relancar = useServerFn(relancarFaturamentoDiario);
   const marcarManual = useServerFn(marcarFaturamentoDiarioManual);
+  const cancelar = useServerFn(cancelarFaturamentoDiario);
   const definirMinutos = useServerFn(definirMinutosHoraExtraDiario);
   const [minutosEdit, setMinutosEdit] = useState<Record<string, string>>({});
 
@@ -130,6 +134,15 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
     onSuccess: (r) => {
       if (r.ok) toast.success("Registrado como lançado manualmente no Sponte.");
       else toast.error(r.erro ?? "Não foi possível registrar.");
+      recarregar();
+    },
+    onError: erro,
+  });
+  const mCancelar = useMutation({
+    mutationFn: async (id: string) => cancelar({ data: { id } }),
+    onSuccess: (r) => {
+      if (r.ok) toast.success("Faturamento cancelado; os consumos voltaram a pendentes.");
+      else toast.error(r.erro ?? "Não foi possível cancelar.");
       recarregar();
     },
     onError: erro,
@@ -350,6 +363,12 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
                           {f.sponteErro}
                         </span>
                       )}
+                      {f.status === "cancelado" && f.canceladoEm && (
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {dataHora(f.canceladoEm)}
+                          {f.canceladoPorNome ? ` · ${f.canceladoPorNome}` : ""}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">
                       {f.sponteContaReceberId ? (
@@ -371,6 +390,24 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
+                      {podeEditar && f.status === "lancado" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-rose-700"
+                          disabled={mCancelar.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Cancelar o faturamento de ${f.aluno} (${formatarBRL(f.valorTotal)})? Os consumos voltam para "Pendentes de faturar" e podem ser faturados de novo. O título no Sponte NÃO é cancelado pelo sistema — cancele-o manualmente no Sponte.`,
+                              )
+                            )
+                              mCancelar.mutate(f.id);
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                      )}
                       {podeEditar && f.status === "erro" && !f.sponteContaReceberId && (
                         <div className="flex justify-end gap-1">
                           <Button
