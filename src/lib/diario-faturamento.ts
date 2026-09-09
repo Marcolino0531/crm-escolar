@@ -27,6 +27,8 @@ export interface EventoExtra {
   meal: MealKey | null;
   extraMinutes: number | null;
   createdAt: string; // ISO
+  // Consumo que o diretor decidiu não cobrar: nunca entra em faturamento.
+  isento?: boolean;
 }
 
 export interface ItemFaturamento {
@@ -137,6 +139,7 @@ export function pendenciasPorAluno(
 ): PendenciaAluno[] {
   const grupos = new Map<string, EventoExtra[]>();
   for (const e of eventos) {
+    if (e.isento) continue;
     const chave = `${e.studentId}|${anoDoEvento(e.createdAt)}`;
     const g = grupos.get(chave) ?? [];
     g.push(e);
@@ -218,4 +221,42 @@ export function transicaoFaturamento(
   return acao === "lancar" || acao === "marcar_manual"
     ? { ok: true }
     : { ok: false, erro: "Ação inválida." };
+}
+
+// ─── Situação de um consumo extra na aba Consumos Extras ────────────────────
+
+export type StatusConsumoExtra = "pendente" | "isento" | StatusFaturamento;
+
+export interface ConsumoFaturavel {
+  isento: boolean;
+  faturamentoId: string | null;
+  // Status do faturamento vinculado; null quando o vínculo não foi resolvido.
+  faturamentoStatus: StatusFaturamento | null;
+}
+
+export function statusConsumoExtra(c: ConsumoFaturavel): StatusConsumoExtra {
+  if (c.isento) return "isento";
+  if (!c.faturamentoId) return "pendente";
+  return c.faturamentoStatus ?? "faturando";
+}
+
+export const ROTULO_STATUS_CONSUMO: Record<StatusConsumoExtra, string> = {
+  pendente: "Pendente",
+  isento: "Isento",
+  faturando: "Faturando",
+  lancado: "Lançado",
+  erro: "Erro no lançamento",
+};
+
+// Só um consumo ainda pendente pode ser isentado; se já entrou num
+// faturamento (em qualquer status) o diretor resolve o faturamento primeiro.
+export function podeIsentar(c: ConsumoFaturavel): TransicaoFaturamento {
+  if (c.isento) return { ok: false, erro: "Este consumo já está isento." };
+  if (c.faturamentoId) {
+    return {
+      ok: false,
+      erro: "Este consumo já entrou em um faturamento. Resolva o faturamento (relançar ou marcar manual) antes de isentar.",
+    };
+  }
+  return { ok: true };
 }
