@@ -376,11 +376,13 @@ export interface VencimentoExtrasDiario {
 // no dia habitual de cobrança do aluno (próximo dia útil). Os boletos do mês
 // corrente já foram enviados às famílias, então a mensalidade em aberto mais
 // próxima NÃO serve de referência aqui — quitada ou não, o mês vigente é pulado.
+// O dia habitual é o das parcelas que ainda vão vencer (dia de cobrança atual
+// do aluno), não o do histórico inteiro.
 export function proximoVencimentoExtrasDiario<T extends ParcelaAberta>(
   parcelas: readonly T[],
   hojeYMD: string,
 ): VencimentoExtrasDiario {
-  const dia = diaVencimentoHabitual(parcelas);
+  const dia = diaVencimentoHabitual(parcelas, hojeYMD);
   if (dia !== null) {
     return {
       vencimento: proximoDiaUtil(dataNoMes(mesSeguinte(hojeYMD), dia)),
