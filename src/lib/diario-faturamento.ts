@@ -38,6 +38,11 @@ export interface ItemFaturamento {
   quantidade: number;
   precoUnitario: number | null;
   valor: number;
+  // Data (dd/mm/aaaa) de cada registro que compôs o item, na ordem em que
+  // aconteceram. Ausente nos faturamentos gravados antes deste campo existir.
+  datas?: string[];
+  // Hora Extra: minutos de cada registro, paralelo a `datas`.
+  minutosPorRegistro?: number[];
 }
 
 export interface PendenciaAluno {
@@ -70,29 +75,37 @@ export function consolidarAluno(
 ): PendenciaAluno {
   const ordenados = [...eventos].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const studentId = ordenados[0]?.studentId ?? "";
-  const refeicoes = new Map<MealKey, number>();
+  const refeicoes = new Map<MealKey, string[]>();
   let minutos = 0;
+  const registrosHora: { data: string; minutos: number }[] = [];
   const semDuracao: { id: string; createdAt: string }[] = [];
 
   for (const e of ordenados) {
     if (e.eventType === "meal" && e.meal) {
-      refeicoes.set(e.meal, (refeicoes.get(e.meal) ?? 0) + 1);
+      const datas = refeicoes.get(e.meal) ?? [];
+      datas.push(dataBR(e.createdAt));
+      refeicoes.set(e.meal, datas);
     } else if (e.eventType === "checkinout") {
       if (e.extraMinutes === null) semDuracao.push({ id: e.id, createdAt: e.createdAt });
-      else minutos += e.extraMinutes;
+      else if (e.extraMinutes > 0) {
+        minutos += e.extraMinutes;
+        registrosHora.push({ data: dataBR(e.createdAt), minutos: e.extraMinutes });
+      }
     }
   }
 
   const itens: ItemFaturamento[] = [];
   const bloqueios: string[] = [];
-  for (const [meal, n] of refeicoes) {
+  for (const [meal, datas] of refeicoes) {
     const preco = precos[meal];
+    const n = datas.length;
     itens.push({
       categoria: meal,
       rotulo: MEAL_LABEL[meal],
       quantidade: n,
       precoUnitario: preco ?? null,
       valor: preco === undefined ? 0 : valorRefeicoes(n, preco),
+      datas,
     });
     if (preco === undefined) bloqueios.push(`Sem preço de ${MEAL_LABEL[meal]} na Tabela de Preços`);
   }
@@ -104,6 +117,8 @@ export function consolidarAluno(
       quantidade: minutos,
       precoUnitario: preco ?? null,
       valor: preco === undefined ? 0 : valorHoraExtra(minutos, preco),
+      datas: registrosHora.map((r) => r.data),
+      minutosPorRegistro: registrosHora.map((r) => r.minutos),
     });
     if (preco === undefined) bloqueios.push("Sem preço de Hora Extra na Tabela de Preços");
   }
@@ -157,26 +172,61 @@ export function podeFaturar(p: PendenciaAluno): boolean {
   return p.bloqueios.length === 0 && p.total > 0;
 }
 
-function dataBR(iso: string): string {
-  const d = iso.slice(0, 10);
-  const [y, m, dd] = d.split("-");
-  return y && m && dd ? `${dd}/${m}/${y}` : d;
+// dd/mm/aaaa no fuso da escola (o evento é gravado em UTC).
+export function dataBR(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso.slice(0, 10);
+  return new Date(t).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+function juntar(partes: readonly string[]): string {
+  if (partes.length <= 1) return partes[0] ?? "";
+  return `${partes.slice(0, -1).join(", ")} e ${partes[partes.length - 1]}`;
+}
+
+// "03/09, 04/09 e 08/09/2026": o ano só na última data quando todas são do
+// mesmo ano; com anos diferentes, cada data sai completa.
+export function listarDatas(datas: readonly string[], sufixos?: readonly string[]): string {
+  const anos = new Set(datas.map((d) => d.slice(6)));
+  const partes = datas.map((d, i) => {
+    const curta = anos.size === 1 && i < datas.length - 1 ? d.slice(0, 5) : d;
+    const sufixo = sufixos?.[i];
+    return sufixo ? `${curta} (${sufixo})` : curta;
+  });
+  return juntar(partes);
 }
 
 export function descreverItem(i: ItemFaturamento): string {
-  if (i.categoria === "hora_extra") return `Hora Extra ${formatarMinutos(i.quantidade)}`;
-  return `${i.rotulo} ×${i.quantidade}`;
+  const datas = i.datas ?? [];
+  if (i.categoria === "hora_extra") {
+    const total = formatarMinutos(i.quantidade);
+    if (datas.length === 0) return `Hora Extra ${total}`;
+    const minutos = i.minutosPorRegistro ?? [];
+    const sufixos =
+      minutos.length === datas.length ? minutos.map((m) => formatarMinutos(m)) : undefined;
+    return `Hora Extra em ${listarDatas(datas, sufixos)} = ${total}`;
+  }
+  if (datas.length === 0) return `${i.rotulo} ×${i.quantidade}`;
+  return `${i.rotulo} em ${listarDatas(datas)}`;
 }
 
-// Observação do título no Sponte: período e composição, para a secretaria
-// conseguir explicar o valor ao responsável sem abrir o School Hub.
+function brl(v: number): string {
+  return `R$ ${v
+    .toFixed(2)
+    .replace(".", ",")
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
+}
+
+// Observação do título no Sponte: cada item com as datas exatas dos consumos
+// e o valor, para a secretaria explicar a cobrança ao responsável sem abrir o
+// School Hub.
 export function observacaoFaturamentoSponte(
   itens: readonly ItemFaturamento[],
-  periodoInicioISO: string,
-  periodoFimISO: string,
+  total: number,
 ): string {
-  const composicao = itens.map(descreverItem).join(", ");
-  return `Extras do Diário ${dataBR(periodoInicioISO)} a ${dataBR(periodoFimISO)}: ${composicao}`;
+  const composicao = itens.map((i) => `${descreverItem(i)} — ${brl(i.valor)}`).join("; ");
+  const sufixo = itens.length > 1 ? `. Total ${brl(total)}` : "";
+  return `Extras do Diário: ${composicao}${sufixo}`;
 }
 
 // ─── Ciclo de vida do faturamento ───────────────────────────────────────────

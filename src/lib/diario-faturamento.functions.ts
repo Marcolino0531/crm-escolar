@@ -353,7 +353,7 @@ async function lancarNoSponte(
     valor: Number(f.valor_total),
     vencimento,
     categoria: CATEGORIA_EXTRAS_DIARIO_SPONTE,
-    observacao: observacaoFaturamentoSponte(f.itens, f.periodo_inicio, f.periodo_fim),
+    observacao: observacaoFaturamentoSponte(f.itens, Number(f.valor_total)),
     logTag: LOG_TAG,
   });
 

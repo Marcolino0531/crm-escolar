@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   consolidarAluno,
+  descreverItem,
   faturandoInterrompido,
+  listarDatas,
   observacaoFaturamentoSponte,
   pendenciasPorAluno,
   podeFaturar,
@@ -52,13 +54,21 @@ describe("consolidarAluno — soma refeições + hora extra pela Tabela de Preç
       PRECOS_2026,
     );
     expect(p.itens).toEqual([
-      { categoria: "lunch", rotulo: "Almoço", quantidade: 2, precoUnitario: 25, valor: 50 },
+      {
+        categoria: "lunch",
+        rotulo: "Almoço",
+        quantidade: 2,
+        precoUnitario: 25,
+        valor: 50,
+        datas: ["01/09/2026", "02/09/2026"],
+      },
       {
         categoria: "snack",
         rotulo: "Lanche da Tarde",
         quantidade: 1,
         precoUnitario: 12.5,
         valor: 12.5,
+        datas: ["01/09/2026"],
       },
       {
         categoria: "hora_extra",
@@ -66,6 +76,8 @@ describe("consolidarAluno — soma refeições + hora extra pela Tabela de Preç
         quantidade: 75,
         precoUnitario: 40,
         valor: 50,
+        datas: ["01/09/2026", "03/09/2026"],
+        minutosPorRegistro: [45, 30],
       },
     ]);
     expect(p.total).toBe(112.5);
@@ -136,14 +148,65 @@ describe("pendenciasPorAluno — agrupa por aluno e usa o preço do ano do event
   });
 });
 
-describe("observação do título no Sponte", () => {
-  it("descreve o período e a composição", () => {
+describe("observação do título no Sponte — datas exatas, não período", () => {
+  it("lista todas as datas da mesma categoria, na ordem em que aconteceram", () => {
+    const precos: TabelaPrecos = { dinner: 25.5 };
     const p = consolidarAluno(
-      [refeicao("a", "lunch"), horaExtra("a", 90, "2026-09-10")],
+      [
+        refeicao("a", "dinner", "2026-09-08"),
+        refeicao("a", "dinner", "2026-09-03"),
+        refeicao("a", "dinner", "2026-09-04"),
+      ],
+      precos,
+    );
+    expect(p.itens[0]?.datas).toEqual(["03/09/2026", "04/09/2026", "08/09/2026"]);
+    expect(observacaoFaturamentoSponte(p.itens, p.total)).toBe(
+      "Extras do Diário: Jantar em 03/09, 04/09 e 08/09/2026 — R$ 76,50",
+    );
+  });
+
+  it("hora extra mostra a data e a duração de cada registro, não só o total", () => {
+    const p = consolidarAluno(
+      [horaExtra("a", 45, "2026-09-02"), horaExtra("a", 90, "2026-09-10"), refeicao("a", "lunch")],
       PRECOS_2026,
     );
-    expect(observacaoFaturamentoSponte(p.itens, p.periodoInicio, p.periodoFim)).toBe(
-      "Extras do Diário 01/09/2026 a 10/09/2026: Almoço ×1, Hora Extra 1h30",
+    expect(observacaoFaturamentoSponte(p.itens, p.total)).toBe(
+      "Extras do Diário: Almoço em 01/09/2026 — R$ 25,00; Hora Extra em 02/09 (45 min) e 10/09/2026 (1h30) = 2h15 — R$ 90,00. Total R$ 115,00",
+    );
+  });
+
+  it("data no fuso da escola: registro às 23h BRT não vira o dia seguinte", () => {
+    const [i] = consolidarAluno(
+      [{ ...refeicao("a", "lunch"), createdAt: "2026-09-02T02:00:00.000Z" }],
+      PRECOS_2026,
+    ).itens;
+    expect(i?.datas).toEqual(["01/09/2026"]);
+  });
+
+  it("datas em anos diferentes saem completas", () => {
+    expect(listarDatas(["30/12/2026", "05/01/2027"])).toBe("30/12/2026 e 05/01/2027");
+    expect(listarDatas(["03/09/2026"])).toBe("03/09/2026");
+  });
+
+  it("faturamento antigo (jsonb sem `datas`) continua descrito sem quebrar", () => {
+    const antigoRefeicao = {
+      categoria: "dinner" as const,
+      rotulo: "Jantar",
+      quantidade: 3,
+      precoUnitario: 25.5,
+      valor: 76.5,
+    };
+    const antigoHora = {
+      categoria: "hora_extra" as const,
+      rotulo: "Hora Extra",
+      quantidade: 90,
+      precoUnitario: 40,
+      valor: 60,
+    };
+    expect(descreverItem(antigoRefeicao)).toBe("Jantar ×3");
+    expect(descreverItem(antigoHora)).toBe("Hora Extra 1h30");
+    expect(observacaoFaturamentoSponte([antigoRefeicao, antigoHora], 136.5)).toBe(
+      "Extras do Diário: Jantar ×3 — R$ 76,50; Hora Extra 1h30 — R$ 60,00. Total R$ 136,50",
     );
   });
 });
