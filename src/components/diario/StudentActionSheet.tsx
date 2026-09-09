@@ -44,6 +44,7 @@ import {
   podeExcluirRegistro,
 } from "@/lib/diario-registro-retroativo";
 import { PlanEditor } from "@/components/diario/PlanEditor";
+import { acoesPlanoAluno } from "@/lib/diario-acesso";
 import { StudentPhotoDialog } from "@/components/diario/StudentPhotoDialog";
 import { MEALS, isCoveredToday, type DiarioStudent, type MealKey } from "@/lib/diario";
 import {
@@ -66,6 +67,7 @@ type Props = {
   student: DiarioStudent | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  canView: boolean;
   canEdit: boolean;
   // Ano do plano exibido/editado; o registro diário só é permitido no vigente.
   anoLetivo: number;
@@ -103,10 +105,12 @@ export function StudentActionSheet({
   student,
   open,
   onOpenChange,
+  canView,
   canEdit,
   anoLetivo,
   anoVigente,
 }: Props) {
+  const acoesPlano = acoesPlanoAluno({ canView, canEdit });
   const { session } = useAuth();
   const qc = useQueryClient();
   const userId = session?.user?.id;
@@ -361,7 +365,7 @@ export function StudentActionSheet({
                 <SheetTitle className="text-lg leading-tight">{student.name}</SheetTitle>
                 <p className="text-sm text-muted-foreground">{student.className || "Sem turma"}</p>
               </div>
-              {canEdit && (
+              {acoesPlano.mostrarBotaoFoto && (
                 <button
                   onClick={() => setEditingPhoto(true)}
                   className="flex h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-medium text-foreground transition hover:border-primary/40"
@@ -371,11 +375,11 @@ export function StudentActionSheet({
                   Foto
                 </button>
               )}
-              {canEdit && (
+              {acoesPlano.mostrarBotaoPlano && (
                 <button
                   onClick={() => setEditingPlan(true)}
                   className="flex h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-medium text-foreground transition hover:border-primary/40"
-                  aria-label="Editar plano"
+                  aria-label={acoesPlano.planoEditavel ? "Editar plano" : "Ver plano"}
                 >
                   <Settings2 className="h-4 w-4" />
                   Plano
@@ -675,15 +679,16 @@ export function StudentActionSheet({
         </AlertDialogContent>
       </AlertDialog>
 
-      {canEdit && (
+      {acoesPlano.mostrarBotaoPlano && (
         <PlanEditor
           student={student}
           open={editingPlan}
           onOpenChange={setEditingPlan}
           anoLetivo={anoLetivo}
+          canEdit={acoesPlano.planoEditavel}
         />
       )}
-      {canEdit && (
+      {acoesPlano.mostrarBotaoFoto && (
         <StudentPhotoDialog student={student} open={editingPhoto} onOpenChange={setEditingPhoto} />
       )}
     </>

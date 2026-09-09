@@ -444,6 +444,7 @@ function DiarioPage() {
         student={active}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
+        canView={acesso.operacional}
         canEdit={podeEditar}
         anoLetivo={anoLetivo ?? new Date().getFullYear()}
         anoVigente={anoVigente}

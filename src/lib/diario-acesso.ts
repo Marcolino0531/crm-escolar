@@ -28,3 +28,22 @@ export function abasDiarioVisiveis(a: AcessoDiario): AbaDiario[] {
 export function abaInicialDiario(a: AcessoDiario): AbaDiario | null {
   return abasDiarioVisiveis(a)[0] ?? null;
 }
+
+// Botões do cabeçalho do modal do aluno e o que o PlanEditor libera.
+// "Plano" abre para quem só visualiza (leitura); "Foto" e o salvar exigem edição.
+export interface AcoesPlanoAluno {
+  mostrarBotaoPlano: boolean;
+  mostrarBotaoFoto: boolean;
+  planoEditavel: boolean;
+  mostrarSalvarPlano: boolean;
+}
+
+export function acoesPlanoAluno(p: { canView: boolean; canEdit: boolean }): AcoesPlanoAluno {
+  const editavel = p.canView && p.canEdit;
+  return {
+    mostrarBotaoPlano: p.canView,
+    mostrarBotaoFoto: editavel,
+    planoEditavel: editavel,
+    mostrarSalvarPlano: editavel,
+  };
+}
