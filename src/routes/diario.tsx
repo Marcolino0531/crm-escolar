@@ -29,7 +29,14 @@ import {
   type StatusConsumoExtra,
   type StatusFaturamento,
 } from "@/lib/diario-faturamento";
-import { abaInicialDiario, podeAbrirDiario } from "@/lib/diario-acesso";
+import {
+  ABAS_FINANCEIRAS_DIARIO,
+  ABAS_OPERACIONAIS_DIARIO,
+  abaInicialDiario,
+  abasDiarioVisiveis,
+  podeAbrirDiario,
+  type AbaDiario,
+} from "@/lib/diario-acesso";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
 import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
 import { FaturamentoExtras } from "@/components/diario/FaturamentoExtras";
@@ -73,8 +80,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type DiarioSearch = { aba?: AbaDiario };
+
+const ABAS_DIARIO: readonly string[] = [...ABAS_OPERACIONAIS_DIARIO, ...ABAS_FINANCEIRAS_DIARIO];
+
 export const Route = createFileRoute("/diario")({
   head: () => ({ meta: [{ title: "Diário do Aluno — School Hub" }] }),
+  validateSearch: (search: Record<string, unknown>): DiarioSearch => ({
+    aba:
+      typeof search.aba === "string" && ABAS_DIARIO.includes(search.aba)
+        ? (search.aba as AbaDiario)
+        : undefined,
+  }),
   component: DiarioGate,
 });
 
@@ -155,6 +172,12 @@ function DiarioPage() {
   const veFinanceiro = acesso.financeiro;
   const podeEditarFinanceiro = canEdit("diario_financeiro");
   const { selected, schools, schoolFilterIds } = useSchool();
+  const { aba: abaDaUrl } = Route.useSearch();
+  // Aba pedida na URL (ex.: aviso do sino → Faturamento), se o usuário a enxerga.
+  const abaInicial =
+    abaDaUrl && abasDiarioVisiveis(acesso).includes(abaDaUrl)
+      ? abaDaUrl
+      : (abaInicialDiario(acesso) ?? "registro");
 
   // Ano letivo: sempre abre no ano vigente configurado (não no mais recente
   // cadastrado). Trocar o vigente na configuração muda o padrão daqui sozinho.
@@ -294,7 +317,7 @@ function DiarioPage() {
         </div>
       </div>
 
-      <Tabs defaultValue={abaInicialDiario(acesso) ?? "registro"} className="w-full">
+      <Tabs key={abaInicial} defaultValue={abaInicial} className="w-full">
         <TabsList>
           {veOperacional && (
             <TabsTrigger value="registro">
