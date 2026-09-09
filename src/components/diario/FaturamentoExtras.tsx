@@ -1,12 +1,28 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, CheckCircle2, Loader2, Receipt } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Receipt,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -17,18 +33,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
-import { descreverItem, type StatusFaturamento } from "@/lib/diario-faturamento";
+import {
+  descreverItem,
+  type EventoPendente,
+  type StatusFaturamento,
+} from "@/lib/diario-faturamento";
 import {
   cancelarFaturamentoDiario,
   definirMinutosHoraExtraDiario,
   faturarExtrasDiario,
   faturarTodosExtrasDiario,
+  isentarEventoDiario,
   listarFaturamentosDiario,
   listarPendenciasFaturamentoDiario,
   marcarFaturamentoDiarioManual,
   relancarFaturamentoDiario,
   type ResultadoFaturamento,
 } from "@/lib/diario-faturamento.functions";
+import { formatarMinutos } from "@/lib/diario-hora-extra";
 import { formatarBRL } from "@/lib/rematricula";
 
 type Props = { unidade: string | null; podeEditar: boolean };
@@ -83,7 +105,13 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
   const marcarManual = useServerFn(marcarFaturamentoDiarioManual);
   const cancelar = useServerFn(cancelarFaturamentoDiario);
   const definirMinutos = useServerFn(definirMinutosHoraExtraDiario);
+  const isentar = useServerFn(isentarEventoDiario);
   const [minutosEdit, setMinutosEdit] = useState<Record<string, string>>({});
+  const [expandidos, setExpandidos] = useState<Record<string, boolean>>({});
+  const [isentando, setIsentando] = useState<{ aluno: string; evento: EventoPendente } | null>(
+    null,
+  );
+  const [motivo, setMotivo] = useState("");
 
   const pendencias = useQuery({
     queryKey: ["diario_faturamento_pendencias", unidade],
@@ -159,6 +187,22 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
     onError: erro,
   });
 
+  const mIsentar = useMutation({
+    mutationFn: async (p: { eventId: string; motivo: string }) => isentar({ data: p }),
+    onSuccess: (r) => {
+      if (!r.ok) {
+        toast.error(r.erro ?? "Não foi possível isentar.");
+        return;
+      }
+      toast.success("Consumo isento — não será cobrado.");
+      setIsentando(null);
+      setMotivo("");
+      recarregar();
+      void qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
+    },
+    onError: erro,
+  });
+
   if (unidade === null) {
     return <SelecioneUnidade acao="ver o faturamento dos Extras" />;
   }
@@ -209,6 +253,7 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8" />
                   <TableHead>Aluno</TableHead>
                   <TableHead>Turma</TableHead>
                   <TableHead>Período</TableHead>
@@ -220,8 +265,26 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
               <TableBody>
                 {lista.map((p) => {
                   const ok = p.bloqueios.length === 0 && p.total > 0;
-                  return (
-                    <TableRow key={`${p.studentId}-${p.anoLetivo}`}>
+                  const chave = `${p.studentId}-${p.anoLetivo}`;
+                  const aberto = expandidos[chave] === true;
+                  return [
+                    <TableRow key={chave}>
+                      <TableCell className="px-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          aria-label={aberto ? "Recolher consumos" : "Ver consumos"}
+                          aria-expanded={aberto}
+                          onClick={() => setExpandidos((s) => ({ ...s, [chave]: !aberto }))}
+                        >
+                          {aberto ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TableCell>
                       <TableCell className="font-medium">{p.aluno}</TableCell>
                       <TableCell className="text-muted-foreground">{p.turma}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs">
@@ -293,8 +356,45 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
                           </Button>
                         )}
                       </TableCell>
-                    </TableRow>
-                  );
+                    </TableRow>,
+                    aberto && (
+                      <TableRow key={`${chave}-eventos`} className="bg-muted/30">
+                        <TableCell />
+                        <TableCell colSpan={5} className="py-2">
+                          <ul className="divide-y divide-border text-xs">
+                            {p.eventos.map((e) => (
+                              <li
+                                key={e.id}
+                                className="flex flex-wrap items-center justify-between gap-2 py-1"
+                              >
+                                <span>
+                                  <span className="text-muted-foreground">
+                                    {dataHora(e.createdAt)}
+                                  </span>{" "}
+                                  · {e.rotulo}
+                                  {e.extraMinutes !== null &&
+                                    ` (${formatarMinutos(e.extraMinutes)})`}
+                                </span>
+                                {podeEditar && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 text-xs"
+                                    onClick={() => {
+                                      setMotivo("");
+                                      setIsentando({ aluno: p.aluno, evento: e });
+                                    }}
+                                  >
+                                    Isentar
+                                  </Button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </TableCell>
+                      </TableRow>
+                    ),
+                  ];
                 })}
               </TableBody>
             </Table>
@@ -443,6 +543,44 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
           </div>
         )}
       </div>
+
+      <Dialog open={isentando !== null} onOpenChange={(o) => !o && setIsentando(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Isentar consumo extra</DialogTitle>
+            <DialogDescription>
+              {isentando
+                ? `${isentando.aluno} — ${isentando.evento.rotulo} em ${dataHora(isentando.evento.createdAt)}. Este consumo não será cobrado e não entrará em nenhum faturamento.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Motivo *</span>
+            <Textarea
+              value={motivo}
+              onChange={(ev) => setMotivo(ev.target.value)}
+              maxLength={300}
+              rows={3}
+              placeholder="Ex.: combinado com o responsável; bonificação da escola"
+            />
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsentando(null)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={motivo.trim().length < 3 || mIsentar.isPending}
+              onClick={() =>
+                isentando &&
+                mIsentar.mutate({ eventId: isentando.evento.id, motivo: motivo.trim() })
+              }
+            >
+              {mIsentar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar isenção
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

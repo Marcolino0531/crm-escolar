@@ -53,9 +53,19 @@ export interface ItemFaturamento {
   minutosPorRegistro?: number[];
 }
 
+// Um consumo individual que compõe a pendência do aluno (alvo da isenção).
+export interface EventoPendente {
+  id: string;
+  createdAt: string; // ISO
+  rotulo: string;
+  // Hora Extra: minutos do registro (null = sem duração, a conferir).
+  extraMinutes: number | null;
+}
+
 export interface PendenciaAluno {
   studentId: string;
   eventIds: string[];
+  eventos: EventoPendente[];
   periodoInicio: string; // ISO do evento mais antigo
   periodoFim: string; // ISO do evento mais recente
   itens: ItemFaturamento[];
@@ -87,8 +97,16 @@ export function consolidarAluno(
   let minutos = 0;
   const registrosHora: { data: string; minutos: number }[] = [];
   const semDuracao: { id: string; createdAt: string }[] = [];
+  const eventosDetalhe: EventoPendente[] = [];
 
   for (const e of ordenados) {
+    eventosDetalhe.push({
+      id: e.id,
+      createdAt: e.createdAt,
+      rotulo:
+        e.eventType === "meal" && e.meal ? MEAL_LABEL[e.meal] : ROTULO_CATEGORIA_EXTRA.hora_extra,
+      extraMinutes: e.eventType === "meal" ? null : e.extraMinutes,
+    });
     if (e.eventType === "meal" && e.meal) {
       const datas = refeicoes.get(e.meal) ?? [];
       datas.push(dataBR(e.createdAt));
@@ -144,6 +162,7 @@ export function consolidarAluno(
   return {
     studentId,
     eventIds: ordenados.map((e) => e.id),
+    eventos: eventosDetalhe,
     periodoInicio: ordenados[0]?.createdAt ?? "",
     periodoFim: ordenados[ordenados.length - 1]?.createdAt ?? "",
     itens,

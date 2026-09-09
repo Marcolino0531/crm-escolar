@@ -291,18 +291,22 @@ export async function divergenciasExtrasDaUnidade(
   }));
 }
 
+/** As divergências aparecem na aba Auditoria Sponte do Diário (nível financeiro). */
 async function exigirPermissaoDiario(userId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_view_module" as never,
-    { _user_id: userId, _module: "diario" } as never,
-  );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para ver as divergências da rematrícula.");
+  for (const modulo of ["diario_financeiro", "diario"]) {
+    const { data, error } = await supabaseAdmin.rpc(
+      "can_view_module" as never,
+      { _user_id: userId, _module: modulo } as never,
+    );
+    if (error) throw new Error(error.message);
+    if (data) return;
+  }
+  throw new Error("Você não tem permissão para ver as divergências da rematrícula.");
 }
 
-/** Quem pode agir no Diário ou aprovar rematrículas pode reconferir. */
+/** Quem pode agir no Diário financeiro ou aprovar rematrículas pode reconferir. */
 async function exigirPermissaoReconferir(userId: string): Promise<void> {
-  for (const modulo of ["rematricula", "diario"]) {
+  for (const modulo of ["rematricula", "diario_financeiro"]) {
     const { data, error } = await supabaseAdmin.rpc(
       "can_edit_module" as never,
       { _user_id: userId, _module: modulo } as never,

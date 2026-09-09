@@ -470,3 +470,26 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
     ).toBe("padrao");
   });
 });
+
+describe("consolidarAluno — eventos individuais para a isenção na aba Faturamento", () => {
+  it("expõe cada consumo com rótulo, data/hora e minutos (só Hora Extra), em ordem", () => {
+    const p = consolidarAluno(
+      [
+        horaExtra("a", 45, "2026-09-03"),
+        refeicao("a", "lunch"),
+        horaExtra("a", null, "2026-09-04"),
+      ],
+      PRECOS_2026,
+    );
+    expect(p.eventos.map((e) => e.id)).toEqual(p.eventIds);
+    expect(p.eventos).toEqual([
+      expect.objectContaining({
+        rotulo: "Almoço",
+        extraMinutes: null,
+        createdAt: "2026-09-01T12:00:00.000Z",
+      }),
+      expect.objectContaining({ rotulo: "Hora Extra", extraMinutes: 45 }),
+      expect.objectContaining({ rotulo: "Hora Extra", extraMinutes: null }),
+    ]);
+  });
+});

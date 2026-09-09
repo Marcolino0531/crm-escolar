@@ -380,7 +380,7 @@ function AppShell() {
   const showTasks = canView("tasks");
   const showUniformes = canView("uniformes");
   const showEstoqueMaterial = canView("estoque_material");
-  const showDiario = canView("diario");
+  const showDiario = canView("diario") || canView("diario_financeiro");
   const showColonia = canView("colonia") || canView("colonia_financeiro");
   const showEsportes = canView("esportes");
   const showDocumentos = canView("documentos");

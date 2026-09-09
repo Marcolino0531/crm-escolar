@@ -14,6 +14,7 @@ const APP_MODULES = [
   "uniformes",
   "estoque_material",
   "diario",
+  "diario_financeiro",
   "colonia",
   "colonia_financeiro",
   "esportes",
