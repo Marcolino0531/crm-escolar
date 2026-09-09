@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,12 +86,15 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="text-sm text-muted-foreground">
-          <p>
-            Compara, para cada aluno de <strong>{unidade}</strong> com plano no Diário, as refeições
-            marcadas como contratadas e o Horário Estendido com as categorias de parcela ativas no
-            Sponte (Lanche da Manhã, Almoço, Lanche da Tarde, Jantar, Hora Extra). Só aparecem os
-            alunos com algo contratado sem lançamento.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base font-semibold text-foreground">
+              Auditoria Sponte · {unidade}
+            </h3>
+            <AjudaTooltip
+              rotulo="O que a Auditoria Sponte confere"
+              texto={`Compara, para cada aluno de ${unidade} com plano no Diário, as refeições marcadas como contratadas e o Horário Estendido com as categorias de parcela ativas no Sponte (Lanche da Manhã, Almoço, Lanche da Tarde, Jantar, Hora Extra). Só aparecem os alunos com algo contratado sem lançamento.`}
+            />
+          </div>
           {exec ? (
             <p className="mt-1">
               Última execução ({exec.origem === "cron" ? "automática" : "manual"}):{" "}
@@ -166,14 +170,15 @@ export function AuditoriaSponte({ unidade, podeExecutar }: Props) {
 
       <section className="space-y-3 pt-4">
         <div className="text-sm text-muted-foreground">
-          <h3 className="text-base font-semibold text-foreground">Divergências pós-rematrícula</h3>
-          <p className="mt-1">
-            Geradas ao “Finalizar Matrícula” no portal: comparam os extras lançados no Sponte para o
-            ano da rematrícula, o que o responsável deixou marcado e o plano do Diário do mesmo ano.
-            São só alertas — nada é alterado automaticamente no Sponte nem no Diário. Depois de
-            corrigir manualmente, use “Conferir novamente” para reler o Sponte e o Diário e
-            atualizar a lista.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base font-semibold text-foreground">
+              Divergências pós-rematrícula
+            </h3>
+            <AjudaTooltip
+              rotulo="O que são as divergências pós-rematrícula"
+              texto="Geradas ao “Finalizar Matrícula” no portal: comparam os extras lançados no Sponte para o ano da rematrícula, o que o responsável deixou marcado e o plano do Diário do mesmo ano. São só alertas — nada é alterado automaticamente no Sponte nem no Diário. Depois de corrigir manualmente, use “Conferir novamente” para reler o Sponte e o Diário e atualizar a lista."
+            />
+          </div>
         </div>
         {divergencias.isLoading ? (
           <Skeleton className="h-24 w-full rounded-2xl" />

@@ -43,6 +43,7 @@ import {
   groupMealPlans,
   groupSchedules,
   isCoveredToday,
+  anosDoSeletor,
   type DiarioStudent,
   type MealKey,
   type MealPlanRow,
@@ -80,14 +81,6 @@ type StudentRow = {
   school_id: string;
   photo: string | null;
 };
-
-// Anos oferecidos no seletor: o vigente (padrão) e o da rematrícula em andamento,
-// mais os vizinhos, para consulta/histórico.
-function anosDoSeletor(anoVigente: number, anoRematricula: number | null): number[] {
-  const anos = new Set<number>([anoVigente - 1, anoVigente, anoVigente + 1]);
-  if (anoRematricula) anos.add(anoRematricula);
-  return [...anos].sort((a, b) => a - b);
-}
 
 function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null) {
   return useQuery({
@@ -245,9 +238,7 @@ function DiarioPage() {
           <BookOpen className="h-6 w-6 text-primary" />
           <div>
             <h1 className="text-xl font-bold text-foreground">Diário do Aluno</h1>
-            <p className="text-sm text-muted-foreground">
-              Registro de refeições e entrada/saída · {specificSchoolName}
-            </p>
+            <p className="text-sm text-muted-foreground">{specificSchoolName}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -259,7 +250,7 @@ function DiarioPage() {
               <SelectContent>
                 {anosDoSeletor(anoVigente, anos.data?.anoRematricula ?? null).map((a) => (
                   <SelectItem key={a} value={String(a)}>
-                    {a === anoVigente ? `${a} (vigente)` : String(a)}
+                    {String(a)}
                   </SelectItem>
                 ))}
               </SelectContent>

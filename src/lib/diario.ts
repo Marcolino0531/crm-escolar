@@ -169,3 +169,11 @@ export function checkSchedule(
   const within = cur >= toMinutes(today.entry) && cur <= toMinutes(today.exit);
   return { withinSchedule: within, hasSchedule: true, today };
 }
+
+// Anos oferecidos no seletor do Diário: o vigente (padrão), o seguinte e o da
+// rematrícula em andamento, se houver. O ano anterior fica de fora.
+export function anosDoSeletor(anoVigente: number, anoRematricula: number | null): number[] {
+  const anos = new Set<number>([anoVigente, anoVigente + 1]);
+  if (anoRematricula) anos.add(anoRematricula);
+  return [...anos].sort((a, b) => a - b);
+}
