@@ -127,9 +127,19 @@ function referenciaValida<T extends ParcelaAberta>(p: T): boolean {
 // "Material Pedagógico"…), então o dia é deduzido do histórico de parcelas — o
 // dia que mais se repete, com empate resolvido pelo maior saldo e pelo menor
 // dia. Parcelas quitadas contam: o que interessa é o dia, não o saldo.
+//
+// Com `aPartirDe` (YYYY-MM-DD), só as parcelas que vencem dessa data em diante
+// entram na contagem — é o dia de cobrança ATUAL do aluno, que pode ter mudado
+// ao longo dos anos (um histórico longo no dia antigo venceria o dia novo).
+// Sem parcela futura, o histórico completo é usado.
 export function diaVencimentoHabitual<T extends ParcelaAberta>(
   parcelas: readonly T[],
+  aPartirDe?: string,
 ): number | null {
+  if (aPartirDe !== undefined) {
+    const futuras = parcelas.filter((p) => referenciaValida(p) && p.vencimento >= aPartirDe);
+    if (futuras.length > 0) return diaVencimentoHabitual(futuras);
+  }
   const porDia = new Map<number, { vezes: number; saldo: number }>();
   for (const p of parcelas) {
     if (!referenciaValida(p)) continue;

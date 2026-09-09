@@ -419,6 +419,47 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
     expect(r.vencimento).toBe("2027-01-11"); // 10/01/2027 é domingo
   });
 
+  it("dia habitual é o das parcelas futuras, não o do histórico inteiro (Stella real, 09/09/2026)", () => {
+    // Histórico da Stella no Sponte: 2023–jun/2026 no dia 5 (122 títulos),
+    // jul/2026 em diante no dia 10 (34 títulos). Só o dia atual (10) conta.
+    const parcelas = [];
+    for (let i = 0; i < 122; i++)
+      parcelas.push(parcela(`2025-${String((i % 12) + 1).padStart(2, "0")}-05`, true));
+    for (const mes of ["07", "08"]) {
+      for (const cat of [
+        "Mensalidade",
+        "Lanche da Tarde",
+        "Jantar",
+        "Hora Extra",
+        "Material Pedagógico",
+      ]) {
+        parcelas.push(parcela(`2026-${mes}-10`, true, cat));
+      }
+    }
+    for (const mes of ["09", "10", "11", "12"]) {
+      for (const cat of [
+        "Mensalidade",
+        "Lanche da Tarde",
+        "Jantar",
+        "Hora Extra",
+        "Material Pedagógico",
+      ]) {
+        parcelas.push(parcela(`2026-${mes}-10`, false, cat));
+      }
+    }
+    const r = proximoVencimentoExtrasDiario(parcelas, "2026-09-09");
+    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" }); // 10/10/2026 é sábado
+    expect(r.vencimento).not.toBe("2026-10-05");
+  });
+
+  it("sem parcela futura, o dia habitual vem do histórico", () => {
+    const r = proximoVencimentoExtrasDiario(
+      [parcela("2026-07-10", true), parcela("2026-08-10", true)],
+      "2026-09-09",
+    );
+    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" });
+  });
+
   it("sem mensalidade de referência usa o dia padrão no mês seguinte", () => {
     const r = proximoVencimentoExtrasDiario([], "2026-09-08");
     expect(r.origem).toBe("padrao");
