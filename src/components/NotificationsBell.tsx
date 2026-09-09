@@ -753,7 +753,7 @@ export function NotificationsBell() {
       !canCobranca &&
       !canUniformes &&
       !canCartao &&
-      !canDiario &&
+      !canDiarioFin &&
       !canAgenda &&
       !canColonia &&
       !canColoniaFin &&

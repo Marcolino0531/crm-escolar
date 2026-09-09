@@ -56,6 +56,9 @@ describe("aviso único do sino: Extras do Diário pendentes de faturar (dia 25+)
   it("sino: bloco por consumo removido; aviso único leva à aba Faturamento", () => {
     const src = fonte("src/components/NotificationsBell.tsx");
     expect(src).not.toContain("diario_extra_today");
+    // Guard do sino usa só variáveis declaradas (ReferenceError derruba a página toda).
+    expect(src).not.toMatch(/\bcanDiario\b/);
+    expect(src).toMatch(/!canCartao &&\s*!canDiarioFin &&/);
     expect(src).not.toContain("cobrança extra gerada para a família");
     expect(src).toMatch(
       /\{avisoExtras && \([\s\S]*?to="\/diario"\s*search=\{\{ aba: "faturamento" \}\}/,
