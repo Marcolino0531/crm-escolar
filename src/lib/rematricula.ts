@@ -654,10 +654,13 @@ export function mensalidadeVigente(
 // ─── Série do aluno ─────────────────────────────────────────────────────────
 
 // Chave de comparação da série: sem acento, minúscula, sem espaços repetidos e
-// com as variações de ordinal ("1º", "1o", "1ª") unificadas. É ela que casa o
-// cadastro digitado pelo administrador com a série lida do Sponte.
+// com as variações de ordinal ("1º", "1o", "1ª") unificadas e sem o código
+// numérico do curso do Sponte ("04 / 1º Período" → "1 periodo"). É ela que casa
+// o cadastro digitado pelo administrador com a série lida do Sponte.
 export function chaveSerie(serie: string): string {
   return serie
+    .trim()
+    .replace(/^\d{1,3}\s*[-–—/]\s*/, "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[ºª°]/g, "")
