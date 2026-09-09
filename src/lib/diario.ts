@@ -154,22 +154,6 @@ export function isCoveredToday(plan: MealPlan, meal: MealKey, today = new Date()
   return plan[meal].includes(today.getDay() as Weekday);
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
-
-export function checkSchedule(
-  schedule: SchedulePlan,
-  now = new Date(),
-): { withinSchedule: boolean; hasSchedule: boolean; today: DaySchedule } {
-  const today = schedule[now.getDay() as Weekday];
-  if (!today) return { withinSchedule: false, hasSchedule: false, today: null };
-  const cur = now.getHours() * 60 + now.getMinutes();
-  const within = cur >= toMinutes(today.entry) && cur <= toMinutes(today.exit);
-  return { withinSchedule: within, hasSchedule: true, today };
-}
-
 // Anos oferecidos no seletor do Diário: o vigente (padrão), o seguinte e o da
 // rematrícula em andamento, se houver. O ano anterior fica de fora.
 export function anosDoSeletor(anoVigente: number, anoRematricula: number | null): number[] {

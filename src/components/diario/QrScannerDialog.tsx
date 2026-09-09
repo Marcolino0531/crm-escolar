@@ -12,7 +12,14 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
-import { checkSchedule, parseDiarioQrValue, type DiarioStudent } from "@/lib/diario";
+import { parseDiarioQrValue, type DiarioStudent, type Weekday } from "@/lib/diario";
+import {
+  ROTULO_DIRECAO,
+  avaliarRegistro,
+  formatarMinutos,
+  inferirDirecao,
+  minutosDoDia,
+} from "@/lib/diario-hora-extra";
 
 const REGION_ID = "diario-qr-reader-region";
 // Ignora leituras repetidas do mesmo código dentro deste intervalo (o leitor
@@ -77,16 +84,24 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
 
       processingRef.current = true;
       try {
-        const sched = checkSchedule(student.schedule);
-        const charge = !sched.withinSchedule;
+        const agora = new Date();
+        const direcao = inferirDirecao(
+          student.schedule[agora.getDay() as Weekday],
+          minutosDoDia(agora),
+        );
+        const av = avaliarRegistro(student.schedule, direcao, agora);
+        const charge = av.cobra;
+        const rotulo = ROTULO_DIRECAO[direcao];
         const { error } = await supabase.from("diario_events" as never).insert({
           student_id: student.id,
           recorded_by: userId,
           event_type: "checkinout",
           meal: null,
-          label: "Entrada / Saída",
+          direction: direcao,
+          label: rotulo,
           extra_charge: charge,
-          reason: charge ? "Fora do horário contratado" : null,
+          extra_minutes: av.minutos,
+          reason: av.motivo,
         } as never);
         if (error) throw error;
 
@@ -102,8 +117,14 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
         });
         setCount((c) => c + 1);
         qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
-        toast.success("Entrada / Saída registrada", {
-          description: `${student.name} • ${hora}${charge ? " • Hora extra gerada" : ""}`,
+        toast.success(`${rotulo} registrada`, {
+          description: `${student.name} • ${hora}${
+            av.minutos
+              ? ` • Hora extra: ${formatarMinutos(av.minutos)}`
+              : charge
+                ? " • Sem horário contratado hoje"
+                : ""
+          }`,
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Tente novamente.";
@@ -171,8 +192,8 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
             <QrCode className="h-5 w-5 text-primary" /> Leitura de QR Code
           </DialogTitle>
           <DialogDescription>
-            Aponte a câmera para o código do aluno. A Entrada / Saída é registrada automaticamente e
-            o leitor continua ativo para o próximo.
+            Aponte a câmera para o código do aluno. A Entrada (manhã / perto do horário de entrada)
+            ou a Saída é registrada automaticamente e o leitor continua ativo para o próximo.
           </DialogDescription>
         </DialogHeader>
 
