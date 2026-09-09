@@ -35,9 +35,10 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   anoLetivo: number;
+  canEdit: boolean;
 };
 
-export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
+export function PlanEditor({ student, open, onOpenChange, anoLetivo, canEdit }: Props) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<MealPlan>(student.plan);
   const [scheduleDraft, setScheduleDraft] = useState<SchedulePlan>(student.schedule);
@@ -50,6 +51,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
   }, [open, student.plan, student.schedule]);
 
   const toggle = (meal: MealKey, day: Weekday) => {
+    if (!canEdit) return;
     setDraft((p) => ({
       ...p,
       [meal]: p[meal].includes(day) ? p[meal].filter((d) => d !== day) : [...p[meal], day],
@@ -57,10 +59,12 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
   };
 
   const toggleDayEnabled = (day: Weekday, enabled: boolean) => {
+    if (!canEdit) return;
     setScheduleDraft((s) => ({ ...s, [day]: enabled ? (s[day] ?? DEFAULT_DAY) : null }));
   };
 
   const setTime = (day: Weekday, field: "entry" | "exit", value: string) => {
+    if (!canEdit) return;
     setScheduleDraft((s) => {
       const current = s[day] ?? DEFAULT_DAY;
       return { ...s, [day]: { ...current, [field]: value } };
@@ -69,6 +73,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
 
   const save = useMutation({
     mutationFn: async () => {
+      if (!canEdit) throw new Error("Você não tem permissão para editar o plano.");
       // Refeições: substitui o conjunto do aluno.
       const { error: dErr } = await supabase
         .from("diario_meal_plans" as never)
@@ -135,7 +140,9 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
             Plano de {student.name} · {anoLetivo}
           </DialogTitle>
           <DialogDescription>
-            Configure as refeições contratadas e o horário de entrada/saída por dia da semana.
+            {canEdit
+              ? "Configure as refeições contratadas e o horário de entrada/saída por dia da semana."
+              : "Refeições contratadas e horário de entrada/saída por dia da semana (somente leitura)."}
           </DialogDescription>
         </DialogHeader>
 
@@ -157,11 +164,13 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
                         key={d.value}
                         type="button"
                         onClick={() => toggle(meal.key, d.value)}
+                        disabled={!canEdit}
                         className={[
                           "flex h-10 items-center justify-center rounded-lg text-xs font-semibold transition",
                           active
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "bg-secondary text-muted-foreground hover:bg-secondary/70",
+                          canEdit ? "" : "cursor-default disabled:opacity-100",
                         ].join(" ")}
                         aria-pressed={active}
                         aria-label={`${meal.label} ${d.long}`}
@@ -193,6 +202,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
                     <Switch
                       checked={enabled}
                       onCheckedChange={(v) => toggleDayEnabled(d.value, v)}
+                      disabled={!canEdit}
                       aria-label={`Ativar ${d.long}`}
                     />
                   </div>
@@ -205,6 +215,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
                         <input
                           type="time"
                           value={day.entry}
+                          readOnly={!canEdit}
                           onChange={(e) => setTime(d.value, "entry", e.target.value)}
                           className="h-10 rounded-lg border border-border bg-background px-2 text-sm text-foreground focus:border-primary focus:outline-none"
                         />
@@ -216,6 +227,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
                         <input
                           type="time"
                           value={day.exit}
+                          readOnly={!canEdit}
                           onChange={(e) => setTime(d.value, "exit", e.target.value)}
                           className="h-10 rounded-lg border border-border bg-background px-2 text-sm text-foreground focus:border-primary focus:outline-none"
                         />
@@ -234,15 +246,17 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo }: Props) {
             className="h-11 w-full rounded-xl sm:w-auto"
             onClick={() => onOpenChange(false)}
           >
-            Cancelar
+            {canEdit ? "Cancelar" : "Fechar"}
           </Button>
-          <Button
-            className="h-11 w-full rounded-xl sm:w-auto"
-            onClick={() => save.mutate()}
-            disabled={save.isPending}
-          >
-            {save.isPending ? "Salvando…" : "Salvar plano"}
-          </Button>
+          {canEdit && (
+            <Button
+              className="h-11 w-full rounded-xl sm:w-auto"
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+            >
+              {save.isPending ? "Salvando…" : "Salvar plano"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

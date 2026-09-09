@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { abaInicialDiario, abasDiarioVisiveis, podeAbrirDiario } from "@/lib/diario-acesso";
+import {
+  abaInicialDiario,
+  abasDiarioVisiveis,
+  acoesPlanoAluno,
+  podeAbrirDiario,
+} from "@/lib/diario-acesso";
 import { APP_MODULES, MODULE_LABELS } from "@/lib/app-context";
 
 function fonte(caminho: string): string {
@@ -109,5 +114,47 @@ describe("Rótulos da Colônia de Férias", () => {
       expect(src).not.toMatch(/Colônia — Registros \(Operacional\)/);
       expect(src).not.toMatch(/Colônia — Fechamento Financeiro/);
     }
+  });
+});
+
+describe("botão Plano no modal do aluno — visualizar abre, editar salva", () => {
+  it("só canView vê o botão Plano e abre o modal, mas sem Foto nem Salvar plano", () => {
+    expect(acoesPlanoAluno({ canView: true, canEdit: false })).toEqual({
+      mostrarBotaoPlano: true,
+      mostrarBotaoFoto: false,
+      planoEditavel: false,
+      mostrarSalvarPlano: false,
+    });
+  });
+
+  it("canEdit mantém o comportamento de hoje: Plano, Foto e Salvar plano, tudo editável", () => {
+    expect(acoesPlanoAluno({ canView: true, canEdit: true })).toEqual({
+      mostrarBotaoPlano: true,
+      mostrarBotaoFoto: true,
+      planoEditavel: true,
+      mostrarSalvarPlano: true,
+    });
+  });
+
+  it("StudentActionSheet usa a regra pura e passa canEdit ao PlanEditor", () => {
+    const src = fonte("src/components/diario/StudentActionSheet.tsx");
+    expect(src).toMatch(
+      /acoesPlano\.mostrarBotaoPlano && \(\s*<button\s*onClick=\{\(\) => setEditingPlan\(true\)\}/,
+    );
+    expect(src).toMatch(
+      /acoesPlano\.mostrarBotaoFoto && \(\s*<button\s*onClick=\{\(\) => setEditingPhoto\(true\)\}/,
+    );
+    expect(src).toMatch(/<PlanEditor[\s\S]*?canEdit=\{acoesPlano\.planoEditavel\}/);
+    expect(fonte("src/routes/diario.tsx")).toContain("canView={acesso.operacional}");
+  });
+
+  it("PlanEditor sem canEdit: botão Salvar plano não renderiza e campos ficam só leitura", () => {
+    const src = fonte("src/components/diario/PlanEditor.tsx");
+    expect(src).toMatch(/\{canEdit && \(\s*<Button[\s\S]*?Salvar plano/);
+    expect(src).toContain("disabled={!canEdit}");
+    expect(src).toContain("readOnly={!canEdit}");
+    expect(src).toContain(
+      'if (!canEdit) throw new Error("Você não tem permissão para editar o plano.")',
+    );
   });
 });
