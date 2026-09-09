@@ -19,8 +19,10 @@ import {
   faturandoInterrompido,
   observacaoFaturamentoSponte,
   pendenciasPorAluno,
+  podeCancelar,
   podeFaturar,
   podeIsentar,
+  registroCancelamento,
   transicaoFaturamento,
   type EventoExtra,
   type ItemFaturamento,
@@ -201,6 +203,8 @@ export interface FaturamentoDiario {
   lancadoAt: string | null;
   lancadoPorNome: string;
   lancadoAutomatico: boolean | null;
+  canceladoEm: string | null;
+  canceladoPorNome: string;
   observacao: string;
   createdAt: string;
   createdByNome: string;
@@ -226,13 +230,15 @@ type FaturamentoRow = {
   lancado_at: string | null;
   lancado_por_nome: string;
   lancado_automatico: boolean | null;
+  cancelado_em: string | null;
+  cancelado_por_nome: string;
   observacao: string;
   created_at: string;
   created_by_nome: string;
 };
 
 const COLUNAS_FATURAMENTO =
-  "id, school_id, unidade, student_id, sponte_aluno_id, aluno_nome, turma, ano_letivo, periodo_inicio, periodo_fim, itens, valor_total, status, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancado_at, lancado_por_nome, lancado_automatico, observacao, created_at, created_by_nome";
+  "id, school_id, unidade, student_id, sponte_aluno_id, aluno_nome, turma, ano_letivo, periodo_inicio, periodo_fim, itens, valor_total, status, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancado_at, lancado_por_nome, lancado_automatico, cancelado_em, cancelado_por_nome, observacao, created_at, created_by_nome";
 
 function paraFaturamento(r: FaturamentoRow): FaturamentoDiario {
   return {
@@ -253,6 +259,8 @@ function paraFaturamento(r: FaturamentoRow): FaturamentoDiario {
     lancadoAt: r.lancado_at,
     lancadoPorNome: r.lancado_por_nome ?? "",
     lancadoAutomatico: r.lancado_automatico,
+    canceladoEm: r.cancelado_em ?? null,
+    canceladoPorNome: r.cancelado_por_nome ?? "",
     observacao: r.observacao ?? "",
     createdAt: r.created_at,
     createdByNome: r.created_by_nome ?? "",
@@ -562,6 +570,45 @@ export const marcarFaturamentoDiarioManual = createServerFn({ method: "POST" })
     if (error) return { ok: false, erro: "Não foi possível registrar o lançamento manual." };
     if ((atualizadas ?? []).length === 0) {
       return { ok: false, erro: "Este faturamento já foi lançado." };
+    }
+    return { ok: true };
+  });
+
+// Cancela um faturamento LANÇADO: a linha vira 'cancelado' (histórico de quem e
+// quando) e os eventos voltam a pendentes. O título no Sponte é cancelado à
+// mão pelo diretor — nada é escrito no Sponte aqui. O UPDATE condicional em
+// status = 'lancado' é a trava contra dois cancelamentos simultâneos.
+export const cancelarFaturamentoDiario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => IdSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
+    await exigirPermissaoDiario(context.userId, true);
+    const f = await carregarFaturamento(data.id);
+    if (!f) return { ok: false, erro: "Faturamento não encontrado." };
+    const t = podeCancelar(f.status);
+    if (!t.ok) return { ok: false, erro: t.erro };
+
+    const nome = await nomeDoUsuario(context.userId);
+    const { data: atualizadas, error } = await supabaseAdmin
+      .from("diario_faturamentos" as never)
+      .update(registroCancelamento(context.userId, nome, new Date().toISOString()) as never)
+      .eq("id", f.id)
+      .eq("status", "lancado")
+      .select("id");
+    if (error) return { ok: false, erro: "Não foi possível cancelar o faturamento." };
+    if ((atualizadas ?? []).length === 0) {
+      return { ok: false, erro: "Este faturamento já foi cancelado." };
+    }
+
+    const { error: eEventos } = await supabaseAdmin
+      .from("diario_events" as never)
+      .update({ faturamento_id: null } as never)
+      .eq("faturamento_id", f.id);
+    if (eEventos) {
+      return {
+        ok: false,
+        erro: "Faturamento cancelado, mas os consumos não voltaram a pendentes. Tente novamente.",
+      };
     }
     return { ok: true };
   });

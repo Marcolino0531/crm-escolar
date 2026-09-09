@@ -519,6 +519,7 @@ const COR_STATUS_CONSUMO: Record<StatusConsumoExtra, string> = {
   faturando: "bg-sky-100 text-sky-800",
   lancado: "bg-emerald-100 text-emerald-800",
   erro: "bg-rose-100 text-rose-800",
+  cancelado: "bg-slate-100 text-slate-600",
 };
 
 function duracaoHoraExtra(e: ExtraEventRow): string {

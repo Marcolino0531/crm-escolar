@@ -236,7 +236,53 @@ export function observacaoFaturamentoSponte(
 //      └──(Sponte falhou)──▶ erro ──(retentativa OK)──▶ lancado
 //                              └──(marcado manual)────▶ lancado (automatico=false)
 
-export type StatusFaturamento = "faturando" | "erro" | "lancado";
+//      lancado ──(Cancelar; título cancelado à mão no Sponte)──▶ cancelado
+//        (eventos voltam a pendentes e podem entrar num faturamento novo)
+
+export type StatusFaturamento = "faturando" | "erro" | "lancado" | "cancelado";
+
+// Status que ocupam a vaga de "faturamento em aberto" do aluno (espelha o
+// índice único parcial diario_faturamentos_aberto_por_aluno_idx).
+export function faturamentoEmAberto(status: StatusFaturamento): boolean {
+  return status !== "lancado" && status !== "cancelado";
+}
+
+// Um aluno só abre faturamento novo se nenhum dos existentes ocupar a vaga.
+export function podeAbrirFaturamento(existentes: readonly StatusFaturamento[]): boolean {
+  return !existentes.some(faturamentoEmAberto);
+}
+
+export interface CancelamentoFaturamento {
+  status: "cancelado";
+  cancelado_em: string;
+  cancelado_por: string;
+  cancelado_por_nome: string;
+}
+
+// Registro do cancelamento: quem, quando; a linha nunca é apagada.
+export function registroCancelamento(
+  userId: string,
+  nome: string,
+  agoraISO: string,
+): CancelamentoFaturamento {
+  return {
+    status: "cancelado",
+    cancelado_em: agoraISO,
+    cancelado_por: userId,
+    cancelado_por_nome: nome,
+  };
+}
+
+// Só um faturamento lançado pode ser cancelado; faturando/erro têm o fluxo
+// próprio (relançar ou marcar manual).
+export function podeCancelar(status: StatusFaturamento): TransicaoFaturamento {
+  if (status === "lancado") return { ok: true };
+  if (status === "cancelado") return { ok: false, erro: "Este faturamento já foi cancelado." };
+  return {
+    ok: false,
+    erro: "Só um faturamento lançado pode ser cancelado. Use Relançar ou Marcar lançado manualmente.",
+  };
+}
 
 // Um faturamento vive em 'faturando' só durante a chamada ao Sponte. Passado
 // este prazo, o processo foi interrompido (deploy, timeout): vira 'erro' para a
@@ -262,6 +308,7 @@ export function transicaoFaturamento(
 ): TransicaoFaturamento {
   if (atual === "lancado")
     return { ok: false, erro: "Este faturamento já está lançado no Sponte." };
+  if (atual === "cancelado") return { ok: false, erro: "Este faturamento foi cancelado." };
   if (temTituloSponte) {
     return { ok: false, erro: "Este faturamento já tem cobrança criada no Sponte." };
   }
@@ -296,6 +343,7 @@ export const ROTULO_STATUS_CONSUMO: Record<StatusConsumoExtra, string> = {
   faturando: "Faturando",
   lancado: "Lançado",
   erro: "Erro no lançamento",
+  cancelado: "Cancelado",
 };
 
 // Só um consumo ainda pendente pode ser isentado; se já entrou num
