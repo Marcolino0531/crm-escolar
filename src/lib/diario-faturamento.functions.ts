@@ -184,6 +184,30 @@ export const listarPendenciasFaturamentoDiario = createServerFn({ method: "POST"
     return (await calcularPendencias(data.unidade, schoolId)).pendencias;
   });
 
+const UnidadesSchema = z.object({ unidades: z.array(z.string().trim().min(1)).max(20) });
+
+// Unidades (entre as informadas) com ao menos um consumo pendente de faturar —
+// mesma regra de `eventosPendentes` (cobrável, não isento, sem faturamento).
+// Alimenta o aviso único do sino a partir do dia 25.
+export const unidadesComExtrasPendentes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => UnidadesSchema.parse(input))
+  .handler(async ({ data, context }): Promise<string[]> => {
+    await exigirPermissaoDiario(context.userId, false);
+    const { data: schools, error } = await supabaseAdmin
+      .from("schools")
+      .select("id, name")
+      .in("name", data.unidades);
+    if (error) throw new Error(error.message);
+    const comPendencia: string[] = [];
+    for (const s of (schools ?? []) as { id: string; name: string }[]) {
+      const alunos = await alunosDaUnidade(s.id);
+      const eventos = await eventosPendentes([...alunos.keys()]);
+      if (eventos.length > 0) comPendencia.push(s.name);
+    }
+    return comPendencia.sort((a, b) => a.localeCompare(b));
+  });
+
 // ─── Histórico ──────────────────────────────────────────────────────────────
 
 export interface FaturamentoDiario {

@@ -61,6 +61,9 @@ import {
   type NotificacaoReuniao,
 } from "@/lib/agenda-notifications";
 import { isDiaUtil } from "@/lib/billing-schedule";
+import { useServerFn } from "@tanstack/react-start";
+import { unidadesComExtrasPendentes } from "@/lib/diario-faturamento.functions";
+import { avisoExtrasPendentes } from "@/lib/diario-aviso-faturamento";
 import {
   avisosExperienciaPendentes,
   mensagemAvisoExperiencia,
@@ -112,14 +115,6 @@ type RecargaPendente = {
 type AvailableReceivable = {
   id: string;
   valor_liquido: number;
-};
-
-type ExtraEvent = {
-  id: string;
-  label: string;
-  meal: string | null;
-  created_at: string;
-  student: { name: string } | null;
 };
 
 type ColoniaPendencia = {
@@ -178,7 +173,7 @@ export function NotificationsBell() {
   const canUniformes = canView("uniformes");
   const canCantina = canView("cantina");
   const canCartao = canView("financeiro_cartao");
-  const canDiario = canView("diario");
+  const canDiarioFin = canView("diario_financeiro");
   const canAgenda = canView("agenda");
   const canColonia = canView("colonia");
   const canColoniaFin = canView("colonia_financeiro");
@@ -411,25 +406,26 @@ export function NotificationsBell() {
     },
   });
 
-  // --- Consumos extras do Diário do Aluno registrados HOJE (refeição/horário
-  // fora do contratado). NÃO dismissível — a lista some naturalmente no dia
-  // seguinte. Alerta a gestão sobre cobranças extras geradas. ---
-  const { data: extraEvents = [] } = useQuery({
-    queryKey: ["diario_extra_today", today],
-    enabled: !!userId && canDiario,
+  // --- Extras do Diário do Aluno pendentes de faturar: UM aviso a partir do
+  // dia 25 (mesma consulta da aba Faturamento). NÃO dismissível — some sozinho
+  // sem pendência ou ao virar o mês. ---
+  const unidadesExtrasPendentesFn = useServerFn(unidadesComExtrasPendentes);
+  const dentroDaJanelaExtras = avisoExtrasPendentes(new Date(), 1) !== null;
+  const { data: unidadesExtrasPendentes = [] } = useQuery({
+    queryKey: ["diario_extras_pendentes_sino", today, unidadesPermitidas],
+    enabled: !!userId && canDiarioFin && dentroDaJanelaExtras && unidadesPermitidas.length > 0,
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("diario_events" as never)
-        .select("id, label, meal, created_at, student:diario_students(name)")
-        .eq("extra_charge", true)
-        .gte("created_at", `${today}T00:00:00`)
-        .order("created_at", { ascending: false })
-        .limit(30);
-      if (error) return [] as ExtraEvent[];
-      return (data ?? []) as unknown as ExtraEvent[];
+      try {
+        return await unidadesExtrasPendentesFn({ data: { unidades: unidadesPermitidas } });
+      } catch {
+        return [] as string[];
+      }
     },
   });
+  const avisoExtras = canDiarioFin
+    ? avisoExtrasPendentes(new Date(), unidadesExtrasPendentes.length, unidadesExtrasPendentes)
+    : null;
 
   // --- Agenda notifications — geradas quando o usuário é incluído no campo
   // "Equipe" de uma reunião. Concluir (check ou reunião que passou) tira da
@@ -790,7 +786,7 @@ export function NotificationsBell() {
     lowStockStores.length +
     recargasPendentes.length +
     availableReceivables.length +
-    extraEvents.length +
+    (avisoExtras ? 1 : 0) +
     contadorNaoLidas(agendaTodas, agoraLocal) +
     coloniaPendencias.length +
     coloniaIncompletos.length +
@@ -950,31 +946,29 @@ export function NotificationsBell() {
             </div>
           )}
 
-          {/* Diário do Aluno: consumos extras (refeição/horário fora do contratado). */}
-          {canDiario && extraEvents.length > 0 && (
+          {/* Diário do Aluno: aviso único de Extras pendentes de faturar (a partir do dia 25). */}
+          {avisoExtras && (
             <div>
               <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Diário do Aluno
               </div>
-              {extraEvents.map((e) => (
-                <Link
-                  key={e.id}
-                  to="/diario"
-                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
-                >
-                  <div className="flex items-start gap-2">
-                    <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                    <div className="min-w-0">
-                      <div className="font-medium text-amber-600">
-                        Consumo extra: {e.student?.name ?? "Aluno"}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {e.label} — cobrança extra gerada para a família.
-                      </div>
-                    </div>
+              <Link
+                to="/diario"
+                search={{ aba: "faturamento" }}
+                onClick={() => {
+                  const u = schools.find((s) => s.name === unidadesExtrasPendentes[0]);
+                  if (u) setSelected(u.id);
+                }}
+                className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+              >
+                <div className="flex items-start gap-2">
+                  <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <div className="min-w-0">
+                    <div className="font-medium text-amber-600">{avisoExtras.titulo}</div>
+                    <div className="text-[11px] text-muted-foreground">{avisoExtras.descricao}</div>
                   </div>
-                </Link>
-              ))}
+                </div>
+              </Link>
             </div>
           )}
 
@@ -1329,7 +1323,7 @@ export function NotificationsBell() {
             lowStockStores.length === 0 &&
             recargasPendentes.length === 0 &&
             availableReceivables.length === 0 &&
-            extraEvents.length === 0 &&
+            !avisoExtras &&
             coloniaPendencias.length === 0 &&
             coloniaIncompletos.length === 0 &&
             plannerDue.length === 0 &&
