@@ -79,10 +79,11 @@ type InconsistenciaRow = {
   erro: string | null;
 };
 
+// Nível FINANCEIRO do Diário ('diario_financeiro'), separado do operacional.
 async function exigirPermissaoDiario(userId: string, edicao: boolean): Promise<void> {
   const { data, error } = await supabaseAdmin.rpc(
     (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "diario" } as never,
+    { _user_id: userId, _module: "diario_financeiro" } as never,
   );
   if (error) throw new Error(error.message);
   if (!data) {

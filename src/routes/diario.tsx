@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -23,24 +22,14 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import {
   ROTULO_STATUS_CONSUMO,
-  podeIsentar,
   statusConsumoExtra,
   type StatusConsumoExtra,
   type StatusFaturamento,
 } from "@/lib/diario-faturamento";
-import { isentarEventoDiario } from "@/lib/diario-faturamento.functions";
+import { abaInicialDiario, podeAbrirDiario } from "@/lib/diario-acesso";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
 import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
 import { FaturamentoExtras } from "@/components/diario/FaturamentoExtras";
@@ -92,7 +81,9 @@ export const Route = createFileRoute("/diario")({
 function DiarioGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("diario"))
+  if (
+    !podeAbrirDiario({ operacional: canView("diario"), financeiro: canView("diario_financeiro") })
+  )
     return <AccessDenied message="Você não tem permissão para visualizar o Diário do Aluno." />;
   return <DiarioPage />;
 }
@@ -157,8 +148,12 @@ function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null)
 }
 
 function DiarioPage() {
-  const { canEdit, isAdmin } = usePermissions();
+  const { canView, canEdit, isAdmin } = usePermissions();
+  const acesso = { operacional: canView("diario"), financeiro: canView("diario_financeiro") };
+  const veOperacional = acesso.operacional;
   const podeEditar = canEdit("diario");
+  const veFinanceiro = acesso.financeiro;
+  const podeEditarFinanceiro = canEdit("diario_financeiro");
   const { selected, schools, schoolFilterIds } = useSchool();
 
   // Ano letivo: sempre abre no ano vigente configurado (não no mais recente
@@ -299,143 +294,147 @@ function DiarioPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="registro" className="w-full">
+      <Tabs defaultValue={abaInicialDiario(acesso) ?? "registro"} className="w-full">
         <TabsList>
-          <TabsTrigger value="registro">
-            <Utensils className="mr-1.5 h-4 w-4" /> Registro
-          </TabsTrigger>
-          <TabsTrigger value="extras">
-            <AlertTriangle className="mr-1.5 h-4 w-4" /> Consumos Extras
-          </TabsTrigger>
-          {podeEditar && (
+          {veOperacional && (
+            <TabsTrigger value="registro">
+              <Utensils className="mr-1.5 h-4 w-4" /> Registro
+            </TabsTrigger>
+          )}
+          {veOperacional && (
+            <TabsTrigger value="extras">
+              <AlertTriangle className="mr-1.5 h-4 w-4" /> Consumos Extras
+            </TabsTrigger>
+          )}
+          {veFinanceiro && (
             <TabsTrigger value="auditoria">
               <ShieldAlert className="mr-1.5 h-4 w-4" /> Auditoria Sponte
             </TabsTrigger>
           )}
-          {podeEditar && (
+          {veFinanceiro && (
             <TabsTrigger value="precos">
               <Tags className="mr-1.5 h-4 w-4" /> Tabela de Preços
             </TabsTrigger>
           )}
-          {podeEditar && (
+          {veFinanceiro && (
             <TabsTrigger value="faturamento">
               <Receipt className="mr-1.5 h-4 w-4" /> Faturamento
             </TabsTrigger>
           )}
         </TabsList>
 
-        <TabsContent value="registro" className="space-y-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar por aluno ou turma…"
-              className="h-11 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground focus:border-primary focus:outline-none"
-            />
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full rounded-2xl" />
-              ))}
+        {veOperacional && (
+          <TabsContent value="registro" className="space-y-4">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar por aluno ou turma…"
+                className="h-11 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground focus:border-primary focus:outline-none"
+              />
             </div>
-          ) : grouped.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-10 text-center">
-              <UserCircle2 className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Nenhum aluno encontrado.{" "}
-                {podeEditar && "Use \u201cGerenciar\u201d para cadastrar turmas e alunos."}
-              </p>
-            </div>
-          ) : (
-            <Accordion
-              type="multiple"
-              value={openGroups}
-              onValueChange={setOpenGroups}
-              className="space-y-2"
-            >
-              {grouped.map(([className, alunos]) => (
-                <AccordionItem
-                  key={className}
-                  value={className}
-                  className="overflow-hidden rounded-2xl border border-border bg-card px-3"
-                >
-                  <AccordionTrigger className="py-3 hover:no-underline">
-                    <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">
-                        {className || "Sem turma"}
-                      </span>
-                      <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
-                        {alunos.length} {alunos.length === 1 ? "aluno" : "alunos"}
-                      </span>
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-2">
-                    {podeEditar && (
-                      <div className="flex justify-end">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={downloadingClass === className}
-                          onClick={() => baixarTurma(className, alunos)}
-                        >
-                          {downloadingClass === className ? (
-                            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                          ) : (
-                            <QrCode className="mr-1.5 h-4 w-4" />
-                          )}
-                          Baixar Turma Toda (chaveiros)
-                        </Button>
-                      </div>
-                    )}
-                    {alunos.map((s) => (
-                      <StudentCard
-                        key={s.id}
-                        student={s}
-                        onClick={() => {
-                          setActive(s);
-                          setSheetOpen(true);
-                        }}
-                      />
-                    ))}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          )}
-        </TabsContent>
 
-        <TabsContent value="extras">
-          <ExtraChargesTab
-            schoolFilterIds={schoolFilterIds}
-            studentIndex={students}
-            podeEditar={podeEditar}
-          />
-        </TabsContent>
-        {podeEditar && (
+            {isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+                ))}
+              </div>
+            ) : grouped.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border p-10 text-center">
+                <UserCircle2 className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Nenhum aluno encontrado.{" "}
+                  {podeEditar && "Use \u201cGerenciar\u201d para cadastrar turmas e alunos."}
+                </p>
+              </div>
+            ) : (
+              <Accordion
+                type="multiple"
+                value={openGroups}
+                onValueChange={setOpenGroups}
+                className="space-y-2"
+              >
+                {grouped.map(([className, alunos]) => (
+                  <AccordionItem
+                    key={className}
+                    value={className}
+                    className="overflow-hidden rounded-2xl border border-border bg-card px-3"
+                  >
+                    <AccordionTrigger className="py-3 hover:no-underline">
+                      <span className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground">
+                          {className || "Sem turma"}
+                        </span>
+                        <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                          {alunos.length} {alunos.length === 1 ? "aluno" : "alunos"}
+                        </span>
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      {podeEditar && (
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={downloadingClass === className}
+                            onClick={() => baixarTurma(className, alunos)}
+                          >
+                            {downloadingClass === className ? (
+                              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                            ) : (
+                              <QrCode className="mr-1.5 h-4 w-4" />
+                            )}
+                            Baixar Turma Toda (chaveiros)
+                          </Button>
+                        </div>
+                      )}
+                      {alunos.map((s) => (
+                        <StudentCard
+                          key={s.id}
+                          student={s}
+                          onClick={() => {
+                            setActive(s);
+                            setSheetOpen(true);
+                          }}
+                        />
+                      ))}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            )}
+          </TabsContent>
+        )}
+
+        {veOperacional && (
+          <TabsContent value="extras">
+            <ExtraChargesTab schoolFilterIds={schoolFilterIds} studentIndex={students} />
+          </TabsContent>
+        )}
+        {veFinanceiro && (
           <TabsContent value="auditoria">
             <AuditoriaSponte
               unidade={unidadeDaSelecao(selected, schools)}
-              podeExecutar={podeEditar}
+              podeExecutar={podeEditarFinanceiro}
             />
           </TabsContent>
         )}
-        {podeEditar && (
+        {veFinanceiro && (
           <TabsContent value="precos">
             <TabelaPrecos
               unidade={unidadeDaSelecao(selected, schools)}
               anoVigente={anoVigente}
-              podeEditar={podeEditar}
+              podeEditar={podeEditarFinanceiro}
             />
           </TabsContent>
         )}
-        {podeEditar && (
+        {veFinanceiro && (
           <TabsContent value="faturamento">
             <FaturamentoExtras
               unidade={unidadeDaSelecao(selected, schools)}
-              podeEditar={podeEditar}
+              podeEditar={podeEditarFinanceiro}
             />
           </TabsContent>
         )}
@@ -531,30 +530,10 @@ function duracaoHoraExtra(e: ExtraEventRow): string {
 function ExtraChargesTab({
   schoolFilterIds,
   studentIndex,
-  podeEditar,
 }: {
   schoolFilterIds: string[] | null;
   studentIndex: DiarioStudent[];
-  podeEditar: boolean;
 }) {
-  const qc = useQueryClient();
-  const isentar = useServerFn(isentarEventoDiario);
-  const [isentando, setIsentando] = useState<ExtraEventRow | null>(null);
-  const [motivo, setMotivo] = useState("");
-  const isentarMut = useMutation({
-    mutationFn: (vars: { eventId: string; motivo: string }) => isentar({ data: vars }),
-    onSuccess: (r) => {
-      if (!r.ok) {
-        toast.error(r.erro ?? "Não foi possível isentar.");
-        return;
-      }
-      toast.success("Consumo isento — não será cobrado.");
-      setIsentando(null);
-      setMotivo("");
-      void qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const [from, setFrom] = useState(firstOfMonth.toISOString().slice(0, 10));
@@ -690,7 +669,6 @@ function ExtraChargesTab({
                     <AjudaTooltip texto="Pendente: ainda não entrou em nenhum faturamento. Faturando/Lançado/Erro: situação do faturamento em que o consumo foi incluído (aba Faturamento). Isento: o diretor decidiu não cobrar; nunca entra em faturamento." />
                   </span>
                 </th>
-                {podeEditar && <th className="px-3 py-2 font-semibold" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -740,22 +718,6 @@ function ExtraChargesTab({
                         </div>
                       )}
                     </td>
-                    {podeEditar && (
-                      <td className="whitespace-nowrap px-3 py-2 text-right">
-                        {podeIsentar(paraConsumo(e)).ok && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setMotivo("");
-                              setIsentando(e);
-                            }}
-                          >
-                            Isentar
-                          </Button>
-                        )}
-                      </td>
-                    )}
                   </tr>
                 );
               })}
@@ -763,43 +725,6 @@ function ExtraChargesTab({
           </table>
         </div>
       )}
-
-      <Dialog open={isentando !== null} onOpenChange={(o) => !o && setIsentando(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Isentar consumo extra</DialogTitle>
-            <DialogDescription>
-              {isentando
-                ? `${nameById.get(isentando.student_id)?.name ?? "Aluno"} — ${isentando.meal ? MEAL_LABEL[isentando.meal] : isentando.label} em ${formatDateBR(isentando.created_at)}. Este consumo não será cobrado e não entrará em nenhum faturamento.`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">Motivo *</span>
-            <Textarea
-              value={motivo}
-              onChange={(ev) => setMotivo(ev.target.value)}
-              maxLength={300}
-              rows={3}
-              placeholder="Ex.: combinado com o responsável; bonificação da escola"
-            />
-          </label>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsentando(null)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={motivo.trim().length < 3 || isentarMut.isPending}
-              onClick={() =>
-                isentando && isentarMut.mutate({ eventId: isentando.id, motivo: motivo.trim() })
-              }
-            >
-              {isentarMut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirmar isenção
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

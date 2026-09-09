@@ -196,6 +196,7 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
     label: "Pedagógico",
     modules: [
       "diario",
+      "diario_financeiro",
       "colonia",
       "colonia_financeiro",
       "uniformes",
