@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { downloadKeychainPdf, sanitizeFileName } from "@/lib/diario-keychain";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -26,18 +26,23 @@ import {
   QrCode,
   Loader2,
   Camera,
+  Check,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
+import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
+import {
+  dataInicialDoModal,
+  diaDaSemana,
+  ehHoje,
+  instanteDaPonta,
+  instanteDaRefeicao,
+  intervaloDoDia,
+} from "@/lib/diario-registro-retroativo";
 import { PlanEditor } from "@/components/diario/PlanEditor";
 import { StudentPhotoDialog } from "@/components/diario/StudentPhotoDialog";
-import {
-  MEALS,
-  isCoveredToday,
-  type DiarioStudent,
-  type MealKey,
-  type Weekday,
-} from "@/lib/diario";
+import { MEALS, isCoveredToday, type DiarioStudent, type MealKey } from "@/lib/diario";
 import {
   ROTULO_DIRECAO,
   TOLERANCIA_ENTRADA_MIN,
@@ -65,7 +70,7 @@ type Props = {
 };
 
 type Pending =
-  | { key: MealKey; label: string; charge: boolean }
+  | { key: MealKey; label: string; charge: boolean; em: Date }
   | {
       key: "checkinout";
       direcao: DirecaoRegistro;
@@ -73,7 +78,27 @@ type Pending =
       charge: boolean;
       minutos: number | null;
       motivo: string | null;
+      em: Date;
     };
+
+type EventoDoDia = {
+  id: string;
+  event_type: "meal" | "checkinout";
+  label: string;
+  direction: DirecaoRegistro | null;
+  extra_charge: boolean;
+  extra_minutes: number | null;
+  created_at: string;
+};
+
+function nowHHMM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function fmtHora(iso: string): string {
+  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 
 export function StudentActionSheet({
   student,
@@ -90,6 +115,33 @@ export function StudentActionSheet({
   const [editingPlan, setEditingPlan] = useState(false);
   const [editingPhoto, setEditingPhoto] = useState(false);
   const [downloadingKey, setDownloadingKey] = useState(false);
+
+  // Data do registro (retroativa): padrão hoje, redefinida ao abrir o modal.
+  const [selectedDate, setSelectedDate] = useState(dataInicialDoModal);
+  useEffect(() => {
+    if (open) setSelectedDate(dataInicialDoModal());
+  }, [open, student?.id]);
+
+  // Entrada/Saída em data passada pedem a hora exata antes de confirmar.
+  const [pontaForm, setPontaForm] = useState<DirecaoRegistro | null>(null);
+  const [pontaHora, setPontaHora] = useState("");
+
+  const { inicio, fim } = intervaloDoDia(selectedDate);
+  const { data: eventosDoDia = [], isLoading: carregandoDia } = useQuery({
+    queryKey: ["diario_events_dia", student?.id ?? "none", selectedDate],
+    enabled: open && !!student,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("diario_events" as never)
+        .select("id, event_type, label, direction, extra_charge, extra_minutes, created_at")
+        .eq("student_id", student!.id)
+        .gte("created_at", inicio)
+        .lte("created_at", fim)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as EventoDoDia[];
+    },
+  });
 
   const handleKeychain = async () => {
     if (!student) return;
@@ -124,6 +176,7 @@ export function StudentActionSheet({
               extra_charge: p.charge,
               extra_minutes: p.minutos,
               reason: p.motivo,
+              created_at: p.em.toISOString(),
             }
           : {
               student_id: student.id,
@@ -132,7 +185,8 @@ export function StudentActionSheet({
               meal: p.key,
               label: p.label,
               extra_charge: p.charge,
-              reason: p.charge ? "Sem plano contratado para esta refeição hoje" : null,
+              reason: p.charge ? "Sem plano contratado para esta refeição neste dia" : null,
+              created_at: p.em.toISOString(),
             };
       const { error } = await supabase.from("diario_events" as never).insert(row as never);
       if (error) throw error;
@@ -140,14 +194,15 @@ export function StudentActionSheet({
     },
     onSuccess: (p) => {
       const isMeal = p.key !== "checkinout";
-      const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      const detalhe = isMeal ? "Realizado" : hora;
+      const hora = p.em.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const dia = ehHoje(selectedDate) ? "" : ` em ${formatDateBR(selectedDate)}`;
+      const detalhe = (isMeal ? "Realizado" : hora) + dia;
       const extra =
         p.key === "checkinout"
           ? p.minutos
             ? ` • Hora extra: ${formatarMinutos(p.minutos)}`
             : p.charge
-              ? " • Sem horário contratado hoje"
+              ? " • Sem horário contratado neste dia"
               : " • Dentro da tolerância"
           : p.charge
             ? " • Cobrança extra gerada"
@@ -156,7 +211,9 @@ export function StudentActionSheet({
         description: `${student?.name} • ${detalhe}${extra}`,
       });
       qc.invalidateQueries({ queryKey: ["diario_extra_events"] });
+      qc.invalidateQueries({ queryKey: ["diario_events_dia"] });
       setPending(null);
+      setPontaForm(null);
       onOpenChange(false);
     },
     onError: (e: unknown) => {
@@ -177,22 +234,20 @@ export function StudentActionSheet({
       toast.error("Você não tem permissão para registrar consumos.");
       return;
     }
-    const covered = isCoveredToday(student.plan, meal);
+    const em = instanteDaRefeicao(selectedDate);
+    const covered = isCoveredToday(student.plan, meal, em);
     if (!covered) {
-      setPending({ key: meal, label, charge: true });
+      setPending({ key: meal, label, charge: true, em });
       return;
     }
-    register.mutate({ key: meal, label, charge: false });
+    register.mutate({ key: meal, label, charge: false, em });
   };
 
-  const hoje = student.schedule[new Date().getDay() as Weekday];
+  const hojeSelecionado = ehHoje(selectedDate);
+  const diaContratado = student.schedule[diaDaSemana(selectedDate)];
 
-  const handlePonta = (direcao: DirecaoRegistro) => {
-    if (!canEdit) {
-      toast.error("Você não tem permissão para registrar consumos.");
-      return;
-    }
-    const av = avaliarRegistro(student.schedule, direcao, new Date());
+  const registrarPonta = (direcao: DirecaoRegistro, em: Date) => {
+    const av = avaliarRegistro(student.schedule, direcao, em);
     const p: Pending = {
       key: "checkinout",
       direcao,
@@ -200,14 +255,44 @@ export function StudentActionSheet({
       charge: av.cobra,
       minutos: av.minutos,
       motivo: av.motivo,
+      em,
     };
     if (av.cobra) setPending(p);
     else register.mutate(p);
   };
 
+  const handlePonta = (direcao: DirecaoRegistro) => {
+    if (!canEdit) {
+      toast.error("Você não tem permissão para registrar consumos.");
+      return;
+    }
+    if (hojeSelecionado) {
+      const em = instanteDaPonta(selectedDate, null);
+      if (em) registrarPonta(direcao, em);
+      return;
+    }
+    setPontaHora(nowHHMM());
+    setPontaForm(direcao);
+  };
+
+  const confirmarPonta = () => {
+    if (!pontaForm) return;
+    const em = instanteDaPonta(selectedDate, pontaHora);
+    if (!em) {
+      toast.error("Horário inválido");
+      return;
+    }
+    registrarPonta(pontaForm, em);
+  };
+
+  const handleSheetOpenChange = (v: boolean) => {
+    if (!v) setPontaForm(null);
+    onOpenChange(v);
+  };
+
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
+      <Sheet open={open} onOpenChange={handleSheetOpenChange}>
         <SheetContent
           side="bottom"
           className="max-h-[92vh] overflow-y-auto rounded-t-3xl border-t-0 p-0"
@@ -274,9 +359,33 @@ export function StudentActionSheet({
                 o ano vigente ({anoVigente}).
               </p>
             )}
+            <div className="rounded-2xl border border-border bg-card p-3">
+              <label
+                htmlFor="diario-data-registro"
+                className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+              >
+                Data do Registro
+              </label>
+              <input
+                id="diario-data-registro"
+                type="date"
+                value={selectedDate}
+                max={todayISOLocal()}
+                disabled={!registroPermitido}
+                onChange={(e) => {
+                  setSelectedDate(e.target.value || todayISOLocal());
+                  setPontaForm(null);
+                }}
+                className="h-12 w-full rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-primary/60 disabled:opacity-60"
+              />
+            </div>
             {MEALS.map((meal) => {
               const Icon = ICONS[meal.key];
-              const covered = isCoveredToday(student.plan, meal.key);
+              const covered = isCoveredToday(
+                student.plan,
+                meal.key,
+                instanteDaRefeicao(selectedDate),
+              );
               return (
                 <button
                   key={meal.key}
@@ -301,41 +410,117 @@ export function StudentActionSheet({
             })}
 
             <div className="mt-1 grid grid-cols-2 gap-2.5">
-              <button
-                onClick={() => handlePonta("entrada")}
-                disabled={register.isPending || !registroPermitido}
-                className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
-              >
-                <LogIn className="h-6 w-6 flex-shrink-0 text-primary" />
-                <div className="flex flex-1 flex-col leading-tight">
-                  <span>Registrar Entrada</span>
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {hoje
-                      ? `Contratada ${hoje.entry} · ${TOLERANCIA_ENTRADA_MIN} min de tolerância`
-                      : "Sem horário hoje · hora extra"}
-                  </span>
+              {pontaForm ? (
+                <div className="col-span-2 rounded-2xl border border-primary/40 bg-card p-3 shadow-sm">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    {pontaForm === "entrada" ? (
+                      <LogIn className="h-5 w-5 flex-shrink-0 text-primary" />
+                    ) : (
+                      <LogOut className="h-5 w-5 flex-shrink-0 text-primary" />
+                    )}
+                    <span>
+                      {ROTULO_DIRECAO[pontaForm]} em {formatDateBR(selectedDate)} — informe o
+                      horário
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={pontaHora}
+                      onChange={(e) => setPontaHora(e.target.value)}
+                      className="h-12 flex-1 rounded-xl border border-border bg-background px-3 text-base tabular-nums outline-none focus:border-primary/60"
+                    />
+                    <button
+                      onClick={confirmarPonta}
+                      disabled={register.isPending || !pontaHora}
+                      className="flex h-12 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground transition active:scale-[0.98] disabled:opacity-60"
+                    >
+                      <Check className="h-4 w-4" /> Confirmar
+                    </button>
+                    <button
+                      onClick={() => setPontaForm(null)}
+                      disabled={register.isPending}
+                      aria-label="Cancelar"
+                      className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
-              </button>
-              <button
-                onClick={() => handlePonta("saida")}
-                disabled={register.isPending || !registroPermitido}
-                className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
-              >
-                <LogOut className="h-6 w-6 flex-shrink-0 text-primary" />
-                <div className="flex flex-1 flex-col leading-tight">
-                  <span>Registrar Saída</span>
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {hoje
-                      ? `Contratada ${hoje.exit} · ${TOLERANCIA_SAIDA_MIN} min de tolerância`
-                      : "Sem horário hoje · hora extra"}
-                  </span>
-                </div>
-              </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handlePonta("entrada")}
+                    disabled={register.isPending || !registroPermitido}
+                    className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
+                  >
+                    <LogIn className="h-6 w-6 flex-shrink-0 text-primary" />
+                    <div className="flex flex-1 flex-col leading-tight">
+                      <span>Registrar Entrada</span>
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {diaContratado
+                          ? `Contratada ${diaContratado.entry} · ${TOLERANCIA_ENTRADA_MIN} min de tolerância`
+                          : "Sem horário neste dia · hora extra"}
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handlePonta("saida")}
+                    disabled={register.isPending || !registroPermitido}
+                    className="flex h-16 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 text-left text-base font-semibold text-foreground transition-all hover:border-primary/40 active:scale-[0.98] disabled:opacity-60"
+                  >
+                    <LogOut className="h-6 w-6 flex-shrink-0 text-primary" />
+                    <div className="flex flex-1 flex-col leading-tight">
+                      <span>Registrar Saída</span>
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {diaContratado
+                          ? `Contratada ${diaContratado.exit} · ${TOLERANCIA_SAIDA_MIN} min de tolerância`
+                          : "Sem horário neste dia · hora extra"}
+                      </span>
+                    </div>
+                  </button>
+                </>
+              )}
             </div>
             <p className="px-1 text-[11px] text-muted-foreground">
               Registre só a ponta que aconteceu fora do combinado. O que não for registrado vale
               como no horário contratado.
+              {!hojeSelecionado && " Em data passada, Entrada/Saída pedem o horário exato."}
             </p>
+
+            <div className="mt-2 border-t border-border pt-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Histórico do dia {formatDateBR(selectedDate)}
+              </h3>
+              {carregandoDia ? (
+                <p className="py-2 text-center text-sm text-muted-foreground">Carregando…</p>
+              ) : eventosDoDia.length === 0 ? (
+                <p className="py-2 text-center text-sm text-muted-foreground">
+                  Nenhum registro nesta data.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {eventosDoDia.map((ev) => (
+                    <li
+                      key={ev.id}
+                      className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2 text-sm"
+                    >
+                      <span className="flex-1 font-medium text-foreground">{ev.label}</span>
+                      {ev.event_type === "checkinout" ? (
+                        <span className="tabular-nums text-muted-foreground">
+                          {fmtHora(ev.created_at)}
+                          {ev.extra_minutes ? ` · ${formatarMinutos(ev.extra_minutes)}` : ""}
+                        </span>
+                      ) : (
+                        <span className={ev.extra_charge ? "text-amber-700" : "text-emerald-600"}>
+                          {ev.extra_charge ? "Extra" : "Realizado"}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             <button
               onClick={handleKeychain}
@@ -373,16 +558,16 @@ export function StudentActionSheet({
                   <strong className="text-foreground">{pending.label}</strong> de{" "}
                   <strong className="text-foreground">{student.name}</strong>:{" "}
                   {pending.minutos === null
-                    ? "não há horário contratado hoje, então a duração da hora extra terá que ser conferida manualmente."
+                    ? "não há horário contratado neste dia, então a duração da hora extra terá que ser conferida manualmente."
                     : `${formatarMinutos(pending.minutos)} de hora extra além da tolerância.`}{" "}
-                  Registrar agora gerará cobrança para a família. Deseja continuar?
+                  Registrar gerará cobrança para a família. Deseja continuar?
                 </>
               ) : (
                 <>
                   <strong className="text-foreground">{student.name}</strong> não tem{" "}
-                  <strong className="text-foreground">{pending?.label}</strong> contratado para este
-                  momento. Registrar agora gerará uma cobrança extra para a família. Deseja
-                  continuar?
+                  <strong className="text-foreground">{pending?.label}</strong> contratado para{" "}
+                  {hojeSelecionado ? "hoje" : formatDateBR(selectedDate)}. Registrar gerará uma
+                  cobrança extra para a família. Deseja continuar?
                 </>
               )}
             </AlertDialogDescription>
