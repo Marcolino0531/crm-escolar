@@ -15,6 +15,14 @@ import {
   type TabelaPrecos,
 } from "@/lib/diario-precos";
 import { formatarMinutos } from "@/lib/diario-hora-extra";
+import {
+  dataNoMes,
+  diaVencimentoHabitual,
+  mesSeguinte,
+  vencimentoPadraoRecarga,
+  type ParcelaAberta,
+} from "@/lib/cantina";
+import { proximoDiaUtil } from "@/lib/billing-schedule";
 
 // Categoria financeira do Sponte em que o título dos Extras é criado (já
 // existe na conta do colégio, usada também pela matrícula formalizada).
@@ -357,4 +365,27 @@ export function podeIsentar(c: ConsumoFaturavel): TransicaoFaturamento {
     };
   }
   return { ok: true };
+}
+
+export interface VencimentoExtrasDiario {
+  vencimento: string; // YYYY-MM-DD
+  origem: "dia_habitual" | "padrao";
+}
+
+// Vencimento do título dos Extras: sempre no mês seguinte ao do faturamento,
+// no dia habitual de cobrança do aluno (próximo dia útil). Os boletos do mês
+// corrente já foram enviados às famílias, então a mensalidade em aberto mais
+// próxima NÃO serve de referência aqui — quitada ou não, o mês vigente é pulado.
+export function proximoVencimentoExtrasDiario<T extends ParcelaAberta>(
+  parcelas: readonly T[],
+  hojeYMD: string,
+): VencimentoExtrasDiario {
+  const dia = diaVencimentoHabitual(parcelas);
+  if (dia !== null) {
+    return {
+      vencimento: proximoDiaUtil(dataNoMes(mesSeguinte(hojeYMD), dia)),
+      origem: "dia_habitual",
+    };
+  }
+  return { vencimento: proximoDiaUtil(vencimentoPadraoRecarga(hojeYMD)), origem: "padrao" };
 }
