@@ -102,6 +102,7 @@ export const CATEGORIAS_EXTRAS = [
   "Lanche da Tarde",
   "Jantar",
 ] as const;
+export type CategoriaExtra = (typeof CATEGORIAS_EXTRAS)[number];
 
 export interface TituloExtras {
   categoria: string;
@@ -114,11 +115,19 @@ export interface TituloExtras {
 
 export interface ExtrasContrato {
   /** Categorias distintas encontradas, na ordem de CATEGORIAS_EXTRAS. */
-  categorias: string[];
+  categorias: CategoriaExtra[];
+  /** Valor mensal de cada categoria contratada (parcela vigente). */
+  valorPorCategoria: Partial<Record<CategoriaExtra, number>>;
   /** Soma dos valores mensais (uma parcela vigente por categoria). */
   valorMensal: number;
-  /** "Hora Extra, Almoço e Jantar" ou o texto de fallback. */
+  /**
+   * Texto da cláusula antes do total: "Hora Extra (R$…, das 11:00 às 13:00, de
+   * segunda a sexta-feira), Almoço (…) e Jantar (…)" quando detalhado pelo
+   * Diário, "Hora Extra, Almoço e Jantar" sem detalhe, ou o fallback.
+   */
   lista: string;
+  /** Divergências Sponte × Diário encontradas ao detalhar (nunca bloqueiam). */
+  avisos: string[];
 }
 
 function chaveCategoria(texto: string): string {
@@ -130,7 +139,7 @@ function chaveCategoria(texto: string): string {
     .trim();
 }
 
-function categoriaExtra(categoria: string): (typeof CATEGORIAS_EXTRAS)[number] | null {
+function categoriaExtra(categoria: string): CategoriaExtra | null {
   const chave = chaveCategoria(categoria);
   return CATEGORIAS_EXTRAS.find((c) => chaveCategoria(c) === chave) ?? null;
 }
@@ -171,20 +180,24 @@ export function extrasDoContrato(
     porCategoria.set(cat, lista);
   }
 
-  const categorias: string[] = [];
+  const categorias: CategoriaExtra[] = [];
+  const valorPorCategoria: Partial<Record<CategoriaExtra, number>> = {};
   let totalCentavos = 0;
   for (const cat of CATEGORIAS_EXTRAS) {
     const lista = porCategoria.get(cat);
     if (!lista?.length) continue;
     const primeira = [...lista].sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
     categorias.push(cat);
+    valorPorCategoria[cat] = centavos(primeira.valor) / 100;
     totalCentavos += centavos(primeira.valor);
   }
 
   return {
     categorias,
+    valorPorCategoria,
     valorMensal: totalCentavos / 100,
     lista: categorias.length ? listarComE(categorias) : TEXTO_SEM_EXTRAS,
+    avisos: [],
   };
 }
 

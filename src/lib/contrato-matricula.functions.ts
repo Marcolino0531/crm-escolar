@@ -48,6 +48,14 @@ import {
 } from "@/lib/contrato-matricula";
 import { gerarPdfContratoMatricula } from "@/lib/contrato-matricula-pdf";
 import {
+  detalharExtrasContrato,
+  type HorarioRegistrado,
+  type PlanoDiarioContrato,
+} from "@/lib/contrato-extras-detalhe";
+import type { MealKey, Weekday } from "@/lib/diario";
+import { HORARIOS_PADRAO, segmentoDaSerie } from "@/lib/matricula-form";
+import { turnoDaTurma, type TurnoTurma } from "@/lib/matricula-turma";
+import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
 } from "@/lib/rematricula-extras.functions";
@@ -469,6 +477,124 @@ async function extrasDoAluno(
   );
 }
 
+// ─── Plano do Diário (dias das refeições e horários) ─────────────────────────
+// O Sponte dá o VALOR de cada extra; o Diário dá os dias da semana e o horário
+// registrado, e student_routine (ano do contrato) o turno regular coberto pela
+// Mensalidade. Nada aqui derruba o contrato: sem dado → plano null + motivo.
+
+interface PlanoDiarioLido {
+  plano: PlanoDiarioContrato | null;
+  motivo?: string;
+  avisos: string[];
+}
+
+async function planoDiarioDoAluno(
+  unidade: string,
+  alunoId: string,
+  anoLetivo: number,
+  serie: string,
+  turmaSponte: string,
+): Promise<PlanoDiarioLido> {
+  const avisos: string[] = [];
+  const { data: school } = await supabaseAdmin
+    .from("schools")
+    .select("id")
+    .eq("name", unidade)
+    .maybeSingle<{ id: string }>();
+  if (!school)
+    return { plano: null, motivo: `Unidade "${unidade}" sem cadastro no Diário.`, avisos };
+
+  const { data: alunos } = await supabaseAdmin
+    .from("diario_students" as never)
+    .select("id, name")
+    .eq("school_id", school.id)
+    .eq("sponte_aluno_id", alunoId)
+    .returns<{ id: string; name: string }[]>();
+  if (!alunos?.length) {
+    return {
+      plano: null,
+      motivo: `Aluno ${alunoId} sem vínculo (sponte_aluno_id) no Diário de ${unidade}; EXTRAS sem dias e horários.`,
+      avisos,
+    };
+  }
+  if (alunos.length > 1) {
+    return {
+      plano: null,
+      motivo: `Mais de um aluno do Diário vinculado ao AlunoID ${alunoId} em ${unidade}; EXTRAS sem dias e horários.`,
+      avisos,
+    };
+  }
+  const studentId = alunos[0].id;
+
+  const [refeicoesRows, horariosRows, rotinaRows] = await Promise.all([
+    selectAll<{ meal: MealKey; weekday: Weekday }>(() =>
+      supabaseAdmin
+        .from("diario_meal_plans" as never)
+        .select("meal, weekday")
+        .eq("student_id", studentId)
+        .eq("ano_letivo", anoLetivo)
+        .order("meal")
+        .order("weekday"),
+    ),
+    selectAll<{ weekday: Weekday; entry: string | null; exit: string | null }>(() =>
+      supabaseAdmin
+        .from("diario_schedules" as never)
+        .select("weekday, entry, exit")
+        .eq("student_id", studentId)
+        .eq("ano_letivo", anoLetivo)
+        .order("weekday"),
+    ),
+    supabaseAdmin
+      .from("student_routine" as never)
+      .select("horario_curricular, origem")
+      .eq("unidade", unidade)
+      .eq("sponte_aluno_id", Number(alunoId))
+      .eq("ano_letivo", anoLetivo)
+      .order("updated_at", { ascending: false })
+      .returns<{ horario_curricular: string | null; origem: string }[]>()
+      .then((r) => r.data ?? []),
+  ]);
+
+  const refeicoes: Record<MealKey, Weekday[]> = { breakfast: [], lunch: [], snack: [], dinner: [] };
+  for (const r of refeicoesRows) {
+    if (r.meal in refeicoes && !refeicoes[r.meal].includes(r.weekday))
+      refeicoes[r.meal].push(r.weekday);
+  }
+  const horarios: Partial<Record<Weekday, HorarioRegistrado>> = {};
+  for (const h of horariosRows) {
+    if (h.entry && h.exit) horarios[h.weekday] = { entry: h.entry, exit: h.exit };
+  }
+  if (refeicoesRows.length === 0 && horariosRows.length === 0) {
+    return {
+      plano: null,
+      motivo: `Aluno sem plano no Diário para ${anoLetivo} (refeições e horários vazios); EXTRAS sem dias e horários.`,
+      avisos,
+    };
+  }
+
+  let turno: TurnoTurma | null = null;
+  const curricular = rotinaRows.find(
+    (r) => r.horario_curricular === "M" || r.horario_curricular === "T",
+  );
+  if (curricular) turno = curricular.horario_curricular as TurnoTurma;
+  else {
+    // Sem rotina do ano (ou sem turno nela): o marcador da turma atual do
+    // Sponte ("07 - 1º Ano T") é a segunda melhor pista — e fica registrado.
+    turno = turnoDaTurma({ nome: turmaSponte, horario: "" });
+    if (turno) {
+      avisos.push(
+        rotinaRows.length === 0
+          ? `Sem rotina (student_routine) do aluno para ${anoLetivo}; turno regular "${turno}" deduzido pela turma do Sponte (${turmaSponte}).`
+          : `Rotina de ${anoLetivo} sem horário curricular; turno regular "${turno}" deduzido pela turma do Sponte (${turmaSponte}).`,
+      );
+    }
+  }
+  const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  const turnoRegular = turno === "M" ? padrao.manha : turno === "T" ? padrao.tarde : null;
+
+  return { plano: { refeicoes, horarios, turnoRegular }, avisos };
+}
+
 async function colegioDaUnidade(unidade: string): Promise<ColegioRow> {
   const { data } = await supabaseAdmin
     .from("documentos_colegios" as never)
@@ -530,6 +656,8 @@ interface PdfContratoMontado {
   input: MontarContratoInput;
   fin: Awaited<ReturnType<typeof buscarResponsaveisComFinanceiro>>[number];
   signatarios: SignatarioContrato[];
+  /** Divergências Sponte × Diário nos EXTRAS — informativas, não bloqueiam. */
+  avisos: string[];
 }
 
 /**
@@ -537,7 +665,7 @@ interface PdfContratoMontado {
  * Não grava nada nem fala com a ZapSign — serve tanto para a prévia quanto
  * para o envio real.
  */
-async function montarPdfContrato(
+export async function montarPdfContrato(
   unidade: string,
   alunoId: string,
   anoLetivo: number,
@@ -570,12 +698,29 @@ async function montarPdfContrato(
   if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
 
   // Respeita a troca de responsável financeiro feita no portal de rematrícula.
-  const [responsaveis, mensalidade, extras, logo] = await Promise.all([
+  // Com a matrícula informada (aba Documentos) a série vem do Sponte; pelo
+  // portal continua a série escolhida na rematrícula.
+  const serie = matriculaInformada
+    ? aluno.serie || (matricula.data?.serie ?? "")
+    : matricula.data!.serie;
+  const [responsaveis, mensalidade, extrasSponte, logo, planoDiario] = await Promise.all([
     buscarResponsaveisComFinanceiro(unidade, alunoId, anoLetivo),
     buscarMensalidadeVigente(unidade, alunoId, anoLetivo),
     extrasDoAluno(unidade, alunoId, anoLetivo),
     carregarLogoServidor(colegio.logo_path),
+    planoDiarioDoAluno(unidade, alunoId, anoLetivo, serie, aluno.turma).catch(
+      (e: unknown): PlanoDiarioLido => ({
+        plano: null,
+        motivo: `Falha ao ler o plano do Diário: ${e instanceof Error ? e.message : String(e)}`,
+        avisos: [],
+      }),
+    ),
   ]);
+  const extras = detalharExtrasContrato(
+    { ...extrasSponte, avisos: [...extrasSponte.avisos, ...planoDiario.avisos] },
+    planoDiario.plano,
+    planoDiario.motivo,
+  );
   const fin = responsaveis.find((r) => r.financeiro);
   if (!fin) throw new Error("Responsável financeiro não encontrado no Sponte.");
   if (!emailValido(fin.email)) {
@@ -585,11 +730,6 @@ async function montarPdfContrato(
     throw new Error(`Nenhuma mensalidade de ${anoLetivo} encontrada no Sponte para este aluno.`);
   }
 
-  // Com a matrícula informada (aba Documentos) a série vem do Sponte; pelo
-  // portal continua a série escolhida na rematrícula.
-  const serie = matriculaInformada
-    ? aluno.serie || (matricula.data?.serie ?? "")
-    : matricula.data!.serie;
   const dadosMatricula: MatriculaContrato = matriculaInformada ?? {
     valor: Number(matricula.data!.valor),
     parcelas: matricula.data!.parcelas,
@@ -672,7 +812,9 @@ async function montarPdfContrato(
     logo,
   );
   const pdfBase64 = pdfParaBase64(pdf);
-  return { pdfBase64, contrato, input, fin, signatarios };
+  if (extras.avisos.length)
+    console.warn(`${LOG_TAG} ${numero} EXTRAS: ${extras.avisos.join(" | ")}`);
+  return { pdfBase64, contrato, input, fin, signatarios, avisos: extras.avisos };
 }
 
 const DadosSchema = z.object({
@@ -784,6 +926,8 @@ export interface PreviaContratoResult {
   numero?: string;
   nomeArquivo?: string;
   pdfBase64?: string;
+  /** Divergências Sponte × Diário nos EXTRAS (o PDF saiu mesmo assim). */
+  avisos?: string[];
 }
 
 export const previaContratoMatricula = createServerFn({ method: "POST" })
@@ -797,7 +941,7 @@ export const previaContratoMatricula = createServerFn({ method: "POST" })
     }
     const numero = numeroContrato(unidade, alunoId, anoLetivo);
     try {
-      const { pdfBase64, input } = await montarPdfContrato(
+      const { pdfBase64, input, avisos } = await montarPdfContrato(
         unidade,
         alunoId,
         anoLetivo,
@@ -809,6 +953,7 @@ export const previaContratoMatricula = createServerFn({ method: "POST" })
         numero,
         nomeArquivo: `PREVIA Contrato de Matrícula ${anoLetivo} - ${input.alunoNome} (${unidade}).pdf`,
         pdfBase64,
+        avisos,
       };
     } catch (e) {
       return { ok: false, erro: e instanceof Error ? e.message : "Falha desconhecida.", numero };
@@ -822,6 +967,8 @@ export interface GerarContratoResult {
   /** Link do CONTRATANTE (responsável financeiro). */
   signUrl?: string;
   signatarios?: SignatarioContratoStatus[];
+  /** Divergências Sponte × Diário nos EXTRAS (o contrato foi enviado mesmo assim). */
+  avisos?: string[];
 }
 
 export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
@@ -864,7 +1011,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
     });
 
     try {
-      const { pdfBase64, contrato, input, fin, signatarios } = await montarPdfContrato(
+      const { pdfBase64, contrato, input, fin, signatarios, avisos } = await montarPdfContrato(
         unidade,
         alunoId,
         anoLetivo,
@@ -939,6 +1086,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
         numero,
         signUrl: linkContratante(doc.signatarios),
         signatarios: signatariosDoDocumento(doc.signatarios),
+        avisos,
       };
     } catch (e) {
       const erro = e instanceof Error ? e.message : "Falha desconhecida.";

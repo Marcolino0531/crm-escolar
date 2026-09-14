@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { avisarExtrasContrato } from "@/lib/contrato-avisos-toast";
 import { FileText, Loader2, Search, Send, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,6 +100,7 @@ export function GerarContratoMatricula() {
       const r = await previa({ data });
       if (!r.ok || !r.pdfBase64) throw new Error(r.erro ?? "Falha ao gerar a prévia.");
       abrirPdfBase64(r.pdfBase64, r.nomeArquivo ?? "previa-contrato.pdf");
+      avisarExtrasContrato(r.avisos);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar a prévia."),
   });
@@ -113,6 +115,7 @@ export function GerarContratoMatricula() {
     },
     onSuccess: (r) => {
       toast.success(`Contrato ${r.numero} enviado para assinatura na ZapSign.`);
+      avisarExtrasContrato(r.avisos);
       dados.refetch();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar o contrato."),
