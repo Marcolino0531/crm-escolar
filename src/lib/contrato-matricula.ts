@@ -10,6 +10,7 @@
 // assinar, o documento já assinado NÃO é atualizado — a cobrança segue o
 // Sponte; o contrato registra apenas o que estava vigente na data da geração.
 
+import { parseBRLNumber } from "@/lib/currency";
 import { dataPorExtenso, valorPorExtenso } from "@/lib/recibos";
 import {
   MODELO_CONTRATO,
@@ -506,4 +507,61 @@ export function nomeArquivoContrato(doc: ContratoMatriculaDocumento): string {
     .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
   return `Contrato-Matricula-${doc.numero}-${aluno}.pdf`;
+}
+
+// ─── Matrícula informada na aba Documentos ─────────────────────────────────
+// Fora do portal de rematrícula não há linha em rematricula_matricula_escolhas:
+// quem gera o contrato escolhe entre o valor integral da tabela do ano
+// (segmento da série) e um valor manual (bolsa, negociação), e digita parcelas
+// e 1º vencimento.
+
+export interface MatriculaInformada {
+  /** Valor integral da tabela para a série/ano; null quando não cadastrado. */
+  valorTabela: number | null;
+  /** Campo manual como digitado ("" = usar a tabela). */
+  valorManual: string;
+  parcelas: string;
+  /** YYYY-MM-DD */
+  primeiroVencimento: string;
+}
+
+export interface MatriculaResolvida {
+  matricula: MatriculaContrato | null;
+  origem: "tabela" | "manual" | null;
+  erros: string[];
+}
+
+const RE_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+export function resolverMatriculaInformada(m: MatriculaInformada): MatriculaResolvida {
+  const erros: string[] = [];
+  const manual = m.valorManual.trim();
+  let valor: number | null = null;
+  let origem: "tabela" | "manual" | null = null;
+  if (manual) {
+    const n = parseBRLNumber(manual);
+    if (Number.isFinite(n) && n > 0) {
+      valor = n;
+      origem = "manual";
+    } else {
+      erros.push("Valor manual da Matrícula inválido.");
+    }
+  } else if (m.valorTabela !== null && m.valorTabela > 0) {
+    valor = m.valorTabela;
+    origem = "tabela";
+  } else {
+    erros.push("Informe o valor da Matrícula (não há tabela de valores para a série/ano).");
+  }
+
+  const parcelas = Number(m.parcelas.trim());
+  if (!Number.isInteger(parcelas) || parcelas < 1 || parcelas > 12) {
+    erros.push("Parcelas da Matrícula devem ser um inteiro entre 1 e 12.");
+  }
+  const venc = m.primeiroVencimento.trim();
+  if (!RE_YMD.test(venc) || Number.isNaN(new Date(`${venc}T00:00:00Z`).getTime())) {
+    erros.push("Data do 1º vencimento da Matrícula inválida.");
+  }
+
+  if (erros.length > 0 || valor === null) return { matricula: null, origem: null, erros };
+  return { matricula: { valor, parcelas, primeiroVencimento: venc }, origem, erros: [] };
 }

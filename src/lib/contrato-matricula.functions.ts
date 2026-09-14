@@ -3,8 +3,11 @@
 // A tela lista as matrículas finalizadas no portal (rematricula_envios) que
 // ainda não têm contrato enviado. "Gerar e enviar contrato" executa, nesta
 // ordem e abortando no primeiro erro:
-//   1. autorização (permissão de edição em Rematrícula + unidade permitida);
-//   2. dados persistidos da matrícula (parcelamento) e do material escolhido;
+//   1. autorização (edição em Rematrícula OU Documentos + unidade permitida);
+//   2. dados persistidos da matrícula (parcelamento) e do material escolhido —
+//      ou, pela aba Documentos (matrícula nova), a Matrícula informada pela
+//      secretaria (tabela do ano ou valor manual, parcelas, 1º vencimento) com
+//      a série lida do Sponte;
 //   3. dados ATUAIS do aluno, do responsável financeiro, da mensalidade vigente
 //      e dos extras (contas a receber) no Sponte da unidade do aluno;
 //   4. Dados dos Colégios da MESMA unidade (razão social, CNPJ, representante
@@ -38,6 +41,7 @@ import {
   validarContrato,
   type CamposContrato,
   type ExtrasContrato,
+  type MatriculaContrato,
   type MontarContratoInput,
   type SignatarioContrato,
   type TestemunhaContrato,
@@ -55,7 +59,10 @@ import {
   exigirPermissaoRematricula,
   hojeBRT,
   itensMaterialDaSerie,
+  valoresMatriculaDoAno,
 } from "@/lib/rematricula.functions";
+import { valorMatricula } from "@/lib/rematricula-matricula";
+import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
 import {
   criarDocumentoPdf,
@@ -209,11 +216,41 @@ function linkContratante(signatarios: SignatarioPersistido[] | null | undefined)
 
 const UnidadeSchema = z.object({ unidade: z.string().min(1) });
 
+const MatriculaInformadaSchema = z.object({
+  valor: z.number().positive(),
+  parcelas: z.number().int().min(1).max(12),
+  primeiroVencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida."),
+});
+
 const GerarSchema = z.object({
   unidade: z.string().min(1),
   alunoId: z.string().trim().regex(/^\d+$/, "AlunoID inválido."),
   anoLetivo: z.number().int().min(2000).max(2100),
+  // Matrícula informada pela secretaria (aba Documentos). Ausente = usar a
+  // escolha gravada pelo portal de rematrícula.
+  matricula: MatriculaInformadaSchema.optional(),
 });
+
+// O contrato é gerado tanto pela Rematrícula quanto pela aba Documentos: basta
+// a permissão de um dos dois módulos (mesmo público, entrada por tela diferente).
+async function exigirPermissaoContrato(userId: string, edicao: boolean): Promise<string> {
+  const fn = (edicao ? "can_edit_module" : "can_view_module") as never;
+  const [rem, doc] = await Promise.all(
+    ["rematricula", "documentos"].map((modulo) =>
+      supabaseAdmin.rpc(fn, { _user_id: userId, _module: modulo } as never),
+    ),
+  );
+  if (rem.error) throw new Error(rem.error.message);
+  if (doc.error) throw new Error(doc.error.message);
+  if (!rem.data && !doc.data) {
+    throw new Error(
+      edicao
+        ? "Você não tem permissão para gerar contratos de matrícula."
+        : "Você não tem permissão para ver contratos de matrícula.",
+    );
+  }
+  return nomeDoUsuario(userId);
+}
 
 async function unidadePermitida(userId: string, unidade: string): Promise<boolean> {
   const permitidas = await allowedSponteUnidades(userId);
@@ -505,6 +542,7 @@ async function montarPdfContrato(
   alunoId: string,
   anoLetivo: number,
   numero: string,
+  matriculaInformada?: MatriculaContrato,
 ): Promise<PdfContratoMontado> {
   const hoje = hojeBRT();
   const [matricula, escolha, aluno, colegio, testemunhas] = await Promise.all([
@@ -526,7 +564,9 @@ async function montarPdfContrato(
     colegioDaUnidade(unidade),
     testemunhasAtivas(),
   ]);
-  if (!matricula.data) throw new Error("Matrícula não encontrada para este aluno.");
+  if (!matricula.data && !matriculaInformada) {
+    throw new Error("Matrícula não encontrada para este aluno.");
+  }
   if (!aluno) throw new Error("Não foi possível ler o aluno no Sponte.");
 
   // Respeita a troca de responsável financeiro feita no portal de rematrícula.
@@ -545,7 +585,16 @@ async function montarPdfContrato(
     throw new Error(`Nenhuma mensalidade de ${anoLetivo} encontrada no Sponte para este aluno.`);
   }
 
-  const serie = matricula.data.serie;
+  // Com a matrícula informada (aba Documentos) a série vem do Sponte; pelo
+  // portal continua a série escolhida na rematrícula.
+  const serie = matriculaInformada
+    ? aluno.serie || (matricula.data?.serie ?? "")
+    : matricula.data!.serie;
+  const dadosMatricula: MatriculaContrato = matriculaInformada ?? {
+    valor: Number(matricula.data!.valor),
+    parcelas: matricula.data!.parcelas,
+    primeiroVencimento: matricula.data!.primeiro_vencimento,
+  };
   const itensMaterial = escolha.data ? await itensMaterialDaSerie(unidade, serie, anoLetivo) : [];
   const input: MontarContratoInput = {
     numeroContrato: numero,
@@ -581,13 +630,9 @@ async function montarPdfContrato(
       uf: fin.uf,
       cep: fin.cep,
     },
-    alunoNome: aluno.nome || matricula.data.aluno_nome,
+    alunoNome: aluno.nome || (matricula.data?.aluno_nome ?? ""),
     serie,
-    matricula: {
-      valor: Number(matricula.data.valor),
-      parcelas: matricula.data.parcelas,
-      primeiroVencimento: matricula.data.primeiro_vencimento,
-    },
+    matricula: dadosMatricula,
     mensalidade: {
       valor: mensalidade.valor,
       descontoPercentual: mensalidade.descontoPercentual,
@@ -630,6 +675,109 @@ async function montarPdfContrato(
   return { pdfBase64, contrato, input, fin, signatarios };
 }
 
+const DadosSchema = z.object({
+  unidade: z.string().min(1),
+  alunoId: z.string().trim().regex(/^\d+$/, "AlunoID inválido."),
+  anoLetivo: z.number().int().min(2000).max(2100),
+});
+
+export interface DadosContratoDocumentos {
+  ok: boolean;
+  erro?: string;
+  alunoNome: string;
+  serie: string;
+  /** Valor integral da tabela do ano para a série; null = não cadastrado. */
+  valorTabela: number | null;
+  /** false quando nenhum segmento tem valor cadastrado para o ano. */
+  tabelaConfigurada: boolean;
+  /** Matrícula gravada pelo portal de rematrícula, se houver. */
+  matriculaRematricula: MatriculaContrato | null;
+  contrato: {
+    numero: string;
+    status: StatusContratoMatricula;
+    enviadoEm: string | null;
+    signatarios: SignatarioContratoStatus[];
+  } | null;
+}
+
+/** Dados que a aba Documentos precisa antes de gerar o Contrato de Matrícula. */
+export const dadosContratoDocumentos = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DadosSchema.parse(input))
+  .handler(async ({ data, context }): Promise<DadosContratoDocumentos> => {
+    await exigirPermissaoContrato(context.userId, false);
+    const { unidade, alunoId, anoLetivo } = data;
+    const vazio: DadosContratoDocumentos = {
+      ok: false,
+      alunoNome: "",
+      serie: "",
+      valorTabela: null,
+      tabelaConfigurada: false,
+      matriculaRematricula: null,
+      contrato: null,
+    };
+    if (!(await unidadePermitida(context.userId, unidade))) {
+      return { ...vazio, erro: "Sem permissão para esta unidade." };
+    }
+    const [aluno, valores, matricula, contrato] = await Promise.all([
+      buscarAlunoPorId(unidade, alunoId),
+      valoresMatriculaDoAno(anoLetivo),
+      supabaseAdmin
+        .from("rematricula_matricula_escolhas" as never)
+        .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
+        .eq("unidade", unidade)
+        .eq("aluno_id", alunoId)
+        .eq("ano_letivo", anoLetivo)
+        .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
+      supabaseAdmin
+        .from(T_CONTRATOS)
+        .select("numero_contrato, status, enviado_em, zapsign_documento_id")
+        .eq("unidade", unidade)
+        .eq("aluno_id", alunoId)
+        .eq("ano_letivo", anoLetivo)
+        .maybeSingle<{
+          numero_contrato: string;
+          status: StatusContratoMatricula;
+          enviado_em: string | null;
+          zapsign_documento_id: string | null;
+        }>(),
+    ]);
+    if (!aluno) return { ...vazio, erro: "Não foi possível ler o aluno no Sponte." };
+
+    let signatarios: SignatarioContratoStatus[] = [];
+    if (contrato.data?.zapsign_documento_id) {
+      const { data: doc } = await supabaseAdmin
+        .from(T_DOCS)
+        .select("signatarios")
+        .eq("id", contrato.data.zapsign_documento_id)
+        .maybeSingle<{ signatarios: SignatarioPersistido[] | null }>();
+      signatarios = signatariosDoDocumento(doc?.signatarios);
+    }
+    const m = matricula.data;
+    return {
+      ok: true,
+      alunoNome: aluno.nome,
+      serie: aluno.serie,
+      valorTabela: aluno.serie ? valorMatricula(valores, aluno.serie) : null,
+      tabelaConfigurada: Object.keys(valores).length > 0,
+      matriculaRematricula: m
+        ? {
+            valor: Number(m.valor),
+            parcelas: m.parcelas,
+            primeiroVencimento: m.primeiro_vencimento,
+          }
+        : null,
+      contrato: contrato.data
+        ? {
+            numero: contrato.data.numero_contrato,
+            status: contrato.data.status,
+            enviadoEm: contrato.data.enviado_em,
+            signatarios,
+          }
+        : null,
+    };
+  });
+
 export interface PreviaContratoResult {
   ok: boolean;
   erro?: string;
@@ -642,14 +790,20 @@ export const previaContratoMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => GerarSchema.parse(input))
   .handler(async ({ data, context }): Promise<PreviaContratoResult> => {
-    await exigirPermissaoRematricula(context.userId, false);
-    const { unidade, alunoId, anoLetivo } = data;
+    await exigirPermissaoContrato(context.userId, false);
+    const { unidade, alunoId, anoLetivo, matricula } = data;
     if (!(await unidadePermitida(context.userId, unidade))) {
       return { ok: false, erro: "Sem permissão para esta unidade." };
     }
     const numero = numeroContrato(unidade, alunoId, anoLetivo);
     try {
-      const { pdfBase64, input } = await montarPdfContrato(unidade, alunoId, anoLetivo, numero);
+      const { pdfBase64, input } = await montarPdfContrato(
+        unidade,
+        alunoId,
+        anoLetivo,
+        numero,
+        matricula,
+      );
       return {
         ok: true,
         numero,
@@ -674,8 +828,8 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => GerarSchema.parse(input))
   .handler(async ({ data, context }): Promise<GerarContratoResult> => {
-    const nomeUsuario = await exigirPermissaoRematricula(context.userId, true);
-    const { unidade, alunoId, anoLetivo } = data;
+    const nomeUsuario = await exigirPermissaoContrato(context.userId, true);
+    const { unidade, alunoId, anoLetivo, matricula } = data;
     if (!(await unidadePermitida(context.userId, unidade))) {
       return { ok: false, erro: "Sem permissão para esta unidade." };
     }
@@ -715,6 +869,7 @@ export const gerarEnviarContratoMatricula = createServerFn({ method: "POST" })
         alunoId,
         anoLetivo,
         numero,
+        matricula,
       );
 
       const nomeDoc = `Contrato de Matrícula ${anoLetivo} - ${input.alunoNome} (${unidade})`;

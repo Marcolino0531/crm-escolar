@@ -10,6 +10,7 @@ import {
   numeroBR,
   numeroContrato,
   preencherModelo,
+  resolverMatriculaInformada,
   signatariosContrato,
   validarContrato,
   valorComDesconto,
@@ -460,5 +461,52 @@ describe("signatariosContrato", () => {
     expect(preencherModelo("x «NaoExiste» «NomeAluno»", campos)).toBe(
       "x «NaoExiste» Pedro da Silva",
     );
+  });
+});
+
+describe("resolverMatriculaInformada", () => {
+  const base = {
+    valorTabela: 1500,
+    valorManual: "",
+    parcelas: "3",
+    primeiroVencimento: "2026-12-10",
+  };
+
+  it("usa o valor integral da tabela quando o manual está vazio", () => {
+    const r = resolverMatriculaInformada(base);
+    expect(r.erros).toEqual([]);
+    expect(r.origem).toBe("tabela");
+    expect(r.matricula).toEqual({ valor: 1500, parcelas: 3, primeiroVencimento: "2026-12-10" });
+  });
+
+  it("o valor manual (formato BR) substitui a tabela", () => {
+    const r = resolverMatriculaInformada({ ...base, valorManual: "1.234,56" });
+    expect(r.origem).toBe("manual");
+    expect(r.matricula?.valor).toBe(1234.56);
+  });
+
+  it("sem tabela e sem manual exige o valor", () => {
+    const r = resolverMatriculaInformada({ ...base, valorTabela: null });
+    expect(r.matricula).toBeNull();
+    expect(r.erros[0]).toMatch(/Informe o valor/);
+  });
+
+  it("sem tabela mas com manual funciona", () => {
+    const r = resolverMatriculaInformada({ ...base, valorTabela: null, valorManual: "800" });
+    expect(r.matricula?.valor).toBe(800);
+    expect(r.origem).toBe("manual");
+  });
+
+  it("rejeita manual zero/negativo, parcelas fora de 1..12 e data inválida", () => {
+    expect(resolverMatriculaInformada({ ...base, valorManual: "0" }).erros).toEqual([
+      "Valor manual da Matrícula inválido.",
+    ]);
+    expect(resolverMatriculaInformada({ ...base, parcelas: "0" }).erros).toHaveLength(1);
+    expect(resolverMatriculaInformada({ ...base, parcelas: "13" }).erros).toHaveLength(1);
+    expect(resolverMatriculaInformada({ ...base, parcelas: "2.5" }).erros).toHaveLength(1);
+    expect(resolverMatriculaInformada({ ...base, primeiroVencimento: "10/12/2026" }).erros).toEqual(
+      ["Data do 1º vencimento da Matrícula inválida."],
+    );
+    expect(resolverMatriculaInformada({ ...base, primeiroVencimento: "" }).matricula).toBeNull();
   });
 });
