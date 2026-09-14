@@ -4,12 +4,13 @@
 // ainda não têm contrato enviado. "Gerar e enviar contrato" executa, nesta
 // ordem e abortando no primeiro erro:
 //   1. autorização (edição em Rematrícula OU Documentos + unidade permitida);
-//   2. dados persistidos da matrícula (parcelamento) e do material escolhido —
+//   2. dados persistidos da matrícula (parcelamento) —
 //      ou, pela aba Documentos (matrícula nova), a Matrícula informada pela
 //      secretaria (tabela do ano ou valor manual, parcelas, 1º vencimento) com
 //      a série lida do Sponte;
-//   3. dados ATUAIS do aluno, do responsável financeiro, da mensalidade vigente
-//      e dos extras (contas a receber) no Sponte da unidade do aluno;
+//   3. dados ATUAIS do aluno, do responsável financeiro, da mensalidade vigente,
+//      do Material Pedagógico e dos extras (contas a receber) no Sponte da
+//      unidade do aluno;
 //   4. Dados dos Colégios da MESMA unidade (razão social, CNPJ, representante
 //      legal e CPF, logo) — nunca de outra unidade;
 //   5. montagem + validação dos campos do modelo, PDF com a logo da unidade;
@@ -35,12 +36,15 @@ import type { LogoRecibo } from "@/lib/documento-pdf";
 import { pdfParaBase64 } from "@/lib/documento-pdf";
 import {
   extrasDoContrato,
+  materialDoContrato,
   montarContratoMatricula,
   numeroContrato,
   signatariosContrato,
   validarContrato,
   type CamposContrato,
   type ExtrasContrato,
+  type MaterialSponte,
+  type TituloExtras,
   type MatriculaContrato,
   type MontarContratoInput,
   type SignatarioContrato,
@@ -457,24 +461,31 @@ async function carregarLogoServidor(logoPath: string | null): Promise<LogoRecibo
 // (Hora Extra, lanches, almoço, jantar). Um contrato já assinado NÃO é
 // alterado se o responsável contratar ou cancelar um extra depois.
 
-async function extrasDoAluno(
-  unidade: string,
-  alunoId: string,
-  anoLetivo: number,
-): Promise<ExtrasContrato> {
+async function titulosDoAluno(unidade: string, alunoId: string): Promise<TituloExtras[]> {
   const r = await coletarTitulosAluno(unidade, alunoId);
   if (r.error) throw new Error(`Falha ao ler o contas a receber no Sponte: ${r.error}`);
   if (r.indisponivel) throw new Error("Integração Sponte indisponível para esta unidade.");
-  return extrasDoContrato(
-    r.titulos.map((t) => ({
-      categoria: t.categoria,
-      vencimento: t.vencimento,
-      valor: t.valor,
-      situacao: t.situacao,
-      quitada: t.quitada,
-    })),
-    anoLetivo,
-  );
+  return r.titulos.map((t) => ({
+    contaReceberID: t.contaReceberID,
+    categoria: t.categoria,
+    vencimento: t.vencimento,
+    valor: t.valor,
+    situacao: t.situacao,
+    quitada: t.quitada,
+  }));
+}
+
+/** Extras e Material Pedagógico do ano letivo, numa só leitura do Sponte. */
+async function extrasEMaterialDoAluno(
+  unidade: string,
+  alunoId: string,
+  anoLetivo: number,
+): Promise<{ extras: ExtrasContrato; material: MaterialSponte | null }> {
+  const titulos = await titulosDoAluno(unidade, alunoId);
+  return {
+    extras: extrasDoContrato(titulos, anoLetivo),
+    material: materialDoContrato(titulos, anoLetivo),
+  };
 }
 
 // ─── Plano do Diário (dias das refeições e horários) ─────────────────────────
@@ -673,7 +684,7 @@ export async function montarPdfContrato(
   matriculaInformada?: MatriculaContrato,
 ): Promise<PdfContratoMontado> {
   const hoje = hojeBRT();
-  const [matricula, escolha, aluno, colegio, testemunhas] = await Promise.all([
+  const [matricula, aluno, colegio, testemunhas] = await Promise.all([
     supabaseAdmin
       .from("rematricula_matricula_escolhas" as never)
       .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")
@@ -681,13 +692,6 @@ export async function montarPdfContrato(
       .eq("aluno_id", alunoId)
       .eq("ano_letivo", anoLetivo)
       .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
-    supabaseAdmin
-      .from("rematricula_escolhas" as never)
-      .select("valor_anual, parcelas")
-      .eq("unidade", unidade)
-      .eq("aluno_id", alunoId)
-      .eq("ano_letivo", anoLetivo)
-      .maybeSingle<Omit<EscolhaRow, "aluno_id" | "ano_letivo">>(),
     buscarAlunoPorId(unidade, alunoId),
     colegioDaUnidade(unidade),
     testemunhasAtivas(),
@@ -703,10 +707,10 @@ export async function montarPdfContrato(
   const serie = matriculaInformada
     ? aluno.serie || (matricula.data?.serie ?? "")
     : matricula.data!.serie;
-  const [responsaveis, mensalidade, extrasSponte, logo, planoDiario] = await Promise.all([
+  const [responsaveis, mensalidade, sponte, logo, planoDiario] = await Promise.all([
     buscarResponsaveisComFinanceiro(unidade, alunoId, anoLetivo),
     buscarMensalidadeVigente(unidade, alunoId, anoLetivo),
-    extrasDoAluno(unidade, alunoId, anoLetivo),
+    extrasEMaterialDoAluno(unidade, alunoId, anoLetivo),
     carregarLogoServidor(colegio.logo_path),
     planoDiarioDoAluno(unidade, alunoId, anoLetivo, serie, aluno.turma).catch(
       (e: unknown): PlanoDiarioLido => ({
@@ -716,6 +720,8 @@ export async function montarPdfContrato(
       }),
     ),
   ]);
+  const extrasSponte = sponte.extras;
+  const materialSponte = sponte.material;
   const extras = detalharExtrasContrato(
     { ...extrasSponte, avisos: [...extrasSponte.avisos, ...planoDiario.avisos] },
     planoDiario.plano,
@@ -735,7 +741,7 @@ export async function montarPdfContrato(
     parcelas: matricula.data!.parcelas,
     primeiroVencimento: matricula.data!.primeiro_vencimento,
   };
-  const itensMaterial = escolha.data ? await itensMaterialDaSerie(unidade, serie, anoLetivo) : [];
+  const itensMaterial = materialSponte ? await itensMaterialDaSerie(unidade, serie, anoLetivo) : [];
   const input: MontarContratoInput = {
     numeroContrato: numero,
     anoLetivo,
@@ -778,13 +784,7 @@ export async function montarPdfContrato(
       descontoPercentual: mensalidade.descontoPercentual,
       vencimento: mensalidade.vencimento,
     },
-    material: escolha.data
-      ? {
-          itens: itensMaterial,
-          valorTotal: Number(escolha.data.valor_anual),
-          parcelas: escolha.data.parcelas,
-        }
-      : null,
+    material: materialSponte ? { itens: itensMaterial, ...materialSponte } : null,
     extras,
     testemunhas,
     hojeISO: hoje,

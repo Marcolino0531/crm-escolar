@@ -3,8 +3,10 @@ import {
   CAMPOS_CONTRATO,
   TEXTO_SEM_EXTRAS,
   TEXTO_SEM_MATERIAL,
+  TEXTO_MATERIAL_SEM_ITENS,
   extrasDoContrato,
   listarComE,
+  materialDoContrato,
   montarCamposContrato,
   montarContratoMatricula,
   numeroBR,
@@ -93,6 +95,7 @@ function entrada(over: Partial<MontarContratoInput> = {}): MontarContratoInput {
       ],
       valorTotal: 3439.1,
       parcelas: 8,
+      primeiroVencimento: "2027-02-05",
     },
     extras: extrasDoContrato(
       [
@@ -293,6 +296,7 @@ describe("montarCamposContrato — valores monetários", () => {
     );
     expect(campos.ValorTotalMaterialPedagogico).toBe("3.439,10");
     expect(campos.NumeroParcelasMaterialPedagogico).toBe("8");
+    expect(campos.DataVencimento1aParcelaMaterialPedagogico).toBe("5 de fevereiro de 2027");
   });
 
   it("extras: lista e soma mensal do retrato do Sponte", () => {
@@ -481,6 +485,85 @@ describe("signatariosContrato", () => {
     const campos = montarCamposContrato(entrada());
     expect(preencherModelo("x «NaoExiste» «NomeAluno»", campos)).toBe(
       "x «NaoExiste» Pedro da Silva",
+    );
+  });
+});
+
+describe("materialDoContrato (título do Sponte)", () => {
+  const material = (over: Partial<TituloExtras>) =>
+    titulo({ categoria: "Material Pedagógico", contaReceberID: "900", ...over });
+
+  it("um só título: soma das parcelas, nº de parcelas e 1º vencimento", () => {
+    const r = materialDoContrato(
+      [
+        material({ vencimento: "2027-04-05", valor: 100 }),
+        material({ vencimento: "2027-02-05", valor: 100.5 }),
+        material({ vencimento: "2027-03-05", valor: 100 }),
+        titulo({ categoria: "Almoço", vencimento: "2027-02-05", valor: 400 }),
+        material({ vencimento: "2026-12-05", valor: 999 }), // outro ano
+        material({ vencimento: "2027-05-05", valor: 100, situacao: "Cancelada" }),
+      ],
+      2027,
+    );
+    expect(r).toEqual({ valorTotal: 300.5, parcelas: 3, primeiroVencimento: "2027-02-05" });
+  });
+
+  it("nenhum título no ano → null (contrato mantém o texto de fallback)", () => {
+    expect(materialDoContrato([], 2027)).toBeNull();
+    expect(materialDoContrato([material({ vencimento: "2026-02-05" })], 2027)).toBeNull();
+    const texto = montarContratoMatricula(
+      entrada({ material: null, extras: extrasDoContrato([], ANO) }),
+    )
+      .paragrafos.map((p) => p.texto)
+      .join("\n");
+    expect(texto).toContain(`MATERIAL PEDAGÓGICO: ${TEXTO_SEM_MATERIAL}`);
+  });
+
+  it("título no Sponte sem itens do kit cadastrados: descrição genérica, nunca o texto de 'sem material'", () => {
+    const texto = montarContratoMatricula(
+      entrada({
+        material: { itens: [], valorTotal: 2947.48, parcelas: 8, primeiroVencimento: "2027-02-05" },
+      }),
+    )
+      .paragrafos.map((p) => p.texto)
+      .find((t) => t.startsWith("MATERIAL PEDAGÓGICO:"));
+    expect(texto).toContain(
+      `MATERIAL PEDAGÓGICO: ${TEXTO_MATERIAL_SEM_ITENS}, no valor total de R$2.947,48`,
+    );
+    expect(texto).not.toContain(TEXTO_SEM_MATERIAL);
+  });
+
+  it("mais de um título no mesmo ano → erro, sem escolher sozinho", () => {
+    expect(() =>
+      materialDoContrato(
+        [
+          material({ contaReceberID: "900", vencimento: "2027-02-05" }),
+          material({ contaReceberID: "901", vencimento: "2027-06-05" }),
+        ],
+        2027,
+      ),
+    ).toThrow(/2 títulos de Material Pedagógico em 2027.*900, 901/);
+  });
+
+  it("Gabriel (2027): 8x, 1ª 368,47 e demais 368,43 = 2.947,48 a partir de 05/02/2027", () => {
+    const parcelas = Array.from({ length: 8 }, (_, i) =>
+      material({
+        contaReceberID: "55123",
+        vencimento: `2027-${String(i + 2).padStart(2, "0")}-05`,
+        valor: i === 0 ? 368.47 : 368.43,
+      }),
+    );
+    const r = materialDoContrato(parcelas, 2027);
+    expect(r).toEqual({ valorTotal: 2947.48, parcelas: 8, primeiroVencimento: "2027-02-05" });
+    const texto = montarContratoMatricula(
+      entrada({
+        material: { itens: [{ nome: "Coleção Principal", quantidade: 4 }], ...r! },
+      }),
+    )
+      .paragrafos.map((p) => p.texto)
+      .find((t) => t.startsWith("MATERIAL PEDAGÓGICO:"));
+    expect(texto).toBe(
+      "MATERIAL PEDAGÓGICO: Coleção Principal — 4 volumes, no valor total de R$2.947,48, parcelado em 8x, com vencimento da 1ª parcela em 5 de fevereiro de 2027, conforme condições já aprovadas pela secretaria no ato desta matrícula.",
     );
   });
 });

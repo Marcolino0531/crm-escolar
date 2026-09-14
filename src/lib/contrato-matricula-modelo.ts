@@ -120,7 +120,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
   {
     tipo: "paragrafo",
     texto:
-      "PARÁGRAFO QUARTO – Os alunos que necessitarem de mediadores para acompanhamento no ambiente escolar e possuírem algum tipo de desconto na mensalidade terão este benefício cancelado, com a incidência do valor integral das mensalidades, a partir do momento em que o mediador for contratado. Excetua-se desta regra os alunos que possuam bolsa de estudos vinculada ao sindicato dos professores (SIMPRO) ou aos auxiliares de administração escolar (SAAEMG).",
+      "PARÁGRAFO QUARTO – Os alunos que necessitarem de mediadores para acompanhamento no ambiente escolar e possuírem algum tipo de desconto na mensalidade terão este benefício cancelado, com a incidência do valor integral das mensalidades, a partir do momento em que o mediador for contratado. Excetua-se desta regra os alunos que possuam bolsa de estudos vinculada ao sindicato dos professores ou aos auxiliares de administração escolar.",
   },
   {
     tipo: "titulo",
@@ -147,7 +147,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
     tipo: "bloco",
     chave: "material",
     texto:
-      "MATERIAL PEDAGÓGICO: «ListaMaterialPedagogicoSelecionado», no valor total de R$«ValorTotalMaterialPedagogico», parcelado em «NumeroParcelasMaterialPedagogico»x, conforme condições já aprovadas pela secretaria no ato desta matrícula.",
+      "MATERIAL PEDAGÓGICO: «ListaMaterialPedagogicoSelecionado», no valor total de R$«ValorTotalMaterialPedagogico», parcelado em «NumeroParcelasMaterialPedagogico»x, com vencimento da 1ª parcela em «DataVencimento1aParcelaMaterialPedagogico», conforme condições já aprovadas pela secretaria no ato desta matrícula.",
   },
   {
     tipo: "bloco",
