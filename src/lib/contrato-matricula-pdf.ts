@@ -17,15 +17,38 @@ function garantirEspaco(doc: Doc, y: number, necessario: number): number {
   return MARGEM;
 }
 
+// O jsPDF só calcula o espaçamento entre palavras (operador Tw) quando recebe
+// várias linhas numa única chamada de text(); linha a linha, Tw fica sempre 0.
+// Por isso as linhas de uma mesma página são desenhadas juntas. O jsPDF deixa
+// a última linha do bloco sem justificar (convenção do fim de parágrafo); quando
+// o bloco é cortado por quebra de página, uma linha vazia no fim faz todas as
+// linhas reais receberem Tw.
 function paragrafo(doc: Doc, texto: string, y: number, negrito = false): number {
   doc.setFont("helvetica", negrito ? "bold" : "normal");
   const linhas = doc.splitTextToSize(texto, CONTEUDO) as string[];
-  linhas.forEach((linha, i) => {
-    y = garantirEspaco(doc, y, ALTURA_LINHA);
-    const ultima = i === linhas.length - 1;
-    doc.text(linha, MARGEM, y, ultima ? undefined : { align: "justify", maxWidth: CONTEUDO });
+  const fatorLinha = ALTURA_LINHA / (doc.getFontSize() / doc.internal.scaleFactor);
+  let bloco: string[] = [];
+  let yBloco = y;
+  const desenharBloco = (fimDoParagrafo: boolean) => {
+    if (bloco.length === 0) return;
+    const conteudo = fimDoParagrafo ? bloco : [...bloco, ""];
+    doc.text(conteudo.join("\n"), MARGEM, yBloco, {
+      align: "justify",
+      maxWidth: CONTEUDO,
+      lineHeightFactor: fatorLinha,
+    });
+    bloco = [];
+  };
+  linhas.forEach((linha) => {
+    if (y + ALTURA_LINHA > RODAPE_Y) {
+      desenharBloco(false);
+      y = garantirEspaco(doc, y, ALTURA_LINHA);
+      yBloco = y;
+    }
+    bloco.push(linha);
     y += ALTURA_LINHA;
   });
+  desenharBloco(true);
   doc.setFont("helvetica", "normal");
   return y;
 }
