@@ -97,7 +97,7 @@ function ColoniaPage() {
   }, [focusStudentId, podeOperacional]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <PartyPopper className="h-6 w-6 text-primary" />

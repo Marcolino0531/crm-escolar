@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -155,11 +156,11 @@ function DocumentosPage() {
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-semibold">
           <FileText className="h-6 w-6 text-primary" /> Documentos
+          <AjudaTooltip
+            rotulo="Sobre esta tela"
+            texto="Emissão de documentos oficiais do colégio com os dados do Sponte. Nada aqui altera o cadastro financeiro do aluno: o recibo é um documento, não uma baixa."
+          />
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Emissão de documentos oficiais do colégio com os dados do Sponte. Nada aqui altera o
-          cadastro financeiro do aluno: o recibo é um documento, não uma baixa.
-        </p>
       </div>
 
       <Tabs defaultValue="documento">

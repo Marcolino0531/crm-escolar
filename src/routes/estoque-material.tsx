@@ -2,6 +2,7 @@
 // unidades (sem filtro por colégio). Controle simples de material pedagógico
 // por turma e quantidade, com adicionar/editar/excluir.
 
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -125,16 +126,16 @@ function EstoqueMaterialPage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold">
             <Package className="h-6 w-6 text-primary" /> Estoque de Material Escolar
+            <AjudaTooltip
+              rotulo="Sobre esta tela"
+              texto="Controle de material pedagógico por turma. Listagem única compartilhada entre todas as unidades."
+            />
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Controle de material pedagógico por turma. Listagem única compartilhada entre todas as
-            unidades.
-          </p>
         </div>
         {editable && (
           <Button onClick={() => setShowCreate(true)} size="sm" className="gap-1">

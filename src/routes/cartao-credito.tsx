@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Plus, Trash2, CreditCard, ArrowRightLeft } from "lucide-react";
@@ -173,16 +174,16 @@ function CartaoPage() {
   }, [receivables, today]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold">
             <CreditCard className="h-6 w-6" /> Cartão de Crédito
+            <AjudaTooltip
+              rotulo="Sobre esta tela"
+              texto="Controle dos recebíveis de cartão: liberação pela operadora e transferência para a conta do colégio."
+            />
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Controle dos recebíveis de cartão: liberação pela operadora e transferência para a conta
-            do colégio.
-          </p>
         </div>
         {editable && (
           <Button

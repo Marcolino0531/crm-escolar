@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -87,15 +88,15 @@ function MensagensAutomaticasGate() {
 function MensagensAutomaticasPage() {
   const [tab, setTab] = useState("cobrancas");
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <Bot className="h-6 w-6 text-primary" /> Mensagens Automáticas
+          <AjudaTooltip
+            rotulo="Sobre esta tela"
+            texto="Disparos automáticos via WhatsApp (Cloud API da Meta): cobrança do que já venceu e lembrete preventivo antes do vencimento, com histórico e rastreamento de status."
+          />
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Disparos automáticos via WhatsApp (Cloud API da Meta): cobrança do que já venceu e
-          lembrete preventivo antes do vencimento, com histórico e rastreamento de status.
-        </p>
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">

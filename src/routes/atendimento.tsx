@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -301,11 +302,11 @@ function AtendimentoPage() {
       <div className="mb-4">
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <MessageSquare className="h-6 w-6 text-primary" /> Atendimento
+          <AjudaTooltip
+            rotulo="Sobre esta tela"
+            texto="Respostas dos responsáveis às cobranças de WhatsApp, em tempo real. Selecione uma conversa para ver o histórico e responder."
+          />
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Respostas dos responsáveis às cobranças de WhatsApp, em tempo real. Selecione uma conversa
-          para ver o histórico e responder.
-        </p>
       </div>
 
       <div className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card md:grid-cols-[320px_1fr]">
