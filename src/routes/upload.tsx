@@ -378,7 +378,7 @@ function UploadPage() {
   const pendingDups = rows.filter((r) => r.duplicate && !r.dismissedDup).length;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Importar Extrato</h1>
         <p className="text-sm text-muted-foreground">

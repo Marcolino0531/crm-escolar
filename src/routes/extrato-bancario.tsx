@@ -642,7 +642,7 @@ function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Extrato Bancário</h1>
@@ -686,7 +686,7 @@ function Dashboard() {
           <CardHeader>
             <CardTitle>Despesas</CardTitle>
           </CardHeader>
-          <CardContent className="h-[340px]">
+          <CardContent className="h-[340px] xl:h-[420px] 2xl:h-[480px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Carregando…
@@ -741,7 +741,7 @@ function Dashboard() {
           <CardHeader>
             <CardTitle>Receitas</CardTitle>
           </CardHeader>
-          <CardContent className="h-[340px]">
+          <CardContent className="h-[340px] xl:h-[420px] 2xl:h-[480px]">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Carregando…

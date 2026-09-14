@@ -13,6 +13,7 @@ import {
   type PixPagamentoSponte,
 } from "@/lib/sponte.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1030,17 +1031,13 @@ function ConciliacaoPage() {
     );
 
   return (
-    <div className="space-y-6 max-w-7xl">
-      <div>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
         <h1 className="text-2xl font-bold">Conciliação de Faturamento</h1>
-        <p className="text-sm text-muted-foreground">
-          Use <strong>Sincronizar com Sponte</strong> para conciliar de uma vez os{" "}
-          <strong>Boletos</strong> (COB COMPE / COB INTERN) e o <strong>PIX</strong> da unidade.
-          Para boletos, o sistema busca as parcelas baixadas do dia e na margem de compensação
-          D+1/D+2, monta o rateio por categoria e respeita o token/filtro da unidade. Também é
-          possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma
-          deve fechar com o valor da linha.
-        </p>
+        <AjudaTooltip
+          rotulo="Como conciliar"
+          texto="Use Sincronizar com Sponte para conciliar de uma vez os Boletos (COB COMPE / COB INTERN) e o PIX da unidade. Para boletos, o sistema busca as parcelas baixadas do dia e na margem de compensação D+1/D+2, monta o rateio por categoria e respeita o token/filtro da unidade. Também é possível anexar a planilha (Excel/CSV) ou desmembrar manualmente. Em todos os casos a soma deve fechar com o valor da linha."
+        />
       </div>
 
       <Card>
@@ -1118,16 +1115,16 @@ function ConciliacaoPage() {
                   <div className="text-xs text-muted-foreground">Total desmembrado</div>
                   <div className="text-xl font-bold">{formatBRL(totalReconciled)}</div>
                 </div>
-                <div className="grid gap-6 md:grid-cols-2 items-center">
-                  <div className="h-80">
+                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3 items-center">
+                  <div className="h-80 xl:h-[28rem] xl:col-span-2">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={chartData}
                           dataKey="value"
                           nameKey="name"
-                          innerRadius={70}
-                          outerRadius={120}
+                          innerRadius="45%"
+                          outerRadius="80%"
                           paddingAngle={2}
                         >
                           {chartData.map((d) => (
@@ -1143,11 +1140,11 @@ function ConciliacaoPage() {
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="space-y-1 max-h-80 overflow-y-auto pr-2">
+                  <div className="space-y-1 max-h-80 xl:max-h-[28rem] overflow-y-auto pr-2">
                     {chartData.map((d) => (
                       <div
                         key={d.name}
-                        className="flex items-center justify-between text-xs border-b py-1.5"
+                        className="flex items-center justify-between text-xs xl:text-sm border-b py-1.5"
                       >
                         <span className="flex items-center gap-2 truncate">
                           <span

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -258,16 +259,15 @@ function EsportesPage() {
   const podeEditar = podeOperarModalidade(modalidade, unidadeAtiva, podeEditarModulo);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <Dumbbell className="h-6 w-6 text-primary" /> Esportes Extracurriculares
+          <AjudaTooltip
+            rotulo="Sobre esta tela"
+            texto="Modalidades ministradas por parceiros externos: alunos matriculados, valor efetivamente pago na categoria da modalidade dentro do boleto do Sponte e repasse ao parceiro. Cada unidade tem as suas próprias modalidades, com turmas, alunos e parceiros separados."
+          />
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Modalidades ministradas por parceiros externos: alunos matriculados, valor efetivamente
-          pago na categoria da modalidade dentro do boleto do Sponte e repasse ao parceiro. Cada
-          unidade tem as suas próprias modalidades, com turmas, alunos e parceiros separados.
-        </p>
       </div>
 
       {podeEditarModulo && unidadeAtiva && (

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -295,11 +296,13 @@ function CantinaPage() {
       <div className="flex items-center gap-3">
         <UtensilsCrossed className="h-6 w-6 text-primary" />
         <div>
-          <h1 className="text-xl font-semibold">Cantina — Solicitações de recarga</h1>
-          <p className="text-sm text-muted-foreground">
-            Pedidos feitos pelos responsáveis no portal, recarga física do cartão e cobrança
-            automática no Sponte.
-          </p>
+          <h1 className="flex items-center gap-2 text-xl font-semibold">
+            Cantina — Solicitações de recarga
+            <AjudaTooltip
+              rotulo="Sobre esta tela"
+              texto="Pedidos feitos pelos responsáveis no portal, recarga física do cartão e cobrança automática no Sponte."
+            />
+          </h1>
         </div>
       </div>
 

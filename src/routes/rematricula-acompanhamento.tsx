@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -459,11 +460,13 @@ function RematriculaAcompanhamentoPage() {
       <div className="flex items-center gap-3">
         <GraduationCap className="h-6 w-6 text-primary" />
         <div>
-          <h1 className="text-xl font-semibold">Rematrícula — Acompanhamento</h1>
-          <p className="text-sm text-muted-foreground">
-            Uma linha por aluno ativo: quem já confirmou a rematrícula no portal, quem ainda não
-            respondeu e o que está aguardando o lançamento do material no Sponte.
-          </p>
+          <h1 className="flex items-center gap-2 text-xl font-semibold">
+            Rematrícula — Acompanhamento
+            <AjudaTooltip
+              rotulo="Sobre esta tela"
+              texto="Uma linha por aluno ativo: quem já confirmou a rematrícula no portal, quem ainda não respondeu e o que está aguardando o lançamento do material no Sponte."
+            />
+          </h1>
         </div>
       </div>
 
