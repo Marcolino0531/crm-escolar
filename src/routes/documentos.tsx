@@ -20,6 +20,7 @@ import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade
 import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
+import { GerarContratoMatricula } from "@/components/documentos/GerarContratoMatricula";
 import { ZapSignSandbox } from "@/components/documentos/ZapSignSandbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -221,6 +222,7 @@ function GerarDocumento() {
       {tipo === "declaracao_debitos" && <GerarDeclaracaoDebitos />}
       {tipo === "declaracao_ir" && <DeclaracaoIRComLote />}
       {tipo === "termo_confissao_divida" && <GerarTermoConfissao />}
+      {tipo === "contrato_matricula" && <GerarContratoMatricula />}
     </div>
   );
 }

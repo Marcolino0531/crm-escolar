@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { abrirPdfBase64 } from "@/lib/abrir-pdf";
 import { toast } from "sonner";
 import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
@@ -44,19 +45,6 @@ import {
   type ContratoPendente,
   type SignatarioContratoStatus,
 } from "@/lib/contrato-matricula.functions";
-
-function abrirPdfBase64(base64: string, nomeArquivo: string) {
-  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-  const aba = window.open(url, "_blank", "noopener");
-  if (!aba) {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = nomeArquivo;
-    a.click();
-  }
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
 
 function formatarDataHora(iso: string): string {
   if (!iso) return "—";
@@ -172,7 +160,7 @@ const SIGNER_LABEL: Record<string, string> = {
 
 // Um bloco por signatário (CONTRATANTE, CONTRATADO, TESTEMUNHA 1 e 2): quem já
 // assinou, quem falta e o link individual de cada um.
-function Signatarios({ signatarios }: { signatarios: SignatarioContratoStatus[] }) {
+export function Signatarios({ signatarios }: { signatarios: SignatarioContratoStatus[] }) {
   if (signatarios.length === 0) return null;
   return (
     <ul className="space-y-1 text-left">

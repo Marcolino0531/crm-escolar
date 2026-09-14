@@ -19,7 +19,8 @@ export type TipoDocumento =
   | "recibo"
   | "declaracao_debitos"
   | "declaracao_ir"
-  | "termo_confissao_divida";
+  | "termo_confissao_divida"
+  | "contrato_matricula";
 
 export interface TipoDocumentoInfo {
   id: TipoDocumento;
@@ -33,6 +34,7 @@ export const TIPOS_DOCUMENTO: readonly TipoDocumentoInfo[] = [
   { id: "declaracao_debitos", label: "Declaração de Inexistência de Débitos" },
   { id: "declaracao_ir", label: "Declaração de Imposto de Renda" },
   { id: "termo_confissao_divida", label: "Termo de Confissão de Dívida e Outras Avenças" },
+  { id: "contrato_matricula", label: "Contrato de Matrícula" },
 ] as const;
 
 export function rotuloTipoDocumento(tipo: string): string {
