@@ -56,7 +56,9 @@ function idsDePaisDesmembrados(txs: TransacaoPendencia[]): Set<string> {
 }
 
 /** Mesma regra do Extrato Bancário: entrada precisa de categoria de receita; saída, de centro de custo. */
-export function semCategoria(t: TransacaoPendencia): boolean {
+export function semCategoria(
+  t: Pick<TransacaoPendencia, "type" | "revenue_category_id" | "cost_center_id">,
+): boolean {
   return t.type === "entrada" ? !t.revenue_category_id : !t.cost_center_id;
 }
 
