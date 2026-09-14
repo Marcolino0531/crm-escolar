@@ -53,6 +53,7 @@ export const CAMPOS_CONTRATO = [
   "ListaMaterialPedagogicoSelecionado",
   "ValorTotalMaterialPedagogico",
   "NumeroParcelasMaterialPedagogico",
+  "DataVencimento1aParcelaMaterialPedagogico",
   "ListaExtrasSelecionados",
   "ValorTotalExtrasMensal",
   "PercentualBolsaMensalidade",
@@ -65,6 +66,8 @@ export type CampoContrato = (typeof CAMPOS_CONTRATO)[number];
 export type CamposContrato = Record<CampoContrato, string>;
 
 export const TEXTO_SEM_MATERIAL = "Não há material pedagógico contratado nesta matrícula.";
+/** Material lançado no Sponte sem itens do kit cadastrados para unidade × ano × série. */
+export const TEXTO_MATERIAL_SEM_ITENS = "Material Pedagógico da série";
 export const TEXTO_SEM_EXTRAS = "Não há serviços extras contratados nesta rematrícula.";
 
 /** Testemunha do contrato (cadastro global em Configurações). */
@@ -105,6 +108,8 @@ export const CATEGORIAS_EXTRAS = [
 export type CategoriaExtra = (typeof CATEGORIAS_EXTRAS)[number];
 
 export interface TituloExtras {
+  /** Título (ContaReceberID) que agrupa as parcelas; usado pelo Material. */
+  contaReceberID?: string;
   categoria: string;
   /** YYYY-MM-DD */
   vencimento: string;
@@ -201,6 +206,58 @@ export function extrasDoContrato(
   };
 }
 
+// ─── Material Pedagógico (contas a receber do Sponte) ───────────────────────
+
+export const CATEGORIA_MATERIAL = "Material Pedagógico";
+
+export interface MaterialSponte {
+  /** Soma das parcelas do título (centavos exatos). */
+  valorTotal: number;
+  parcelas: number;
+  /** YYYY-MM-DD da parcela de menor vencimento. */
+  primeiroVencimento: string;
+}
+
+/**
+ * Material Pedagógico lançado no Sponte para o ano letivo: um único título
+ * (ContaReceberID) de categoria "Material Pedagógico" com parcelas vencendo no
+ * ano dá valor total (soma), nº de parcelas e 1º vencimento. Nenhum título →
+ * null (contrato usa o texto de "sem material"). Mais de um título no mesmo
+ * ano é ambíguo (reposição, complementar…) e derruba a geração em vez de
+ * escolher sozinho.
+ */
+export function materialDoContrato(
+  titulos: readonly TituloExtras[],
+  anoLetivo: number,
+): MaterialSponte | null {
+  const prefixo = `${anoLetivo}-`;
+  const chaveMaterial = chaveCategoria(CATEGORIA_MATERIAL);
+  const porTitulo = new Map<string, TituloExtras[]>();
+  for (const t of titulos) {
+    if (chaveCategoria(t.categoria) !== chaveMaterial) continue;
+    if (t.valor <= 0 || !t.vencimento || tituloCancelado(t)) continue;
+    if (!t.vencimento.startsWith(prefixo)) continue;
+    const id = t.contaReceberID || "(sem ContaReceberID)";
+    const lista = porTitulo.get(id) ?? [];
+    lista.push(t);
+    porTitulo.set(id, lista);
+  }
+  if (porTitulo.size === 0) return null;
+  if (porTitulo.size > 1) {
+    throw new Error(
+      `Há ${porTitulo.size} títulos de Material Pedagógico em ${anoLetivo} no Sponte (${[...porTitulo.keys()].join(", ")}); ajuste no Sponte antes de gerar o contrato.`,
+    );
+  }
+  const parcelas = [...porTitulo.values()][0].sort((a, b) =>
+    a.vencimento.localeCompare(b.vencimento),
+  );
+  return {
+    valorTotal: parcelas.reduce((s, p) => s + centavos(p.valor), 0) / 100,
+    parcelas: parcelas.length,
+    primeiroVencimento: parcelas[0].vencimento,
+  };
+}
+
 // ─── Entrada e montagem dos campos ──────────────────────────────────────────
 
 export interface ColegioContrato {
@@ -258,6 +315,8 @@ export interface MaterialContrato {
   itens: ItemMaterial[];
   valorTotal: number;
   parcelas: number;
+  /** YYYY-MM-DD da 1ª parcela (título do Sponte). */
+  primeiroVencimento: string;
 }
 
 export interface MontarContratoInput {
@@ -368,12 +427,16 @@ export function montarCamposContrato(input: MontarContratoInput): CamposContrato
     ValorMensalidadeComDesconto: numeroBR(comDesconto),
     ValorMensalidadeComDescontoExtenso: valorPorExtenso(comDesconto),
     DiaVencimentoMensalidade: diaDoISO(mensalidade.vencimento),
-    ListaMaterialPedagogicoSelecionado:
-      material && material.itens.length
+    ListaMaterialPedagogicoSelecionado: !material
+      ? TEXTO_SEM_MATERIAL
+      : material.itens.length
         ? listarComE(rotulosItensMaterial(material.itens))
-        : TEXTO_SEM_MATERIAL,
+        : TEXTO_MATERIAL_SEM_ITENS,
     ValorTotalMaterialPedagogico: material ? numeroBR(material.valorTotal) : "0,00",
     NumeroParcelasMaterialPedagogico: material ? String(material.parcelas) : "0",
+    DataVencimento1aParcelaMaterialPedagogico: material
+      ? dataPorExtenso(material.primeiroVencimento)
+      : "",
     ListaExtrasSelecionados: extras.lista,
     ValorTotalExtrasMensal: numeroBR(extras.valorMensal),
     PercentualBolsaMensalidade:
