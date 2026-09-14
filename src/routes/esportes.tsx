@@ -245,7 +245,8 @@ function EsportesPage() {
     [todasModalidades, unidadeAtiva],
   );
 
-  // Trocar a unidade no topo descarta a modalidade da unidade anterior.
+  // Trocar a unidade no topo descarta a modalidade da unidade anterior e volta
+  // a "Selecione" — nunca pula para a primeira modalidade da nova unidade.
   useEffect(() => {
     const valida = selecaoValida(todasModalidades, unidadeAtiva, modalidadeId);
     if (valida !== modalidadeId) setModalidadeId(valida);
@@ -293,12 +294,12 @@ function EsportesPage() {
               <Label className="text-[11px] text-muted-foreground">Modalidade</Label>
               <Select value={modalidadeId} onValueChange={setModalidadeId}>
                 <SelectTrigger className="h-9 w-72">
-                  <SelectValue placeholder="Selecione a modalidade" />
+                  <SelectValue placeholder="Selecione" />
                 </SelectTrigger>
                 <SelectContent>
                   {modalidades.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
-                      {m.nome} — {m.tipo_repasse === "fixo" ? "valor fixo" : "percentual"}
+                      {m.nome}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -51,16 +51,15 @@ export function modalidadesDaUnidade<T extends ModalidadeDeUnidade>(
   return modalidades.filter((m) => modalidadeDaUnidade(m, unidade));
 }
 
-// Modalidade selecionada que continua válida ao trocar de unidade; senão, a
-// primeira da unidade (ou "" quando a unidade não tem modalidade nenhuma).
+// Modalidade selecionada que continua válida ao trocar de unidade; senão ""
+// (nenhuma escolhida): a seleção é sempre ativa do usuário, nunca automática.
 export function selecaoValida<T extends ModalidadeDeUnidade>(
   modalidades: T[],
   unidade: string | null,
   atual: string,
 ): string {
   const daUnidade = modalidadesDaUnidade(modalidades, unidade);
-  if (daUnidade.some((m) => m.id === atual)) return atual;
-  return daUnidade[0]?.id ?? "";
+  return daUnidade.some((m) => m.id === atual) ? atual : "";
 }
 
 // Escrita (cadastrar, editar, matricular, registrar repasse) só na unidade da
