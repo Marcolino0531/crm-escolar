@@ -563,7 +563,7 @@ describe("materialDoContrato (título do Sponte)", () => {
       .paragrafos.map((p) => p.texto)
       .find((t) => t.startsWith("MATERIAL PEDAGÓGICO:"));
     expect(texto).toBe(
-      "MATERIAL PEDAGÓGICO: Coleção Principal — 4 volumes, no valor total de R$2.947,48, parcelado em 8x, com vencimento da 1ª parcela em 5 de fevereiro de 2027, conforme condições já aprovadas pela secretaria no ato desta matrícula.",
+      "MATERIAL PEDAGÓGICO: Coleção Principal — 4 volumes, no valor total de R$2.947,48, parcelado em 8x, com vencimento da 1ª parcela em 5 de fevereiro de 2027.",
     );
   });
 });
