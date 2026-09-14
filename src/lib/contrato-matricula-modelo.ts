@@ -147,7 +147,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
     tipo: "bloco",
     chave: "material",
     texto:
-      "MATERIAL PEDAGÓGICO: «ListaMaterialPedagogicoSelecionado», no valor total de R$«ValorTotalMaterialPedagogico», parcelado em «NumeroParcelasMaterialPedagogico»x, com vencimento da 1ª parcela em «DataVencimento1aParcelaMaterialPedagogico», conforme condições já aprovadas pela secretaria no ato desta matrícula.",
+      "MATERIAL PEDAGÓGICO: «ListaMaterialPedagogicoSelecionado», no valor total de R$«ValorTotalMaterialPedagogico», parcelado em «NumeroParcelasMaterialPedagogico»x, com vencimento da 1ª parcela em «DataVencimento1aParcelaMaterialPedagogico».",
   },
   {
     tipo: "bloco",
