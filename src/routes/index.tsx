@@ -13,8 +13,9 @@ import {
   TrendingUp,
   TrendingDown,
   Scale,
-  Tags,
   Landmark,
+  ArrowUpCircle,
+  ArrowDownCircle,
   ArrowLeftRight,
   LineChart as LineChartIcon,
 } from "lucide-react";
@@ -47,16 +48,16 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { fetchSponteAlunosAtivos, fetchSponteInadimplenciaAnual } from "@/lib/sponte.functions";
+import { saldosDoPeriodo, transacoesDoPeriodo } from "@/lib/extrato-lista";
+import { serieTotalPatrimonio, seriePatrimonioPorFundo } from "@/lib/fundos";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import {
   despesaPorCentroCusto,
   fechamentoMensal,
   fechamentoPorUnidade,
   resolverIdsFinanceiros,
-  serieAnualInvestimentos,
   FECHAMENTO_ZERADO,
   IDS_VAZIOS,
-  type FundoResumo,
-  type LancamentoFundo,
   type TransacaoFinanceira,
 } from "@/lib/dashboard-financeiro";
 
@@ -315,8 +316,10 @@ function MainDashboard() {
   });
   const idsFin = catalogos?.ids ?? IDS_VAZIOS;
 
-  const { data: txsPeriodo, isFetching: finFetching } = useQuery({
-    queryKey: ["dash-fin-transacoes", startDate, endDate, schoolFilterIds],
+  // Histórico completo da(s) unidade(s), igual ao Extrato Bancário: o Saldo
+  // Inicial do período vem das transações anteriores a ele.
+  const { data: txsTodas, isFetching: finFetching } = useQuery({
+    queryKey: ["dash-fin-transacoes", schoolFilterIds],
     staleTime: 60_000,
     queryFn: () =>
       fetchAllRows<TransacaoFinanceira>((from, to) => {
@@ -325,14 +328,42 @@ function MainDashboard() {
           .select(
             "id, school_id, date, type, amount, cost_center_id, revenue_category_id, parent_transaction_id",
           )
-          .gte("date", startDate)
-          .lte("date", endDate)
           .order("id", { ascending: true })
           .range(from, to);
         if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
         return q as unknown as PromiseLike<PagedRows<TransacaoFinanceira>>;
       }),
   });
+  const txsPeriodo = useMemo(
+    () => (txsTodas ? transacoesDoPeriodo(txsTodas, startDate, endDate) : undefined),
+    [txsTodas, startDate, endDate],
+  );
+
+  // Saldo Inicial manual (initial_balances), mesma consulta do Extrato Bancário.
+  const { data: saldoManual } = useQuery({
+    queryKey: ["initial_balance", selected, startDate],
+    queryFn: async () => {
+      if (selected === "all") return null;
+      const { data, error } = await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .from("initial_balances" as any)
+        .select("amount")
+        .eq("school_id", selected)
+        .lte("reference_date", startDate)
+        .order("reference_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as { amount: number } | null) ?? null;
+    },
+  });
+  const saldos = useMemo(
+    () =>
+      txsTodas
+        ? saldosDoPeriodo(txsTodas, startDate, endDate, saldoManual?.amount)
+        : { saldoInicial: 0, entradas: 0, saidas: 0, saldoFinal: 0 },
+    [txsTodas, startDate, endDate, saldoManual],
+  );
 
   const fechamento = useMemo(
     () => (txsPeriodo ? fechamentoMensal(txsPeriodo, idsFin) : FECHAMENTO_ZERADO),
@@ -351,41 +382,46 @@ function MainDashboard() {
     [selected, txsPeriodo, idsFin, schools],
   );
 
-  // ── Investimentos do ano (Fundos) ────────────────────────────────────────
-  const { data: fundosAno, isFetching: fundosFetching } = useQuery({
-    queryKey: ["dash-fundos-ano", anoAtual],
+  // ── Evolução do Patrimônio (Fundos) ─────────────────────────────────────
+  type FundoDash = { id: string; school_id: string; name: string; destination: string };
+  type EntradaFundoDash = { fund_id: string; competencia: string; valor_liquido: number };
+  const { data: patrimonio, isFetching: fundosFetching } = useQuery({
+    queryKey: ["dash-fundos-patrimonio", schoolFilterIds],
     staleTime: 60_000,
     queryFn: async () => {
-      const fundos = await selectAll<FundoResumo>(() =>
-        supabase
+      const fundos = await selectAll<FundoDash>(() => {
+        let q = supabase
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .from("provision_funds" as any)
-          .select("id, school_id")
-          .order("id"),
-      );
-      const entradas = await selectAll<LancamentoFundo>(() =>
+          .select("id, school_id, name, destination")
+          .order("name");
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
+      if (fundos.length === 0) return { fundos, entradas: [] as EntradaFundoDash[] };
+      const entradas = await selectAll<EntradaFundoDash>(() =>
         supabase
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .from("provision_fund_entries" as any)
-          .select("fund_id, competencia, aportes, resgates")
-          .gte("competencia", `${anoAtual}-01-01`)
-          .lte("competencia", `${anoAtual}-12-31`)
-          .order("id"),
+          .select("fund_id, competencia, valor_liquido")
+          .in(
+            "fund_id",
+            fundos.map((f) => f.id),
+          )
+          .order("competencia", { ascending: true }),
       );
       return { fundos, entradas };
     },
   });
-  const serieInvestimentos = useMemo(
-    () =>
-      serieAnualInvestimentos(
-        fundosAno?.entradas ?? [],
-        fundosAno?.fundos ?? [],
-        schoolFilterIds,
-        anoAtual,
-      ),
-    [fundosAno, schoolFilterIds, anoAtual],
+  const fundosVisiveis = useMemo(() => patrimonio?.fundos ?? [], [patrimonio]);
+  const patrimonioTotal = useMemo(
+    () => serieTotalPatrimonio(patrimonio?.entradas ?? []),
+    [patrimonio],
   );
-  const temMovimentoFundos = serieInvestimentos.some((p) => p.aportes > 0 || p.resgates > 0);
+  const patrimonioPorFundo = useMemo(
+    () => seriePatrimonioPorFundo(patrimonio?.entradas ?? [], fundosVisiveis, (f) => f.id),
+    [patrimonio, fundosVisiveis],
+  );
 
   const avisoIds = [
     idsFin.resgateInvestimento === null && "Resgate Fundo de Investimento",
@@ -510,14 +546,44 @@ function MainDashboard() {
             foram aplicadas.
           </p>
         )}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            label="Saldo Inicial"
+            icon={Wallet}
+            tone={saldos.saldoInicial >= 0 ? "success" : "destructive"}
+            loading={finFetching}
+            value={formatBRL(saldos.saldoInicial)}
+          />
+          <MetricCard
+            label="Entradas"
+            icon={ArrowUpCircle}
+            tone="success"
+            loading={finFetching}
+            value={formatBRL(saldos.entradas)}
+          />
+          <MetricCard
+            label="Saídas"
+            icon={ArrowDownCircle}
+            tone="destructive"
+            loading={finFetching}
+            value={formatBRL(saldos.saidas)}
+          />
+          <MetricCard
+            label="Saldo Final"
+            icon={Wallet}
+            tone={saldos.saldoFinal >= 0 ? "success" : "destructive"}
+            loading={finFetching}
+            value={formatBRL(saldos.saldoFinal)}
+          />
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <MetricCard
             label="Receita do Mês"
             icon={TrendingUp}
             tone="success"
             loading={finFetching}
             value={formatBRL(fechamento.receita)}
-            hint="Entradas do extrato, sem resgate de fundo e sem transferência recebida"
+            ajuda="Entradas do extrato, sem considerar resgate de fundo de investimento e aporte recebido de outra unidade"
           />
           <MetricCard
             label="Despesa do Mês"
@@ -525,7 +591,7 @@ function MainDashboard() {
             tone="destructive"
             loading={finFetching}
             value={formatBRL(fechamento.despesa)}
-            hint="Saídas do extrato, sem aporte em fundo e sem transferência enviada"
+            ajuda="Saídas do extrato, sem considerar aplicação em fundo de investimento e aporte realizado em outra unidade"
           />
           <MetricCard
             label="Resultado do Mês"
@@ -533,16 +599,10 @@ function MainDashboard() {
             tone={fechamento.resultado >= 0 ? "success" : "destructive"}
             loading={finFetching}
             value={formatBRL(fechamento.resultado)}
-            hint="Receita − Despesa do período"
+            ajuda="Receita − Despesa do período"
           />
-          <MetricCard
-            label="Sem Categorização no Mês"
-            icon={Tags}
-            tone={fechamento.semCategoria > 0 ? "warning" : "primary"}
-            loading={finFetching}
-            value={String(fechamento.semCategoria)}
-            hint="Transações do período sem categoria de receita / centro de custo"
-          />
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <DuplaCard
             label="Movimentação de Investimentos"
             icon={Landmark}
@@ -551,7 +611,7 @@ function MainDashboard() {
               { rotulo: "Aportado no Fundo", valor: fechamento.aportadoFundo },
               { rotulo: "Resgatado do Fundo", valor: fechamento.resgatadoFundo },
             ]}
-            hint="Não entra em Receita nem Despesa"
+            ajuda="Não entra em Receita nem Despesa"
           />
           <DuplaCard
             label="Transferências entre Unidades"
@@ -562,7 +622,7 @@ function MainDashboard() {
               { rotulo: "Recebido de Outras Unidades", valor: fechamento.recebidoOutras },
             ]}
             destaque={{ rotulo: "Saldo líquido", valor: fechamento.saldoTransferencias }}
-            hint="Não entra em Receita nem Despesa"
+            ajuda="Não entra em Receita nem Despesa"
           />
         </div>
       </div>
@@ -651,31 +711,36 @@ function MainDashboard() {
           </CardContent>
         </Card>
 
-        {/* Investimentos do ano */}
+        {/* Evolução do Patrimônio (Fundos) */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <LineChartIcon className="h-5 w-5 text-muted-foreground" />
-              Investimentos em {anoAtual} — Aportes × Resgates
+              Evolução do Patrimônio
             </CardTitle>
           </CardHeader>
           <CardContent>
             {fundosFetching ? (
               <Skeleton className="h-72 w-full" />
-            ) : !temMovimentoFundos ? (
+            ) : fundosVisiveis.length === 0 ? (
               <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
                 <AlertTriangle className="h-6 w-6" />
-                Nenhum aporte ou resgate registrado nos fundos em {anoAtual}.
+                Nenhum fundo de investimento cadastrado para esta unidade.
+              </div>
+            ) : patrimonioTotal.length === 0 ? (
+              <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-6 w-6" />
+                Nenhum lançamento mensal registrado nos fundos.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart
-                  data={serieInvestimentos}
+                  data={fundosVisiveis.length <= 1 ? patrimonioTotal : patrimonioPorFundo}
                   margin={{ top: 10, right: 24, left: 8, bottom: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                   <XAxis
-                    dataKey="mes"
+                    dataKey="month"
                     tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
                   />
                   <YAxis
@@ -690,23 +755,31 @@ function MainDashboard() {
                       borderRadius: 8,
                     }}
                   />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="aportes"
-                    name="Aportes"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="resgates"
-                    name="Resgates"
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
+                  {fundosVisiveis.length <= 1 ? (
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      name={fundosVisiveis[0]?.destination || "Total"}
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                    />
+                  ) : (
+                    <>
+                      <Legend />
+                      {fundosVisiveis.map((f, i) => (
+                        <Line
+                          key={f.id}
+                          type="monotone"
+                          dataKey={f.id}
+                          name={f.destination || f.name}
+                          stroke={ORIGEM_CORES[i % ORIGEM_CORES.length]}
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                        />
+                      ))}
+                    </>
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -764,14 +837,14 @@ function DuplaCard({
   icon: Icon,
   itens,
   destaque,
-  hint,
+  ajuda,
   loading,
 }: {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   itens: { rotulo: string; valor: number }[];
   destaque?: { rotulo: string; valor: number };
-  hint?: string;
+  ajuda?: string;
   loading?: boolean;
 }) {
   return (
@@ -781,7 +854,10 @@ function DuplaCard({
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
+            {label}
+            {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
+          </div>
           {loading ? (
             <Skeleton className="mt-1 h-12 w-40" />
           ) : (
@@ -804,7 +880,6 @@ function DuplaCard({
               )}
             </div>
           )}
-          {hint && <div className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</div>}
         </div>
       </CardContent>
     </Card>
@@ -817,6 +892,7 @@ function MetricCard({
   icon: Icon,
   tone,
   hint,
+  ajuda,
   loading,
 }: {
   label: string;
@@ -824,6 +900,7 @@ function MetricCard({
   icon: React.ComponentType<{ className?: string }>;
   tone: "primary" | "success" | "destructive" | "warning";
   hint?: string;
+  ajuda?: string;
   loading?: boolean;
 }) {
   const toneClass =
@@ -843,7 +920,10 @@ function MetricCard({
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
+            {label}
+            {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
+          </div>
           {loading ? (
             <Skeleton className="mt-1 h-7 w-24" />
           ) : (

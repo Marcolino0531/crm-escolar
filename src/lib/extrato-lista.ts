@@ -57,3 +57,40 @@ export function transacoesAnteriores<T extends ExtratoTx>(
     .filter((t) => t.date < startDate)
     .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 }
+
+export interface SaldosPeriodo {
+  saldoInicial: number;
+  entradas: number;
+  saidas: number;
+  saldoFinal: number;
+}
+
+/**
+ * Cards Saldo Inicial / Entradas / Saídas / Saldo Final do Extrato Bancário.
+ * O Saldo Inicial é o acumulado de TODAS as transações anteriores ao período
+ * (sem pais desmembrados); só quando não existe nenhuma é que vale o saldo
+ * manual (`initial_balances`). `txs` deve conter o histórico completo da(s)
+ * unidade(s), não apenas o período.
+ */
+export function saldosDoPeriodo(
+  txs: readonly ExtratoTx[],
+  startDate: string,
+  endDate: string,
+  saldoManual: number | null | undefined,
+): SaldosPeriodo {
+  const pais = idsDePaisDesmembrados(txs);
+  const doPeriodo = transacoesDoPeriodo(txs, startDate, endDate, pais);
+  const anteriores = transacoesAnteriores(txs, startDate, pais);
+  const entradas = doPeriodo
+    .filter((t) => t.type === "entrada")
+    .reduce((s, t) => s + Number(t.amount), 0);
+  const saidas = doPeriodo
+    .filter((t) => t.type === "saida")
+    .reduce((s, t) => s + Number(t.amount), 0);
+  const acumuladoAnterior = anteriores.reduce(
+    (s, t) => s + (t.type === "entrada" ? Number(t.amount) : -Number(t.amount)),
+    0,
+  );
+  const saldoInicial = anteriores.length > 0 ? acumuladoAnterior : Number(saldoManual ?? 0);
+  return { saldoInicial, entradas, saidas, saldoFinal: saldoInicial + entradas - saidas };
+}

@@ -73,3 +73,46 @@ export function somarPatrimonioPorCompetencia(entries: PatrimonioEntry[]): Map<s
   }
   return byMonth;
 }
+
+/** "2026-03-01" → "março de 2026" (rótulo do eixo X do gráfico de patrimônio). */
+export function monthLabel(iso: string): string {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
+export interface PatrimonioEntryPorFundo extends PatrimonioEntry {
+  fund_id: string;
+}
+
+export interface PontoPatrimonioTotal {
+  month: string;
+  total: number;
+}
+
+/** Série do total (todos os fundos somados) por competência, em ordem cronológica. */
+export function serieTotalPatrimonio(entries: PatrimonioEntry[]): PontoPatrimonioTotal[] {
+  const byMonth = somarPatrimonioPorCompetencia(entries);
+  return [...byMonth.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([comp, total]) => ({ month: monthLabel(comp), total }));
+}
+
+/**
+ * Série multi-linha: um ponto por competência com uma chave por fundo
+ * (`chave(f)`, ex.: nome ou id). Fundo sem lançamento no mês sai como 0.
+ */
+export function seriePatrimonioPorFundo<F extends { id: string }>(
+  entries: PatrimonioEntryPorFundo[],
+  funds: F[],
+  chave: (f: F) => string,
+): Array<Record<string, number | string>> {
+  const months = [...new Set(entries.map((e) => e.competencia))].sort();
+  return months.map((m) => {
+    const point: Record<string, number | string> = { month: monthLabel(m) };
+    for (const f of funds) {
+      const e = entries.find((x) => x.fund_id === f.id && x.competencia === m);
+      point[chave(f)] = e ? Number(e.valor_liquido) : 0;
+    }
+    return point;
+  });
+}
