@@ -196,7 +196,7 @@ function DocumentosPage() {
 // tela só escolhe qual renderizar. Modelo novo entra em TIPOS_DOCUMENTO e ganha
 // um case aqui, sem mexer no resto.
 function GerarDocumento() {
-  const [tipo, setTipo] = useState<TipoDocumento>("recibo");
+  const [tipo, setTipo] = useState<TipoDocumento | "">("");
 
   return (
     <div className="space-y-4">
@@ -205,7 +205,7 @@ function GerarDocumento() {
           <Label className="text-[11px] text-muted-foreground">Tipo de documento</Label>
           <Select value={tipo} onValueChange={(v) => setTipo(v as TipoDocumento)}>
             <SelectTrigger className="h-9 w-80">
-              <SelectValue />
+              <SelectValue placeholder="Selecione" />
             </SelectTrigger>
             <SelectContent>
               {TIPOS_DOCUMENTO.map((t) => (
@@ -218,6 +218,15 @@ function GerarDocumento() {
         </div>
       </section>
 
+      {tipo === "" && (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-card px-6 py-10 text-center">
+          <FileText className="h-6 w-6 text-muted-foreground" />
+          <p className="text-sm font-medium">Selecione um tipo de documento acima</p>
+          <p className="max-w-md text-xs text-muted-foreground">
+            O formulário de geração aparece depois da escolha do tipo.
+          </p>
+        </div>
+      )}
       {tipo === "recibo" && <GerarRecibo />}
       {tipo === "declaracao_debitos" && <GerarDeclaracaoDebitos />}
       {tipo === "declaracao_ir" && <DeclaracaoIRComLote />}
