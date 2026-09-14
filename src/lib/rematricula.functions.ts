@@ -74,7 +74,6 @@ import {
   type EnvioAcompanhamento,
   type EscolhaAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
-import { T_CONTRATOS, T_DOCS } from "@/lib/zapsign.persist";
 import {
   REFEICOES_ROTINA,
   ROTINA_FORM_VAZIA,
@@ -159,6 +158,9 @@ import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
 } from "@/lib/rematricula-extras.functions";
+
+const T_CONTRATOS = "contratos_matricula" as never;
+const T_DOCS = "zapsign_documentos" as never;
 
 const LOG_TAG = "[rematricula]";
 
