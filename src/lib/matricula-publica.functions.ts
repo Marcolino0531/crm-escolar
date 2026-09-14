@@ -475,6 +475,7 @@ async function salvarRotina(
       aluno_nome: form.aluno.nome.trim(),
       serie,
       origem: "matricula",
+      ano_letivo: form.anoLetivo,
       data_inicio: dados.dataInicio,
       dias_ativos: dados.diasAtivos,
       periodo_manha: dados.periodoManha,

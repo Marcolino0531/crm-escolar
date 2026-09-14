@@ -3,6 +3,7 @@ import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { abrirPdfBase64 } from "@/lib/abrir-pdf";
 import { toast } from "sonner";
+import { avisarExtrasContrato } from "@/lib/contrato-avisos-toast";
 import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { Badge } from "@/components/ui/badge";
@@ -329,6 +330,7 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
         toast.success(
           `Contrato ${res.numero} enviado para assinatura${n ? ` (${n} signatários)` : ""}.`,
         );
+        avisarExtrasContrato(res.avisos);
       } else toast.error(res.erro ?? "Falha ao gerar o contrato.", { duration: 12000 });
       void qc.invalidateQueries({ queryKey: ["contratos_matricula"] });
     },
@@ -347,6 +349,7 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
     onSuccess: (res) => {
       if (res.ok && res.pdfBase64) {
         abrirPdfBase64(res.pdfBase64, res.nomeArquivo ?? `previa-${res.numero}.pdf`);
+        avisarExtrasContrato(res.avisos);
       } else toast.error(res.erro ?? "Falha ao gerar a prévia.", { duration: 12000 });
     },
     onError: (e: Error) => toast.error(e.message),
