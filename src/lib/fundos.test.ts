@@ -3,6 +3,9 @@ import {
   rentabilidadeRealPct,
   somarPatrimonioPorCompetencia,
   formatMovimentacaoBRL,
+  monthLabel,
+  serieTotalPatrimonio,
+  seriePatrimonioPorFundo,
 } from "./fundos";
 
 describe("rentabilidadeRealPct", () => {
@@ -156,5 +159,40 @@ describe("formatMovimentacaoBRL", () => {
 
   it("formata centavos corretamente", () => {
     expect(norm(formatMovimentacaoBRL(0.1))).toBe("R$ 0,10");
+  });
+});
+
+describe("Evolução do Patrimônio (séries do gráfico)", () => {
+  const fundos = [
+    { id: "f1", name: "EXPERTISE", destination: "Marcelo" },
+    { id: "f2", name: "PLENO DI", destination: "Marcelo" },
+  ];
+  const entradas = [
+    { fund_id: "f1", competencia: "2026-02-01", valor_liquido: 100 },
+    { fund_id: "f2", competencia: "2026-02-01", valor_liquido: 50 },
+    { fund_id: "f1", competencia: "2026-01-01", valor_liquido: 90 },
+  ];
+
+  it("monthLabel formata a competência em pt-BR", () => {
+    expect(monthLabel("2026-03-01")).toBe("março de 2026");
+  });
+
+  it("série total soma os fundos por competência em ordem cronológica", () => {
+    expect(serieTotalPatrimonio(entradas)).toEqual([
+      { month: "janeiro de 2026", total: 90 },
+      { month: "fevereiro de 2026", total: 150 },
+    ]);
+  });
+
+  it("série por fundo usa a chave informada (id) e zera o mês sem lançamento", () => {
+    expect(seriePatrimonioPorFundo(entradas, fundos, (f) => f.id)).toEqual([
+      { month: "janeiro de 2026", f1: 90, f2: 0 },
+      { month: "fevereiro de 2026", f1: 100, f2: 50 },
+    ]);
+  });
+
+  it("dois fundos com o mesmo destino não colidem quando a chave é o id", () => {
+    const ponto = seriePatrimonioPorFundo(entradas, fundos, (f) => f.id)[1];
+    expect(Object.keys(ponto)).toEqual(["month", "f1", "f2"]);
   });
 });

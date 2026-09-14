@@ -4,11 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { fetchAllRows, selectAll, type PagedRows } from "@/lib/supabase-paginate";
-import {
-  idsDePaisDesmembrados,
-  transacoesAnteriores,
-  transacoesDoPeriodo,
-} from "@/lib/extrato-lista";
+import { idsDePaisDesmembrados, saldosDoPeriodo, transacoesDoPeriodo } from "@/lib/extrato-lista";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,34 +230,16 @@ function Dashboard() {
     [txs, startDate, endDate, splitParentIds],
   );
 
-  const totalIn = filteredTxs
-    .filter((t) => t.type === "entrada")
-    .reduce((s, t) => s + Number(t.amount), 0);
-  const totalOut = filteredTxs
-    .filter((t) => t.type === "saida")
-    .reduce((s, t) => s + Number(t.amount), 0);
-
-  // Saldo Inicial dinâmico: corresponde ao Saldo Final (running balance) da última
-  // transação cronológica anterior ao startDate, respeitando o colégio selecionado e
-  // ignorando lançamentos-pai desmembrados. Equivale a somar TODAS as transações
-  // anteriores ao período filtrado (sem cortar por baselineDate). Apenas quando NÃO
-  // existe nenhuma transação anterior é que usamos o Saldo Inicial manual como ponto
-  // de partida (cenário do primeiro mês de uso).
-  const priorTxs = useMemo(
-    () => transacoesAnteriores(txs, startDate, splitParentIds),
-    [txs, splitParentIds, startDate],
+  // Mesma função usada pelos cards de saldo do Dashboard (nunca divergem).
+  const {
+    saldoInicial: startingBalance,
+    entradas: totalIn,
+    saidas: totalOut,
+    saldoFinal: finalBalance,
+  } = useMemo(
+    () => saldosDoPeriodo(txs, startDate, endDate, initialBalance?.amount),
+    [txs, startDate, endDate, initialBalance],
   );
-  const carryFromPriorTxs = useMemo(
-    () =>
-      priorTxs.reduce(
-        (s, t) => s + (t.type === "entrada" ? Number(t.amount) : -Number(t.amount)),
-        0,
-      ),
-    [priorTxs],
-  );
-  const manualBaseline = Number(initialBalance?.amount ?? 0);
-  const startingBalance = priorTxs.length > 0 ? carryFromPriorTxs : manualBaseline;
-  const finalBalance = startingBalance + totalIn - totalOut;
 
   const rowsWithBalance = useMemo(() => {
     let running = startingBalance;

@@ -39,7 +39,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   rentabilidadeRealPct,
-  somarPatrimonioPorCompetencia,
+  monthLabel,
+  serieTotalPatrimonio,
+  seriePatrimonioPorFundo,
   formatMovimentacaoBRL,
 } from "@/lib/fundos";
 
@@ -82,10 +84,6 @@ function fmtBRL(n: number) {
 }
 function monthKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-}
-function monthLabel(iso: string) {
-  const [y, m] = iso.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 }
 function addMonths(iso: string, delta: number) {
   const [y, m] = iso.split("-").map(Number);
@@ -173,27 +171,13 @@ function FundosPage() {
   }, [funds, entries, month, prevMonth]);
 
   // Chart data: total patrimônio per month (sum across funds per competencia)
-  const chartData = useMemo(() => {
-    const byMonth = somarPatrimonioPorCompetencia(entries);
-    return [...byMonth.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([comp, total]) => ({ month: monthLabel(comp), total }));
-  }, [entries]);
+  const chartData = useMemo(() => serieTotalPatrimonio(entries), [entries]);
 
   // Per-fund chart lines
-  const perFundChartData = useMemo(() => {
-    const monthsSet = new Set<string>();
-    for (const e of entries) monthsSet.add(e.competencia);
-    const months = [...monthsSet].sort();
-    return months.map((m) => {
-      const point: Record<string, number | string> = { month: monthLabel(m) };
-      for (const f of funds) {
-        const e = entries.find((x) => x.fund_id === f.id && x.competencia === m);
-        point[f.name] = e ? Number(e.valor_liquido) : 0;
-      }
-      return point;
-    });
-  }, [entries, funds]);
+  const perFundChartData = useMemo(
+    () => seriePatrimonioPorFundo(entries, funds, (f) => f.name),
+    [entries, funds],
+  );
 
   const schoolName = (id: string) => schools.find((s) => s.id === id)?.name ?? "";
 

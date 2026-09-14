@@ -6,7 +6,6 @@
 // corrente como entrada/saída normais, mas não são faturamento nem custo
 // operacional: ficam fora de Receita e Despesa e ganham cards próprios.
 
-import { semCategoria } from "./financeiro-pendencias";
 import { idsDePaisDesmembrados } from "./extrato-lista";
 
 export interface TransacaoFinanceira {
@@ -72,7 +71,6 @@ export interface FechamentoMensal {
   receita: number;
   despesa: number;
   resultado: number;
-  semCategoria: number;
   aportadoFundo: number;
   resgatadoFundo: number;
   enviadoOutras: number;
@@ -84,7 +82,6 @@ export const FECHAMENTO_ZERADO: FechamentoMensal = {
   receita: 0,
   despesa: 0,
   resultado: 0,
-  semCategoria: 0,
   aportadoFundo: 0,
   resgatadoFundo: 0,
   enviadoOutras: 0,
@@ -148,7 +145,6 @@ export function fechamentoMensal(
   const r = { ...FECHAMENTO_ZERADO };
   for (const t of linhasContaveis(txs)) {
     const v = valor(t);
-    if (semCategoria(t)) r.semCategoria += 1;
     if (ehReceitaOperacional(t, ids)) r.receita += v;
     if (ehDespesaOperacional(t, ids)) r.despesa += v;
     if (ehResgateFundo(t, ids)) r.resgatadoFundo += v;
@@ -210,72 +206,4 @@ export function fechamentoPorUnidade(
       ids,
     ),
   }));
-}
-
-// ── Gráfico anual de investimentos (fonte: provision_fund_entries) ───────────
-
-export interface FundoResumo {
-  id: string;
-  school_id: string;
-}
-
-export interface LancamentoFundo {
-  fund_id: string;
-  competencia: string; // YYYY-MM-DD (1º dia do mês)
-  aportes: number | null;
-  resgates: number | null;
-}
-
-export interface PontoAnualInvestimentos {
-  mes: string; // "jan", "fev", ...
-  competencia: string; // YYYY-MM
-  aportes: number;
-  resgates: number;
-}
-
-export const MESES_CURTOS = [
-  "jan",
-  "fev",
-  "mar",
-  "abr",
-  "mai",
-  "jun",
-  "jul",
-  "ago",
-  "set",
-  "out",
-  "nov",
-  "dez",
-];
-
-/**
- * 12 meses do ano, somando aportes/resgates de todos os fundos das unidades
- * escolhidas (`schoolIds === null` = todas) por competência.
- */
-export function serieAnualInvestimentos(
-  entradas: readonly LancamentoFundo[],
-  fundos: readonly FundoResumo[],
-  schoolIds: readonly string[] | null,
-  ano: number,
-): PontoAnualInvestimentos[] {
-  const permitidos = schoolIds === null ? null : new Set(schoolIds);
-  const fundosVisiveis = new Set(
-    fundos.filter((f) => permitidos === null || permitidos.has(f.school_id)).map((f) => f.id),
-  );
-  const serie = MESES_CURTOS.map((mes, i) => ({
-    mes,
-    competencia: `${ano}-${String(i + 1).padStart(2, "0")}`,
-    aportes: 0,
-    resgates: 0,
-  }));
-  for (const e of entradas) {
-    if (!fundosVisiveis.has(e.fund_id)) continue;
-    const m = /^(\d{4})-(\d{2})/.exec(String(e.competencia ?? ""));
-    if (!m || Number(m[1]) !== ano) continue;
-    const p = serie[Number(m[2]) - 1];
-    if (!p) continue;
-    p.aportes += Number(e.aportes ?? 0) || 0;
-    p.resgates += Number(e.resgates ?? 0) || 0;
-  }
-  return serie;
 }

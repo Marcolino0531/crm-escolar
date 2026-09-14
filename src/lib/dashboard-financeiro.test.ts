@@ -4,7 +4,6 @@ import {
   fechamentoMensal,
   fechamentoPorUnidade,
   resolverIdsFinanceiros,
-  serieAnualInvestimentos,
   SEM_CENTRO_CUSTO,
   type IdsFinanceiros,
   type TransacaoFinanceira,
@@ -113,8 +112,6 @@ describe("fechamentoMensal — Receita e Despesa", () => {
     );
     expect(r.despesa).toBe(1000);
     expect(r.receita).toBe(300);
-    // pais sem categoria não contam como pendência: quem categoriza são as filhas
-    expect(r.semCategoria).toBe(0);
   });
 
   it("Resultado = Receita − Despesa, positivo e negativo", () => {
@@ -126,13 +123,11 @@ describe("fechamentoMensal — Receita e Despesa", () => {
     );
   });
 
-  it("conta transações sem categoria (entrada sem receita, saída sem centro)", () => {
+  it("transação sem categoria ainda é receita/despesa operacional (não é fundo nem transferência)", () => {
     const r = fechamentoMensal(
       [tx({ revenue_category_id: null }), saida({ cost_center_id: null }), tx({}), saida({})],
       IDS,
     );
-    expect(r.semCategoria).toBe(2);
-    // sem categoria ainda é receita/despesa operacional (não é fundo nem transferência)
     expect(r.receita).toBe(200);
     expect(r.despesa).toBe(200);
   });
@@ -237,39 +232,5 @@ describe("fechamentoPorUnidade", () => {
     });
     expect(linhas[2]).toMatchObject({ receita: 200, resultado: 200, recebidoOutras: 5000 });
     expect(linhas[3]).toMatchObject({ despesa: 300, resultado: -300, enviadoOutras: 5000 });
-  });
-});
-
-describe("serieAnualInvestimentos", () => {
-  const FUNDOS = [
-    { id: "f-cec-1", school_id: "cec" },
-    { id: "f-cec-2", school_id: "cec" },
-    { id: "f-belv", school_id: "belv" },
-  ];
-  const ENTRADAS = [
-    { fund_id: "f-cec-1", competencia: "2026-07-01", aportes: 1000, resgates: 500 },
-    { fund_id: "f-cec-2", competencia: "2026-07-01", aportes: 250, resgates: 100 },
-    { fund_id: "f-belv", competencia: "2026-07-01", aportes: 0, resgates: 100000 },
-    { fund_id: "f-cec-1", competencia: "2026-08-01", aportes: null, resgates: 118665.66 },
-    { fund_id: "f-cec-1", competencia: "2025-12-01", aportes: 9999, resgates: 9999 },
-  ];
-
-  it("soma mais de um fundo da mesma unidade na mesma competência", () => {
-    const serie = serieAnualInvestimentos(ENTRADAS, FUNDOS, ["cec"], 2026);
-    expect(serie).toHaveLength(12);
-    expect(serie[6]).toMatchObject({ mes: "jul", aportes: 1250, resgates: 600 });
-    expect(serie[7]).toMatchObject({ mes: "ago", aportes: 0, resgates: 118665.66 });
-    expect(serie[0]).toMatchObject({ mes: "jan", aportes: 0, resgates: 0 });
-  });
-
-  it("'Todas as Unidades' soma todos os fundos; ano diferente fica fora", () => {
-    const serie = serieAnualInvestimentos(ENTRADAS, FUNDOS, null, 2026);
-    expect(serie[6]).toMatchObject({ aportes: 1250, resgates: 100600 });
-    expect(serie[11]).toMatchObject({ mes: "dez", aportes: 0, resgates: 0 });
-  });
-
-  it("unidade sem fundo cadastrado sai zerada nos 12 meses", () => {
-    const serie = serieAnualInvestimentos(ENTRADAS, FUNDOS, ["baby"], 2026);
-    expect(serie.every((p) => p.aportes === 0 && p.resgates === 0)).toBe(true);
   });
 });
