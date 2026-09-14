@@ -1,6 +1,6 @@
-// Aba "ZapSign (teste)" do módulo Documentos — prova de conceito em SANDBOX.
-// Tudo o que sai daqui é documento de teste, sem validade jurídica. Nenhum
-// Termo de Confissão ou Contrato real é gerado nesta tela.
+// Aba "ZapSign" do módulo Documentos — documento avulso (PDF pronto ou modelo
+// DOCX) enviado à ZapSign de PRODUÇÃO: consome crédito real e vai para
+// assinatura de verdade. O ambiente é fixo aqui e repassado a toda server fn.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +10,6 @@ import {
   Copy,
   ExternalLink,
   FileText,
-  FlaskConical,
   Loader2,
   Plus,
   RefreshCw,
@@ -44,6 +43,7 @@ import {
   sincronizarDocumentoTeste,
   type ZapSignDocumentoLista,
 } from "@/lib/zapsign.functions";
+import type { ZapSignAmbiente } from "@/lib/zapsign.server";
 
 type SignatarioForm = { nome: string; email: string; telefone: string; cpf: string };
 
@@ -75,20 +75,14 @@ async function arquivoParaBase64(file: File): Promise<string> {
   return btoa(bin);
 }
 
-async function gerarPdfTeste(nomeSignatarios: string[]): Promise<string> {
+async function gerarPdfSimples(titulo: string, nomeSignatarios: string[]): Promise<string> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
-  doc.text("Documento de teste School Hub", 105, 60, { align: "center" });
+  doc.text(titulo, 105, 60, { align: "center", maxWidth: 170 });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(
-    "Prova de conceito da integração com a ZapSign (ambiente sandbox). Sem validade jurídica.",
-    105,
-    72,
-    { align: "center", maxWidth: 170 },
-  );
   doc.text(`Gerado em ${new Date().toLocaleString("pt-BR")}`, 105, 84, { align: "center" });
   doc.text(`Signatário(s): ${nomeSignatarios.join(", ")}`, 105, 92, {
     align: "center",
@@ -97,11 +91,13 @@ async function gerarPdfTeste(nomeSignatarios: string[]): Promise<string> {
   return pdfParaBase64(doc);
 }
 
+const AMBIENTE: ZapSignAmbiente = "producao";
+
 function copiar(texto: string) {
   void navigator.clipboard.writeText(texto).then(() => toast.success("Link copiado"));
 }
 
-export function ZapSignSandbox() {
+export function ZapSignDocumentos() {
   const unidade = useUnidadeAtiva();
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("documentos");
@@ -109,30 +105,20 @@ export function ZapSignSandbox() {
   const listar = useServerFn(listarDocumentosTeste);
 
   const lista = useQuery({
-    queryKey: ["zapsign-poc", unidade],
-    queryFn: () => listar({ data: { unidade } }),
+    queryKey: ["zapsign-docs", AMBIENTE, unidade],
+    queryFn: () => listar({ data: { ambiente: AMBIENTE, unidade } }),
     refetchInterval: 15_000,
   });
 
-  const invalidar = () => qc.invalidateQueries({ queryKey: ["zapsign-poc"] });
+  const invalidar = () => qc.invalidateQueries({ queryKey: ["zapsign-docs"] });
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
-        <FlaskConical className="mt-0.5 h-5 w-5 shrink-0" />
-        <div className="text-sm">
-          <p className="font-semibold">Prova de conceito — ZapSign SANDBOX</p>
-          <p>
-            Documentos de teste, sem validade jurídica. Nenhum Termo de Confissão de Dívida ou
-            Contrato de Matrícula real é gerado ou enviado por esta tela.
-            {lista.data && !lista.data.configurado && (
-              <strong className="block mt-1">
-                ZAPSIGN_SANDBOX_TOKEN não está configurada neste ambiente — criação desativada.
-              </strong>
-            )}
-          </p>
+      {lista.data && !lista.data.configurado && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          ZAPSIGN_PROD_TOKEN não está configurada neste ambiente — criação desativada.
         </div>
-      </div>
+      )}
 
       {podeEditar && (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -147,7 +133,7 @@ export function ZapSignSandbox() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <FileText className="h-4 w-4" /> Documentos de teste enviados
+            <FileText className="h-4 w-4" /> Documentos enviados
             {unidade && <Badge variant="outline">{unidade}</Badge>}
           </CardTitle>
           <CardDescription>
@@ -159,7 +145,7 @@ export function ZapSignSandbox() {
           {lista.isLoading ? (
             <p className="text-sm text-muted-foreground">Carregando…</p>
           ) : (lista.data?.documentos.length ?? 0) === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum documento de teste ainda.</p>
+            <p className="text-sm text-muted-foreground">Nenhum documento enviado ainda.</p>
           ) : (
             <TabelaDocumentos
               documentos={lista.data?.documentos ?? []}
@@ -268,14 +254,14 @@ function CamposSignatario({
 }
 
 function mostrarLinks(links: { nome: string; signUrl: string }[]) {
-  toast.success("Documento criado na ZapSign sandbox", {
+  toast.success("Documento criado na ZapSign", {
     description: `${links.length} link(s) de assinatura disponível(is) na tabela abaixo.`,
   });
 }
 
 function CriarViaPdf({ unidade, onCriado }: { unidade: string | null; onCriado: () => void }) {
   const criar = useServerFn(criarDocumentoTestePdf);
-  const [nome, setNome] = useState("Documento de teste School Hub");
+  const [nome, setNome] = useState("");
   const [signatarios, setSignatarios] = useState<SignatarioForm[]>([signatarioVazio()]);
   const [ordem, setOrdem] = useState(false);
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -287,9 +273,19 @@ function CriarViaPdf({ unidade, onCriado }: { unidade: string | null; onCriado: 
       const pdfBase64 =
         fonte === "arquivo"
           ? await arquivoParaBase64(arquivo as File)
-          : await gerarPdfTeste(validos.map((s) => s.nome.trim()));
+          : await gerarPdfSimples(
+              nome.trim(),
+              validos.map((s) => s.nome.trim()),
+            );
       return criar({
-        data: { nome, unidade, pdfBase64, signatarios: validos, ordemSequencial: ordem },
+        data: {
+          ambiente: AMBIENTE,
+          nome,
+          unidade,
+          pdfBase64,
+          signatarios: validos,
+          ordemSequencial: ordem,
+        },
       });
     },
     onSuccess: (r) => {
@@ -304,9 +300,8 @@ function CriarViaPdf({ unidade, onCriado }: { unidade: string | null; onCriado: 
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Caminho 1 — Upload de PDF pronto</CardTitle>
         <CardDescription>
-          Gera um PDF de uma página (&quot;Documento de teste School Hub&quot;) ou usa um PDF do
-          computador e cria o documento na sandbox. Sem envio automático de email/WhatsApp: o link é
-          copiado desta tela.
+          Gera um PDF de uma página ou usa um PDF do computador e cria o documento na ZapSign. Sem
+          envio automático de email/WhatsApp: o link de assinatura é copiado desta tela.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -349,7 +344,7 @@ function CriarViaPdf({ unidade, onCriado }: { unidade: string | null; onCriado: 
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={mut.isPending} onClick={() => mut.mutate("gerado")}>
             {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Gerar PDF de teste e enviar
+            Gerar PDF simples e enviar
           </Button>
           <Button
             type="button"
@@ -371,7 +366,7 @@ function CriarViaTemplate({ unidade, onCriado }: { unidade: string | null; onCri
   const [docx, setDocx] = useState<File | null>(null);
   const [templateToken, setTemplateToken] = useState("");
   const [variaveis, setVariaveis] = useState<string[]>([]);
-  const [nome, setNome] = useState("Modelo de teste School Hub");
+  const [nome, setNome] = useState("");
   const [signatario, setSignatario] = useState<SignatarioForm>(signatarioVazio());
   const [campos, setCampos] = useState<{ de: string; para: string }[]>([
     { de: "{{NOME}}", para: "" },
@@ -381,13 +376,13 @@ function CriarViaTemplate({ unidade, onCriado }: { unidade: string | null; onCri
   const subir = useMutation({
     mutationFn: async () => {
       const docxBase64 = await arquivoParaBase64(docx as File);
-      return criarTemplate({ data: { nome, docxBase64 } });
+      return criarTemplate({ data: { ambiente: AMBIENTE, nome, docxBase64 } });
     },
     onSuccess: (r) => {
       setTemplateToken(r.token);
       setVariaveis(r.variaveis);
       if (r.variaveis.length) setCampos(r.variaveis.map((v) => ({ de: v, para: "" })));
-      toast.success("Modelo criado na sandbox", {
+      toast.success("Modelo criado na ZapSign", {
         description: r.variaveis.length
           ? `Variáveis detectadas: ${r.variaveis.join(", ")}`
           : "A ZapSign não devolveu variáveis detectadas.",
@@ -400,6 +395,7 @@ function CriarViaTemplate({ unidade, onCriado }: { unidade: string | null; onCri
     mutationFn: () =>
       criarDoc({
         data: {
+          ambiente: AMBIENTE,
           nome,
           unidade,
           templateToken: templateToken.trim(),
@@ -419,8 +415,8 @@ function CriarViaTemplate({ unidade, onCriado }: { unidade: string | null; onCri
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Caminho 2 — Modelo DOCX com campos dinâmicos</CardTitle>
         <CardDescription>
-          Sobe um .docx simples com marcadores (ex.: <code>{"{{NOME}}"}</code>) como modelo na
-          sandbox e cria um documento preenchendo os campos.
+          Sobe um .docx com marcadores (ex.: <code>{"{{NOME}}"}</code>) como modelo na ZapSign e
+          cria um documento preenchendo os campos.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -519,9 +515,9 @@ function RegistrarWebhook({
 }) {
   const registrar = useServerFn(registrarWebhookTeste);
   const mut = useMutation({
-    mutationFn: () => registrar({ data: { baseUrl: window.location.origin } }),
+    mutationFn: () => registrar({ data: { ambiente: AMBIENTE, baseUrl: window.location.origin } }),
     onSuccess: (r) => {
-      toast.success("Webhook registrado na ZapSign sandbox", { description: r.url });
+      toast.success("Webhook registrado na ZapSign", { description: r.url });
       onRegistrado();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao registrar webhook"),
@@ -579,7 +575,7 @@ function TabelaDocumentos({
 }) {
   const sincronizar = useServerFn(sincronizarDocumentoTeste);
   const mut = useMutation({
-    mutationFn: (id: string) => sincronizar({ data: { id } }),
+    mutationFn: (id: string) => sincronizar({ data: { ambiente: AMBIENTE, id } }),
     onSuccess: (r) => {
       toast.success(`Status na ZapSign: ${r.status}`);
       onSincronizado();

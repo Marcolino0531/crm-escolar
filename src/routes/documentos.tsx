@@ -13,7 +13,7 @@ import {
   Receipt,
   Search,
   User,
-  FlaskConical,
+  PenLine,
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
@@ -21,7 +21,7 @@ import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
 import { GerarContratoMatricula } from "@/components/documentos/GerarContratoMatricula";
-import { ZapSignSandbox } from "@/components/documentos/ZapSignSandbox";
+import { ZapSignDocumentos } from "@/components/documentos/ZapSignDocumentos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -173,7 +173,7 @@ function DocumentosPage() {
             <History className="h-4 w-4" /> Histórico
           </TabsTrigger>
           <TabsTrigger value="zapsign" className="gap-1">
-            <FlaskConical className="h-4 w-4" /> ZapSign (teste)
+            <PenLine className="h-4 w-4" /> ZapSign
           </TabsTrigger>
         </TabsList>
 
@@ -184,7 +184,7 @@ function DocumentosPage() {
           <HistoricoDocumentos />
         </TabsContent>
         <TabsContent value="zapsign" className="mt-4">
-          <ZapSignSandbox />
+          <ZapSignDocumentos />
         </TabsContent>
       </Tabs>
     </div>
@@ -428,7 +428,6 @@ function GerarRecibo() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
                 }}
-                placeholder="ex.: Bento ou 672"
                 className="h-9 w-64"
               />
             </div>
@@ -859,7 +858,6 @@ function GerarDeclaracaoDebitos() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
                 }}
-                placeholder="ex.: Bento ou 672"
                 className="h-9 w-64"
               />
             </div>
@@ -1247,7 +1245,6 @@ function GerarDeclaracaoIR() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
                 }}
-                placeholder="ex.: Bento ou 672"
                 className="h-9 w-64"
               />
             </div>
@@ -1554,7 +1551,6 @@ function HistoricoDocumentos() {
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               className="h-9 w-56"
-              placeholder="ex.: Bento, 672 ou 00007"
             />
           </div>
         </div>

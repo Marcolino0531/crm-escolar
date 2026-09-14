@@ -1,8 +1,7 @@
 // Cliente server-side da API ZapSign, com dois ambientes ISOLADOS:
-//   - "sandbox"  → ZAPSIGN_SANDBOX_TOKEN, host sandbox (POC da aba de teste,
-//                  sem validade jurídica);
+//   - "sandbox"  → ZAPSIGN_SANDBOX_TOKEN, host sandbox (sem validade jurídica);
 //   - "producao" → ZAPSIGN_PROD_TOKEN, host de produção (Contrato de
-//                  Matrícula real, com validade jurídica).
+//                  Matrícula e aba ZapSign de Documentos, com validade jurídica).
 // O ambiente é sempre um parâmetro EXPLÍCITO de quem chama (default sandbox);
 // nunca há fallback de um token para o outro. Os tokens são lidos só aqui, do
 // servidor, e vão no header `Authorization: Bearer`. Nada deste módulo pode
@@ -253,14 +252,15 @@ export type CriarTemplateDocxInput = {
 
 export async function criarTemplateDocx(
   input: CriarTemplateDocxInput,
+  ambiente: ZapSignAmbiente = "sandbox",
 ): Promise<ZapSignResultado<ZapSignTemplateResposta>> {
-  return zapsignFetch<ZapSignTemplateResposta>("sandbox", "/templates/create", {
+  return zapsignFetch<ZapSignTemplateResposta>(ambiente, "/templates/create", {
     method: "POST",
     body: {
       name: input.nome,
       base64_docx: input.docxBase64,
       lang: "pt-br",
-      folder_path: "/school-hub-poc/",
+      folder_path: ZAPSIGN_AMBIENTES[ambiente].pasta,
       first_signer: {
         blank_email: false,
         blank_phone: true,
@@ -282,9 +282,10 @@ export type CriarDocTemplateInput = {
 
 export async function criarDocumentoViaTemplate(
   input: CriarDocTemplateInput,
+  ambiente: ZapSignAmbiente = "sandbox",
 ): Promise<ZapSignResultado<ZapSignDocResposta>> {
   const tel = telefoneParaZapSign(input.signatario.telefone);
-  return zapsignFetch<ZapSignDocResposta>("sandbox", "/models/create-doc/", {
+  return zapsignFetch<ZapSignDocResposta>(ambiente, "/models/create-doc/", {
     method: "POST",
     body: {
       template_id: input.templateToken,
@@ -297,7 +298,7 @@ export async function criarDocumentoViaTemplate(
       send_automatic_email: false,
       send_automatic_whatsapp: false,
       external_id: input.externalId,
-      folder_path: "/school-hub-poc/",
+      folder_path: ZAPSIGN_AMBIENTES[ambiente].pasta,
       data: input.campos,
     },
   });

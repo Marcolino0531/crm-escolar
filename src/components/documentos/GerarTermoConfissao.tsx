@@ -358,7 +358,6 @@ export function GerarTermoConfissao() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && buscaValida) buscarAlunos.mutate();
                 }}
-                placeholder="ex.: Giovanna ou 672"
                 className="h-9 w-64"
               />
             </div>

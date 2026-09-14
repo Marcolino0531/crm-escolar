@@ -29,12 +29,14 @@ export interface TipoDocumentoInfo {
 
 // Catálogo dos modelos disponíveis. Novo modelo entra aqui e na tela de
 // emissão; o histórico é compartilhado e não precisa de mudança.
+// Manter em ordem alfabética pelo label: o dropdown "Tipo de documento" é
+// montado diretamente deste array.
 export const TIPOS_DOCUMENTO: readonly TipoDocumentoInfo[] = [
-  { id: "recibo", label: "Recibo" },
-  { id: "declaracao_debitos", label: "Declaração de Inexistência de Débitos" },
-  { id: "declaracao_ir", label: "Declaração de Imposto de Renda" },
-  { id: "termo_confissao_divida", label: "Termo de Confissão de Dívida e Outras Avenças" },
   { id: "contrato_matricula", label: "Contrato de Matrícula" },
+  { id: "declaracao_ir", label: "Declaração de Imposto de Renda" },
+  { id: "declaracao_debitos", label: "Declaração de Inexistência de Débitos" },
+  { id: "recibo", label: "Recibo" },
+  { id: "termo_confissao_divida", label: "Termo de Confissão de Dívida e Outras Avenças" },
 ] as const;
 
 export function rotuloTipoDocumento(tipo: string): string {

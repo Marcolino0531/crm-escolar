@@ -1,6 +1,9 @@
-// Server functions da POC ZapSign (sandbox). Todas exigem sessão autenticada
-// e permissão de edição no módulo Documentos. Nenhum documento real é gerado
-// aqui: apenas PDFs/modelos de teste, sem validade jurídica.
+// Server functions da aba ZapSign de Documentos (documento avulso via PDF ou
+// modelo DOCX, webhook e acompanhamento). Todas exigem sessão autenticada e
+// permissão de edição no módulo Documentos. O ambiente ("producao" | "sandbox")
+// é sempre explícito na entrada e é repassado ao cliente da ZapSign: nunca há
+// fallback de um token para o outro. Em produção os documentos têm validade
+// jurídica e consomem crédito real da ZapSign.
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -12,7 +15,9 @@ import {
   criarTemplateDocx,
   criarWebhook,
   detalharDocumento,
+  ZAPSIGN_AMBIENTES,
   zapsignConfigurado,
+  type ZapSignAmbiente,
   type ZapSignSignatarioInput,
 } from "@/lib/zapsign.server";
 import {
@@ -25,6 +30,19 @@ import {
 } from "@/lib/zapsign.persist";
 
 const LIMITE_PDF_BYTES = 10 * 1024 * 1024;
+
+const AmbienteSchema = z.enum(["sandbox", "producao"]);
+
+/** Documentos de sandbox continuam marcados como POC e prefixados; produção não. */
+export function nomeDocumentoZapSign(nome: string, ambiente: ZapSignAmbiente): string {
+  return ambiente === "sandbox" ? `[POC] ${nome}` : nome;
+}
+
+function exigirTokenDoAmbiente(ambiente: ZapSignAmbiente): void {
+  if (!zapsignConfigurado(ambiente)) {
+    throw new Error(`${ZAPSIGN_AMBIENTES[ambiente].envToken} não configurada no servidor.`);
+  }
+}
 
 async function exigirEdicaoDocumentos(userId: string): Promise<string> {
   const { data: pode, error } = await supabaseAdmin.rpc(
@@ -76,6 +94,7 @@ function signatariosIniciais(lista: ZapSignSignatarioInput[]): SignatarioPersist
 }
 
 const CriarPdfSchema = z.object({
+  ambiente: AmbienteSchema,
   nome: z.string().trim().min(3).max(120),
   unidade: z.string().trim().max(40).nullable(),
   pdfBase64: z.string().min(100),
@@ -108,22 +127,25 @@ function validarBase64Pdf(b64: string): string {
   return limpo;
 }
 
-/** Cria um documento de teste na ZapSign sandbox a partir de um PDF em Base64. */
+/** Cria um documento na ZapSign do ambiente informado a partir de um PDF em Base64. */
 export const criarDocumentoTestePdf = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => CriarPdfSchema.parse(input))
   .handler(async ({ data, context }) => {
     const autor = await exigirEdicaoDocumentos(context.userId);
-    if (!zapsignConfigurado())
-      throw new Error("ZAPSIGN_SANDBOX_TOKEN não configurada no servidor.");
+    const { ambiente } = data;
+    exigirTokenDoAmbiente(ambiente);
     const pdf = validarBase64Pdf(data.pdfBase64);
     const signatarios = normalizarSignatarios(data.signatarios);
+    const nome = nomeDocumentoZapSign(data.nome, ambiente);
 
     const { data: registro, error } = await supabaseAdmin
       .from(T_DOCS)
       .insert({
+        ambiente,
+        poc: ambiente === "sandbox",
         origem: "pdf",
-        nome: `[POC] ${data.nome}`,
+        nome,
         unidade: data.unidade,
         signatarios: signatariosIniciais(signatarios),
         created_by: context.userId,
@@ -134,7 +156,8 @@ export const criarDocumentoTestePdf = createServerFn({ method: "POST" })
     if (error || !registro) throw new Error(`Falha ao registrar documento: ${error?.message}`);
 
     const r = await criarDocumentoPdf({
-      nome: `[POC] ${data.nome}`,
+      ambiente,
+      nome,
       pdfBase64: pdf,
       signatarios,
       externalId: registro.id,
@@ -170,11 +193,12 @@ export const criarDocumentoTestePdf = createServerFn({ method: "POST" })
   });
 
 const CriarTemplateSchema = z.object({
+  ambiente: AmbienteSchema,
   nome: z.string().trim().min(3).max(120),
   docxBase64: z.string().min(100),
 });
 
-/** Sobe um modelo DOCX de teste na ZapSign sandbox e devolve o token do template + variáveis lidas. */
+/** Sobe um modelo DOCX na ZapSign do ambiente informado e devolve o token do template + variáveis lidas. */
 export const criarTemplateTeste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => CriarTemplateSchema.parse(input))
@@ -184,7 +208,11 @@ export const criarTemplateTeste = createServerFn({ method: "POST" })
     const bytes = Buffer.from(limpo, "base64");
     if (bytes.length > LIMITE_PDF_BYTES) throw new Error("DOCX acima de 10 MB.");
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error("O arquivo não é um DOCX.");
-    const r = await criarTemplateDocx({ nome: `[POC] ${data.nome}`, docxBase64: limpo });
+    exigirTokenDoAmbiente(data.ambiente);
+    const r = await criarTemplateDocx(
+      { nome: nomeDocumentoZapSign(data.nome, data.ambiente), docxBase64: limpo },
+      data.ambiente,
+    );
     if (!r.ok) throw new Error(r.erro);
     return {
       token: r.dados.token,
@@ -194,6 +222,7 @@ export const criarTemplateTeste = createServerFn({ method: "POST" })
   });
 
 const CriarViaTemplateSchema = z.object({
+  ambiente: AmbienteSchema,
   nome: z.string().trim().min(3).max(120),
   unidade: z.string().trim().max(40).nullable(),
   templateToken: z.string().trim().min(8).max(80),
@@ -201,21 +230,24 @@ const CriarViaTemplateSchema = z.object({
   campos: z.array(z.object({ de: z.string().min(1).max(80), para: z.string().max(500) })).max(30),
 });
 
-/** Cria um documento de teste a partir de um modelo DOCX já existente na ZapSign sandbox. */
+/** Cria um documento a partir de um modelo DOCX já existente na ZapSign do ambiente informado. */
 export const criarDocumentoTesteTemplate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => CriarViaTemplateSchema.parse(input))
   .handler(async ({ data, context }) => {
     const autor = await exigirEdicaoDocumentos(context.userId);
-    if (!zapsignConfigurado())
-      throw new Error("ZAPSIGN_SANDBOX_TOKEN não configurada no servidor.");
+    const { ambiente } = data;
+    exigirTokenDoAmbiente(ambiente);
     const [signatario] = normalizarSignatarios([data.signatario]);
+    const nome = nomeDocumentoZapSign(data.nome, ambiente);
 
     const { data: registro, error } = await supabaseAdmin
       .from(T_DOCS)
       .insert({
+        ambiente,
+        poc: ambiente === "sandbox",
         origem: "template",
-        nome: `[POC] ${data.nome}`,
+        nome,
         unidade: data.unidade,
         template_token: data.templateToken,
         signatarios: signatariosIniciais([signatario]),
@@ -226,12 +258,15 @@ export const criarDocumentoTesteTemplate = createServerFn({ method: "POST" })
       .single<{ id: string }>();
     if (error || !registro) throw new Error(`Falha ao registrar documento: ${error?.message}`);
 
-    const r = await criarDocumentoViaTemplate({
-      templateToken: data.templateToken,
-      signatario,
-      campos: data.campos,
-      externalId: registro.id,
-    });
+    const r = await criarDocumentoViaTemplate(
+      {
+        templateToken: data.templateToken,
+        signatario,
+        campos: data.campos,
+        externalId: registro.id,
+      },
+      ambiente,
+    );
     if (!r.ok) {
       await supabaseAdmin
         .from(T_DOCS)
@@ -261,16 +296,23 @@ export const criarDocumentoTesteTemplate = createServerFn({ method: "POST" })
     };
   });
 
-/** Registra na ZapSign sandbox o webhook apontando para /api/zapsign/webhook deste School Hub. */
+/**
+ * Registra na ZapSign do ambiente informado o webhook apontando para
+ * /api/zapsign/webhook deste School Hub, assinado com o segredo do mesmo
+ * ambiente (é por ele que o backend distingue de onde veio o callback).
+ */
 export const registrarWebhookTeste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ baseUrl: z.string().url().max(300) }).parse(input))
+  .inputValidator((input: unknown) =>
+    z.object({ ambiente: AmbienteSchema, baseUrl: z.string().url().max(300) }).parse(input),
+  )
   .handler(async ({ data, context }) => {
     const autor = await exigirEdicaoDocumentos(context.userId);
     const url = `${data.baseUrl.replace(/\/+$/, "")}/api/zapsign/webhook`;
-    const r = await criarWebhook(url);
+    const r = await criarWebhook(url, data.ambiente);
     if (!r.ok) throw new Error(r.erro);
     await supabaseAdmin.from(T_WEBHOOKS).insert({
+      ambiente: data.ambiente,
       zapsign_id: r.dados.id ?? null,
       url,
       tipo: r.dados.type ?? "",
@@ -283,18 +325,21 @@ export const registrarWebhookTeste = createServerFn({ method: "POST" })
 /** Consulta o detalhe na ZapSign e sincroniza o status local (fallback quando o webhook não chegou). */
 export const sincronizarDocumentoTeste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: unknown) =>
+    z.object({ ambiente: AmbienteSchema, id: z.string().uuid() }).parse(input),
+  )
   .handler(async ({ data, context }) => {
     await exigirEdicaoDocumentos(context.userId);
     const { data: doc } = await supabaseAdmin
       .from(T_DOCS)
       .select("zapsign_token")
       .eq("id", data.id)
+      .eq("ambiente", data.ambiente)
       .maybeSingle<{ zapsign_token: string | null }>();
     if (!doc?.zapsign_token) throw new Error("Documento sem token da ZapSign.");
-    const r = await detalharDocumento(doc.zapsign_token);
+    const r = await detalharDocumento(doc.zapsign_token, data.ambiente);
     if (!r.ok) throw new Error(r.erro);
-    await aplicarEstadoDocumento(doc.zapsign_token, r.dados);
+    await aplicarEstadoDocumento(doc.zapsign_token, r.dados, data.ambiente);
     return { status: r.dados.status };
   });
 
@@ -316,11 +361,16 @@ export type ZapSignWebhookLista = {
   created_by_nome: string;
 };
 
-/** Lista documentos de teste, eventos recebidos e webhooks registrados (só leitura). */
+/**
+ * Lista documentos avulsos desta aba, eventos recebidos e webhooks do ambiente
+ * (só leitura). Os Contratos de Matrícula ficam de fora: têm tela própria.
+ */
 export const listarDocumentosTeste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({ unidade: z.string().trim().max(40).nullable() }).parse(input),
+    z
+      .object({ ambiente: AmbienteSchema, unidade: z.string().trim().max(40).nullable() })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { data: pode, error } = await supabaseAdmin.rpc(
@@ -335,7 +385,8 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
       .select(
         "id, origem, nome, unidade, zapsign_token, status, signatarios, enviado_em, assinado_em, ultima_atualizacao_em, erro, created_by_nome",
       )
-      .eq("poc", true)
+      .eq("ambiente", data.ambiente)
+      .not("external_id", "like", "contrato-matricula:%")
       .order("enviado_em", { ascending: false })
       .limit(200);
     if (data.unidade) q = q.eq("unidade", data.unidade);
@@ -344,19 +395,21 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
       supabaseAdmin
         .from(T_EVENTOS)
         .select("id, documento_id, zapsign_token, event_type, status_documento, recebido_em")
+        .eq("sandbox", data.ambiente === "sandbox")
         .order("recebido_em", { ascending: false })
         .limit(200)
         .returns<ZapSignEventoLista[]>(),
       supabaseAdmin
         .from(T_WEBHOOKS)
         .select("id, zapsign_id, url, tipo, created_at, created_by_nome")
+        .eq("ambiente", data.ambiente)
         .order("created_at", { ascending: false })
         .limit(20)
         .returns<ZapSignWebhookLista[]>(),
     ]);
     if (docs.error) throw new Error(docs.error.message);
     return {
-      configurado: zapsignConfigurado(),
+      configurado: zapsignConfigurado(data.ambiente),
       documentos: docs.data ?? [],
       eventos: eventos.data ?? [],
       webhooks: webhooks.data ?? [],
