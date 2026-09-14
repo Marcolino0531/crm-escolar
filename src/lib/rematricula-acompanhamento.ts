@@ -12,26 +12,44 @@ import {
   type StatusEscolhaRematricula,
 } from "./rematricula";
 
+// "contrato_enviado" e "matriculado" são o caminho de quem NÃO passou pelo
+// portal: matrícula nova lançada no Sponte cujo contrato saiu pela aba
+// Documentos (contratos_matricula + zapsign_documentos).
 export type StatusAcompanhamento =
   | "nao_iniciado"
   | "em_andamento"
   | "aguardando_aprovacao"
-  | "rematriculado";
+  | "contrato_enviado"
+  | "rematriculado"
+  | "matriculado";
 
 export const STATUS_ACOMPANHAMENTO_LABEL: Record<StatusAcompanhamento, string> = {
   nao_iniciado: "Não iniciado",
   em_andamento: "Em andamento",
   aguardando_aprovacao: "Aguardando aprovação",
+  contrato_enviado: "Contrato enviado, aguardando assinatura",
   rematriculado: "Rematriculado",
+  matriculado: "Matriculado",
 };
 
+export const STATUS_ACOMPANHAMENTO_ORDEM: readonly StatusAcompanhamento[] = [
+  "nao_iniciado",
+  "em_andamento",
+  "aguardando_aprovacao",
+  "contrato_enviado",
+  "rematriculado",
+  "matriculado",
+];
+
 // Ordenação padrão: quem ainda dá trabalho de cobrança vem primeiro; quem já
-// está rematriculado vai para o fim.
+// está rematriculado/matriculado vai para o fim.
 const PESO_STATUS: Record<StatusAcompanhamento, number> = {
   nao_iniciado: 0,
   em_andamento: 1,
   aguardando_aprovacao: 2,
-  rematriculado: 3,
+  contrato_enviado: 3,
+  rematriculado: 4,
+  matriculado: 4,
 };
 
 export interface AlunoAtivoAcompanhamento {
@@ -69,6 +87,25 @@ export interface EnvioAcompanhamento {
   enviadaEm: string;
 }
 
+/** Contrato de Matrícula gerado pela aba Documentos/Contratos, com o retrato da ZapSign. */
+export interface ContratoAcompanhamento {
+  unidade: string;
+  alunoId: string;
+  /** contratos_matricula.status */
+  status: string;
+  /** zapsign_documentos.status ("signed" = todos assinaram); "" sem documento. */
+  zapsignStatus: string;
+  enviadoEm: string | null;
+}
+
+export function contratoAssinado(c: ContratoAcompanhamento): boolean {
+  return c.status === "enviado" && c.zapsignStatus === "signed";
+}
+
+export function contratoAguardandoAssinatura(c: ContratoAcompanhamento): boolean {
+  return c.status === "enviado" && c.zapsignStatus !== "signed";
+}
+
 export interface LinhaAcompanhamento {
   alunoId: string;
   nome: string;
@@ -99,14 +136,22 @@ export function chaveAluno(unidade: string, alunoId: string): string {
 // progresso parcial e conta como "em andamento". 'efetivada' é a linha que a
 // secretaria já reivindicou mas cujo título ainda não existe no Sponte (ou cujo
 // lançamento falhou): continua pendente de aprovação, nunca "Rematriculado".
+//
+// Sem envio pelo portal, vale o Contrato de Matrícula gerado direto (aba
+// Documentos): enviado e já assinado na ZapSign → "matriculado"; enviado e
+// ainda sem assinatura → "contrato_enviado". Contrato cancelado/erro/pendente
+// não muda nada. Quem tem envio do portal segue a regra de sempre.
 export function statusAcompanhamento(
   escolha: EscolhaAcompanhamento | null,
   acessou: boolean,
   enviada: boolean,
+  contrato: ContratoAcompanhamento | null = null,
 ): StatusAcompanhamento {
   if (enviada) {
     return escolha?.status === "lancada" ? "rematriculado" : "aguardando_aprovacao";
   }
+  if (contrato && contratoAssinado(contrato)) return "matriculado";
+  if (contrato && contratoAguardandoAssinatura(contrato)) return "contrato_enviado";
   return acessou || escolha ? "em_andamento" : "nao_iniciado";
 }
 
@@ -130,9 +175,12 @@ export function montarLinhasAcompanhamento(entrada: {
   acessos: readonly AcessoAcompanhamento[];
   envios: readonly EnvioAcompanhamento[];
   cadastroAlterados: readonly { unidade: string; alunoId: string }[];
+  contratos?: readonly ContratoAcompanhamento[];
 }): LinhaAcompanhamento[] {
   const porEnvio = new Map<string, string>();
   for (const e of entrada.envios) porEnvio.set(chaveAluno(e.unidade, e.alunoId), e.enviadaEm);
+  const porContrato = new Map<string, ContratoAcompanhamento>();
+  for (const c of entrada.contratos ?? []) porContrato.set(chaveAluno(c.unidade, c.alunoId), c);
   const porEscolha = new Map<string, EscolhaAcompanhamento>();
   for (const e of entrada.escolhas) porEscolha.set(chaveAluno(e.unidade, e.alunoId), e);
   const porAcesso = new Map<string, string>();
@@ -147,7 +195,8 @@ export function montarLinhasAcompanhamento(entrada: {
     // "Última atualização" é a última vez que o responsável mexeu no formulário:
     // vale a mais recente entre o acesso, a escolha e o envio final.
     const envio = porEnvio.get(chave) ?? null;
-    const atualizadoEm = [escolha?.atualizadoEm, acesso, envio]
+    const contrato = porContrato.get(chave) ?? null;
+    const atualizadoEm = [escolha?.atualizadoEm, acesso, envio, contrato?.enviadoEm]
       .filter((d): d is string => Boolean(d))
       .sort()
       .pop();
@@ -156,7 +205,7 @@ export function montarLinhasAcompanhamento(entrada: {
       nome: aluno.nome,
       unidade: aluno.unidade,
       turma: aluno.turma,
-      status: statusAcompanhamento(escolha, acesso !== null, envio !== null),
+      status: statusAcompanhamento(escolha, acesso !== null, envio !== null, contrato),
       atualizadoEm: atualizadoEm ?? null,
       parcelamento: rotuloParcelamento(escolha),
       cadastroAlterado: alterados.has(chave),
@@ -217,7 +266,12 @@ export function ordenarAcompanhamento(
 // já lançado). Quem só abriu o portal ou salvou parte continua como não respondido,
 // porque é dele que a escola precisa cobrar retorno.
 export function respondeu(linha: LinhaAcompanhamento): boolean {
-  return linha.status === "aguardando_aprovacao" || linha.status === "rematriculado";
+  return (
+    linha.status === "aguardando_aprovacao" ||
+    linha.status === "rematriculado" ||
+    linha.status === "contrato_enviado" ||
+    linha.status === "matriculado"
+  );
 }
 
 export function contadoresAcompanhamento(

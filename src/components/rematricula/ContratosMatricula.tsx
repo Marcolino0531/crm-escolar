@@ -447,7 +447,7 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
         <Skeleton className="h-64 w-full" />
       ) : itens.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Nenhuma matrícula finalizada no portal para as unidades selecionadas.
+          Nenhuma matrícula finalizada no portal nem contrato gerado para as unidades selecionadas.
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
@@ -477,8 +477,10 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                     <TableCell>
                       <p className="font-medium">{item.alunoNome || `AlunoID ${item.alunoId}`}</p>
                       <p className="text-xs text-muted-foreground">
-                        {item.serie || "—"} · {item.anoLetivo} · finalizada{" "}
-                        {formatarDataHora(item.enviadaEm)}
+                        {item.serie || "—"} · {item.anoLetivo} ·{" "}
+                        {item.enviadaEm
+                          ? `finalizada ${formatarDataHora(item.enviadaEm)}`
+                          : "contrato gerado pela aba Documentos (sem portal)"}
                       </p>
                       {!enviado && (
                         <AvisoDivergenciasExtras divergencias={item.divergenciasExtras} />

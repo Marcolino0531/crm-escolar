@@ -40,6 +40,7 @@ import {
   montarContratoMatricula,
   numeroContrato,
   signatariosContrato,
+  unirBaseContratos,
   validarContrato,
   type CamposContrato,
   type ExtrasContrato,
@@ -119,6 +120,7 @@ export interface ContratoPendente {
   alunoNome: string;
   anoLetivo: number;
   serie: string;
+  /** Data do Finalizar no portal; "" quando o contrato saiu direto pela aba Documentos. */
   enviadaEm: string;
   /** Matrícula parcelada gravada pelo portal. */
   matricula: { valor: number; parcelas: number; primeiroVencimento: string } | null;
@@ -345,19 +347,28 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
     const escPor = new Map(escolhas.map((e) => [`${e.aluno_id}|${e.ano_letivo}`, e]));
     const contratoPor = new Map(contratos.map((c) => [`${c.aluno_id}|${c.ano_letivo}`, c]));
 
-    const itens: ContratoPendente[] = envios.map((e) => {
-      const anoLetivo = e.ano_letivo;
-      const m = matPor.get(`${e.aluno_id}|${anoLetivo}`);
-      const esc = escPor.get(`${e.aluno_id}|${anoLetivo}`);
-      const c = contratoPor.get(`${e.aluno_id}|${anoLetivo}`) ?? null;
+    const base_ = unirBaseContratos(
+      envios.map((e) => ({
+        alunoId: e.aluno_id,
+        anoLetivo: e.ano_letivo,
+        enviadaEm: e.enviada_em,
+      })),
+      contratos.map((c) => ({ alunoId: c.aluno_id, anoLetivo: c.ano_letivo })),
+    );
+
+    const itens: ContratoPendente[] = base_.map((e) => {
+      const anoLetivo = e.anoLetivo;
+      const m = matPor.get(`${e.alunoId}|${anoLetivo}`);
+      const esc = escPor.get(`${e.alunoId}|${anoLetivo}`);
+      const c = contratoPor.get(`${e.alunoId}|${anoLetivo}`) ?? null;
       const doc = c?.zapsign_documento_id ? docs.get(c.zapsign_documento_id) : undefined;
       return {
         unidade,
-        alunoId: e.aluno_id,
-        alunoNome: m?.aluno_nome ?? "",
+        alunoId: e.alunoId,
+        alunoNome: m?.aluno_nome ?? c?.campos?.NomeAluno ?? "",
         anoLetivo,
-        serie: m?.serie ?? "",
-        enviadaEm: e.enviada_em,
+        serie: m?.serie ?? c?.campos?.CursoAtual ?? "",
+        enviadaEm: e.enviadaEm ?? "",
         matricula: m
           ? {
               valor: Number(m.valor),
@@ -367,7 +378,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
           : null,
         material: esc ? { valorAnual: Number(esc.valor_anual), parcelas: esc.parcelas } : null,
         divergenciasExtras: divergencias.filter(
-          (d) => d.alunoId === e.aluno_id && d.anoLetivo === anoLetivo,
+          (d) => d.alunoId === e.alunoId && d.anoLetivo === anoLetivo,
         ),
         contrato: c
           ? {

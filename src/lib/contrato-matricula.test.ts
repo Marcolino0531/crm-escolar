@@ -18,6 +18,7 @@ import {
   valorComDesconto,
   type MontarContratoInput,
   type TituloExtras,
+  unirBaseContratos,
 } from "@/lib/contrato-matricula";
 import { MODELO_CONTRATO } from "@/lib/contrato-matricula-modelo";
 
@@ -612,5 +613,38 @@ describe("resolverMatriculaInformada", () => {
       ["Data do 1º vencimento da Matrícula inválida."],
     );
     expect(resolverMatriculaInformada({ ...base, primeiroVencimento: "" }).matricula).toBeNull();
+  });
+});
+
+describe("unirBaseContratos — aba Contratos = envios do portal ∪ contratos_matricula", () => {
+  it("inclui aluno que só tem contrato (sem rematricula_envios), sem duplicar quem está nos dois", () => {
+    const base = unirBaseContratos(
+      [
+        { alunoId: "10", anoLetivo: 2027, enviadaEm: "2026-08-20T11:00:00.000Z" },
+        { alunoId: "11", anoLetivo: 2027, enviadaEm: "2026-08-21T11:00:00.000Z" },
+      ],
+      [
+        { alunoId: "11", anoLetivo: 2027 }, // também finalizou pelo portal
+        { alunoId: "12", anoLetivo: 2027 }, // só contrato pela aba Documentos
+        { alunoId: "10", anoLetivo: 2026 }, // mesmo aluno, outro ano: linha própria
+      ],
+    );
+    expect(base).toHaveLength(4);
+    expect(base.find((b) => b.alunoId === "11")?.enviadaEm).toBe("2026-08-21T11:00:00.000Z");
+    expect(base.find((b) => b.alunoId === "12")).toEqual({
+      alunoId: "12",
+      anoLetivo: 2027,
+      enviadaEm: null,
+    });
+    expect(
+      base
+        .filter((b) => b.alunoId === "10")
+        .map((b) => b.anoLetivo)
+        .sort(),
+    ).toEqual([2026, 2027]);
+  });
+
+  it("sem envios nem contratos → lista vazia", () => {
+    expect(unirBaseContratos([], [])).toEqual([]);
   });
 });
