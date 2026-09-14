@@ -176,7 +176,6 @@ export function GerarContratoMatricula() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
                 }}
-                placeholder="ex.: Bento ou 672"
                 className="h-9 w-64"
               />
             </div>

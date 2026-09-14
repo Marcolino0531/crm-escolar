@@ -1,13 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: {} }));
+vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
+vi.mock("@tanstack/react-start", () => {
+  const encadeavel = () => {
+    const obj = {
+      middleware: () => obj,
+      inputValidator: () => obj,
+      handler: () => obj,
+    };
+    return obj;
+  };
+  return { createServerFn: encadeavel };
+});
 
 import { ambienteDaAssinatura } from "@/lib/zapsign.api";
+import { nomeDocumentoZapSign } from "@/lib/zapsign.functions";
 import {
   ZAPSIGN_PROD_BASE,
   ZAPSIGN_AUTH_MODE,
   ZAPSIGN_SANDBOX_BASE,
   criarDocumentoPdf,
+  criarDocumentoViaTemplate,
+  criarTemplateDocx,
+  criarWebhook,
   montarSigner,
   recusarDocumento,
   zapsignConfigurado,
@@ -156,6 +172,73 @@ describe("ZapSign — separação sandbox × produção", () => {
     expect(fetchMock.mock.calls.some(([, i]) => (i as RequestInit).method === "DELETE")).toBe(
       false,
     );
+  });
+
+  it("aba ZapSign em produção: modelo DOCX, documento via modelo e webhook usam host, token, pasta e segredo de produção", async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ token: "tpl", name: "Modelo", inputs: [] }), { status: 200 }),
+    );
+    await criarTemplateDocx({ nome: "Modelo", docxBase64: "UEsD" }, "producao");
+    await criarDocumentoViaTemplate(
+      {
+        templateToken: "tpl",
+        signatario: { nome: "Fulano", email: "f@x.com" },
+        campos: [{ de: "NOME", para: "Fulano" }],
+        externalId: "ext-2",
+      },
+      "producao",
+    );
+    await criarWebhook("https://hub.exemplo/api/zapsign/webhook", "producao");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const chamadas = fetchMock.mock.calls as [string, RequestInit][];
+    expect(chamadas.map(([url]) => url)).toEqual([
+      `${ZAPSIGN_PROD_BASE}/templates/create`,
+      `${ZAPSIGN_PROD_BASE}/models/create-doc/`,
+      `${ZAPSIGN_PROD_BASE}/user/company/webhook/`,
+    ]);
+    for (const [url, init] of chamadas) {
+      expect(url.startsWith(ZAPSIGN_SANDBOX_BASE)).toBe(false);
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-prod");
+    }
+    const [tpl, doc, hook] = chamadas.map(
+      ([, init]) => JSON.parse(String(init.body)) as Record<string, unknown>,
+    );
+    expect(tpl.folder_path).toBe("/school-hub-contratos/");
+    expect(doc.folder_path).toBe("/school-hub-contratos/");
+    expect(hook.headers).toEqual([
+      { name: "X-School-Hub-Signature", value: zapsignWebhookSegredo("producao") },
+    ]);
+    expect(zapsignWebhookSegredo("producao")).not.toBe(zapsignWebhookSegredo("sandbox"));
+  });
+
+  it("aba ZapSign em produção sem ZAPSIGN_PROD_TOKEN: modelo, documento via modelo e webhook falham explicitamente, sem fallback para sandbox", async () => {
+    delete process.env.ZAPSIGN_PROD_TOKEN;
+    const resultados = await Promise.all([
+      criarTemplateDocx({ nome: "Modelo", docxBase64: "UEsD" }, "producao"),
+      criarDocumentoViaTemplate(
+        {
+          templateToken: "tpl",
+          signatario: { nome: "Fulano", email: "f@x.com" },
+          campos: [],
+          externalId: "ext-3",
+        },
+        "producao",
+      ),
+      criarWebhook("https://hub.exemplo/api/zapsign/webhook", "producao"),
+    ]);
+    for (const r of resultados) {
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.erro).toContain("ZAPSIGN_PROD_TOKEN");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(zapsignConfigurado("sandbox")).toBe(true);
+  });
+
+  it("nome do documento: sandbox mantém o prefixo [POC]; produção vai sem marca de teste", () => {
+    expect(nomeDocumentoZapSign("Autorização", "sandbox")).toBe("[POC] Autorização");
+    expect(nomeDocumentoZapSign("Autorização", "producao")).toBe("Autorização");
   });
 
   it("segredo do webhook difere por ambiente e identifica a origem do callback", () => {
