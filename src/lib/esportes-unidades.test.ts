@@ -72,8 +72,12 @@ describe("selecaoValida", () => {
     expect(selecaoValida(TODAS, "CEC", TEATRO_CEC.id)).toBe(TEATRO_CEC.id);
   });
 
-  it("ao trocar de unidade, descarta a modalidade da unidade anterior", () => {
-    expect(selecaoValida(TODAS, "CEC Baby", TEATRO_CEC.id)).toBe(JIU_BABY.id);
+  it("ao trocar de unidade, descarta a modalidade da unidade anterior sem pular para a primeira", () => {
+    expect(selecaoValida(TODAS, "CEC Baby", TEATRO_CEC.id)).toBe("");
+  });
+
+  it("carregamento inicial (seleção vazia) não escolhe modalidade automaticamente", () => {
+    expect(selecaoValida(TODAS, "CEC", "")).toBe("");
   });
 
   it("unidade sem modalidades zera a seleção", () => {
