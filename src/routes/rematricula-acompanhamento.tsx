@@ -37,7 +37,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { BotaoReconferirExtras } from "@/components/rematricula/BotaoReconferirExtras";
 import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
-import { MaterialPedagogicoSeries } from "@/components/rematricula/MaterialPedagogicoSeries";
+import {
+  AnoVigenteDiario,
+  CampanhasRematricula,
+} from "@/components/rematricula/MaterialPedagogicoSeries";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
@@ -478,7 +481,7 @@ function RematriculaAcompanhamentoPage() {
         <TabsList>
           <TabsTrigger value="alunos">Alunos</TabsTrigger>
           <TabsTrigger value="contratos">Contratos</TabsTrigger>
-          <TabsTrigger value="material">Material Pedagógico por Série</TabsTrigger>
+          <TabsTrigger value="campanhas">Campanhas e Ano Vigente</TabsTrigger>
         </TabsList>
 
         <TabsContent value="alunos" className="mt-4 space-y-6">
@@ -634,8 +637,9 @@ function RematriculaAcompanhamentoPage() {
           <ContratosMatricula podeEditar={podeEditar} />
         </TabsContent>
 
-        <TabsContent value="material" className="mt-4">
-          <MaterialPedagogicoSeries podeEditar={podeEditar} />
+        <TabsContent value="campanhas" className="mt-4 space-y-6">
+          <CampanhasRematricula podeEditar={podeEditar} />
+          <AnoVigenteDiario podeEditar={podeEditar} />
         </TabsContent>
       </Tabs>
 
