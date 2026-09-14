@@ -23,6 +23,7 @@ import {
   montarParametrosUpdateParcela,
 } from "@/lib/sponte-plano";
 import { filtrarAlunosDaUnidade } from "@/lib/imposto-renda-lote";
+import { diasNaJanela, janelaDeDias, MAX_DIAS_INADIMPLENCIA } from "@/lib/sponte-janela";
 
 export { escapeXml };
 
@@ -223,23 +224,7 @@ function ymdParaBr(ymd: string): string {
 
 // Lista os dias de calendário (YYYY-MM-DD) entre início e fim, inclusive. Usa
 // aritmética em UTC só para o passo de +1 dia (sem deslocamento de fuso) e
-// reformata para string. `maxDias` é um teto de segurança contra payloads
-// patológicos (31 nos blocos mensais; maior na busca por período customizado,
-// que pode cobrir vários meses — limitada pelo timeout da API, não pelo dia).
-function diasNaJanela(inicioYMD: string, fimYMD: string, maxDias = 31): string[] {
-  const dias: string[] = [];
-  const [yi, mi, di] = inicioYMD.split("-").map(Number);
-  const [yf, mf, df] = fimYMD.split("-").map(Number);
-  let cur = Date.UTC(yi, mi - 1, di);
-  const end = Date.UTC(yf, mf - 1, df);
-  for (let i = 0; cur <= end && i < maxDias; i++) {
-    const dt = new Date(cur);
-    const ymd = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
-    dias.push(ymd);
-    cur += 86400000;
-  }
-  return dias;
-}
+// reformata para string. Implementação em sponte-janela.ts (pura, testável).
 
 // Código numérico da situação "Quitada" no filtro Situacao do Sponte
 // (0=Pendente, 1=Quitada). Confirmado contra a API real.
@@ -394,6 +379,8 @@ interface ColetaResult {
   pendencias: PendenciaAgrupada[];
   alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null>;
   fault?: string;
+  /** Último dia varrido quando o período excedeu o teto de segurança (resultado incompleto). */
+  parcialAte?: string;
 }
 
 // Núcleo da consulta para UM par de credenciais (código + token): Inversão de
@@ -413,11 +400,11 @@ async function coletarPendencias(
   // (~7000), dominado por vencimentos futuros, que corta justamente os boletos
   // vencidos de ex-alunos. O filtro por data de vencimento (`DataVencimento`) é
   // honrado pela API e devolve o conjunto COMPLETO daquele dia — de TODOS os
-  // alunos (ativos, inativos, transferidos, formados), sem truncar. Iteramos os
-  // dias da janela e unimos os resultados. O teto é elevado (≈6 meses) para
-  // permitir a busca por período customizado; janelas longas demais simplesmente
-  // estouram o timeout de 60s da API e o frontend trata isso com aviso amigável.
-  const dias = diasNaJanela(inicioYMD, fimYMD, 186);
+  // alunos (ativos, inativos, transferidos, formados), sem truncar. Iteramos
+  // TODOS os dias da janela em lotes de DIAS_CONC e unimos os resultados. Só há
+  // corte acima de MAX_DIAS_INADIMPLENCIA, e nesse caso `parcialAte` avisa o
+  // chamador de que o resultado é incompleto.
+  const { dias, parcialAte } = janelaDeDias(inicioYMD, fimYMD, MAX_DIAS_INADIMPLENCIA);
   const parcelaNodes: string[] = [];
   let primeiroFault: string | null = null;
   const DIAS_CONC = 10; // janela de concorrência para não estourar a API/timeout
@@ -444,8 +431,9 @@ async function coletarPendencias(
     }
   }
   // Só propaga erro se NENHUM dia retornou parcelas (falha geral de credencial).
+  const parcial = parcialAte ? { parcialAte } : {};
   if (parcelaNodes.length === 0 && primeiroFault) {
-    return { pendencias: [], alunoUnidadeMap: {}, fault: primeiroFault };
+    return { pendencias: [], alunoUnidadeMap: {}, fault: primeiroFault, ...parcial };
   }
 
   // ── Step 2: Filter by status/saldo, collect raw parcelas ──
@@ -485,7 +473,7 @@ async function coletarPendencias(
     });
   }
 
-  if (parcelasRaw.length === 0) return { pendencias: [], alunoUnidadeMap: {} };
+  if (parcelasRaw.length === 0) return { pendencias: [], alunoUnidadeMap: {}, ...parcial };
 
   // ── Step 3: Fetch student names + responsável ONLY for debtors ──
   const debtorIds = Array.from(alunosComPendencia);
@@ -599,7 +587,7 @@ async function coletarPendencias(
     });
   }
 
-  return { pendencias: pendenciasAgrupadas, alunoUnidadeMap };
+  return { pendencias: pendenciasAgrupadas, alunoUnidadeMap, ...parcial };
 }
 
 // ─── Conciliação de Faturamento ─────────────────────────────────────────────
@@ -1531,7 +1519,13 @@ export async function coletarInadimplenciaPorEscopo(
   inicioYMD: string,
   fimYMD: string,
   userId: string,
-): Promise<{ pendencias: PendenciaAgrupada[]; error?: string; indisponivel?: boolean }> {
+): Promise<{
+  pendencias: PendenciaAgrupada[];
+  error?: string;
+  indisponivel?: boolean;
+  /** Período varrido só até este dia (teto de segurança) — resultado incompleto. */
+  parcialAte?: string;
+}> {
   // RBAC por unidade (server-side): impede que um usuário restrito force a
   // leitura de unidades fora da sua permissão (ou do consolidado). `null` =
   // acesso global.
@@ -1610,7 +1604,10 @@ export async function coletarInadimplenciaPorEscopo(
     if (pendencias.length === 0 && (cecRes.fault || belvedereRes.fault || valeSerenoRes.fault)) {
       return { pendencias: [], error: cecRes.fault ?? belvedereRes.fault ?? valeSerenoRes.fault };
     }
-    return { pendencias };
+    const parcialAte = [cecRes.parcialAte, belvedereRes.parcialAte, valeSerenoRes.parcialAte]
+      .filter((d): d is string => !!d)
+      .sort()[0];
+    return parcialAte ? { pendencias, parcialAte } : { pendencias };
   }
 
   // ── Unidade individual: usa EXCLUSIVAMENTE as credenciais da unidade ──
@@ -1634,7 +1631,8 @@ export async function coletarInadimplenciaPorEscopo(
     : unidadeKey === "CEC"
       ? res.pendencias.filter((p) => (res.alunoUnidadeMap[p.alunoId] ?? "CEC") === "CEC")
       : res.pendencias.filter((p) => res.alunoUnidadeMap[p.alunoId] === "CEC Baby");
-  return { pendencias: lista.map((p) => ({ ...p, unidade: unidadeKey })) };
+  const pendencias = lista.map((p) => ({ ...p, unidade: unidadeKey }));
+  return res.parcialAte ? { pendencias, parcialAte: res.parcialAte } : { pendencias };
 }
 
 export const fetchSponteInadimplencia = createServerFn({ method: "POST" })
@@ -1707,6 +1705,8 @@ export interface InadimplenciaAnualResult {
   boletosAcordoExcluidos: number;
   indisponivel?: boolean;
   error?: string;
+  /** Varredura cortada pelo teto de segurança: boletos só até este dia (YYYY-MM-DD). */
+  parcialAte?: string;
   tempoSegundos: number;
   dataInicio: string;
   dataFim: string;
@@ -2256,6 +2256,7 @@ export const fetchSponteInadimplenciaAnual = createServerFn({ method: "POST" })
       tempoSegundos,
       dataInicio: inicioYMD,
       dataFim: fimYMD,
+      ...(coleta.parcialAte ? { parcialAte: coleta.parcialAte } : {}),
     };
   });
 

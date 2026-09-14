@@ -294,6 +294,7 @@ function MainDashboard() {
   const indiceAnual = faturamentoTotalAno > 0 ? (inadimplenteAno / faturamentoTotalAno) * 100 : 0;
   const anualCarregando = anualFetching || receitasAnoFetching;
   const anualErro = anual?.error ?? null;
+  const anualParcialAte = anual?.parcialAte ?? null;
 
   // ── Fechamento mensal (Extrato Bancário) ─────────────────────────────────
   const { data: catalogos } = useQuery({
@@ -495,7 +496,9 @@ function MainDashboard() {
               ? "Faturamento retroativo (Jan–Mai) não informado"
               : anualErro
                 ? anualErro
-                : `${formatBRL(inadimplenteAno)} inadimplente no ano`
+                : anualParcialAte
+                  ? `Parcial: ${formatBRL(inadimplenteAno)} — boletos varridos só até ${anualParcialAte.split("-").reverse().join("/")}`
+                  : `${formatBRL(inadimplenteAno)} inadimplente no ano`
           }
         />
 
