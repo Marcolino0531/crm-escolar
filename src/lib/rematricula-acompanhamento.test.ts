@@ -6,7 +6,9 @@ import {
   montarLinhasAcompanhamento,
   ordenarAcompanhamento,
   resumirLancamentosRevisao,
+  statusAcompanhamento,
   type AcessoAcompanhamento,
+  type ContratoAcompanhamento,
   type AlunoAtivoAcompanhamento,
   type EnvioAcompanhamento,
   type EscolhaAcompanhamento,
@@ -228,5 +230,83 @@ describe("resumirLancamentosRevisao — material e matrícula independentes", ()
       algumSucesso: false,
       tudoOk: false,
     });
+  });
+});
+
+describe("contrato de matrícula sem passagem pelo portal (aba Documentos)", () => {
+  const contrato = (
+    alunoId: string,
+    status: string,
+    zapsignStatus: string,
+    unidade = "CEC",
+  ): ContratoAcompanhamento => ({
+    unidade,
+    alunoId,
+    status,
+    zapsignStatus,
+    enviadoEm: "2026-09-01T10:00:00.000Z",
+  });
+
+  it("contrato enviado e ainda não assinado → 'Contrato enviado, aguardando assinatura'", () => {
+    expect(statusAcompanhamento(null, false, false, contrato("1", "enviado", "pending"))).toBe(
+      "contrato_enviado",
+    );
+    expect(statusAcompanhamento(null, false, false, contrato("1", "enviado", ""))).toBe(
+      "contrato_enviado",
+    );
+  });
+
+  it("documento assinado na ZapSign sem rematricula_envios → 'Matriculado'", () => {
+    expect(statusAcompanhamento(null, false, false, contrato("1", "enviado", "signed"))).toBe(
+      "matriculado",
+    );
+  });
+
+  it("quem finalizou pelo portal mantém a regra antiga, mesmo com contrato assinado", () => {
+    const esc = escolha("CEC", "1", "lancada");
+    expect(statusAcompanhamento(esc, true, true, contrato("1", "enviado", "signed"))).toBe(
+      "rematriculado",
+    );
+    expect(
+      statusAcompanhamento(
+        escolha("CEC", "1", "pendente_lancamento"),
+        true,
+        true,
+        contrato("1", "enviado", "pending"),
+      ),
+    ).toBe("aguardando_aprovacao");
+  });
+
+  it("contrato cancelado, com erro, pendente ou gerando não muda o status", () => {
+    for (const s of ["cancelado", "erro", "pendente", "gerando"]) {
+      expect(statusAcompanhamento(null, false, false, contrato("1", s, "signed"))).toBe(
+        "nao_iniciado",
+      );
+      expect(statusAcompanhamento(null, true, false, contrato("1", s, ""))).toBe("em_andamento");
+    }
+  });
+
+  it("montarLinhas cruza contrato por (unidade, alunoId) e conta nos cards como respondido", () => {
+    const linhasComContrato = montarLinhasAcompanhamento({
+      alunos,
+      escolhas: [],
+      acessos: [],
+      envios: [],
+      cadastroAlterados: [],
+      contratos: [
+        contrato("1", "enviado", "pending"), // Ana (CEC)
+        contrato("2", "enviado", "signed"), // Bruno (CEC)
+        contrato("1", "enviado", "signed", "Núcleo Belvedere"), // Elisa
+      ],
+    });
+    const porNome = new Map(linhasComContrato.map((l) => [l.nome, l]));
+    expect(porNome.get("Ana")?.status).toBe("contrato_enviado");
+    expect(porNome.get("Bruno")?.status).toBe("matriculado");
+    expect(porNome.get("Elisa")?.status).toBe("matriculado");
+    expect(porNome.get("Carla")?.status).toBe("nao_iniciado");
+    expect(porNome.get("Ana")?.atualizadoEm).toBe("2026-09-01T10:00:00.000Z");
+    const c = contadoresAcompanhamento(linhasComContrato);
+    expect(c.responderam).toBe(3);
+    expect(filtrarPorStatus(linhasComContrato, "matriculado")).toHaveLength(2);
   });
 });

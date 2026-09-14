@@ -443,13 +443,13 @@ function AppShell() {
           kind: "item",
           to: "/matriculas",
           icon: ClipboardList,
-          label: "Matrículas",
+          label: "e-Formulário",
         }),
         ...item(showRematricula, {
           kind: "item",
           to: "/rematricula-acompanhamento",
           icon: GraduationCap,
-          label: "Rematrícula",
+          label: "Matrícula",
         }),
         ...item(showOnboarding, {
           kind: "item",

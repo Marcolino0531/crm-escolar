@@ -44,6 +44,7 @@ import { formatarBRL } from "@/lib/rematricula";
 import { formatarDataBR } from "@/lib/rematricula-matricula";
 import {
   STATUS_ACOMPANHAMENTO_LABEL,
+  STATUS_ACOMPANHAMENTO_ORDEM,
   contadoresAcompanhamento,
   filtrarAcompanhamento,
   filtrarPorStatus,
@@ -79,7 +80,9 @@ const CORES_STATUS: Record<StatusAcompanhamento, string> = {
   nao_iniciado: "bg-slate-100 text-slate-700",
   em_andamento: "bg-blue-100 text-blue-800",
   aguardando_aprovacao: "bg-amber-100 text-amber-900",
+  contrato_enviado: "bg-violet-100 text-violet-900",
   rematriculado: "bg-emerald-100 text-emerald-800",
+  matriculado: "bg-emerald-100 text-emerald-800",
 };
 
 // Revisão antes do lançamento: a secretaria confere o que o responsável escolheu
@@ -413,6 +416,7 @@ function RematriculaAcompanhamentoPage() {
           escolhas: c.data.escolhas,
           acessos: c.data.acessos,
           envios: c.data.envios,
+          contratos: c.data.contratos,
           cadastroAlterados: c.data.cadastroAlterados,
         })
       : [],
@@ -549,18 +553,11 @@ function RematriculaAcompanhamentoPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos os status</SelectItem>
-                <SelectItem value="nao_iniciado">
-                  {STATUS_ACOMPANHAMENTO_LABEL.nao_iniciado}
-                </SelectItem>
-                <SelectItem value="em_andamento">
-                  {STATUS_ACOMPANHAMENTO_LABEL.em_andamento}
-                </SelectItem>
-                <SelectItem value="aguardando_aprovacao">
-                  {STATUS_ACOMPANHAMENTO_LABEL.aguardando_aprovacao}
-                </SelectItem>
-                <SelectItem value="rematriculado">
-                  {STATUS_ACOMPANHAMENTO_LABEL.rematriculado}
-                </SelectItem>
+                {STATUS_ACOMPANHAMENTO_ORDEM.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_ACOMPANHAMENTO_LABEL[s]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

@@ -70,6 +70,7 @@ import {
 import {
   type AcessoAcompanhamento,
   type AlunoAtivoAcompanhamento,
+  type ContratoAcompanhamento,
   type EnvioAcompanhamento,
   type EscolhaAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
@@ -157,6 +158,9 @@ import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
 } from "@/lib/rematricula-extras.functions";
+
+const T_CONTRATOS = "contratos_matricula" as never;
+const T_DOCS = "zapsign_documentos" as never;
 
 const LOG_TAG = "[rematricula]";
 
@@ -2277,6 +2281,7 @@ export interface AcompanhamentoRematriculaResult {
   escolhas: EscolhaAcompanhamento[];
   acessos: AcessoAcompanhamento[];
   envios: EnvioAcompanhamento[];
+  contratos: ContratoAcompanhamento[];
   cadastroAlterados: { unidade: string; alunoId: string }[];
   divergenciasExtras: DivergenciaExtraAluno[];
   error?: string;
@@ -2295,7 +2300,7 @@ export async function carregarAcompanhamentoUnidade(
   unidade: string,
   anoLetivo: number,
 ): Promise<AcompanhamentoRematriculaResult> {
-  const [ativos, escolhas, acessos, envios, auditoria, divergenciasExtras, campanhas] =
+  const [ativos, escolhas, acessos, envios, auditoria, divergenciasExtras, campanhas, contratos] =
     await Promise.all([
       alunosAtivosDaUnidade(unidade),
       selectAll<EscolhaRow>(() =>
@@ -2323,6 +2328,7 @@ export async function carregarAcompanhamentoUnidade(
         .eq("resultado", "gravado"),
       divergenciasExtrasDaUnidade(unidade, anoLetivo),
       listarCampanhas(),
+      contratosAcompanhamentoDaUnidade(unidade, anoLetivo),
     ]);
 
   const linhas = escolhas;
@@ -2365,6 +2371,7 @@ export async function carregarAcompanhamentoUnidade(
       alunoId: e.aluno_id,
       enviadaEm: e.enviada_em,
     })),
+    contratos,
     cadastroAlterados: [...alterados].map((alunoId) => ({ unidade, alunoId })),
     divergenciasExtras,
     error: ativos.error,
@@ -2389,6 +2396,7 @@ export const acompanhamentoRematricula = createServerFn({ method: "POST" })
       escolhas: [],
       acessos: [],
       envios: [],
+      contratos: [],
       cadastroAlterados: [],
       divergenciasExtras: [],
       error,
@@ -2425,6 +2433,46 @@ interface EnvioRow {
   unidade: string;
   aluno_id: string;
   enviada_em: string;
+}
+
+interface ContratoAcompRow {
+  unidade: string;
+  aluno_id: string;
+  status: string;
+  enviado_em: string | null;
+  zapsign_documento_id: string | null;
+}
+
+// Contratos de Matrícula da unidade/ano (aba Documentos ou Contratos) com o
+// status do documento na ZapSign — é o que permite ao Acompanhamento
+// reconhecer matrícula nova sem passagem pelo portal.
+export async function contratosAcompanhamentoDaUnidade(
+  unidade: string,
+  anoLetivo: number,
+): Promise<ContratoAcompanhamento[]> {
+  const contratos = await selectAll<ContratoAcompRow>(() =>
+    supabaseAdmin
+      .from(T_CONTRATOS)
+      .select("unidade, aluno_id, status, enviado_em, zapsign_documento_id")
+      .eq("unidade", unidade)
+      .eq("ano_letivo", anoLetivo)
+      .order("aluno_id", { ascending: true }),
+  );
+  const docIds = contratos.map((c) => c.zapsign_documento_id).filter((d): d is string => !!d);
+  const statusDoc = new Map<string, string>();
+  if (docIds.length) {
+    const { data } = await supabaseAdmin.from(T_DOCS).select("id, status").in("id", docIds);
+    for (const d of (data ?? []) as unknown as { id: string; status: string }[]) {
+      statusDoc.set(d.id, d.status);
+    }
+  }
+  return contratos.map((c) => ({
+    unidade: c.unidade,
+    alunoId: c.aluno_id,
+    status: c.status,
+    zapsignStatus: c.zapsign_documento_id ? (statusDoc.get(c.zapsign_documento_id) ?? "") : "",
+    enviadoEm: c.enviado_em,
+  }));
 }
 
 export interface AlteracaoCadastralRematricula {

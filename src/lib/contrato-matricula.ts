@@ -646,3 +646,37 @@ export function resolverMatriculaInformada(m: MatriculaInformada): MatriculaReso
   if (erros.length > 0 || valor === null) return { matricula: null, origem: null, erros };
   return { matricula: { valor, parcelas, primeiroVencimento: venc }, origem, erros: [] };
 }
+
+// ─── Base da aba Contratos ───────────────────────────────────────────────────
+// A lista nasce da UNIÃO (por aluno + ano letivo) de quem finalizou pelo portal
+// (rematricula_envios) com quem já tem Contrato de Matrícula gerado direto pela
+// aba Documentos (contratos_matricula), sem passar pelo portal. Quem está nos
+// dois conjuntos aparece uma vez, com a data do envio do portal.
+
+export interface AlunoAnoContrato {
+  alunoId: string;
+  anoLetivo: number;
+  /** Data do Finalizar no portal; null = só existe o contrato (aba Documentos). */
+  enviadaEm: string | null;
+}
+
+export function unirBaseContratos(
+  envios: readonly { alunoId: string; anoLetivo: number; enviadaEm: string }[],
+  contratos: readonly { alunoId: string; anoLetivo: number }[],
+): AlunoAnoContrato[] {
+  const porChave = new Map<string, AlunoAnoContrato>();
+  for (const e of envios) {
+    porChave.set(`${e.alunoId}|${e.anoLetivo}`, {
+      alunoId: e.alunoId,
+      anoLetivo: e.anoLetivo,
+      enviadaEm: e.enviadaEm,
+    });
+  }
+  for (const c of contratos) {
+    const chave = `${c.alunoId}|${c.anoLetivo}`;
+    if (!porChave.has(chave)) {
+      porChave.set(chave, { alunoId: c.alunoId, anoLetivo: c.anoLetivo, enviadaEm: null });
+    }
+  }
+  return [...porChave.values()];
+}

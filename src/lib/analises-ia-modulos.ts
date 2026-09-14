@@ -14,6 +14,7 @@ import { z } from "zod";
 import { STATUS_RECARGA_LABEL, type StatusRecarga } from "./cantina";
 import {
   STATUS_ACOMPANHAMENTO_LABEL,
+  STATUS_ACOMPANHAMENTO_ORDEM,
   type StatusAcompanhamento,
 } from "./rematricula-acompanhamento";
 
@@ -606,12 +607,7 @@ export function agregarRecargasCantina(recargas: RecargaCantinaIA[]) {
 }
 
 export function agregarRematricula(linhas: LinhaRematriculaIA[], avisos: string[]) {
-  const statusPossiveis: StatusAcompanhamento[] = [
-    "nao_iniciado",
-    "em_andamento",
-    "aguardando_aprovacao",
-    "rematriculado",
-  ];
+  const statusPossiveis: readonly StatusAcompanhamento[] = STATUS_ACOMPANHAMENTO_ORDEM;
   const respondidas = linhas.filter((l) => l.parcelas !== null);
   const distribuicaoParcelamentos = Array.from({ length: 8 }, (_, i) => i + 1).map((parcelas) => ({
     parcelas,
