@@ -43,6 +43,7 @@ export const CAMPOS_CONTRATO = [
   "ValorMatriculaExtenso",
   "NumeroParcelasMatricula",
   "DataVencimento1aParcelaMatricula",
+  "ComplementoParcelasMatricula",
   "ValorMensalidade",
   "ValorMensalidadeExtenso",
   "PercentualDesconto",
@@ -344,6 +345,10 @@ export function montarCamposContrato(input: MontarContratoInput): CamposContrato
     ValorMatriculaExtenso: valorPorExtenso(matricula.valor),
     NumeroParcelasMatricula: String(matricula.parcelas),
     DataVencimento1aParcelaMatricula: dataPorExtenso(matricula.primeiroVencimento),
+    ComplementoParcelasMatricula:
+      matricula.parcelas === 1
+        ? "."
+        : " e demais parcelas com vencimento acompanhando o dia de vencimento da mensalidade, nos meses subsequentes.",
     ValorMensalidade: numeroBR(mensalidade.valor),
     ValorMensalidadeExtenso: valorPorExtenso(mensalidade.valor),
     PercentualDesconto: percentualBR(mensalidade.descontoPercentual),

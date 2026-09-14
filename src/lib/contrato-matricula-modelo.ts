@@ -135,7 +135,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
     tipo: "bloco",
     chave: "matricula",
     texto:
-      "MATRÍCULA: R$«ValorMatricula» («ValorMatriculaExtenso»), parcelada em «NumeroParcelasMatricula»x, com vencimento da 1ª parcela em «DataVencimento1aParcelaMatricula» e demais parcelas com vencimento acompanhando o dia de vencimento da mensalidade, nos meses subsequentes.",
+      "MATRÍCULA: R$«ValorMatricula» («ValorMatriculaExtenso»), parcelada em «NumeroParcelasMatricula»x, com vencimento da 1ª parcela em «DataVencimento1aParcelaMatricula»«ComplementoParcelasMatricula»",
   },
   {
     tipo: "bloco",

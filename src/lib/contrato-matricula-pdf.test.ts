@@ -162,4 +162,54 @@ describe("gerarPdfContratoMatricula", () => {
     expect(texto).toContain("CNPJ 98.765.432/0001-10");
     expect(doc.getNumberOfPages()).toBeGreaterThan(1);
   });
+
+  it("parágrafos saem justificados de verdade: operador Tw ≠ 0 nas linhas internas e Tw 0 na última", async () => {
+    const contrato = montarContratoMatricula(entrada());
+    const c = entrada().colegio;
+    const doc = await gerarPdfContratoMatricula(
+      contrato,
+      {
+        colegio: {
+          unidade: c.unidade,
+          razaoSocial: c.razaoSocial,
+          nomeFantasia: c.nomeFantasia,
+          cnpj: c.cnpj,
+          inscricaoMunicipal: "",
+          endereco: c.endereco,
+          numero: c.numero,
+          complemento: "",
+          bairro: c.bairro,
+          cidade: c.cidade,
+          uf: c.uf,
+          cep: c.cep,
+          telefone: "",
+          email: c.email,
+          site: "",
+          assinanteNome: "",
+          assinanteCargo: "",
+          observacao: "",
+        },
+        enderecoColegio: "Rua Azul, 10 — Bairro, Belo Horizonte/MG",
+        contatoColegio: "baby@cec.com.br",
+      },
+      null,
+    );
+    // jsPDF grava os content streams sem compressão, então o operador de
+    // espaçamento de palavra ("<n> Tw") de cada linha fica legível no PDF bruto.
+    // Cada bloco BT…ET é um parágrafo (ou o trecho dele que cabe na página).
+    const bruto = doc.output() as string;
+    const blocos = [...bruto.matchAll(/BT\n([\s\S]*?)ET/g)]
+      .map((m) => [...m[1].matchAll(/(-?\d+(?:\.\d+)?) Tw/g)].map((t) => Number(t[1])))
+      .filter((tws) => tws.length >= 3);
+    expect(blocos.length).toBeGreaterThan(10);
+    for (const tws of blocos) {
+      const internas = tws.slice(0, -1);
+      const ultima = tws[tws.length - 1];
+      // Tw ≠ 0 em toda linha interna (pode ficar levemente negativo quando a
+      // linha sai um fio mais larga que a coluna); só a última do parágrafo é 0.
+      expect(internas.every((t) => t !== 0 && t > -1 && t < 40)).toBe(true);
+      expect(internas.some((t) => t > 0.1)).toBe(true);
+      expect(ultima).toBe(0);
+    }
+  });
 });

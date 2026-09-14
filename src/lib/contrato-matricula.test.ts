@@ -256,6 +256,27 @@ describe("montarCamposContrato — valores monetários", () => {
     expect(campos.DataVencimento1aParcelaMatricula).toBe("10 de outubro de 2026");
   });
 
+  it("matrícula parcelada: bloco cita as demais parcelas acompanhando a mensalidade", () => {
+    const texto = montarContratoMatricula(entrada())
+      .paragrafos.map((p) => p.texto)
+      .join("\n");
+    expect(texto).toContain(
+      "MATRÍCULA: R$1.250,50 (mil duzentos e cinquenta reais e cinquenta centavos), parcelada em 3x, com vencimento da 1ª parcela em 10 de outubro de 2026 e demais parcelas com vencimento acompanhando o dia de vencimento da mensalidade, nos meses subsequentes.",
+    );
+  });
+
+  it("matrícula em parcela única: bloco termina no 1º vencimento, sem 'demais parcelas'", () => {
+    const e = entrada();
+    e.matricula = { valor: 1250.5, parcelas: 1, primeiroVencimento: "2026-10-10" };
+    const texto = montarContratoMatricula(e)
+      .paragrafos.map((p) => p.texto)
+      .join("\n");
+    expect(texto).toContain(
+      "MATRÍCULA: R$1.250,50 (mil duzentos e cinquenta reais e cinquenta centavos), parcelada em 1x, com vencimento da 1ª parcela em 10 de outubro de 2026.",
+    );
+    expect(texto).not.toContain("2026 e demais parcelas");
+  });
+
   it("mensalidade: integral, desconto e valor com desconto (extenso)", () => {
     expect(campos.ValorMensalidade).toBe("2.000,00");
     expect(campos.ValorMensalidadeExtenso).toBe("dois mil reais");
