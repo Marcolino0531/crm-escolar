@@ -509,7 +509,19 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      {item.matricula ? (
+                      {item.contrato ? (
+                        item.contrato.resumo.matricula ? (
+                          <>
+                            <p>R$ {item.contrato.resumo.matricula.valor}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.contrato.resumo.matricula.parcelas}x · 1ª em{" "}
+                              {item.contrato.resumo.matricula.primeiroVencimento}
+                            </p>
+                          </>
+                        ) : (
+                          <span className="text-xs text-red-600">Sem matrícula no contrato</span>
+                        )
+                      ) : item.matricula ? (
                         <>
                           <p>{formatarBRL(item.matricula.valor)}</p>
                           <p className="text-xs text-muted-foreground">
@@ -522,7 +534,18 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      {item.material ? (
+                      {item.contrato ? (
+                        item.contrato.resumo.material ? (
+                          <>
+                            <p>R$ {item.contrato.resumo.material.valorTotal}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.contrato.resumo.material.parcelas}x
+                            </p>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Sem material</span>
+                        )
+                      ) : item.material ? (
                         <>
                           <p>{formatarBRL(item.material.valorAnual)}</p>
                           <p className="text-xs text-muted-foreground">{item.material.parcelas}x</p>

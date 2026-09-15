@@ -39,6 +39,7 @@ import {
   materialDoContrato,
   montarContratoMatricula,
   numeroContrato,
+  resumoContratoGerado,
   signatariosContrato,
   unirBaseContratos,
   validarContrato,
@@ -48,6 +49,7 @@ import {
   type TituloExtras,
   type MatriculaContrato,
   type MontarContratoInput,
+  type ResumoContratoGerado,
   type SignatarioContrato,
   type TestemunhaContrato,
 } from "@/lib/contrato-matricula";
@@ -136,6 +138,8 @@ export interface ContratoPendente {
     responsavelNome: string;
     responsavelEmail: string;
     mensalidadeComDesconto: string;
+    /** Matrícula/Material como gravados em `campos` no último contrato gerado. */
+    resumo: ResumoContratoGerado;
     erro: string;
     enviadoEm: string;
     enviadoPor: string;
@@ -388,6 +392,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
               responsavelNome: c.responsavel_nome,
               responsavelEmail: c.responsavel_email,
               mensalidadeComDesconto: c.campos?.ValorMensalidadeComDesconto ?? "",
+              resumo: resumoContratoGerado(c.campos),
               erro: c.erro,
               enviadoEm: c.enviado_em ?? "",
               enviadoPor: c.enviado_por_nome,

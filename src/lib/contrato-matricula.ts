@@ -66,6 +66,42 @@ export type CampoContrato = (typeof CAMPOS_CONTRATO)[number];
 export type CamposContrato = Record<CampoContrato, string>;
 
 export const TEXTO_SEM_MATERIAL = "Não há material pedagógico contratado nesta matrícula.";
+
+/** Matrícula e Material como saíram no último contrato gerado (valores já formatados). */
+export interface ResumoContratoGerado {
+  matricula: { valor: string; parcelas: string; primeiroVencimento: string } | null;
+  material: { descricao: string; valorTotal: string; parcelas: string } | null;
+}
+
+/**
+ * Lê de `campos` do contrato gravado o que a aba Contratos mostra nas colunas
+ * Matrícula e Material. `material: null` quando o contrato saiu com
+ * TEXTO_SEM_MATERIAL (série sem material no Sponte) ou sem parcelas.
+ */
+export function resumoContratoGerado(campos: Partial<CamposContrato> | null): ResumoContratoGerado {
+  const c = campos ?? {};
+  const matricula =
+    c.ValorMatricula && c.NumeroParcelasMatricula
+      ? {
+          valor: c.ValorMatricula,
+          parcelas: c.NumeroParcelasMatricula,
+          primeiroVencimento: c.DataVencimento1aParcelaMatricula ?? "",
+        }
+      : null;
+  const semMaterial =
+    !c.ListaMaterialPedagogicoSelecionado ||
+    c.ListaMaterialPedagogicoSelecionado === TEXTO_SEM_MATERIAL ||
+    !c.NumeroParcelasMaterialPedagogico ||
+    c.NumeroParcelasMaterialPedagogico === "0";
+  const material = semMaterial
+    ? null
+    : {
+        descricao: c.ListaMaterialPedagogicoSelecionado ?? "",
+        valorTotal: c.ValorTotalMaterialPedagogico ?? "",
+        parcelas: c.NumeroParcelasMaterialPedagogico ?? "",
+      };
+  return { matricula, material };
+}
 /** Material lançado no Sponte sem itens do kit cadastrados para unidade × ano × série. */
 export const TEXTO_MATERIAL_SEM_ITENS = "Material Pedagógico da série";
 export const TEXTO_SEM_EXTRAS = "Não há serviços extras contratados nesta rematrícula.";
