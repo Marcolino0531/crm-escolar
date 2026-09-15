@@ -26,6 +26,7 @@ import { filtrarAlunosDaUnidade } from "@/lib/imposto-renda-lote";
 import { diasNaJanela, janelaDeDias, MAX_DIAS_INADIMPLENCIA } from "@/lib/sponte-janela";
 import {
   alunosVigentesDoAno,
+  parseWsMatricula,
   planejarSincronizacaoAno,
   turmaMaisRecente,
   unidadeDestinoDiario,
@@ -3264,13 +3265,7 @@ async function listarContratosDoAno(
   );
   const fault = checkFault(xml);
   if (fault) throw new Error(fault);
-  return parseXmlList(xml, "wsMatricula").map((node) => ({
-    alunoId: parseXmlValue(node, "AlunoID"),
-    nome: parseXmlValue(node, "Nome"),
-    turma: parseXmlValue(node, "NomeTurma"),
-    contratoId: parseXmlValue(node, "ContratoID"),
-    situacao: parseXmlValue(node, "Situacao"),
-  }));
+  return parseXmlList(xml, "wsMatricula").map(parseWsMatricula);
 }
 
 const vazio = (anoLetivo: number): DiarioSyncResult => ({

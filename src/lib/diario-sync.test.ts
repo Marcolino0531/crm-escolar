@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   alunosVigentesDoAno,
   contarTurmasCorrigidas,
+  parseWsMatricula,
   planejarSincronizacaoAno,
   turmaMaisRecente,
   turmasDoAno,
   unidadeDestinoDiario,
+  valorTopoXml,
   type ContratoSponte,
   type VinculoAno,
 } from "./diario-sync";
@@ -197,5 +199,45 @@ describe("contarTurmasCorrigidas", () => {
       [],
     );
     expect(contarTurmasCorrigidas(plano.upserts, antes)).toBe(1);
+  });
+});
+
+describe("parseWsMatricula", () => {
+  // Estrutura real do GetMatriculas: o nome do aluno vem em <Aluno>; <Nome>
+  // só aparece dentro de <Disciplinas>/<wsDisciplinas>.
+  const node = `
+    <wsMatricula>
+      <RetornoOperacao>01 - Operação Realizada com Sucesso.</RetornoOperacao>
+      <ContratoID>2151</ContratoID>
+      <Situacao>Vigente</Situacao>
+      <Aluno>Ana Clara Miranda Ramos</Aluno>
+      <AlunoID>290</AlunoID>
+      <TurmaID>120</TurmaID>
+      <NomeTurma>05 - 1º Período T / A</NomeTurma>
+      <NomeCurso>Educação Infantil</NomeCurso>
+      <DataEncerramento />
+      <Disciplinas>
+        <wsDisciplinas>
+          <DisciplinaID>22</DisciplinaID>
+          <Nome>O Eu, o outro e o nós</Nome>
+          <NomeTurma>Turma da disciplina</NomeTurma>
+          <Modulo>1</Modulo>
+        </wsDisciplinas>
+      </Disciplinas>
+    </wsMatricula>`;
+
+  it("lê o nome do aluno de <Aluno>, nunca o <Nome> aninhado em Disciplinas", () => {
+    expect(parseWsMatricula(node)).toEqual({
+      alunoId: "290",
+      nome: "Ana Clara Miranda Ramos",
+      turma: "05 - 1º Período T / A",
+      contratoId: "2151",
+      situacao: "Vigente",
+    });
+  });
+
+  it("valorTopoXml ignora tags dentro de sub-blocos", () => {
+    expect(valorTopoXml(node, "Nome")).toBe("");
+    expect(valorTopoXml(node, "NomeTurma")).toBe("05 - 1º Período T / A");
   });
 });
