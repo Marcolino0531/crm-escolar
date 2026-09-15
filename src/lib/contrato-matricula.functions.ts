@@ -39,6 +39,7 @@ import {
   materialDoContrato,
   montarContratoMatricula,
   numeroContrato,
+  periodoParcelasMensalidade,
   resumoContratoGerado,
   signatariosContrato,
   unirBaseContratos,
@@ -77,6 +78,7 @@ import {
   valoresMatriculaDoAno,
 } from "@/lib/rematricula.functions";
 import { valorMatricula } from "@/lib/rematricula-matricula";
+import { parcelasMensalidadeDoAnoLetivo, type ParcelasMensalidade } from "@/lib/rematricula";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
 import {
@@ -491,16 +493,21 @@ async function titulosDoAluno(unidade: string, alunoId: string): Promise<TituloE
   }));
 }
 
-/** Extras e Material Pedagógico do ano letivo, numa só leitura do Sponte. */
+/** Extras, Material Pedagógico e parcelas de Mensalidade do ano letivo, numa só leitura do Sponte. */
 async function extrasEMaterialDoAluno(
   unidade: string,
   alunoId: string,
   anoLetivo: number,
-): Promise<{ extras: ExtrasContrato; material: MaterialSponte | null }> {
+): Promise<{
+  extras: ExtrasContrato;
+  material: MaterialSponte | null;
+  parcelasMensalidade: ParcelasMensalidade | null;
+}> {
   const titulos = await titulosDoAluno(unidade, alunoId);
   return {
     extras: extrasDoContrato(titulos, anoLetivo),
     material: materialDoContrato(titulos, anoLetivo),
+    parcelasMensalidade: parcelasMensalidadeDoAnoLetivo(titulos, anoLetivo),
   };
 }
 
@@ -738,8 +745,18 @@ export async function montarPdfContrato(
   ]);
   const extrasSponte = sponte.extras;
   const materialSponte = sponte.material;
+  const parcelasMensalidade = sponte.parcelasMensalidade;
+  const avisosMensalidade =
+    parcelasMensalidade && parcelasMensalidade.lacunas.length
+      ? [
+          `Mensalidades de ${anoLetivo} no Sponte com lacuna em ${parcelasMensalidade.lacunas.join(", ")}: o contrato saiu com ${parcelasMensalidade.totalParcelas} parcelas, ${periodoParcelasMensalidade(parcelasMensalidade.primeiroMesExtenso, parcelasMensalidade.ultimoMesExtenso)}. Confira o carnê antes de enviar.`,
+        ]
+      : [];
   const extras = detalharExtrasContrato(
-    { ...extrasSponte, avisos: [...extrasSponte.avisos, ...planoDiario.avisos] },
+    {
+      ...extrasSponte,
+      avisos: [...extrasSponte.avisos, ...planoDiario.avisos, ...avisosMensalidade],
+    },
     planoDiario.plano,
     planoDiario.motivo,
   );
@@ -748,7 +765,7 @@ export async function montarPdfContrato(
   if (!emailValido(fin.email)) {
     throw new Error("O responsável financeiro não tem email válido no Sponte.");
   }
-  if (!mensalidade) {
+  if (!mensalidade || !parcelasMensalidade) {
     throw new Error(`Nenhuma mensalidade de ${anoLetivo} encontrada no Sponte para este aluno.`);
   }
 
@@ -799,6 +816,9 @@ export async function montarPdfContrato(
       valor: mensalidade.valor,
       descontoPercentual: mensalidade.descontoPercentual,
       vencimento: mensalidade.vencimento,
+      totalParcelas: parcelasMensalidade.totalParcelas,
+      primeiroMes: parcelasMensalidade.primeiroMesExtenso,
+      ultimoMes: parcelasMensalidade.ultimoMesExtenso,
     },
     material: materialSponte ? { itens: itensMaterial, ...materialSponte } : null,
     extras,

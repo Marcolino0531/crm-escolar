@@ -89,7 +89,14 @@ function entrada(over: Partial<MontarContratoInput> = {}): MontarContratoInput {
     alunoNome: "Pedro da Silva",
     serie: "3º Ano",
     matricula: { valor: 1250.5, parcelas: 3, primeiroVencimento: "2026-10-10" },
-    mensalidade: { valor: 2000, descontoPercentual: 30, vencimento: "2026-10-10" },
+    mensalidade: {
+      valor: 2000,
+      descontoPercentual: 30,
+      vencimento: "2026-10-10",
+      totalParcelas: 11,
+      primeiroMes: "fevereiro",
+      ultimoMes: "dezembro",
+    },
     material: {
       itens: [
         { nome: "Coleção Principal (Bernoulli)", quantidade: 4 },
@@ -321,9 +328,20 @@ describe("montarCamposContrato — valores monetários", () => {
 
   it("sem desconto: 0% e 'Não há bolsa de desconto'", () => {
     const c = montarCamposContrato(
-      entrada({ mensalidade: { valor: 1500, descontoPercentual: 0, vencimento: "2026-10-05" } }),
+      entrada({
+        mensalidade: {
+          valor: 1500,
+          descontoPercentual: 0,
+          vencimento: "2026-10-05",
+          totalParcelas: 9,
+          primeiroMes: "abril",
+          ultimoMes: "dezembro",
+        },
+      }),
     );
     expect(c.PercentualDesconto).toBe("0");
+    expect(c.NumeroParcelasMensalidade).toBe("9");
+    expect(c.PeriodoParcelasMensalidade).toBe("de abril a dezembro");
     expect(c.ValorMensalidadeComDesconto).toBe("1.500,00");
     expect(c.PercentualBolsaMensalidade).toBe("Não há bolsa de desconto");
     expect(c.DiaVencimentoMensalidade).toBe("5");
@@ -341,8 +359,9 @@ describe("montarContratoMatricula — texto do modelo", () => {
     const texto = doc.paragrafos.map((p) => p.texto).join("\n");
     expect(texto).not.toMatch(/«|»/);
     expect(texto).toContain("MATRÍCULA: R$1.250,50 (mil duzentos e cinquenta reais");
+    expect(texto).toContain("até 31 (trinta e um) de dezembro de 2027, sendo a observância");
     expect(texto).toContain(
-      "MENSALIDADE: R$2.000,00, com desconto de 30% aplicado, resultando no valor mensal de R$1.400,00 (mil e quatrocentos reais)",
+      "MENSALIDADE: 11 parcelas mensais, de fevereiro a dezembro de 2027, de R$2.000,00 cada, com desconto de 30% aplicado, resultando no valor mensal de R$1.400,00 (mil e quatrocentos reais), com vencimento todo dia 10 de cada mês.",
     );
     expect(texto).toContain("EXTRAS: Hora Extra e Almoço, no valor mensal total de R$770,50");
     expect(texto).not.toContain("este bloco é substituído por");

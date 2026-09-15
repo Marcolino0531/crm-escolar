@@ -24,6 +24,7 @@ import {
   type ParcelaAberta,
 } from "./cantina";
 import { addMesesYMD } from "./confissao-divida";
+import { mesPorExtenso } from "./recibos";
 import { proximoDiaUtil } from "./billing-schedule";
 import { parcelasVencidas } from "./billing-debt";
 import {
@@ -620,21 +621,72 @@ export function percentualBolsa(bolsaAssociada: string): number {
 // vencer (ou, se todas já venceram, a mais recente delas). Nunca cai para outro
 // ano: sem mensalidade do ano pedido, devolve null e a tela avisa que a
 // secretaria ainda não a lançou. Sempre lida na hora do Sponte — sem cache.
+// Mensalidades (categoria mensalidade, valor > 0) com vencimento entre 01/01 e
+// 31/12 do ano letivo, ordenadas por vencimento. Base comum de
+// mensalidadeVigente() e de parcelasMensalidadeDoAnoLetivo().
+export function mensalidadesDoAnoLetivo<
+  T extends Pick<ParcelaMensalidade, "categoria" | "vencimento" | "valor">,
+>(parcelas: readonly T[], anoLetivo: number): T[] {
+  const inicio = `${anoLetivo}-01-01`;
+  const fim = `${anoLetivo}-12-31`;
+  return parcelas
+    .filter(
+      (p) =>
+        chaveSerie(p.categoria).includes("mensalidade") &&
+        p.valor > 0 &&
+        p.vencimento >= inicio &&
+        p.vencimento <= fim,
+    )
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+}
+
+export interface ParcelasMensalidade {
+  /** Quantidade de mensalidades do ano letivo no Sponte. */
+  totalParcelas: number;
+  /** Mês (1–12) e nome por extenso da primeira e da última parcela. */
+  primeiroMes: number;
+  ultimoMes: number;
+  primeiroMesExtenso: string;
+  ultimoMesExtenso: string;
+  /** Meses entre a primeira e a última parcela SEM mensalidade (por extenso). */
+  lacunas: string[];
+}
+
+// Contagem e período das mensalidades do ano letivo (contrato). Duas parcelas
+// no mesmo mês contam como duas — o Sponte é a fonte. Um mês sem mensalidade
+// entre a primeira e a última vai em `lacunas`: quem chama decide (avisar), não
+// se presume regra nenhuma aqui.
+export function parcelasMensalidadeDoAnoLetivo(
+  parcelas: readonly Pick<ParcelaMensalidade, "categoria" | "vencimento" | "valor">[],
+  anoLetivo: number,
+): ParcelasMensalidade | null {
+  const lista = mensalidadesDoAnoLetivo(parcelas, anoLetivo);
+  if (lista.length === 0) return null;
+  const meses = lista.map((p) => Number(p.vencimento.slice(5, 7)));
+  const primeiroMes = meses[0];
+  const ultimoMes = meses[meses.length - 1];
+  const presentes = new Set(meses);
+  const lacunas: string[] = [];
+  for (let m = primeiroMes; m <= ultimoMes; m++) {
+    if (!presentes.has(m)) lacunas.push(mesPorExtenso(m));
+  }
+  return {
+    totalParcelas: lista.length,
+    primeiroMes,
+    ultimoMes,
+    primeiroMesExtenso: mesPorExtenso(primeiroMes),
+    ultimoMesExtenso: mesPorExtenso(ultimoMes),
+    lacunas,
+  };
+}
+
 export function mensalidadeVigente(
   parcelas: ParcelaMensalidade[],
   anoLetivo: number,
   hojeISO: string,
 ): MensalidadeVigente | null {
   const hoje = hojeISO.slice(0, 10);
-  const inicio = `${anoLetivo}-01-01`;
-  const fim = `${anoLetivo}-12-31`;
-  const mensalidades = parcelas.filter(
-    (p) =>
-      chaveSerie(p.categoria).includes("mensalidade") &&
-      p.valor > 0 &&
-      p.vencimento >= inicio &&
-      p.vencimento <= fim,
-  );
+  const mensalidades = mensalidadesDoAnoLetivo(parcelas, anoLetivo);
   if (mensalidades.length === 0) return null;
 
   const futuras = mensalidades

@@ -63,7 +63,14 @@ function entrada(): MontarContratoInput {
     alunoNome: "Lia Souza",
     serie: "Maternal 3",
     matricula: { valor: 980, parcelas: 2, primeiroVencimento: "2026-11-05" },
-    mensalidade: { valor: 1850.75, descontoPercentual: 10, vencimento: "2026-11-05" },
+    mensalidade: {
+      valor: 1850.75,
+      descontoPercentual: 10,
+      vencimento: "2026-11-05",
+      totalParcelas: 11,
+      primeiroMes: "fevereiro",
+      ultimoMes: "dezembro",
+    },
     material: null,
     extras: extrasDoContrato(
       [
@@ -142,7 +149,8 @@ describe("gerarPdfContratoMatricula", () => {
     expect(texto).toContain("N° DO CONTRATO: 2027-CECB-555");
     expect(texto).toContain("R$980,00 (novecentos e oitenta reais)");
     expect(texto).toContain("parcelada em 2x");
-    expect(texto).toContain("R$1.850,75, com desconto de 10% aplicado");
+    expect(texto).toContain("11 parcelas mensais, de fevereiro a dezembro de");
+    expect(texto).toContain("R$1.850,75 cada, com desconto de 10% aplicado");
     expect(texto).toMatch(
       /R\$1\.665,68 \(mil seiscentos e sessenta e cinco reais e sessenta e oito\s+centavos\)/,
     );

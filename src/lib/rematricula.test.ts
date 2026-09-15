@@ -14,6 +14,7 @@ import {
   MENSAGEM_LINK_ENVIADO,
   mascararEmail,
   mensalidadeVigente,
+  parcelasMensalidadeDoAnoLetivo,
   urlPortalRematricula,
   anoLetivoDaUrl,
   situacaoCampanha,
@@ -917,6 +918,64 @@ describe("mensalidadeVigente filtra estritamente pelo ano da URL", () => {
     expect(res?.vencimento).toBe("2026-12-10");
     expect(mensalidadeVigente(parcelas, 2028, "2027-06-01T12:00:00.000Z")).toBeNull();
     expect(mensalidadeVigente(parcelas, 2029, "2027-06-01T12:00:00.000Z")).toBeNull();
+  });
+});
+
+describe("parcelasMensalidadeDoAnoLetivo — contagem e período das mensalidades do contrato", () => {
+  const mensal = (vencimento: string, valor = 1700) => ({
+    categoria: "Mensalidade",
+    vencimento,
+    valor,
+  });
+  const meses = (de: number, ate: number, ano = 2027) =>
+    Array.from({ length: ate - de + 1 }, (_, i) =>
+      mensal(`${ano}-${String(de + i).padStart(2, "0")}-10`),
+    );
+
+  it("ano completo: 11 parcelas, de fevereiro a dezembro, sem lacuna", () => {
+    const r = parcelasMensalidadeDoAnoLetivo(
+      [
+        ...meses(2, 12).reverse(),
+        mensal("2026-12-10"),
+        { categoria: "Material Pedagógico", vencimento: "2027-02-05", valor: 368.47 },
+        { categoria: "Hora Extra", vencimento: "2027-03-10", valor: 611.8 },
+      ],
+      2027,
+    );
+    expect(r).toEqual({
+      totalParcelas: 11,
+      primeiroMes: 2,
+      ultimoMes: 12,
+      primeiroMesExtenso: "fevereiro",
+      ultimoMesExtenso: "dezembro",
+      lacunas: [],
+    });
+  });
+
+  it("entrada no meio do ano: 9 parcelas, de abril a dezembro", () => {
+    const r = parcelasMensalidadeDoAnoLetivo(meses(4, 12), 2027);
+    expect(r?.totalParcelas).toBe(9);
+    expect(r?.primeiroMesExtenso).toBe("abril");
+    expect(r?.ultimoMesExtenso).toBe("dezembro");
+    expect(r?.lacunas).toEqual([]);
+  });
+
+  it("lacuna no meio (julho sem mensalidade): conta só as reais e sinaliza o mês", () => {
+    const r = parcelasMensalidadeDoAnoLetivo(
+      meses(2, 12).filter((p) => !p.vencimento.startsWith("2027-07")),
+      2027,
+    );
+    expect(r?.totalParcelas).toBe(10);
+    expect(r?.primeiroMesExtenso).toBe("fevereiro");
+    expect(r?.ultimoMesExtenso).toBe("dezembro");
+    expect(r?.lacunas).toEqual(["julho"]);
+  });
+
+  it("ignora valor zerado e outros anos; sem mensalidade do ano devolve null", () => {
+    expect(
+      parcelasMensalidadeDoAnoLetivo([mensal("2027-03-10", 0), mensal("2026-12-10")], 2027),
+    ).toBeNull();
+    expect(parcelasMensalidadeDoAnoLetivo([], 2027)).toBeNull();
   });
 });
 
