@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { Plus, Trash2, CreditCard, ArrowRightLeft } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { Plus, Trash2, CreditCard, ArrowRightLeft, Search, Loader2, User } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
@@ -29,6 +30,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
+import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
+import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
 
 export const Route = createFileRoute("/cartao-credito")({
   head: () => ({ meta: [{ title: "Cartão de Crédito — School Hub" }] }),
@@ -55,6 +58,17 @@ type Receivable = {
   valor_liquido: number;
   status: ReceivableStatus;
   unit_id: string | null;
+  aluno_id: string | null;
+  aluno_nome: string;
+};
+
+type NovoRecebivel = {
+  data_pagamento: string;
+  data_disponibilidade: string;
+  valor_bruto: number;
+  valor_liquido: number;
+  aluno_id: string;
+  aluno_nome: string;
 };
 
 function fmtBRL(n: number) {
@@ -91,7 +105,7 @@ function CartaoPage() {
       let rq = supabase
         .from("credit_card_receivables" as never)
         .select(
-          "id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status, unit_id",
+          "id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status, unit_id, aluno_id, aluno_nome",
         )
         .order("data_disponibilidade", { ascending: true });
       if (schoolFilterIds) rq = rq.in("unit_id", schoolFilterIds as never);
@@ -102,12 +116,7 @@ function CartaoPage() {
   });
 
   const create = useMutation({
-    mutationFn: async (p: {
-      data_pagamento: string;
-      data_disponibilidade: string;
-      valor_bruto: number;
-      valor_liquido: number;
-    }) => {
+    mutationFn: async (p: NovoRecebivel) => {
       if (selected === "all") {
         throw new Error(
           "Selecione uma unidade específica no seletor do topo para cadastrar um recebível.",
@@ -238,7 +247,7 @@ function CartaoPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Unidade</TableHead>
+                  <TableHead>Aluno</TableHead>
                   <TableHead>Pagamento</TableHead>
                   <TableHead>Disponibilidade</TableHead>
                   <TableHead className="text-right">Valor Bruto</TableHead>
@@ -253,8 +262,18 @@ function CartaoPage() {
                   const meta = STATUS_META[st];
                   return (
                     <TableRow key={r.id}>
-                      <TableCell className="font-medium">
-                        {(r.unit_id && schoolNameById.get(r.unit_id)) || "—"}
+                      <TableCell>
+                        <div className="font-medium">
+                          {r.aluno_nome || "—"}
+                          {r.aluno_id && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              #{r.aluno_id}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {(r.unit_id && schoolNameById.get(r.unit_id)) || "—"}
+                        </div>
                       </TableCell>
                       <TableCell>{formatDateBR(r.data_pagamento)}</TableCell>
                       <TableCell>{formatDateBR(r.data_disponibilidade)}</TableCell>
@@ -328,28 +347,54 @@ function NovoRecebivelDialog({
   onClose: () => void;
   defaultDate: string;
   saving: boolean;
-  onSave: (p: {
-    data_pagamento: string;
-    data_disponibilidade: string;
-    valor_bruto: number;
-    valor_liquido: number;
-  }) => void;
+  onSave: (p: NovoRecebivel) => void;
 }) {
+  const unidade = useUnidadeAtiva() ?? "";
+  const buscar = useServerFn(buscarAlunosSponte);
   const [dataPagamento, setDataPagamento] = useState(defaultDate);
   const [dataDisp, setDataDisp] = useState("");
   const [valorBruto, setValorBruto] = useState("");
   const [valorLiquido, setValorLiquido] = useState("");
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [aluno, setAluno] = useState<AlunoBuscaSponte | null>(null);
+
+  useEffect(() => {
+    setResultados(null);
+    setAluno(null);
+  }, [unidade]);
 
   const reset = () => {
     setDataPagamento(defaultDate);
     setDataDisp("");
     setValorBruto("");
     setValorLiquido("");
+    setTermo("");
+    setResultados(null);
+    setAluno(null);
   };
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: setResultados,
+    onError: (e) => {
+      setResultados(null);
+      toast.error(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  const t = termo.trim();
+  const termoValido = !!unidade && (/^\d+$/.test(t) ? t.length >= 1 : t.length >= 3);
 
   const bruto = parseBRLNumber(valorBruto);
   const liquido = parseBRLNumber(valorLiquido);
-  const valid = !!dataPagamento && !!dataDisp && Number.isFinite(bruto) && Number.isFinite(liquido);
+  const valid =
+    !!aluno && !!dataPagamento && !!dataDisp && Number.isFinite(bruto) && Number.isFinite(liquido);
 
   return (
     <Dialog
@@ -366,6 +411,79 @@ function NovoRecebivelDialog({
           <DialogTitle>Novo Recebível</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="rec-aluno">Aluno (nome ou AlunoID do Sponte)</Label>
+            {aluno ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                <div className="font-medium">
+                  {aluno.nome}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    #{aluno.alunoId} · {aluno.turma || "sem turma"}
+                  </span>
+                </div>
+                <Button variant="ghost" className="h-8 text-xs" onClick={() => setAluno(null)}>
+                  Trocar aluno
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <Input
+                    id="rec-aluno"
+                    value={termo}
+                    onChange={(e) => setTermo(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
+                    }}
+                    disabled={!unidade}
+                    placeholder={unidade ? "" : "Selecione uma unidade no topo"}
+                  />
+                  <Button
+                    variant="outline"
+                    className="gap-1"
+                    disabled={!termoValido || buscarAlunos.isPending}
+                    onClick={() => buscarAlunos.mutate()}
+                  >
+                    {buscarAlunos.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                    Buscar
+                  </Button>
+                </div>
+                {resultados && resultados.length === 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    Nenhum aluno encontrado para “{t}” em {unidade}.
+                  </div>
+                )}
+                {resultados && resultados.length > 0 && (
+                  <div className="max-h-40 divide-y divide-border overflow-y-auto rounded-md border border-border">
+                    {resultados.map((a) => (
+                      <button
+                        key={a.alunoId}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                        onClick={() => {
+                          setAluno(a);
+                          setResultados(null);
+                          setTermo("");
+                        }}
+                      >
+                        <span>
+                          <span className="font-medium">{a.nome}</span>
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            #{a.alunoId} · {a.turma || "sem turma"} · {a.situacao}
+                          </span>
+                        </span>
+                        <User className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label htmlFor="rec-pagamento">Data do Pagamento</Label>
@@ -435,6 +553,8 @@ function NovoRecebivelDialog({
                 data_disponibilidade: dataDisp,
                 valor_bruto: bruto,
                 valor_liquido: liquido,
+                aluno_id: aluno!.alunoId,
+                aluno_nome: aluno!.nome,
               });
               reset();
             }}
