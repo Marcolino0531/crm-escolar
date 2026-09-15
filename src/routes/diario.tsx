@@ -53,6 +53,7 @@ import { DiarioManager } from "@/components/diario/DiarioManager";
 import { QrScannerDialog } from "@/components/diario/QrScannerDialog";
 import { downloadKeychainPdf, sanitizeFileName } from "@/lib/diario-keychain";
 import { syncDiarioSponte } from "@/lib/sponte.functions";
+import { turmasDoAno } from "@/lib/diario-sync";
 import {
   MEALS,
   MEAL_LABEL,
@@ -110,6 +111,14 @@ type StudentRow = {
   class_name: string;
   school_id: string;
   photo: string | null;
+  sponte_aluno_id: string | null;
+};
+
+type VinculoRow = {
+  student_id: string;
+  ano_letivo: number;
+  turma_nome: string;
+  ativo: boolean;
 };
 
 function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null) {
@@ -118,17 +127,27 @@ function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null)
     enabled: anoLetivo !== null,
     queryFn: async () => {
       if (anoLetivo === null) return [];
-      const [students, plans, schedules] = await Promise.all([
+      const [students, vinculos, plans, schedules] = await Promise.all([
         selectAll<StudentRow>(() => {
           let sq = supabase
             .from("diario_students" as never)
-            .select("id, name, class_id, class_name, school_id, photo")
-            .order("class_name")
+            .select("id, name, class_id, class_name, school_id, photo, sponte_aluno_id")
             .order("name")
             .order("id");
           if (schoolFilterIds) sq = sq.in("school_id", schoolFilterIds as never);
           return sq;
         }),
+        // Vínculo do ano: aluno do Sponte sem contrato vigente no ano selecionado
+        // não aparece; a turma é a DAQUELE ano (não o class_name "mais recente").
+        // Aluno cadastrado à mão (sem AlunoID) segue com a própria turma.
+        selectAll<VinculoRow>(() =>
+          supabase
+            .from("diario_matriculas_ano" as never)
+            .select("student_id, ano_letivo, turma_nome, ativo")
+            .eq("ano_letivo", anoLetivo)
+            .eq("ativo", true)
+            .order("id"),
+        ),
         selectAll<MealPlanRow>(() =>
           supabase
             .from("diario_meal_plans" as never)
@@ -147,17 +166,34 @@ function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null)
 
       const planByStudent = groupMealPlans(plans, anoLetivo);
       const schedByStudent = groupSchedules(schedules, anoLetivo);
+      const turmaDoAno = turmasDoAno(
+        vinculos.map((v) => ({
+          studentId: v.student_id,
+          anoLetivo: Number(v.ano_letivo),
+          turmaNome: v.turma_nome,
+          ativo: v.ativo,
+        })),
+        anoLetivo,
+      );
 
-      return students.map<DiarioStudent>((s) => ({
-        id: s.id,
-        name: s.name,
-        className: s.class_name,
-        classId: s.class_id,
-        schoolId: s.school_id,
-        photo: s.photo,
-        plan: planByStudent.get(s.id) ?? emptyPlan(),
-        schedule: schedByStudent.get(s.id) ?? emptySchedule(),
-      }));
+      return students
+        .filter((s) => turmaDoAno.has(s.id) || !s.sponte_aluno_id)
+        .map<DiarioStudent>((s) => ({
+          id: s.id,
+          name: s.name,
+          className: turmaDoAno.get(s.id) ?? s.class_name,
+          classId: s.class_id,
+          schoolId: s.school_id,
+          photo: s.photo,
+          plan: planByStudent.get(s.id) ?? emptyPlan(),
+          schedule: schedByStudent.get(s.id) ?? emptySchedule(),
+        }))
+        .sort(
+          (a, b) =>
+            a.className.localeCompare(b.className) ||
+            a.name.localeCompare(b.name) ||
+            a.id.localeCompare(b.id),
+        );
     },
   });
 }
@@ -196,17 +232,18 @@ function DiarioPage() {
   // Sincronização com o Sponte (fonte da verdade de turmas/alunos). Admin-only.
   const sync = useMutation({
     mutationFn: async () => {
-      const res = await syncDiarioSponte();
+      if (anoLetivo === null) throw new Error("Selecione o ano letivo.");
+      const res = await syncDiarioSponte({ data: { anoLetivo } });
       if (res.error) throw new Error(res.error);
       return res;
     },
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["diario_students"] });
       if (res.indisponivel) {
-        toast.warning("Sponte indisponível ou sem alunos ativos.");
+        toast.warning(`Sponte indisponível ou sem contratos vigentes em ${res.anoLetivo}.`);
       } else {
         toast.success(
-          `Sincronizado com o Sponte: ${res.alunos} aluno(s) e ${res.turmas} turma(s).`,
+          `Sincronizado ${res.anoLetivo} com o Sponte: ${res.alunos} aluno(s), ${res.turmas} turma(s), ${res.inativados} inativado(s).`,
         );
       }
     },

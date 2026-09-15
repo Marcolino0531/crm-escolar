@@ -28,6 +28,8 @@ import {
 } from "@/lib/diario-auditoria";
 import { coletarTitulosAluno } from "@/lib/sponte.functions";
 import { anoVigenteConfigurado } from "@/lib/rematricula.functions";
+import { turmasDoAno } from "@/lib/diario-sync";
+import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
 
 const CONCORRENCIA_SPONTE = 4;
 
@@ -155,9 +157,17 @@ export async function runAuditoriaDiarioSponte(
 
   const planoPorAluno = groupMealPlans(planos, anoLetivo);
   const horarioPorAluno = groupSchedules(horarios, anoLetivo);
+  // Só quem tem contrato vigente no ano auditado, com a turma desse ano.
+  const turmaDoAno = turmasDoAno(
+    await vinculosAtivosDosAlunos(
+      alunos.map((a) => a.id),
+      [anoLetivo],
+    ),
+    anoLetivo,
+  );
 
   const auditaveis = alunos.filter((a) => {
-    if (!a.sponte_aluno_id) return false;
+    if (!a.sponte_aluno_id || !turmaDoAno.has(a.id)) return false;
     return temPlanoAtivo(
       planoPorAluno.get(a.id) ?? emptyPlan(),
       horarioPorAluno.get(a.id) ?? emptySchedule(),
@@ -168,10 +178,11 @@ export async function runAuditoriaDiarioSponte(
     await emLotes(auditaveis, CONCORRENCIA_SPONTE, async (a): Promise<LinhaAuditoria | null> => {
       const sponteId = a.sponte_aluno_id as string;
       const res = await coletarTitulosAluno(unidade, sponteId);
+      const turma = turmaDoAno.get(a.id) ?? a.class_name;
       const base = {
         studentId: a.id,
         aluno: a.name,
-        turma: a.class_name,
+        turma,
         unidade,
         sponteAlunoId: sponteId,
       };
@@ -185,7 +196,7 @@ export async function runAuditoriaDiarioSponte(
       const itens = itensSemLancamento({
         plan: planoPorAluno.get(a.id) ?? emptyPlan(),
         schedule: horarioPorAluno.get(a.id) ?? emptySchedule(),
-        segmento: segmentoDaTurma(a.class_name),
+        segmento: segmentoDaTurma(turma),
         categoriasAtivas: categoriasAtivas(res.titulos, anoLetivo),
       });
       return itens.length > 0 ? { ...base, itens, erro: null } : null;

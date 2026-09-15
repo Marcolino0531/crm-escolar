@@ -35,6 +35,8 @@ import type { TabelaPrecos } from "@/lib/diario-precos";
 import type { MealKey } from "@/lib/diario";
 import { coletarTitulosAluno, inserirPlanoSponte } from "@/lib/sponte.functions";
 import { selectAll } from "@/lib/supabase-paginate";
+import { turmasDoAno, type VinculoAno } from "@/lib/diario-sync";
+import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
 
 const LOG_TAG = "[Diário][Faturamento]";
 
@@ -141,17 +143,23 @@ export interface PendenciaFaturamento extends PendenciaAluno {
   anoLetivo: number;
 }
 
-function decorar(p: PendenciaAluno, alunos: ReadonlyMap<string, StudentRow>): PendenciaFaturamento {
+// Turma do aluno NO ANO do consumo (vínculo anual); sem vínculo, o class_name.
+function decorar(
+  p: PendenciaAluno,
+  alunos: ReadonlyMap<string, StudentRow>,
+  vinculos: readonly VinculoAno[],
+): PendenciaFaturamento {
   const a = alunos.get(p.studentId);
   const bloqueios = [...p.bloqueios];
   if (!a?.sponte_aluno_id) bloqueios.push("Aluno sem vínculo com o Sponte (sincronize o Diário)");
+  const anoLetivo = anoDoEvento(p.periodoInicio);
   return {
     ...p,
     bloqueios,
     aluno: a?.name ?? "Aluno removido",
-    turma: a?.class_name ?? "",
+    turma: turmasDoAno(vinculos, anoLetivo).get(p.studentId) ?? a?.class_name ?? "",
     sponteAlunoId: a?.sponte_aluno_id ?? null,
-    anoLetivo: anoDoEvento(p.periodoInicio),
+    anoLetivo,
   };
 }
 
@@ -167,8 +175,12 @@ async function calcularPendencias(
     unidade,
     eventos.map((e) => anoDoEvento(e.createdAt)),
   );
+  const vinculos = await vinculosAtivosDosAlunos(
+    [...new Set(eventos.map((e) => e.studentId))],
+    eventos.map((e) => anoDoEvento(e.createdAt)),
+  );
   const pendencias = pendenciasPorAluno(eventos, precos)
-    .map((p) => decorar(p, alunos))
+    .map((p) => decorar(p, alunos, vinculos))
     .sort((a, b) => a.aluno.localeCompare(b.aluno) || a.anoLetivo - b.anoLetivo);
   return { pendencias, alunos };
 }
