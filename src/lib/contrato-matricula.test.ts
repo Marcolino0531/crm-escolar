@@ -13,6 +13,7 @@ import {
   numeroContrato,
   preencherModelo,
   resolverMatriculaInformada,
+  resumoContratoGerado,
   signatariosContrato,
   validarContrato,
   valorComDesconto,
@@ -646,5 +647,49 @@ describe("unirBaseContratos — aba Contratos = envios do portal ∪ contratos_m
 
   it("sem envios nem contratos → lista vazia", () => {
     expect(unirBaseContratos([], [])).toEqual([]);
+  });
+});
+
+describe("resumoContratoGerado — colunas Matrícula/Material lidas do contrato gravado", () => {
+  it("Gabriel Guatimosim Machado (Vale do Sereno, 2027): contrato pela aba Documentos, Matrícula manual e Material do Sponte", () => {
+    // Sem linha em rematricula_matricula_escolhas/rematricula_escolhas; os
+    // valores reais estão só em contratos_matricula.campos.
+    const r = resumoContratoGerado({
+      NomeAluno: "Gabriel Guatimosim Machado",
+      ValorMatricula: "1.550,00",
+      NumeroParcelasMatricula: "1",
+      DataVencimento1aParcelaMatricula: "5 de outubro de 2026",
+      ListaMaterialPedagogicoSelecionado: TEXTO_MATERIAL_SEM_ITENS,
+      ValorTotalMaterialPedagogico: "2.947,48",
+      NumeroParcelasMaterialPedagogico: "8",
+    });
+    expect(r.matricula).toEqual({
+      valor: "1.550,00",
+      parcelas: "1",
+      primeiroVencimento: "5 de outubro de 2026",
+    });
+    expect(r.material).toEqual({
+      descricao: TEXTO_MATERIAL_SEM_ITENS,
+      valorTotal: "2.947,48",
+      parcelas: "8",
+    });
+  });
+
+  it('série sem material no Sponte → material null ("Sem material" é o correto)', () => {
+    const r = resumoContratoGerado({
+      ValorMatricula: "1.200,00",
+      NumeroParcelasMatricula: "3",
+      DataVencimento1aParcelaMatricula: "10 de outubro de 2026",
+      ListaMaterialPedagogicoSelecionado: TEXTO_SEM_MATERIAL,
+      ValorTotalMaterialPedagogico: "0,00",
+      NumeroParcelasMaterialPedagogico: "0",
+    });
+    expect(r.matricula?.parcelas).toBe("3");
+    expect(r.material).toBeNull();
+  });
+
+  it("campos ausentes (contrato com erro antes de montar) → tudo null", () => {
+    expect(resumoContratoGerado(null)).toEqual({ matricula: null, material: null });
+    expect(resumoContratoGerado({})).toEqual({ matricula: null, material: null });
   });
 });
