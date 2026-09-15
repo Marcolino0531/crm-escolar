@@ -19,6 +19,30 @@ export interface ContratoSponte {
   situacao: string;
 }
 
+// Valor de uma tag de PRIMEIRO NÍVEL do nó: sub-blocos (ex.: <Disciplinas>,
+// cujos <wsDisciplinas> têm a própria tag <Nome>) são removidos antes da busca.
+export function valorTopoXml(node: string, tag: string): string {
+  const interno = node
+    .trim()
+    .replace(/^<[A-Za-z_][\w.-]*[^>]*>/, "")
+    .replace(/<\/[A-Za-z_][\w.-]*>\s*$/, "");
+  const semSubBlocos = interno.replace(/<([A-Za-z_][\w.-]*)[^>]*>(?=\s*<)[\s\S]*?<\/\1>/g, "");
+  const m = semSubBlocos.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, "i"));
+  return m ? m[1].trim() : "";
+}
+
+// Um <wsMatricula> do GetMatriculas. O nome do aluno vem na tag <Aluno>
+// (top-level); <Nome> só existe dentro de <Disciplinas>/<wsDisciplinas>.
+export function parseWsMatricula(node: string): ContratoSponte {
+  return {
+    alunoId: valorTopoXml(node, "AlunoID"),
+    nome: valorTopoXml(node, "Aluno"),
+    turma: valorTopoXml(node, "NomeTurma"),
+    contratoId: valorTopoXml(node, "ContratoID"),
+    situacao: valorTopoXml(node, "Situacao"),
+  };
+}
+
 export interface AlunoDoAno {
   sponteId: string;
   nome: string;
