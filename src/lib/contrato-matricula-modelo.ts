@@ -54,7 +54,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
   {
     tipo: "paragrafo",
     texto:
-      "PARÁGRAFO PRIMEIRO – O presente contrato vigorará da data de sua matrícula até 31 (trinta e um) de dezembro do ano em questão, sendo a observância de suas cláusulas contratuais obrigatórias às partes contratantes.",
+      "PARÁGRAFO PRIMEIRO – O presente contrato vigorará da data de sua matrícula até 31 (trinta e um) de dezembro de «AnoLetivoContrato», sendo a observância de suas cláusulas contratuais obrigatórias às partes contratantes.",
   },
   {
     tipo: "titulo",
@@ -141,7 +141,7 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
     tipo: "bloco",
     chave: "mensalidade",
     texto:
-      "MENSALIDADE: R$«ValorMensalidade», com desconto de «PercentualDesconto»% aplicado, resultando no valor mensal de R$«ValorMensalidadeComDesconto» («ValorMensalidadeComDescontoExtenso»), com vencimento todo dia «DiaVencimentoMensalidade» de cada mês.",
+      "MENSALIDADE: «NumeroParcelasMensalidade» parcelas mensais, «PeriodoParcelasMensalidade» de «AnoLetivoContrato», de R$«ValorMensalidade» cada, com desconto de «PercentualDesconto»% aplicado, resultando no valor mensal de R$«ValorMensalidadeComDesconto» («ValorMensalidadeComDescontoExtenso»), com vencimento todo dia «DiaVencimentoMensalidade» de cada mês.",
   },
   {
     tipo: "bloco",

@@ -50,6 +50,9 @@ export const CAMPOS_CONTRATO = [
   "ValorMensalidadeComDesconto",
   "ValorMensalidadeComDescontoExtenso",
   "DiaVencimentoMensalidade",
+  "NumeroParcelasMensalidade",
+  "PeriodoParcelasMensalidade",
+  "AnoLetivoContrato",
   "ListaMaterialPedagogicoSelecionado",
   "ValorTotalMaterialPedagogico",
   "NumeroParcelasMaterialPedagogico",
@@ -344,6 +347,16 @@ export interface MensalidadeContrato {
   descontoPercentual: number;
   /** YYYY-MM-DD da parcela vigente — define o dia de vencimento. */
   vencimento: string;
+  /** Mensalidades do ano letivo no Sponte (contagem e período real). */
+  totalParcelas: number;
+  /** Mês por extenso da primeira e da última parcela ("fevereiro", "dezembro"). */
+  primeiroMes: string;
+  ultimoMes: string;
+}
+
+/** "de fevereiro a dezembro" — ou "em dezembro" quando começa e termina no mesmo mês. */
+export function periodoParcelasMensalidade(primeiroMes: string, ultimoMes: string): string {
+  return primeiroMes === ultimoMes ? `em ${ultimoMes}` : `de ${primeiroMes} a ${ultimoMes}`;
 }
 
 export interface MaterialContrato {
@@ -463,6 +476,12 @@ export function montarCamposContrato(input: MontarContratoInput): CamposContrato
     ValorMensalidadeComDesconto: numeroBR(comDesconto),
     ValorMensalidadeComDescontoExtenso: valorPorExtenso(comDesconto),
     DiaVencimentoMensalidade: diaDoISO(mensalidade.vencimento),
+    NumeroParcelasMensalidade: String(mensalidade.totalParcelas),
+    PeriodoParcelasMensalidade: periodoParcelasMensalidade(
+      mensalidade.primeiroMes,
+      mensalidade.ultimoMes,
+    ),
+    AnoLetivoContrato: String(input.anoLetivo),
     ListaMaterialPedagogicoSelecionado: !material
       ? TEXTO_SEM_MATERIAL
       : material.itens.length
@@ -586,6 +605,9 @@ export function validarContrato(input: MontarContratoInput): string[] {
   if (!input.matricula.primeiroVencimento) erros.push("Vencimento da 1ª parcela da matrícula");
   if (!(input.mensalidade.valor > 0)) erros.push("Mensalidade vigente no Sponte");
   if (!input.mensalidade.vencimento) erros.push("Dia de vencimento da mensalidade");
+  if (!(input.mensalidade.totalParcelas >= 1) || !input.mensalidade.primeiroMes) {
+    erros.push("Parcelas de mensalidade do ano letivo no Sponte");
+  }
   if (input.material && !(input.material.valorTotal > 0)) erros.push("Valor do material");
   return erros;
 }

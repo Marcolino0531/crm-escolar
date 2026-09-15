@@ -264,6 +264,11 @@ export function valorPorExtenso(valor: number): string {
   return partes.join(" e ");
 }
 
+/** "fevereiro" a partir do mês 1–12. */
+export function mesPorExtenso(mes: number): string {
+  return MESES[mes - 1] ?? "";
+}
+
 /** "14 de agosto de 2026" a partir de YYYY-MM-DD (sem passar por Date/UTC). */
 export function dataPorExtenso(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
