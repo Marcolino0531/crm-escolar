@@ -16,15 +16,20 @@
 //     transita entre as semanas do mês até zerar.
 //  9. Isenção de refeição (Julho/Dezembro): refeição inclusa na mensalidade tem
 //     a cobrança zerada nos dias em que for registrada na colônia.
+//
+// Os valores acima são os PADRÃO (fallback). Cada unidade × ano letivo pode ter
+// os seus em Configurações → Cadastros Gerais → Valor Colônia de Férias; toda
+// função recebe `valores` e usa o padrão quando omitido.
 import { COLONIA_RECORD_LABEL, type ColoniaRecord, type ColoniaRecordType } from "@/lib/colonia";
+import { COLONIA_VALORES_PADRAO, type ColoniaValores } from "@/lib/colonia-valores";
 
-export const FRANQUIA_MINUTOS = 270; // 4h30
-export const VALOR_DIARIA_AVULSA = 130;
-export const VALOR_PACOTE_SEMANAL = 596;
-export const VALOR_HORA_EXTRA = 11.3;
-export const VALOR_LANCHE = 17.9; // breakfast, snack
-export const VALOR_REFEICAO_PRINCIPAL = 21.5; // lunch, dinner
-export const DIAS_PARA_PACOTE = 5;
+export const FRANQUIA_MINUTOS = COLONIA_VALORES_PADRAO.franquiaMinutos; // 4h30
+export const VALOR_DIARIA_AVULSA = COLONIA_VALORES_PADRAO.diariaAvulsa;
+export const VALOR_PACOTE_SEMANAL = COLONIA_VALORES_PADRAO.pacoteSemanal;
+export const VALOR_HORA_EXTRA = COLONIA_VALORES_PADRAO.horaExtraPorHora;
+export const VALOR_LANCHE = COLONIA_VALORES_PADRAO.lanchePorRegistro; // breakfast, snack
+export const VALOR_REFEICAO_PRINCIPAL = COLONIA_VALORES_PADRAO.refeicaoPrincipalPorRegistro; // lunch, dinner
+export const DIAS_PARA_PACOTE = COLONIA_VALORES_PADRAO.diasParaPacote;
 
 export const LANCHE_TYPES: ColoniaRecordType[] = ["breakfast", "snack"];
 export const REFEICAO_TYPES: ColoniaRecordType[] = ["lunch", "dinner"];
@@ -39,9 +44,12 @@ export function isLanche(t: ColoniaRecordType): boolean {
 export function isRefeicaoPrincipal(t: ColoniaRecordType): boolean {
   return t === "lunch" || t === "dinner";
 }
-export function mealValue(t: ColoniaRecordType): number {
-  if (isLanche(t)) return VALOR_LANCHE;
-  if (isRefeicaoPrincipal(t)) return VALOR_REFEICAO_PRINCIPAL;
+export function mealValue(
+  t: ColoniaRecordType,
+  valores: ColoniaValores = COLONIA_VALORES_PADRAO,
+): number {
+  if (isLanche(t)) return valores.lanchePorRegistro;
+  if (isRefeicaoPrincipal(t)) return valores.refeicaoPrincipalPorRegistro;
   return 0;
 }
 
@@ -70,6 +78,7 @@ export function computeDayBilling(
   records: ColoniaRecord[],
   weekday: number,
   exemptions: Set<ColoniaRecordType>,
+  valores: ColoniaValores = COLONIA_VALORES_PADRAO,
 ): DayBilling {
   let entry: string | null = null;
   let exit: string | null = null;
@@ -85,7 +94,7 @@ export function computeDayBilling(
       meals.push({
         type: r.record_type,
         label: COLONIA_RECORD_LABEL[r.record_type],
-        valor: isento ? 0 : mealValue(r.record_type),
+        valor: isento ? 0 : mealValue(r.record_type, valores),
         isento,
         occurredAt: r.occurred_at,
       });
@@ -97,9 +106,9 @@ export function computeDayBilling(
     const diff = (new Date(exit).getTime() - new Date(entry).getTime()) / 60000;
     permanenciaMin = diff > 0 ? diff : 0;
   }
-  const excedente = Math.max(0, permanenciaMin - FRANQUIA_MINUTOS);
+  const excedente = Math.max(0, permanenciaMin - valores.franquiaMinutos);
   const horasExtras = excedente > 0 ? Math.ceil(excedente / 60) : 0;
-  const custoHorasExtras = round2(horasExtras * VALOR_HORA_EXTRA);
+  const custoHorasExtras = round2(horasExtras * valores.horaExtraPorHora);
   const custoRefeicoes = round2(meals.reduce((s, m) => s + m.valor, 0));
 
   return {
@@ -117,10 +126,15 @@ export function computeDayBilling(
 
 // Permanência bruta da semana (diárias + horas extras), antes do crédito. Usada
 // tanto no extrato da semana quanto para medir o consumo das semanas anteriores.
-export function computeWeekPermanencia(days: DayBilling[]): number {
+export function computeWeekPermanencia(
+  days: DayBilling[],
+  valores: ColoniaValores = COLONIA_VALORES_PADRAO,
+): number {
   const attendedDays = days.filter((d) => d.attended).length;
   const diaria =
-    attendedDays >= DIAS_PARA_PACOTE ? VALOR_PACOTE_SEMANAL : attendedDays * VALOR_DIARIA_AVULSA;
+    attendedDays >= valores.diasParaPacote
+      ? valores.pacoteSemanal
+      : attendedDays * valores.diariaAvulsa;
   const horas = days.reduce((s, d) => s + d.custoHorasExtras, 0);
   return round2(diaria + horas);
 }
@@ -155,14 +169,16 @@ export type WeekBillingInput = {
   permanenciaSemanasAnteriores: number;
   // Banco de crédito mensal de hora extra (0 se não houver / mês sem Sponte).
   creditoHoraExtra: number;
+  valores?: ColoniaValores;
 };
 
 export function computeWeekBilling(input: WeekBillingInput): WeekBilling {
   const { days, permanenciaSemanasAnteriores, creditoHoraExtra } = input;
+  const valores = input.valores ?? COLONIA_VALORES_PADRAO;
 
   const attendedDays = days.filter((d) => d.attended).length;
-  const isPacote = attendedDays >= DIAS_PARA_PACOTE;
-  const diariaValor = isPacote ? VALOR_PACOTE_SEMANAL : attendedDays * VALOR_DIARIA_AVULSA;
+  const isPacote = attendedDays >= valores.diasParaPacote;
+  const diariaValor = isPacote ? valores.pacoteSemanal : attendedDays * valores.diariaAvulsa;
 
   const horasExtrasQtd = days.reduce((s, d) => s + d.horasExtras, 0);
   const horasExtrasValor = round2(days.reduce((s, d) => s + d.custoHorasExtras, 0));
@@ -175,11 +191,15 @@ export function computeWeekBilling(input: WeekBillingInput): WeekBilling {
   if (attendedDays > 0) {
     rubricas.push(
       isPacote
-        ? { label: "Pacote Semanal (5 dias)", qtd: 1, valor: VALOR_PACOTE_SEMANAL }
+        ? {
+            label: `Pacote Semanal (${valores.diasParaPacote} dias)`,
+            qtd: 1,
+            valor: valores.pacoteSemanal,
+          }
         : {
             label: `${attendedDays} ${attendedDays === 1 ? "Diária Avulsa" : "Diárias Avulsas"}`,
             qtd: attendedDays,
-            valor: round2(attendedDays * VALOR_DIARIA_AVULSA),
+            valor: round2(attendedDays * valores.diariaAvulsa),
           },
     );
   }
@@ -261,7 +281,11 @@ export function computeWeekBilling(input: WeekBillingInput): WeekBilling {
   };
 }
 
-// Julho e Dezembro habilitam as regras do Sponte (crédito + isenção). mês 1-based.
-export function sponteAtivoNoMes(mes1: number): boolean {
-  return mes1 === 7 || mes1 === 12;
+// Meses que habilitam as regras do Sponte (crédito + isenção); padrão Julho e
+// Dezembro. mês 1-based.
+export function sponteAtivoNoMes(
+  mes1: number,
+  meses: readonly number[] = COLONIA_VALORES_PADRAO.mesesCreditoIsencao,
+): boolean {
+  return meses.includes(mes1);
 }

@@ -14,7 +14,6 @@ import {
   QrCode,
   Loader2,
   ShieldAlert,
-  Tags,
   Receipt,
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
@@ -38,7 +37,6 @@ import {
   type AbaDiario,
 } from "@/lib/diario-acesso";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
-import { TabelaPrecos } from "@/components/diario/TabelaPrecos";
 import { FaturamentoExtras } from "@/components/diario/FaturamentoExtras";
 import { formatarMinutos } from "@/lib/diario-hora-extra";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
@@ -335,11 +333,6 @@ function DiarioPage() {
             </TabsTrigger>
           )}
           {veFinanceiro && (
-            <TabsTrigger value="precos">
-              <Tags className="mr-1.5 h-4 w-4" /> Tabela de Preços
-            </TabsTrigger>
-          )}
-          {veFinanceiro && (
             <TabsTrigger value="faturamento">
               <Receipt className="mr-1.5 h-4 w-4" /> Faturamento
             </TabsTrigger>
@@ -441,15 +434,6 @@ function DiarioPage() {
             <AuditoriaSponte
               unidade={unidadeDaSelecao(selected, schools)}
               podeExecutar={podeEditarFinanceiro}
-            />
-          </TabsContent>
-        )}
-        {veFinanceiro && (
-          <TabsContent value="precos">
-            <TabelaPrecos
-              unidade={unidadeDaSelecao(selected, schools)}
-              anoVigente={anoVigente}
-              podeEditar={podeEditarFinanceiro}
             />
           </TabsContent>
         )}

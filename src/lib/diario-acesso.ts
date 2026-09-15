@@ -1,12 +1,13 @@
 // Divisão de acesso do Diário do Aluno, no mesmo padrão da Colônia de Férias:
 //   • 'diario'            → operacional: Registro e Consumos Extras.
-//   • 'diario_financeiro' → financeiro: Auditoria Sponte, Tabela de Preços e
-//                           Faturamento (onde fica a isenção de consumo).
+//   • 'diario_financeiro' → financeiro: Auditoria Sponte e Faturamento (onde fica
+//                           a isenção de consumo). A Tabela de Preços fica em
+//                           Configurações → Cadastros Gerais.
 
-export type AbaDiario = "registro" | "extras" | "auditoria" | "precos" | "faturamento";
+export type AbaDiario = "registro" | "extras" | "auditoria" | "faturamento";
 
 export const ABAS_OPERACIONAIS_DIARIO: readonly AbaDiario[] = ["registro", "extras"];
-export const ABAS_FINANCEIRAS_DIARIO: readonly AbaDiario[] = ["auditoria", "precos", "faturamento"];
+export const ABAS_FINANCEIRAS_DIARIO: readonly AbaDiario[] = ["auditoria", "faturamento"];
 
 export interface AcessoDiario {
   operacional: boolean;

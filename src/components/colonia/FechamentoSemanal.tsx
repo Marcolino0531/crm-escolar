@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -69,6 +69,8 @@ import {
   sponteAtivoNoMes,
   type WeekBilling,
 } from "@/lib/colonia-billing";
+import { resolverValoresColonia, type ColoniaValores } from "@/lib/colonia-valores";
+import { listarValoresColonia } from "@/lib/colonia-valores.functions";
 import {
   fetchColoniaBeneficios,
   faturarColoniaSponte,
@@ -148,10 +150,36 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const refDay = addDays(weekStart, 3);
   const refMes = refDay.getMonth() + 1;
   const refAno = refDay.getFullYear();
-  const sponteActive = sponteAtivoNoMes(refMes);
   const monthStart = firstOfMonth(refDay);
 
   const schoolKey = schoolFilterIds ? schoolFilterIds.join(",") : "all";
+
+  // Valores por unidade × ano letivo (Cadastros Gerais). Sem cadastro para a
+  // unidade/ano cai nos valores padrão e avisa.
+  const listarValores = useServerFn(listarValoresColonia);
+  const { data: valoresCadastrados = [], isLoading: valoresLoading } = useQuery({
+    queryKey: ["colonia_valores"],
+    staleTime: 5 * 60_000,
+    queryFn: async () => listarValores({ data: undefined }),
+  });
+  const valoresPorEscola = useMemo(() => {
+    const m = new Map<string, ColoniaValores>();
+    const ids = schoolFilterIds ?? schools.map((s) => s.id);
+    for (const id of ids) {
+      m.set(id, resolverValoresColonia(valoresCadastrados, id, refAno).valores);
+    }
+    return m;
+  }, [valoresCadastrados, schoolFilterIds, schools, refAno]);
+  const valoresDe = useCallback(
+    (schoolId: string): ColoniaValores =>
+      valoresPorEscola.get(schoolId) ?? resolverValoresColonia([], schoolId, refAno).valores,
+    [valoresPorEscola, refAno],
+  );
+  // Sponte ativo no mês para pelo menos uma unidade em escopo (as consultas
+  // auxiliares são compartilhadas); por aluno a regra usa os meses da sua unidade.
+  const sponteActive = [...valoresPorEscola.values()].some((v) =>
+    sponteAtivoNoMes(refMes, v.mesesCreditoIsencao),
+  );
 
   const { data: students = [], isLoading } = useQuery({
     queryKey: ["colonia_closing", schoolKey, weekStart.toISOString()],
@@ -201,13 +229,19 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   // usada para o crédito de hora extra transitar entre semanas. Só faz sentido
   // quando o Sponte está ativo (Julho/Dezembro).
   const { data: prevPermByStudent = {}, isLoading: prevPermLoading } = useQuery({
-    queryKey: ["colonia_prev_perm", schoolKey, monthStart.toISOString(), weekStart.toISOString()],
-    enabled: sponteActive && weekStart.getTime() > monthStart.getTime(),
+    queryKey: [
+      "colonia_prev_perm",
+      schoolKey,
+      monthStart.toISOString(),
+      weekStart.toISOString(),
+      valoresCadastrados,
+    ],
+    enabled: !valoresLoading && sponteActive && weekStart.getTime() > monthStart.getTime(),
     queryFn: async () => {
       const rows = await fetchAllRows<RawRow>((from, to) => {
         let q = supabase
           .from("holiday_camp_records" as never)
-          .select("id, student_id, record_type, occurred_at")
+          .select("id, student_id, school_id, record_type, occurred_at")
           .gte("occurred_at", monthStart.toISOString())
           .lt("occurred_at", rangeStart.toISOString())
           .order("occurred_at", { ascending: true })
@@ -218,10 +252,12 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
       // student_id → (mondayISO → byDay)
       const perStudent = new Map<string, Map<string, Record<number, ColoniaRecord[]>>>();
+      const schoolOf = new Map<string, string>();
       for (const r of rows) {
         const wd = new Date(r.occurred_at).getDay();
         if (wd < 1 || wd > 5) continue;
         const monday = mondayOf(new Date(r.occurred_at)).toISOString();
+        schoolOf.set(r.student_id, r.school_id);
         let weeks = perStudent.get(r.student_id);
         if (!weeks) {
           weeks = new Map();
@@ -241,12 +277,13 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
       const result: Record<string, number> = {};
       for (const [studentId, weeks] of perStudent) {
+        const valores = valoresDe(schoolOf.get(studentId) ?? "");
         let total = 0;
         for (const byDay of weeks.values()) {
           const days = COLONIA_WEEKDAYS.map((d) =>
-            computeDayBilling(byDay[d.weekday], d.weekday, new Set()),
+            computeDayBilling(byDay[d.weekday], d.weekday, new Set(), valores),
           );
-          total += computeWeekPermanencia(days);
+          total += computeWeekPermanencia(days, valores);
         }
         result[studentId] = Math.round(total * 100) / 100;
       }
@@ -290,7 +327,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     },
   });
 
-  const calcReady = !sponteActive || (!beneficiosLoading && !prevPermLoading);
+  const calcReady = !valoresLoading && (!sponteActive || (!beneficiosLoading && !prevPermLoading));
 
   // Integridade da portaria: dia com qualquer movimentação precisa ter Entrada
   // E Saída. Só acusa dias já finalizados (de ontem para trás).
@@ -317,24 +354,40 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
   const billingByStudent = useMemo(() => {
     const m = new Map<string, WeekBilling>();
     for (const s of students) {
-      const benefit = sponteActive && s.sponteAlunoId ? beneficios[s.sponteAlunoId] : undefined;
+      const valores = valoresDe(s.schoolId);
+      const sponteAluno = sponteAtivoNoMes(refMes, valores.mesesCreditoIsencao);
+      const benefit = sponteAluno && s.sponteAlunoId ? beneficios[s.sponteAlunoId] : undefined;
       const exemptions = new Set<ColoniaRecordType>(
         (benefit?.refeicoesIsentas ?? []) as ColoniaRecordType[],
       );
       const days = COLONIA_WEEKDAYS.map((d) =>
-        computeDayBilling(s.byDay[d.weekday], d.weekday, exemptions),
+        computeDayBilling(s.byDay[d.weekday], d.weekday, exemptions, valores),
       );
       m.set(
         s.studentId,
         computeWeekBilling({
           days,
           permanenciaSemanasAnteriores: prevPermByStudent[s.studentId] ?? 0,
-          creditoHoraExtra: sponteActive ? (benefit?.creditoHoraExtra ?? 0) : 0,
+          creditoHoraExtra: sponteAluno ? (benefit?.creditoHoraExtra ?? 0) : 0,
+          valores,
         }),
       );
     }
     return m;
-  }, [students, beneficios, prevPermByStudent, sponteActive]);
+  }, [students, beneficios, prevPermByStudent, valoresDe, refMes]);
+
+  // Aviso de valor padrão: só para unidades com movimentação na semana e sem
+  // cadastro para o ano de referência.
+  const avisosValoresPadrao = useMemo(() => {
+    if (valoresLoading) return [];
+    const ids = [...new Set(students.map((s) => s.schoolId))];
+    return ids
+      .map(
+        (id) =>
+          resolverValoresColonia(valoresCadastrados, id, refAno, schoolIdToName.get(id)).aviso,
+      )
+      .filter((a): a is string => a !== null);
+  }, [students, valoresCadastrados, refAno, schoolIdToName, valoresLoading]);
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
@@ -639,6 +692,16 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
 
   return (
     <div className="space-y-4">
+      {avisosValoresPadrao.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="space-y-0.5">
+            {avisosValoresPadrao.map((a) => (
+              <p key={a}>{a}</p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-3 py-2.5">
         <button
           onClick={() => setWeekStart((w) => addDays(w, -7))}

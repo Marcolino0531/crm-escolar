@@ -20,10 +20,10 @@ describe("Diário do Aluno — dois módulos de acesso (padrão da Colônia)", (
     expect(abaInicialDiario(a)).toBe("registro");
   });
 
-  it("só 'diario_financeiro' vê Auditoria Sponte, Tabela de Preços e Faturamento", () => {
+  it("só 'diario_financeiro' vê Auditoria Sponte e Faturamento", () => {
     const a = { operacional: false, financeiro: true };
     expect(podeAbrirDiario(a)).toBe(true);
-    expect(abasDiarioVisiveis(a)).toEqual(["auditoria", "precos", "faturamento"]);
+    expect(abasDiarioVisiveis(a)).toEqual(["auditoria", "faturamento"]);
     expect(abaInicialDiario(a)).toBe("auditoria");
   });
 
@@ -32,7 +32,6 @@ describe("Diário do Aluno — dois módulos de acesso (padrão da Colônia)", (
       "registro",
       "extras",
       "auditoria",
-      "precos",
       "faturamento",
     ]);
     const nenhum = { operacional: false, financeiro: false };
@@ -58,7 +57,10 @@ describe("Diário do Aluno — dois módulos de acesso (padrão da Colônia)", (
     expect(src).toMatch(/podeEditarFinanceiro = canEdit\("diario_financeiro"\)/);
     // Componentes financeiros recebem a permissão financeira, não a operacional.
     expect(src).toMatch(/<AuditoriaSponte[\s\S]*?podeExecutar=\{podeEditarFinanceiro\}/);
-    expect(src).toMatch(/<TabelaPrecos[\s\S]*?podeEditar=\{podeEditarFinanceiro\}/);
+    expect(src).not.toMatch(/<TabelaPrecos/);
+    expect(fonte("src/components/configuracoes/CadastrosGerais.tsx")).toMatch(
+      /<TabelaPrecos[\s\S]*?podeEditar=\{canEdit\("diario_financeiro"\)\}/,
+    );
     expect(src).toMatch(/<FaturamentoExtras[\s\S]*?podeEditar=\{podeEditarFinanceiro\}/);
     // O menu lateral mostra o Diário com qualquer dos dois módulos.
     expect(fonte("src/routes/__root.tsx")).toMatch(

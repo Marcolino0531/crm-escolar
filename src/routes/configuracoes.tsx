@@ -28,6 +28,7 @@ import {
   Building2,
   Users,
   ShieldCheck,
+  ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -41,6 +42,7 @@ import {
 import { AccessDenied } from "@/components/AccessDenied";
 import { DadosColegios } from "@/components/documentos/DadosColegios";
 import { TestemunhasContrato } from "@/components/documentos/TestemunhasContrato";
+import { CadastrosGerais, abasCadastrosGerais } from "@/components/configuracoes/CadastrosGerais";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listManagedUsers,
@@ -65,6 +67,7 @@ function SettingsPage() {
   if (!canView("configuracoes"))
     return <AccessDenied message="Você não tem permissão para acessar as Configurações." />;
   const podeEditar = canEdit("configuracoes");
+  const veCadastros = abasCadastrosGerais(canView).length > 0;
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
@@ -79,6 +82,12 @@ function SettingsPage() {
           <TabsTrigger value="cc">Despesas</TabsTrigger>
           <TabsTrigger value="rev">Receitas</TabsTrigger>
           <TabsTrigger value="rules">Regras</TabsTrigger>
+          {veCadastros && (
+            <TabsTrigger value="cadastros">
+              <ClipboardList className="h-3.5 w-3.5 mr-1" />
+              Cadastros Gerais
+            </TabsTrigger>
+          )}
           {canView("documentos") && (
             <TabsTrigger value="colegios">
               <Building2 className="h-3.5 w-3.5 mr-1" />
@@ -101,6 +110,11 @@ function SettingsPage() {
         <TabsContent value="rules" className="mt-4">
           <Rules podeEditar={podeEditar} />
         </TabsContent>
+        {veCadastros && (
+          <TabsContent value="cadastros" className="mt-4">
+            <CadastrosGerais />
+          </TabsContent>
+        )}
         {canView("documentos") && (
           <TabsContent value="colegios" className="mt-4">
             <DadosColegios podeEditar={canEdit("documentos")} />

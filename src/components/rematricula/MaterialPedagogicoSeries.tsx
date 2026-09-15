@@ -60,7 +60,7 @@ import {
 // Campanhas de rematrícula por ano letivo. Cada ano tem a sua linha: o portal
 // público /rematricula/{ano} só aceita acesso com a campanha daquele ano aberta,
 // e abrir exige o valor da Matrícula cadastrado para todos os segmentos.
-function CampanhasRematricula({ podeEditar }: { podeEditar: boolean }) {
+export function CampanhasRematricula({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const listar = useServerFn(listarCampanhasRematricula);
   const preparar = useServerFn(prepararCampanhaRematricula);
@@ -189,7 +189,7 @@ function CampanhasRematricula({ podeEditar }: { podeEditar: boolean }) {
 // Valor da Matrícula por segmento e ano letivo (antes fixo no código). O portal
 // usa o valor do ano da campanha em que o responsável está; sem valor para o
 // segmento do aluno, a campanha do ano não abre.
-function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
+export function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const listar = useServerFn(listarValoresMatricula);
   const salvar = useServerFn(salvarValorMatricula);
@@ -330,7 +330,7 @@ function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
 
 // Ano vigente do Diário do Aluno: configuração administrativa única, separada
 // das campanhas de rematrícula.
-function AnoVigenteDiario({ podeEditar }: { podeEditar: boolean }) {
+export function AnoVigenteDiario({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const obter = useServerFn(anosLetivosDiario);
   const salvarVigente = useServerFn(salvarAnoVigenteDiario);
@@ -611,9 +611,6 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
 
   return (
     <div className="space-y-6">
-      <CampanhasRematricula podeEditar={podeEditar} />
-      <ValoresMatricula podeEditar={podeEditar} />
-      <AnoVigenteDiario podeEditar={podeEditar} />
       {podeEditar && !unidade && <SelecioneUnidade acao="O cadastro do material pedagógico" />}
       {podeEditar && unidade && (
         <div className="rounded-lg border p-4">
