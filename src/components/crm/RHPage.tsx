@@ -290,7 +290,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           onAtualizarHorario={atualizarHorarioTrabalho}
         />
       ) : abaRh === "contracheques" ? (
-        <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} />
+        <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} schoolId={schoolId} />
       ) : abaRh === "folhas" ? (
         <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
       ) : abaRh === "terceirizados" ? (

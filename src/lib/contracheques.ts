@@ -259,6 +259,12 @@ export function removerPagina(
   return marcarDuplicadas(paginas.filter((p) => p.pagina !== pagina));
 }
 
+// Filtro do histórico de envios: com uma unidade selecionada no topo mostra só
+// a dela; em "Todas as Unidades" (null) mostra tudo (é só leitura).
+export function filtroHistoricoEnvios(schoolId: string | null): { school_id: string } | null {
+  return schoolId ? { school_id: schoolId } : null;
+}
+
 export function paginasEnviaveis(paginas: readonly PaginaContracheque[]): PaginaContracheque[] {
   return paginas.filter((p) => p.status === "pronta" && p.funcionarioId !== null);
 }
