@@ -29,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
-import { IDS_VAZIOS, resolverIdsFinanceiros } from "@/lib/dashboard-financeiro";
+import { useCatalogosFinanceiros } from "@/hooks/use-catalogos-financeiros";
 import {
   anosDisponiveis,
   faturamentoRecebido,
@@ -337,24 +337,11 @@ function InadimplenciaPage() {
 
   // Mesmos ids/critério do Fechamento do Mês do Dashboard: resgate de fundo e
   // aporte recebido de outra unidade não são faturamento.
-  const { data: idsFin = IDS_VAZIOS } = useQuery({
-    queryKey: ["dash-fin-catalogos", "ids"],
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      type Nomeado = { id: string; name: string };
-      const [rc, cc] = await Promise.all([
-        supabase.from("revenue_categories").select("id, name"),
-        supabase.from("cost_centers").select("id, name"),
-      ]);
-      if (rc.error) throw rc.error;
-      if (cc.error) throw cc.error;
-      return resolverIdsFinanceiros((rc.data ?? []) as Nomeado[], (cc.data ?? []) as Nomeado[]);
-    },
-  });
+  const { idsFin, idsCarregados } = useCatalogosFinanceiros();
 
   const { data: totalRecebido, isFetching: recebidoFetching } = useQuery({
     queryKey: ["faturamento-mes", dataInicio, dataFim, selected, schoolFilterIds, idsFin],
-    enabled: indiceHabilitado && integracaoDisponivel,
+    enabled: indiceHabilitado && integracaoDisponivel && idsCarregados,
     staleTime: 60_000,
     queryFn: async () => {
       const rows = await fetchAllRows<ReceitaRow>((from, to) => {
@@ -435,7 +422,7 @@ function InadimplenciaPage() {
   // e exclusões do índice mensal), respeitando o filtro global de unidade.
   const { data: receitasAno, isFetching: receitasAnoFetching } = useQuery({
     queryKey: ["faturamento-anual", "receitas", anoSelecionado, selected, schoolFilterIds, idsFin],
-    enabled: anualHabilitado,
+    enabled: anualHabilitado && idsCarregados,
     staleTime: 60_000,
     queryFn: async () => {
       const rows = await fetchAllRows<ReceitaRow>((from, to) => {

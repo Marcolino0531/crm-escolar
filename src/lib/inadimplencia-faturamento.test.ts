@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { IDS_VAZIOS, type IdsFinanceiros } from "./dashboard-financeiro";
 import {
   anosDisponiveis,
@@ -98,5 +99,45 @@ describe("anosDisponiveis / indiceInadimplencia", () => {
 
   it("índice zero sem faturamento", () => {
     expect(indiceInadimplencia(100, 0)).toBe(0);
+  });
+});
+
+describe("Dashboard × Inadimplência: mesmo denominador anual", () => {
+  const ids = {
+    ...IDS_VAZIOS,
+    resgateInvestimento: "cat-resgate",
+    transferenciaRecebida: "cat-aporte",
+  };
+  const rows = [
+    { amount: "1000", description: "COB COMPE", revenue_category_id: "cat-mensalidade" },
+    { amount: "15000", description: "RESGATE FUNDO", revenue_category_id: "cat-resgate" },
+    { amount: "38533.34", description: "TED RECEBIDA", revenue_category_id: "cat-aporte" },
+    { amount: 1, description: "IMPORT", revenue_category_id: null },
+  ];
+
+  it("resgate e aporte não entram no faturamento; soma manual antiga divergia", () => {
+    const antiga = rows.reduce((s, t) => (Number(t.amount) === 1 ? s : s + Number(t.amount)), 0);
+    expect(antiga).toBeCloseTo(54533.34, 2);
+    expect(faturamentoRecebido(rows, ids)).toBe(1000);
+  });
+
+  it("o percentual do Dashboard sai igual ao da tela de Inadimplência", () => {
+    const inadimplente = 245350.91;
+    const retroativo = 2072686.99;
+    const denominador = retroativo + faturamentoRecebido(rows, ids);
+    expect(indiceInadimplencia(inadimplente, denominador)).toBeCloseTo(
+      (inadimplente / (retroativo + 1000)) * 100,
+      10,
+    );
+  });
+
+  it("index.tsx usa faturamentoRecebido e não tem mais o reduce manual", () => {
+    const src = readFileSync(new URL("../routes/index.tsx", import.meta.url), "utf8");
+    expect(src).toContain("faturamentoRecebido(rows, idsFin)");
+    expect(src).toContain("useCatalogosFinanceiros()");
+    expect(src).not.toMatch(/desc\.includes\("SALDO DIA"\)/);
+    const inad = readFileSync(new URL("../routes/inadimplencia.tsx", import.meta.url), "utf8");
+    expect(inad).toContain("useCatalogosFinanceiros()");
+    expect(inad).not.toContain("resolverIdsFinanceiros(");
   });
 });
