@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { capitalizarPrimeiraLetra, toTitleCase } from "./name-format";
 
@@ -16,6 +18,28 @@ describe("toTitleCase — nome de funcionário", () => {
       "Karla Regina Rodrigues de Noronha de Morais",
     );
     expect(toTitleCase("DE PAULA")).toBe("De Paula");
+  });
+});
+
+describe("toTitleCase — cargo de funcionário (migration 20260917120000)", () => {
+  it("cargo em CAIXA ALTA sai em Title Case, com preposição minúscula no meio", () => {
+    expect(toTitleCase("AUXILIAR DE LIMPEZA")).toBe("Auxiliar de Limpeza");
+    expect(toTitleCase("ESTAGIÁRIA")).toBe("Estagiária");
+    expect(toTitleCase("PROFESSOR(A)")).toBe("Professor(a)");
+    expect(toTitleCase("Estagiária de psicologia ")).toBe("Estagiária de Psicologia");
+  });
+
+  it("trigger formata nome e cargo no mesmo BEFORE INSERT OR UPDATE", () => {
+    const sql = readFileSync(
+      resolve(
+        __dirname,
+        "../../supabase/migrations/20260917120000_funcionarios_cargo_title_case.sql",
+      ),
+      "utf8",
+    );
+    expect(sql).toContain("NEW.nome_completo := public.title_case(NEW.nome_completo);");
+    expect(sql).toContain("NEW.cargo := public.title_case(NEW.cargo);");
+    expect(sql).toMatch(/UPDATE public\.funcionarios\s+SET cargo = public\.title_case\(cargo\)/);
   });
 });
 
