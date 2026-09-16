@@ -58,6 +58,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { displayPhoneBR } from "@/lib/phone";
 import { filtrarPorUnidade } from "@/lib/unidade-global";
+import { totaisPorUnidade, type LogExecucao } from "@/lib/billing-execucoes-unidade";
 import {
   ROTULO_CATEGORIA,
   contarPorCategoria,
@@ -1078,6 +1079,46 @@ function ExecucoesDoCron({
     },
   });
 
+  // Com uma unidade no topo, os totais de cada execução são recalculados a partir
+  // dos logs individuais daquela unidade (a execução em si cobre as 4 juntas).
+  const unidade = useUnidadeAtiva();
+  const porUnidade = tipo === "lembrete" && !!unidade;
+  const datas = runs.map((r) => r.data_ref).sort();
+  const { data: logsUnidade = [] } = useQuery({
+    queryKey: ["cobranca-cron-runs-logs", tipo, unidade, datas[0], datas[datas.length - 1]],
+    enabled: porUnidade && datas.length > 0,
+    refetchInterval: 60000,
+    queryFn: async (): Promise<LogExecucao[]> => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sessão inválida — faça login novamente.");
+      const todos: LogExecucao[] = [];
+      for (let page = 1; ; page++) {
+        const params = new URLSearchParams({
+          tipo,
+          unidade: unidade ?? "",
+          date_start: datas[0],
+          date_end: datas[datas.length - 1],
+          per_page: "100",
+          page: String(page),
+        });
+        const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = (await resp.json()) as {
+          ok: boolean;
+          data?: LogExecucao[];
+          error?: string;
+        };
+        if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar os logs.");
+        const pagina = body.data ?? [];
+        todos.push(...pagina);
+        if (pagina.length < 100) break;
+      }
+      return todos;
+    },
+  });
+
   const hoje = hojeSaoPauloYMD();
   const horaBRT = Number(
     new Date().toLocaleString("pt-BR", {
@@ -1097,7 +1138,10 @@ function ExecucoesDoCron({
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Timer className="h-4 w-4 text-primary" /> Execuções da Automação
         </h2>
-        <span className="text-xs text-muted-foreground">{legenda}</span>
+        <span className="text-xs text-muted-foreground">
+          {legenda}
+          {porUnidade ? ` · totais de ${unidade}` : ""}
+        </span>
       </div>
 
       {alerta && (
@@ -1129,6 +1173,10 @@ function ExecucoesDoCron({
           <TableBody>
             {runs.map((r) => {
               const style = RUN_STATUS_STYLE[r.status] ?? RUN_STATUS_STYLE.em_andamento;
+              const totais =
+                porUnidade && unidade
+                  ? totaisPorUnidade(r, logsUnidade, unidade)
+                  : { enviados: r.enviados, falhas: r.falhas, pulados: r.pulados };
               return (
                 <TableRow key={r.id}>
                   <TableCell className="whitespace-nowrap text-sm">
@@ -1149,7 +1197,7 @@ function ExecucoesDoCron({
                     {r.erro
                       ? r.erro
                       : r.status === "ok"
-                        ? `${r.enviados} enviada(s), ${r.falhas} falha(s), ${r.pulados} já cobrado(s)`
+                        ? `${totais.enviados} enviada(s), ${totais.falhas} falha(s), ${totais.pulados} já cobrado(s)`
                         : (r.motivo ?? "—")}
                   </TableCell>
                 </TableRow>
