@@ -6,6 +6,7 @@ import {
   GraduationCap,
   Percent,
   Wallet,
+  ArrowRight,
   UserPlus,
   CheckCircle2,
   PieChart as PieChartIcon,
@@ -14,8 +15,6 @@ import {
   TrendingDown,
   Scale,
   Landmark,
-  ArrowUpCircle,
-  ArrowDownCircle,
   ArrowLeftRight,
   LineChart as LineChartIcon,
 } from "lucide-react";
@@ -55,11 +54,11 @@ import {
   despesaPorCentroCusto,
   fechamentoMensal,
   fechamentoPorUnidade,
-  resolverIdsFinanceiros,
   FECHAMENTO_ZERADO,
-  IDS_VAZIOS,
   type TransacaoFinanceira,
 } from "@/lib/dashboard-financeiro";
+import { faturamentoRecebido, type ReceitaExtrato } from "@/lib/inadimplencia-faturamento";
+import { useCatalogosFinanceiros } from "@/hooks/use-catalogos-financeiros";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -169,48 +168,6 @@ function MainDashboard() {
       .sort((a, b) => b.value - a.value);
   }, [leads]);
 
-  // ── Card 3: Saldo Atual (consolidado bancário) ───────────────────────────
-  const { data: saldoAtual, isFetching: saldoFetching } = useQuery({
-    queryKey: ["dash-saldo", selected, schoolFilterIds],
-    staleTime: 60_000,
-    queryFn: async () => {
-      type SaldoRow = {
-        id: string;
-        type: string;
-        amount: number;
-        parent_transaction_id: string | null;
-      };
-      // Saldo consolidado usa todas as transações da unidade; sem paginação o
-      // PostgREST devolveria apenas as primeiras 1000 linhas e o saldo sairia menor.
-      const rows = await fetchAllRows<SaldoRow>((from, to) => {
-        let q = supabase
-          .from("transactions")
-          .select("id, type, amount, parent_transaction_id")
-          .order("id", { ascending: true })
-          .range(from, to);
-        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-        return q as unknown as PromiseLike<PagedRows<SaldoRow>>;
-      });
-      const splitParents = new Set(
-        rows.map((t) => t.parent_transaction_id).filter((v): v is string => !!v),
-      );
-      const net = rows
-        .filter((t) => !splitParents.has(t.id))
-        .reduce((s, t) => s + (t.type === "entrada" ? Number(t.amount) : -Number(t.amount)), 0);
-      if (rows.length > 0) return net;
-      // Sem transações: usa o Saldo Inicial manual da unidade (quando específica).
-      if (selected === "all") return 0;
-      const { data: ib } = await supabase
-        .from("initial_balances")
-        .select("amount")
-        .eq("school_id", selected)
-        .order("reference_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return Number((ib as { amount?: number } | null)?.amount ?? 0);
-    },
-  });
-
   // ── Card 2: Inadimplência Anual (índice %) ───────────────────────────────
   // % = Total Inadimplente (Sponte, 01/01 → hoje, sem "Acordo") ÷ Faturamento
   // Total do Ano (retroativo Jan–Mai + receitas reais do extrato Jun → hoje).
@@ -245,37 +202,29 @@ function MainDashboard() {
     return { retroativoAno: v ?? 0, retroativoConfigurado: v != null };
   }, [schoolsFaturamento, selected, schools]);
 
+  const { catalogos, idsFin, idsCarregados } = useCatalogosFinanceiros();
+
+  // Mesma fonte e exclusões (resgate de fundo, aporte de outra unidade) da
+  // tela de Inadimplência, para o percentual bater nas duas telas.
   const { data: receitasAno, isFetching: receitasAnoFetching } = useQuery({
-    queryKey: ["dash-receitas-ano", anoAtual, selected, schoolFilterIds],
-    enabled: integracaoDisponivel && retroativoConfigurado,
+    queryKey: ["faturamento-anual", "receitas", anoAtual, selected, schoolFilterIds, idsFin],
+    enabled: integracaoDisponivel && retroativoConfigurado && idsCarregados,
     staleTime: 60_000,
     queryFn: async () => {
-      const rows = await fetchAllRows<{ amount: number; description: string | null }>(
-        (from, to) => {
-          let q = supabase
-            .from("transactions")
-            .select("amount, description")
-            .eq("type", "entrada")
-            .is("parent_transaction_id", null)
-            .gte("date", anoJunhoYMD)
-            .lte("date", hojeYMD)
-            .order("id", { ascending: true })
-            .range(from, to);
-          if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-          return q as unknown as PromiseLike<
-            PagedRows<{ amount: number; description: string | null }>
-          >;
-        },
-      );
-      return rows.reduce((sum, t) => {
-        const desc = String(t.description ?? "")
-          .trim()
-          .toUpperCase();
-        const amt = Number(t.amount ?? 0);
-        if (desc.includes("SALDO DIA")) return sum;
-        if (amt === 1) return sum;
-        return sum + amt;
-      }, 0);
+      const rows = await fetchAllRows<ReceitaExtrato>((from, to) => {
+        let q = supabase
+          .from("transactions")
+          .select("amount, description, revenue_category_id")
+          .eq("type", "entrada")
+          .is("parent_transaction_id", null)
+          .gte("date", anoJunhoYMD)
+          .lte("date", hojeYMD)
+          .order("id", { ascending: true })
+          .range(from, to);
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q as unknown as PromiseLike<PagedRows<ReceitaExtrato>>;
+      });
+      return faturamentoRecebido(rows, idsFin);
     },
   });
 
@@ -297,26 +246,6 @@ function MainDashboard() {
   const anualParcialAte = anual?.parcialAte ?? null;
 
   // ── Fechamento mensal (Extrato Bancário) ─────────────────────────────────
-  const { data: catalogos } = useQuery({
-    queryKey: ["dash-fin-catalogos"],
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      type Nomeado = { id: string; name: string };
-      const [rc, cc] = await Promise.all([
-        supabase.from("revenue_categories").select("id, name"),
-        supabase.from("cost_centers").select("id, name"),
-      ]);
-      if (rc.error) throw rc.error;
-      if (cc.error) throw cc.error;
-      const centros = (cc.data ?? []) as Nomeado[];
-      return {
-        ids: resolverIdsFinanceiros((rc.data ?? []) as Nomeado[], centros),
-        nomesCentros: new Map(centros.map((c) => [c.id, c.name])),
-      };
-    },
-  });
-  const idsFin = catalogos?.ids ?? IDS_VAZIOS;
-
   // Histórico completo da(s) unidade(s), igual ao Extrato Bancário: o Saldo
   // Inicial do período vem das transações anteriores a ele.
   const { data: txsTodas, isFetching: finFetching } = useQuery({
@@ -462,173 +391,121 @@ function MainDashboard() {
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <MetricCard
-          label="Alunos Matriculados Ativos"
-          icon={GraduationCap}
-          tone="primary"
-          loading={alunosFetching}
-          value={
-            !integracaoDisponivel || alunosIndisponivel
-              ? "—"
-              : alunosErro
-                ? "Erro"
-                : String(alunos?.total ?? 0)
-          }
-          hint={alunosErro ?? (alunosIndisponivel ? "Integração indisponível" : "Fonte: Sponte")}
-        />
+      {catalogos && avisoIds.length > 0 && (
+        <p className="flex items-center gap-2 text-xs text-amber-600">
+          <AlertTriangle className="h-4 w-4" />
+          Categoria/centro não encontrado: {avisoIds.join(", ")}. As exclusões correspondentes não
+          foram aplicadas.
+        </p>
+      )}
 
+      {/* Nível 1 — os três números do mês */}
+      <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
-          label="Inadimplência Anual"
-          icon={Percent}
-          tone="warning"
-          loading={anualCarregando}
-          value={
-            !retroativoConfigurado
-              ? "—"
-              : anualErro
-                ? "Erro"
-                : `${indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
-          }
-          hint={
-            !retroativoConfigurado
-              ? "Faturamento retroativo (Jan–Mai) não informado"
-              : anualErro
-                ? anualErro
-                : anualParcialAte
-                  ? `Parcial: ${formatBRL(inadimplenteAno)} — boletos varridos só até ${anualParcialAte.split("-").reverse().join("/")}`
-                  : `${formatBRL(inadimplenteAno)} inadimplente no ano`
-          }
-        />
-
-        <MetricCard
-          label="Saldo Atual"
-          icon={Wallet}
-          tone={(saldoAtual ?? 0) >= 0 ? "success" : "destructive"}
-          loading={saldoFetching}
-          value={formatBRL(saldoAtual ?? 0)}
-          hint="Saldo bancário consolidado"
-        />
-
-        <MetricCard
-          label="Criação de Leads"
-          icon={UserPlus}
-          tone="primary"
-          loading={leadsFetching}
-          value={String(totalLeads)}
-          hint="Leads no período (Admissões)"
-        />
-
-        <MetricCard
-          label="Matrículas Efetivadas"
-          icon={CheckCircle2}
+          size="lg"
+          label="Receita do Mês"
+          icon={TrendingUp}
           tone="success"
-          loading={leadsFetching}
-          value={String(matriculasEfetivadas)}
-          hint="Leads convertidas em matrícula"
+          loading={finFetching}
+          value={formatBRL(fechamento.receita)}
+          ajuda="Entradas do extrato, sem considerar resgate de fundo de investimento e aporte recebido de outra unidade"
         />
-
         <MetricCard
-          label="Conversão de Leads"
-          icon={CheckCircle2}
-          tone="primary"
-          loading={leadsFetching}
-          value={totalLeads > 0 ? `${Math.round((matriculasEfetivadas / totalLeads) * 100)}%` : "—"}
-          hint="Matrículas ÷ Leads do período"
+          size="lg"
+          label="Despesa do Mês"
+          icon={TrendingDown}
+          tone="destructive"
+          loading={finFetching}
+          value={formatBRL(fechamento.despesa)}
+          ajuda="Saídas do extrato, sem considerar aplicação em fundo de investimento e aporte realizado em outra unidade"
+        />
+        <MetricCard
+          size="lg"
+          label="Resultado do Mês"
+          icon={Scale}
+          tone={fechamento.resultado >= 0 ? "success" : "destructive"}
+          loading={finFetching}
+          value={formatBRL(fechamento.resultado)}
+          ajuda="Receita − Despesa do período"
         />
       </div>
 
-      {/* Fechamento mensal */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold tracking-tight">Fechamento do Mês</h2>
-        {catalogos && avisoIds.length > 0 && (
-          <p className="mb-3 flex items-center gap-2 text-xs text-amber-600">
-            <AlertTriangle className="h-4 w-4" />
-            Categoria/centro não encontrado: {avisoIds.join(", ")}. As exclusões correspondentes não
-            foram aplicadas.
-          </p>
-        )}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            label="Saldo Inicial"
-            icon={Wallet}
-            tone={saldos.saldoInicial >= 0 ? "success" : "destructive"}
+      {/* Nível 2 — Fechamento de Caixa (Saldo Final = saldo bancário atual) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Wallet className="h-5 w-5 text-muted-foreground" />
+            Fechamento de Caixa
+            <AjudaTooltip
+              texto="Movimento bancário do período (Extrato Bancário). O Saldo Final é o saldo bancário consolidado da unidade."
+              rotulo="Ajuda: Fechamento de Caixa"
+            />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FaixaFluxo
             loading={finFetching}
-            value={formatBRL(saldos.saldoInicial)}
-          />
-          <MetricCard
-            label="Entradas"
-            icon={ArrowUpCircle}
-            tone="success"
-            loading={finFetching}
-            value={formatBRL(saldos.entradas)}
-          />
-          <MetricCard
-            label="Saídas"
-            icon={ArrowDownCircle}
-            tone="destructive"
-            loading={finFetching}
-            value={formatBRL(saldos.saidas)}
-          />
-          <MetricCard
-            label="Saldo Final"
-            icon={Wallet}
-            tone={saldos.saldoFinal >= 0 ? "success" : "destructive"}
-            loading={finFetching}
-            value={formatBRL(saldos.saldoFinal)}
-          />
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <MetricCard
-            label="Receita do Mês"
-            icon={TrendingUp}
-            tone="success"
-            loading={finFetching}
-            value={formatBRL(fechamento.receita)}
-            ajuda="Entradas do extrato, sem considerar resgate de fundo de investimento e aporte recebido de outra unidade"
-          />
-          <MetricCard
-            label="Despesa do Mês"
-            icon={TrendingDown}
-            tone="destructive"
-            loading={finFetching}
-            value={formatBRL(fechamento.despesa)}
-            ajuda="Saídas do extrato, sem considerar aplicação em fundo de investimento e aporte realizado em outra unidade"
-          />
-          <MetricCard
-            label="Resultado do Mês"
-            icon={Scale}
-            tone={fechamento.resultado >= 0 ? "success" : "destructive"}
-            loading={finFetching}
-            value={formatBRL(fechamento.resultado)}
-            ajuda="Receita − Despesa do período"
-          />
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <DuplaCard
-            label="Movimentação de Investimentos"
-            icon={Landmark}
-            loading={finFetching}
-            itens={[
-              { rotulo: "Aportado no Fundo", valor: fechamento.aportadoFundo },
-              { rotulo: "Resgatado do Fundo", valor: fechamento.resgatadoFundo },
+            etapas={[
+              {
+                rotulo: "Saldo Inicial",
+                valor: saldos.saldoInicial,
+                tone: saldos.saldoInicial >= 0 ? "success" : "destructive",
+              },
+              { rotulo: "Entradas", valor: saldos.entradas, tone: "success", sinal: "+" },
+              { rotulo: "Saídas", valor: saldos.saidas, tone: "destructive", sinal: "−" },
+              {
+                rotulo: "Saldo Final",
+                valor: saldos.saldoFinal,
+                tone: saldos.saldoFinal >= 0 ? "success" : "destructive",
+                destaque: true,
+                hint: "Saldo bancário consolidado",
+              },
             ]}
-            ajuda="Não entra em Receita nem Despesa"
           />
-          <DuplaCard
-            label="Transferências entre Unidades"
-            icon={ArrowLeftRight}
-            loading={finFetching}
-            itens={[
-              { rotulo: "Enviado a Outras Unidades", valor: fechamento.enviadoOutras },
-              { rotulo: "Recebido de Outras Unidades", valor: fechamento.recebidoOutras },
-            ]}
-            destaque={{ rotulo: "Saldo líquido", valor: fechamento.saldoTransferencias }}
-            ajuda="Não entra em Receita nem Despesa"
-          />
-        </div>
-      </div>
+        </CardContent>
+      </Card>
+
+      {/* Nível 3 — Investimentos e Transferências */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ArrowLeftRight className="h-5 w-5 text-muted-foreground" />
+            Investimentos e Transferências entre Unidades
+            <AjudaTooltip
+              texto="Movimentações que não entram em Receita nem Despesa do mês."
+              rotulo="Ajuda: Investimentos e Transferências entre Unidades"
+            />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 md:grid-cols-2 md:divide-x">
+            <BlocoLiquido
+              titulo="Fundos de Investimento"
+              icon={Landmark}
+              loading={finFetching}
+              itens={[
+                { rotulo: "Aportado no Fundo", valor: fechamento.aportadoFundo },
+                { rotulo: "Resgatado do Fundo", valor: fechamento.resgatadoFundo },
+              ]}
+              liquido={{
+                rotulo: "Saldo líquido aplicado",
+                valor: fechamento.aportadoFundo - fechamento.resgatadoFundo,
+              }}
+            />
+            <BlocoLiquido
+              titulo="Transferências entre Unidades"
+              icon={ArrowLeftRight}
+              loading={finFetching}
+              className="md:pl-6"
+              itens={[
+                { rotulo: "Enviado a Outras Unidades", valor: fechamento.enviadoOutras },
+                { rotulo: "Recebido de Outras Unidades", valor: fechamento.recebidoOutras },
+              ]}
+              liquido={{ rotulo: "Saldo líquido recebido", valor: fechamento.saldoTransferencias }}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {selected === "all" && (
         <Card>
@@ -672,6 +549,7 @@ function MainDashboard() {
         </Card>
       )}
 
+      {/* Nível 4 — gráficos */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Despesa por Centro de Custo */}
         <Card>
@@ -758,6 +636,8 @@ function MainDashboard() {
                       borderRadius: 8,
                     }}
                   />
+                  {/* Sem <>…</>: o Recharts não enxerga <Line> dentro de Fragment (react-is 18 × React 19). */}
+                  {fundosVisiveis.length > 1 && <Legend />}
                   {fundosVisiveis.length <= 1 ? (
                     <Line
                       type="monotone"
@@ -768,20 +648,17 @@ function MainDashboard() {
                       dot={{ r: 3 }}
                     />
                   ) : (
-                    <>
-                      <Legend />
-                      {fundosVisiveis.map((f, i) => (
-                        <Line
-                          key={f.id}
-                          type="monotone"
-                          dataKey={f.id}
-                          name={f.destination || f.name}
-                          stroke={ORIGEM_CORES[i % ORIGEM_CORES.length]}
-                          strokeWidth={2}
-                          dot={{ r: 3 }}
-                        />
-                      ))}
-                    </>
+                    fundosVisiveis.map((f, i) => (
+                      <Line
+                        key={f.id}
+                        type="monotone"
+                        dataKey={f.id}
+                        name={f.destination || f.name}
+                        stroke={ORIGEM_CORES[i % ORIGEM_CORES.length]}
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    ))
                   )}
                 </LineChart>
               </ResponsiveContainer>
@@ -790,102 +667,234 @@ function MainDashboard() {
         </Card>
       </div>
 
-      {/* Origem das Leads */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <PieChartIcon className="h-5 w-5 text-muted-foreground" />
-            Origem das Leads
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {leadsFetching ? (
-            <Skeleton className="h-72 w-full" />
-          ) : origemData.length === 0 ? (
-            <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-              <AlertTriangle className="h-6 w-6" />
-              Nenhuma lead criada no período selecionado.
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={origemData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={70}
-                  outerRadius={110}
-                  paddingAngle={2}
-                  label={(entry) => `${entry.name}: ${entry.value}`}
-                >
-                  {origemData.map((entry, i) => (
-                    <Cell key={entry.name} fill={ORIGEM_CORES[i % ORIGEM_CORES.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number, name: string) => [`${value} lead(s)`, name]} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+      {/* Nível 5 — Indicadores de Captação (admissão de alunos, não caixa) */}
+      <section className="space-y-3 border-t pt-6">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-muted-foreground">
+            Indicadores de Captação
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Alunos, inadimplência e leads — indicadores de admissão, separados do fechamento
+            financeiro do mês.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <MetricCard
+            size="sm"
+            label="Alunos Matriculados Ativos"
+            icon={GraduationCap}
+            tone="primary"
+            loading={alunosFetching}
+            value={
+              !integracaoDisponivel || alunosIndisponivel
+                ? "—"
+                : alunosErro
+                  ? "Erro"
+                  : String(alunos?.total ?? 0)
+            }
+            hint={alunosErro ?? (alunosIndisponivel ? "Integração indisponível" : "Fonte: Sponte")}
+          />
+          <MetricCard
+            size="sm"
+            label="Inadimplência Anual"
+            icon={Percent}
+            tone="warning"
+            loading={anualCarregando}
+            value={
+              !retroativoConfigurado
+                ? "—"
+                : anualErro
+                  ? "Erro"
+                  : `${indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+            }
+            hint={
+              !retroativoConfigurado
+                ? "Faturamento retroativo (Jan–Mai) não informado"
+                : anualErro
+                  ? anualErro
+                  : anualParcialAte
+                    ? `Parcial: ${formatBRL(inadimplenteAno)} — boletos varridos só até ${anualParcialAte.split("-").reverse().join("/")}`
+                    : `${formatBRL(inadimplenteAno)} inadimplente no ano`
+            }
+          />
+          <MetricCard
+            size="sm"
+            label="Criação de Leads"
+            icon={UserPlus}
+            tone="primary"
+            loading={leadsFetching}
+            value={String(totalLeads)}
+            hint="Leads no período (Admissões)"
+          />
+          <MetricCard
+            size="sm"
+            label="Matrículas Efetivadas"
+            icon={CheckCircle2}
+            tone="success"
+            loading={leadsFetching}
+            value={String(matriculasEfetivadas)}
+            hint="Leads convertidas em matrícula"
+          />
+          <MetricCard
+            size="sm"
+            label="Conversão de Leads"
+            icon={CheckCircle2}
+            tone="primary"
+            loading={leadsFetching}
+            value={
+              totalLeads > 0 ? `${Math.round((matriculasEfetivadas / totalLeads) * 100)}%` : "—"
+            }
+            hint="Matrículas ÷ Leads do período"
+          />
+        </div>
+
+        {/* Origem das Leads */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <PieChartIcon className="h-5 w-5 text-muted-foreground" />
+              Origem das Leads
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {leadsFetching ? (
+              <Skeleton className="h-72 w-full" />
+            ) : origemData.length === 0 ? (
+              <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-6 w-6" />
+                Nenhuma lead criada no período selecionado.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={origemData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={70}
+                    outerRadius={110}
+                    paddingAngle={2}
+                    label={(entry) => `${entry.name}: ${entry.value}`}
+                  >
+                    {origemData.map((entry, i) => (
+                      <Cell key={entry.name} fill={ORIGEM_CORES[i % ORIGEM_CORES.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value: number, name: string) => [`${value} lead(s)`, name]}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }
 
-function DuplaCard({
-  label,
-  icon: Icon,
-  itens,
-  destaque,
-  ajuda,
+type Tone = "primary" | "success" | "destructive" | "warning";
+
+function toneClasses(tone: Tone): string {
+  return tone === "success"
+    ? "bg-success/10 text-success"
+    : tone === "destructive"
+      ? "bg-destructive/10 text-destructive"
+      : tone === "warning"
+        ? "bg-amber-500/10 text-amber-600"
+        : "bg-primary/10 text-primary";
+}
+
+function FaixaFluxo({
+  etapas,
   loading,
 }: {
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  itens: { rotulo: string; valor: number }[];
-  destaque?: { rotulo: string; valor: number };
-  ajuda?: string;
+  etapas: {
+    rotulo: string;
+    valor: number;
+    tone: Tone;
+    sinal?: string;
+    destaque?: boolean;
+    hint?: string;
+  }[];
   loading?: boolean;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-start gap-4 p-5">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
-            {label}
-            {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
-          </div>
-          {loading ? (
-            <Skeleton className="mt-1 h-12 w-40" />
-          ) : (
-            <div className="mt-1 space-y-0.5 text-sm">
-              {itens.map((it) => (
-                <div key={it.rotulo} className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">{it.rotulo}</span>
-                  <span className="font-semibold tabular-nums">{formatBRL(it.valor)}</span>
-                </div>
-              ))}
-              {destaque && (
-                <div className="flex justify-between gap-3 border-t pt-1">
-                  <span className="font-medium">{destaque.rotulo}</span>
-                  <span
-                    className={`font-bold tabular-nums ${destaque.valor >= 0 ? "text-success" : "text-destructive"}`}
-                  >
-                    {formatBRL(destaque.valor)}
-                  </span>
-                </div>
-              )}
-            </div>
+    <div className="flex flex-col gap-3 md:flex-row md:items-stretch">
+      {etapas.map((e, i) => (
+        <div key={e.rotulo} className="flex flex-1 items-center gap-3">
+          {i > 0 && (
+            <ArrowRight className="hidden h-5 w-5 shrink-0 text-muted-foreground/60 md:block" />
           )}
+          <div
+            className={`flex-1 rounded-lg border p-4 ${e.destaque ? "border-primary/40 bg-primary/5" : "bg-muted/30"}`}
+          >
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              {e.sinal && <span className="mr-1 font-semibold">{e.sinal}</span>}
+              {e.rotulo}
+            </div>
+            {loading ? (
+              <Skeleton className="mt-1 h-8 w-32" />
+            ) : (
+              <div
+                className={`mt-1 tabular-nums font-bold ${e.destaque ? "text-2xl" : "text-xl"} ${toneClasses(e.tone).split(" ")[1]}`}
+              >
+                {formatBRL(e.valor)}
+              </div>
+            )}
+            {e.hint && <div className="mt-0.5 text-xs text-muted-foreground">{e.hint}</div>}
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      ))}
+    </div>
+  );
+}
+
+function BlocoLiquido({
+  titulo,
+  icon: Icon,
+  itens,
+  liquido,
+  loading,
+  className,
+}: {
+  titulo: string;
+  icon: React.ComponentType<{ className?: string }>;
+  itens: { rotulo: string; valor: number }[];
+  liquido: { rotulo: string; valor: number };
+  loading?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+        {titulo}
+      </div>
+      {loading ? (
+        <Skeleton className="h-20 w-full" />
+      ) : (
+        <div className="space-y-1 text-sm">
+          {itens.map((it) => (
+            <div key={it.rotulo} className="flex justify-between gap-3">
+              <span className="text-muted-foreground">{it.rotulo}</span>
+              <span className="font-semibold tabular-nums">{formatBRL(it.valor)}</span>
+            </div>
+          ))}
+          <div className="mt-2 flex items-baseline justify-between gap-3 border-t pt-2">
+            <span className="font-medium">{liquido.rotulo}</span>
+            <span
+              className={`text-xl font-bold tabular-nums ${liquido.valor >= 0 ? "text-success" : "text-destructive"}`}
+            >
+              {formatBRL(liquido.valor)}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -897,30 +906,29 @@ function MetricCard({
   hint,
   ajuda,
   loading,
+  size = "md",
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
-  tone: "primary" | "success" | "destructive" | "warning";
+  tone: Tone;
   hint?: string;
   ajuda?: string;
   loading?: boolean;
+  size?: "sm" | "md" | "lg";
 }) {
-  const toneClass =
-    tone === "success"
-      ? "bg-success/10 text-success"
-      : tone === "destructive"
-        ? "bg-destructive/10 text-destructive"
-        : tone === "warning"
-          ? "bg-amber-500/10 text-amber-600"
-          : "bg-primary/10 text-primary";
+  const toneClass = toneClasses(tone);
+  const iconBox = size === "lg" ? "h-14 w-14" : size === "sm" ? "h-9 w-9" : "h-11 w-11";
+  const iconSize = size === "lg" ? "h-7 w-7" : size === "sm" ? "h-4 w-4" : "h-5 w-5";
+  const valueSize = size === "lg" ? "text-3xl" : size === "sm" ? "text-xl" : "text-2xl";
+  const padding = size === "lg" ? "p-6" : size === "sm" ? "p-4" : "p-5";
   return (
-    <Card>
-      <CardContent className="flex items-start gap-4 p-5">
+    <Card className={size === "lg" ? "shadow-md" : undefined}>
+      <CardContent className={`flex items-start gap-4 ${padding}`}>
         <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${toneClass}`}
+          className={`flex ${iconBox} shrink-0 items-center justify-center rounded-lg ${toneClass}`}
         >
-          <Icon className="h-5 w-5" />
+          <Icon className={iconSize} />
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
@@ -928,9 +936,9 @@ function MetricCard({
             {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
           </div>
           {loading ? (
-            <Skeleton className="mt-1 h-7 w-24" />
+            <Skeleton className={`mt-1 ${size === "lg" ? "h-10 w-40" : "h-7 w-24"}`} />
           ) : (
-            <div className="text-2xl font-bold">{value}</div>
+            <div className={`${valueSize} font-bold tabular-nums`}>{value}</div>
           )}
           {hint && (
             <TooltipProvider>
