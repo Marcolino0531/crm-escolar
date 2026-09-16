@@ -21,6 +21,7 @@ import {
   type FuncionarioContracheque,
   type PaginaContracheque,
   detalheTecnicoErro,
+  filtroHistoricoEnvios,
   mensagemErroProcessamento,
 } from "@/lib/contracheques";
 import {
@@ -33,6 +34,7 @@ import { enviarContracheque, registrarFalhaContracheque } from "@/lib/contracheq
 
 type EnvioRow = {
   id: string;
+  school_id: string | null;
   employee_nome: string;
   email: string;
   competencia: string;
@@ -66,10 +68,11 @@ const CORES_STATUS: Record<PaginaContracheque["status"], string> = {
   sem_cpf: "bg-amber-50 text-amber-700 border-amber-200",
 };
 
-const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }> = ({
-  funcionarios,
-  isAdmin,
-}) => {
+const Contracheques: React.FC<{
+  funcionarios: Funcionario[];
+  isAdmin: boolean;
+  schoolId: string | null;
+}> = ({ funcionarios, isAdmin, schoolId }) => {
   const qc = useQueryClient();
   const enviarFn = useServerFn(enviarContracheque);
 
@@ -93,15 +96,16 @@ const Contracheques: React.FC<{ funcionarios: Funcionario[]; isAdmin: boolean }>
   const enviaveis = paginas ? paginasEnviaveis(paginas) : [];
 
   const historico = useQuery({
-    queryKey: ["hr-payslip-sends"],
+    queryKey: ["hr-payslip-sends", schoolId],
     queryFn: async (): Promise<EnvioRow[]> => {
-      const { data, error } = await supabase
+      const filtro = filtroHistoricoEnvios(schoolId);
+      let query = supabase
         .from("hr_payslip_sends" as never)
         .select(
-          "id, employee_nome, email, competencia, pagina, status, erro, enviado_em, enviado_por_nome",
-        )
-        .order("enviado_em", { ascending: false })
-        .limit(300);
+          "id, school_id, employee_nome, email, competencia, pagina, status, erro, enviado_em, enviado_por_nome",
+        );
+      if (filtro) query = query.match(filtro);
+      const { data, error } = await query.order("enviado_em", { ascending: false }).limit(300);
       if (error) throw new Error(error.message);
       return (data ?? []) as unknown as EnvioRow[];
     },

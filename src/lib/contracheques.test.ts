@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  filtroHistoricoEnvios,
   assuntoEmailContracheque,
   classificarErroPdf,
   competenciaExtenso,
@@ -419,5 +420,16 @@ describe("erro técnico não aparece cru para o usuário", () => {
     const gigante = new Error("x");
     gigante.stack = "y".repeat(9000);
     expect(detalheTecnicoErro(gigante).stack.length).toBe(4000);
+  });
+});
+
+describe("filtroHistoricoEnvios", () => {
+  it("filtra por school_id quando há unidade selecionada", () => {
+    expect(filtroHistoricoEnvios("cec-baby")).toEqual({ school_id: "cec-baby" });
+  });
+
+  it("não filtra em Todas as Unidades", () => {
+    expect(filtroHistoricoEnvios(null)).toBeNull();
+    expect(filtroHistoricoEnvios("")).toBeNull();
   });
 });
