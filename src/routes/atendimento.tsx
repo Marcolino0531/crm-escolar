@@ -298,7 +298,7 @@ function AtendimentoPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="w-full">
       <div className="mb-4">
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <MessageSquare className="h-6 w-6 text-primary" /> Atendimento
@@ -309,7 +309,7 @@ function AtendimentoPage() {
         </h1>
       </div>
 
-      <div className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card md:grid-cols-[320px_1fr]">
+      <div className="grid h-[calc(100vh-220px)] min-h-[480px] grid-cols-1 overflow-hidden rounded-xl border border-border bg-card md:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
         {/* Lista de conversas */}
         <div
           className={`flex min-h-0 flex-col border-border md:border-r ${
