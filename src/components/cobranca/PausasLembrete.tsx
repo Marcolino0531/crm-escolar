@@ -10,6 +10,8 @@ import { BellOff, Loader2, PlayCircle, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuth } from "@/lib/app-context";
+import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { pausasDaUnidade } from "@/lib/billing-execucoes-unidade";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,7 +61,7 @@ function usePausasLembrete() {
         .select(
           "id, telefone, responsavel_nome, alunos_nomes, unidade, nota, created_at, created_by_nome",
         )
-        .order("created_at", { ascending: false });
+        .order("responsavel_nome", { ascending: true });
       if (error) throw new Error(error.message);
       return (data ?? []) as unknown as PausaLembreteRow[];
     },
@@ -69,7 +71,9 @@ function usePausasLembrete() {
 export function PausasLembrete({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
   const { session } = useAuth();
-  const { data: pausas = [], isLoading } = usePausasLembrete();
+  const { data: todasPausas = [], isLoading } = usePausasLembrete();
+  const unidade = useUnidadeAtiva();
+  const pausas = pausasDaUnidade(todasPausas, unidade);
 
   const [busca, setBusca] = useState("");
   const [termo, setTermo] = useState("");
@@ -97,7 +101,7 @@ export function PausasLembrete({ podeEditar }: { podeEditar: boolean }) {
     },
   });
 
-  const chavesPausadas = new Set(pausas.map((p) => chaveTelefone(p.telefone)));
+  const chavesPausadas = new Set(todasPausas.map((p) => chaveTelefone(p.telefone)));
   const digitosBusca = termo.replace(/\D/g, "");
   const telefoneAvulso =
     digitosBusca.length >= 10 &&
@@ -262,7 +266,8 @@ export function PausasLembrete({ podeEditar }: { podeEditar: boolean }) {
         <div className="px-4 py-6 text-sm text-muted-foreground">Carregando…</div>
       ) : pausas.length === 0 ? (
         <div className="px-4 py-6 text-sm text-muted-foreground">
-          Nenhum número pausado. Todos os responsáveis com parcela a vencer recebem o lembrete.
+          Nenhum número pausado{unidade ? ` em ${unidade}` : ""}. Todos os responsáveis com parcela
+          a vencer recebem o lembrete.
         </div>
       ) : (
         <Table>
