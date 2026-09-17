@@ -153,9 +153,11 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
   const [ordenacao, setOrdenacao] = useState<OrdenacaoRh>(ORDENACAO_PADRAO);
-  const [abaRh, setAbaRh] = useState<
-    "funcionarios" | "terceirizados" | "folhas" | "contracheques" | "ponto"
-  >("funcionarios");
+  const [abaRh, setAbaRh] = useState<"funcionarios" | "folhas" | "contracheques" | "ponto">(
+    "funcionarios",
+  );
+  const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados">("efetivos");
+  const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
   const [folhasRefresh, setFolhasRefresh] = useState(0);
   // Período compartilhado pelos rankings da lateral (faltas manuais e ponto
   // eletrônico). Começa no mês atual.
@@ -250,7 +252,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && abaRh === "funcionarios" && (
+          {isAdmin && mostraEfetivos && (
             <button
               onClick={() => setExportModalAberto(true)}
               disabled={funcionarios.length === 0}
@@ -273,7 +275,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
               Exportar Planilha
             </button>
           )}
-          {isAdmin && abaRh === "funcionarios" && (
+          {isAdmin && mostraEfetivos && (
             <button
               onClick={() => setModalAberto(true)}
               className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-colors text-sm font-medium shadow-md"
@@ -289,8 +291,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
       <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
         {(
           [
-            { id: "funcionarios", label: "Funcionários" },
-            { id: "terceirizados", label: "Terceirizados" },
+            { id: "funcionarios", label: "Pessoal" },
             { id: "folhas", label: "Folhas Salvas" },
             { id: "contracheques", label: "Contracheques" },
             { id: "ponto", label: "Folha de Ponto" },
@@ -311,6 +312,30 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         ))}
       </div>
 
+      {abaRh === "funcionarios" && (
+        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 mb-4">
+          {(
+            [
+              { id: "efetivos", label: "Efetivos" },
+              { id: "terceirizados", label: "Terceirizados" },
+            ] as const
+          ).map((sub) => (
+            <button
+              key={sub.id}
+              type="button"
+              onClick={() => setSubPessoal(sub.id)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                subPessoal === sub.id
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {sub.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {abaRh === "ponto" ? (
         <FolhaPonto
           funcionarios={funcionarios}
@@ -321,7 +346,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} schoolId={schoolId} />
       ) : abaRh === "folhas" ? (
         <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
-      ) : abaRh === "terceirizados" ? (
+      ) : subPessoal === "terceirizados" ? (
         <Terceirizados unidadeSelecionada={unidadeSelecionada} isAdmin={isAdmin} />
       ) : funcionarios.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
@@ -503,7 +528,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </>
       )}
 
-      {abaRh === "funcionarios" && funcionarios.length > 0 && (
+      {mostraEfetivos && funcionarios.length > 0 && (
         <div className="mt-6">
           <FechamentoVT
             funcionarios={funcionarios}
