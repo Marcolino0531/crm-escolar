@@ -29,9 +29,18 @@ export const MESES_PT = [
   "Dezembro",
 ] as const;
 
-// Padrão ao abrir a tela: mês atual.
+// Padrão dos rankings de Faltas: mês atual.
 export function periodoAtual(hoje: Date = new Date()): PeriodoRh {
   return { modo: "mes", ano: hoje.getFullYear(), mes: hoje.getMonth() + 1 };
+}
+
+// Padrão do ranking do ponto eletrônico: mês anterior ao atual (o fechamento
+// do ponto só é lançado depois que o mês termina). Em janeiro volta para
+// dezembro do ano anterior.
+export function periodoMesAnterior(hoje: Date = new Date()): PeriodoRh {
+  const mes = hoje.getMonth(); // 0 = janeiro → mês anterior é dezembro
+  if (mes === 0) return { modo: "mes", ano: hoje.getFullYear() - 1, mes: 12 };
+  return { modo: "mes", ano: hoje.getFullYear(), mes };
 }
 
 export function rotuloPeriodo(periodo: PeriodoRh): string {
