@@ -6,7 +6,13 @@ import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
 import RankingPonto from "./RankingPonto";
-import { MESES_PT, PeriodoRh, anosDisponiveis, periodoAtual } from "@/lib/rh-periodo";
+import {
+  MESES_PT,
+  PeriodoRh,
+  anosDisponiveis,
+  periodoAtual,
+  periodoMesAnterior,
+} from "@/lib/rh-periodo";
 import FechamentoVT from "./FechamentoVT";
 import FolhasPagamentoVT from "./FolhasPagamentoVT";
 import Terceirizados from "./Terceirizados";
@@ -153,15 +159,16 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
   const [ordenacao, setOrdenacao] = useState<OrdenacaoRh>(ORDENACAO_PADRAO);
-  const [abaRh, setAbaRh] = useState<"funcionarios" | "folhas" | "contracheques" | "ponto">(
-    "funcionarios",
-  );
+  const [abaRh, setAbaRh] = useState<
+    "funcionarios" | "folhas" | "contracheques" | "ponto" | "estatistica"
+  >("funcionarios");
   const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados">("efetivos");
   const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
   const [folhasRefresh, setFolhasRefresh] = useState(0);
-  // Período compartilhado pelos rankings da lateral (faltas manuais e ponto
-  // eletrônico). Começa no mês atual.
-  const [periodo, setPeriodo] = useState<PeriodoRh>(() => periodoAtual());
+  // Períodos da aba Estatística: faltas manuais começam no mês atual; o ponto
+  // eletrônico começa no mês anterior (o fechamento só sai após o fim do mês).
+  const [periodoFaltas, setPeriodoFaltas] = useState<PeriodoRh>(() => periodoAtual());
+  const [periodoPonto, setPeriodoPonto] = useState<PeriodoRh>(() => periodoMesAnterior());
 
   const isAtivo = (f: Funcionario) => !f.dataRescisao;
   const funcionariosFiltrados = ordenarFuncionarios(
@@ -195,6 +202,48 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
       </th>
     );
   };
+  const seletorPeriodo = (
+    periodo: PeriodoRh,
+    setPeriodo: React.Dispatch<React.SetStateAction<PeriodoRh>>,
+  ) => (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3">
+      <label className="block text-xs font-medium text-gray-600 mb-2">Período dos rankings</label>
+      <div className="flex items-center gap-2">
+        <select
+          value={periodo.modo === "ano" ? "ano" : String(periodo.mes)}
+          onChange={(e) =>
+            setPeriodo((p) =>
+              e.target.value === "ano"
+                ? { ...p, modo: "ano" }
+                : { ...p, modo: "mes", mes: Number(e.target.value) },
+            )
+          }
+          className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+        >
+          {MESES_PT.map((m, i) => (
+            <option key={m} value={i + 1}>
+              {m}
+            </option>
+          ))}
+          <option value="ano">Ano inteiro</option>
+        </select>
+        <select
+          value={periodo.ano}
+          onChange={(e) => setPeriodo((p) => ({ ...p, ano: Number(e.target.value) }))}
+          className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+        >
+          {anosDisponiveis([
+            String(periodo.ano),
+            ...funcionarios.flatMap((f) => (f.faltas ?? []).map((fa) => fa.data)),
+          ]).map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
   const totalAtivos = funcionarios.filter(isAtivo).length;
   const totalDesligados = funcionarios.length - totalAtivos;
 
@@ -295,6 +344,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             { id: "folhas", label: "Folhas Salvas" },
             { id: "contracheques", label: "Contracheques" },
             { id: "ponto", label: "Folha de Ponto" },
+            { id: "estatistica", label: "Estatística" },
           ] as const
         ).map((aba) => (
           <button
@@ -346,6 +396,21 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} schoolId={schoolId} />
       ) : abaRh === "folhas" ? (
         <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+      ) : abaRh === "estatistica" ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Faltas</h3>
+            {seletorPeriodo(periodoFaltas, setPeriodoFaltas)}
+            <RankingFaltas funcionarios={funcionarios.filter(isAtivo)} periodo={periodoFaltas} />
+          </div>
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+              Ponto eletrônico
+            </h3>
+            {seletorPeriodo(periodoPonto, setPeriodoPonto)}
+            <RankingPonto funcionarios={funcionarios.filter(isAtivo)} periodo={periodoPonto} />
+          </div>
+        </div>
       ) : subPessoal === "terceirizados" ? (
         <Terceirizados unidadeSelecionada={unidadeSelecionada} isAdmin={isAdmin} />
       ) : funcionarios.length === 0 ? (
@@ -386,143 +451,99 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
               </button>
             ))}
           </div>
-          <div className="flex flex-col lg:flex-row gap-4 items-start">
-            <div className="flex-1 min-w-0 w-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      {thOrdenavel("nome", "Nome")}
-                      {thOrdenavel("cpf", "CPF")}
-                      {thOrdenavel("cargo", "Cargo")}
-                      {thOrdenavel("admissao", "Admissão")}
-                      {abaStatus === "desligados" && thOrdenavel("rescisao", "Rescisão")}
-                      {thOrdenavel("horario", "Horário")}
-                      {thOrdenavel("status", "Status")}
-                      {isAdmin && (
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Ações
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {funcionariosFiltrados.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={(isAdmin ? 7 : 6) + (abaStatus === "desligados" ? 1 : 0)}
-                          className="px-4 py-10 text-center text-sm text-gray-400"
-                        >
-                          {abaStatus === "ativos"
-                            ? "Nenhum funcionário ativo."
-                            : "Nenhum funcionário desligado."}
-                        </td>
-                      </tr>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    {thOrdenavel("nome", "Nome")}
+                    {thOrdenavel("cpf", "CPF")}
+                    {thOrdenavel("cargo", "Cargo")}
+                    {thOrdenavel("admissao", "Admissão")}
+                    {abaStatus === "desligados" && thOrdenavel("rescisao", "Rescisão")}
+                    {thOrdenavel("horario", "Horário")}
+                    {thOrdenavel("status", "Status")}
+                    {isAdmin && (
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Ações
+                      </th>
                     )}
-                    {funcionariosFiltrados.map((func) => (
-                      <tr
-                        key={func.id}
-                        onClick={() => handleClickFuncionario(func)}
-                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {funcionariosFiltrados.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={(isAdmin ? 7 : 6) + (abaStatus === "desligados" ? 1 : 0)}
+                        className="px-4 py-10 text-center text-sm text-gray-400"
                       >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                              <span className="text-emerald-600 text-sm font-bold">
-                                {func.nomeCompleto.charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                            <span className="text-sm font-medium text-gray-800">
-                              {func.nomeCompleto}
+                        {abaStatus === "ativos"
+                          ? "Nenhum funcionário ativo."
+                          : "Nenhum funcionário desligado."}
+                      </td>
+                    </tr>
+                  )}
+                  {funcionariosFiltrados.map((func) => (
+                    <tr
+                      key={func.id}
+                      onClick={() => handleClickFuncionario(func)}
+                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                            <span className="text-emerald-600 text-sm font-bold">
+                              {func.nomeCompleto.charAt(0).toUpperCase()}
                             </span>
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{func.cpf || "—"}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{func.cargo || "—"}</td>
+                          <span className="text-sm font-medium text-gray-800">
+                            {func.nomeCompleto}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{func.cpf || "—"}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{func.cargo || "—"}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {converterParaBR(func.dataAdmissao || "")}
+                      </td>
+                      {abaStatus === "desligados" && (
                         <td className="px-4 py-3 text-sm text-gray-600">
-                          {converterParaBR(func.dataAdmissao || "")}
+                          {converterParaBR(func.dataRescisao || "") || "—"}
                         </td>
-                        {abaStatus === "desligados" && (
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {converterParaBR(func.dataRescisao || "") || "—"}
-                          </td>
+                      )}
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
+                      </td>
+                      <td className="px-4 py-3">
+                        {func.dataRescisao ? (
+                          <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">
+                            Desligado
+                          </span>
+                        ) : (
+                          <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium">
+                            Ativo
+                          </span>
                         )}
-                        <td className="px-4 py-3 text-sm text-gray-600">
-                          {func.horarioTrabalhoInicio} às {func.horarioTrabalhoFim}
+                      </td>
+                      {isAdmin && (
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
+                                removerFuncionario(func.id);
+                              }
+                            }}
+                            className="text-red-400 hover:text-red-600 text-xs font-medium"
+                          >
+                            Remover
+                          </button>
                         </td>
-                        <td className="px-4 py-3">
-                          {func.dataRescisao ? (
-                            <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-full font-medium">
-                              Desligado
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full font-medium">
-                              Ativo
-                            </span>
-                          )}
-                        </td>
-                        {isAdmin && (
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (window.confirm(`Remover ${func.nomeCompleto}?`)) {
-                                  removerFuncionario(func.id);
-                                }
-                              }}
-                              className="text-red-400 hover:text-red-600 text-xs font-medium"
-                            >
-                              Remover
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="w-full lg:w-80 lg:flex-shrink-0 space-y-4">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3">
-                <label className="block text-xs font-medium text-gray-600 mb-2">
-                  Período dos rankings
-                </label>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={periodo.modo === "ano" ? "ano" : String(periodo.mes)}
-                    onChange={(e) =>
-                      setPeriodo((p) =>
-                        e.target.value === "ano"
-                          ? { ...p, modo: "ano" }
-                          : { ...p, modo: "mes", mes: Number(e.target.value) },
-                      )
-                    }
-                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
-                  >
-                    {MESES_PT.map((m, i) => (
-                      <option key={m} value={i + 1}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value="ano">Ano inteiro</option>
-                  </select>
-                  <select
-                    value={periodo.ano}
-                    onChange={(e) => setPeriodo((p) => ({ ...p, ano: Number(e.target.value) }))}
-                    className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
-                  >
-                    {anosDisponiveis(
-                      funcionarios.flatMap((f) => (f.faltas ?? []).map((fa) => fa.data)),
-                    ).map((a) => (
-                      <option key={a} value={a}>
-                        {a}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <RankingFaltas funcionarios={funcionarios.filter(isAtivo)} periodo={periodo} />
-              <RankingPonto funcionarios={funcionarios.filter(isAtivo)} periodo={periodo} />
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </>

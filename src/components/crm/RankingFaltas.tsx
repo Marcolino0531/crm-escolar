@@ -1,74 +1,22 @@
 import React from "react";
-import { Funcionario, CategoriaFalta } from "@/lib/crm/types";
-import { PeriodoRh, dentroDoPeriodo, rotuloPeriodo } from "@/lib/rh-periodo";
+import { Funcionario } from "@/lib/crm/types";
+import { PeriodoRh, rotuloPeriodo } from "@/lib/rh-periodo";
+import { ItemRankingFaltas, rankingFaltasPorTipo } from "@/lib/rh-ranking-faltas";
 
 interface RankingFaltasProps {
   funcionarios: Funcionario[];
   periodo: PeriodoRh;
 }
 
-interface RankingItem {
-  id: string;
-  nome: string;
-  total: number;
-  comAtestado: number;
-  semAtestado: number;
-  totalMinutos: number;
-}
-
-const categoriaDe = (c?: CategoriaFalta): CategoriaFalta => c ?? "integral";
-
-const formatarDuracao = (minutos: number): string => {
-  if (!minutos || minutos <= 0) return "0min";
-  const h = Math.floor(minutos / 60);
-  const m = minutos % 60;
-  if (h > 0 && m > 0) return `${h}h${String(m).padStart(2, "0")}`;
-  if (h > 0) return `${h}h`;
-  return `${m}min`;
-};
-
-// Soma por funcionário considerando apenas as categorias pedidas, ordenando do
-// maior número de ocorrências para o menor e, em empate, priorizando quem tem
-// mais ocorrências "Sem Atestado".
-const construirRanking = (
-  funcionarios: Funcionario[],
-  categorias: CategoriaFalta[],
-  periodo: PeriodoRh,
-): RankingItem[] =>
-  funcionarios
-    .map((f) => {
-      const ocorrencias = (f.faltas ?? []).filter(
-        (fa) => categorias.includes(categoriaDe(fa.categoria)) && dentroDoPeriodo(fa.data, periodo),
-      );
-      return {
-        id: f.id,
-        nome: f.nomeCompleto,
-        total: ocorrencias.length,
-        comAtestado: ocorrencias.filter((fa) => fa.tipo === "com_atestado").length,
-        semAtestado: ocorrencias.filter((fa) => fa.tipo === "sem_atestado").length,
-        totalMinutos: ocorrencias.reduce((acc, fa) => acc + (fa.duracaoMinutos ?? 0), 0),
-      };
-    })
-    .filter((r) => r.total > 0)
-    .sort((a, b) => b.total - a.total || b.semAtestado - a.semAtestado);
-
 interface RankingCardProps {
   titulo: string;
   icone: string;
   vazio: string;
-  ranking: RankingItem[];
-  unidadeLabel: (total: number) => string;
-  mostrarTempo?: boolean;
+  ranking: ItemRankingFaltas[];
+  corBarra: string;
 }
 
-const RankingCard: React.FC<RankingCardProps> = ({
-  titulo,
-  icone,
-  vazio,
-  ranking,
-  unidadeLabel,
-  mostrarTempo = false,
-}) => {
+const RankingCard: React.FC<RankingCardProps> = ({ titulo, icone, vazio, ranking, corBarra }) => {
   const maxTotal = ranking.length > 0 ? ranking[0].total : 0;
 
   return (
@@ -105,39 +53,11 @@ const RankingCard: React.FC<RankingCardProps> = ({
                   <span className="text-sm font-medium text-gray-800 truncate">{item.nome}</span>
                 </div>
                 <span className="flex-shrink-0 text-sm font-bold text-gray-700 ml-2">
-                  {item.total} {unidadeLabel(item.total)}
+                  {item.total} {item.total === 1 ? "falta" : "faltas"}
                 </span>
               </div>
-
-              <div className="flex h-2 rounded-full overflow-hidden bg-gray-100 mb-1.5">
-                {item.semAtestado > 0 && (
-                  <div
-                    className="bg-red-400"
-                    style={{ width: `${(item.semAtestado / maxTotal) * 100}%` }}
-                  />
-                )}
-                {item.comAtestado > 0 && (
-                  <div
-                    className="bg-emerald-400"
-                    style={{ width: `${(item.comAtestado / maxTotal) * 100}%` }}
-                  />
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
-                <span className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  {item.comAtestado} com atestado
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-red-400" />
-                  {item.semAtestado} sem atestado
-                </span>
-                {mostrarTempo && (
-                  <span className="flex items-center gap-1 text-gray-600 font-medium">
-                    ⏱ {formatarDuracao(item.totalMinutos)}
-                  </span>
-                )}
+              <div className="flex h-2 rounded-full overflow-hidden bg-gray-100">
+                <div className={corBarra} style={{ width: `${(item.total / maxTotal) * 100}%` }} />
               </div>
             </div>
           ))}
@@ -148,26 +68,23 @@ const RankingCard: React.FC<RankingCardProps> = ({
 };
 
 const RankingFaltas: React.FC<RankingFaltasProps> = ({ funcionarios, periodo }) => {
-  const rankingFaltas = construirRanking(funcionarios, ["integral"], periodo);
-  const rankingParciais = construirRanking(funcionarios, ["atraso", "saida_antecipada"], periodo);
   const rotulo = rotuloPeriodo(periodo);
 
   return (
     <div className="space-y-4">
       <RankingCard
-        titulo="Ranking de Faltas"
-        icone="🏆"
-        vazio={`Nenhuma falta integral registrada em ${rotulo}.`}
-        ranking={rankingFaltas}
-        unidadeLabel={(t) => (t === 1 ? "falta" : "faltas")}
+        titulo="Ranking de Faltas com Atestado"
+        icone="🩺"
+        vazio={`Nenhuma falta com atestado registrada em ${rotulo}.`}
+        ranking={rankingFaltasPorTipo(funcionarios, "com_atestado", periodo)}
+        corBarra="bg-emerald-400"
       />
       <RankingCard
-        titulo="Ranking de Atrasos e Saídas (lançamento manual)"
-        icone="⏰"
-        vazio={`Nenhum atraso ou saída antecipada registrado em ${rotulo}.`}
-        ranking={rankingParciais}
-        unidadeLabel={(t) => (t === 1 ? "ocorrência" : "ocorrências")}
-        mostrarTempo
+        titulo="Ranking de Faltas sem Atestado"
+        icone="🏆"
+        vazio={`Nenhuma falta sem atestado registrada em ${rotulo}.`}
+        ranking={rankingFaltasPorTipo(funcionarios, "sem_atestado", periodo)}
+        corBarra="bg-red-400"
       />
     </div>
   );

@@ -4,12 +4,33 @@ import {
   competenciasDoPeriodo,
   dentroDoPeriodo,
   periodoAtual,
+  periodoMesAnterior,
   rotuloPeriodo,
 } from "./rh-periodo";
 
 describe("periodoAtual", () => {
   it("começa no mês corrente", () => {
     expect(periodoAtual(new Date(2026, 8, 15))).toEqual({ modo: "mes", ano: 2026, mes: 9 });
+  });
+});
+
+describe("periodoMesAnterior", () => {
+  it("começa no mês vigente menos 1", () => {
+    expect(periodoMesAnterior(new Date(2026, 8, 15))).toEqual({ modo: "mes", ano: 2026, mes: 8 });
+  });
+
+  it("em janeiro volta para dezembro do ano anterior", () => {
+    expect(periodoMesAnterior(new Date(2027, 0, 3))).toEqual({ modo: "mes", ano: 2026, mes: 12 });
+  });
+
+  it("navegar para outro mês (inclusive o vigente) preserva o restante do período", () => {
+    const inicial = periodoMesAnterior(new Date(2026, 8, 15));
+    const vigente = { ...inicial, mes: 9 };
+    expect(vigente).toEqual({ modo: "mes", ano: 2026, mes: 9 });
+    expect(anosDisponiveis([String(inicial.ano)], new Date(2026, 8, 15))).toContain(2026);
+    // ano do período inicial sempre oferecido no seletor, mesmo sem lançamentos
+    const jan = periodoMesAnterior(new Date(2027, 0, 3));
+    expect(anosDisponiveis([String(jan.ano)], new Date(2027, 0, 3))).toEqual([2027, 2026]);
   });
 });
 
