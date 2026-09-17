@@ -18,6 +18,8 @@ import FolhasPagamentoVT from "./FolhasPagamentoVT";
 import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
+import SalariosRH from "./SalariosRH";
+import { acessoSalario, subPagamentosPermitida, type SubPagamentos } from "@/lib/rh-salario-acesso";
 import {
   ColunaOrdenacao,
   ORDENACAO_PADRAO,
@@ -136,9 +138,14 @@ const downloadCSV = (csv: string, filename: string) => {
 };
 
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
-  const { canEdit } = usePermissions();
+  const { canEdit, canView } = usePermissions();
   const { selected } = useSchool();
   const isAdmin = canEdit("rh");
+  // Sub-visão Salário: só pelo módulo dedicado rh_salario (canEdit("rh") não conta).
+  const salario = acessoSalario({
+    canViewRhSalario: canView("rh_salario"),
+    canEditRhSalario: canEdit("rh_salario"),
+  });
   const schoolId = selected !== "all" ? selected : null;
   const {
     funcionarios,
@@ -165,6 +172,14 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados">("efetivos");
   const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
   const [folhasRefresh, setFolhasRefresh] = useState(0);
+  // ?sub=salario na URL só abre Salário com permissão; senão cai em Vale Transporte.
+  const [subPagamentos, setSubPagamentos] = useState<SubPagamentos>(() =>
+    subPagamentosPermitida(
+      typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("sub"),
+      salario,
+    ),
+  );
+  const subPagamentosEfetiva = subPagamentosPermitida(subPagamentos, salario);
   // Períodos da aba Estatística: faltas manuais começam no mês atual; o ponto
   // eletrônico começa no mês anterior (o fechamento só sai após o fim do mês).
   const [periodoFaltas, setPeriodoFaltas] = useState<PeriodoRh>(() => periodoAtual());
@@ -341,7 +356,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         {(
           [
             { id: "funcionarios", label: "Pessoal" },
-            { id: "folhas", label: "Folhas Salvas" },
+            { id: "folhas", label: "Pagamentos" },
             { id: "contracheques", label: "Contracheques" },
             { id: "ponto", label: "Folha de Ponto" },
             { id: "estatistica", label: "Estatística" },
@@ -386,6 +401,30 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </div>
       )}
 
+      {abaRh === "folhas" && salario.visivel && (
+        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 mb-4">
+          {(
+            [
+              { id: "vt", label: "Vale Transporte" },
+              { id: "salario", label: "Salário" },
+            ] as const
+          ).map((sub) => (
+            <button
+              key={sub.id}
+              type="button"
+              onClick={() => setSubPagamentos(sub.id)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                subPagamentosEfetiva === sub.id
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {sub.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {abaRh === "ponto" ? (
         <FolhaPonto
           funcionarios={funcionarios}
@@ -395,7 +434,15 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
       ) : abaRh === "contracheques" ? (
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} schoolId={schoolId} />
       ) : abaRh === "folhas" ? (
-        <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+        subPagamentosEfetiva === "salario" ? (
+          <SalariosRH
+            schoolId={schoolId}
+            funcionarios={funcionarios}
+            podeEditar={salario.editavel}
+          />
+        ) : (
+          <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+        )
       ) : abaRh === "estatistica" ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <div className="space-y-4">
