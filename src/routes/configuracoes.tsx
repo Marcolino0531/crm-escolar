@@ -222,6 +222,7 @@ const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
     label: "Operacional",
     modules: [
       "rh",
+      "rh_salario",
       "tasks",
       "financeiro_atendimento",
       "financeiro_atendimento_ia",

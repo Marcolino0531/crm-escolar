@@ -10,6 +10,7 @@ const APP_MODULES = [
   "admissoes",
   "onboarding",
   "rh",
+  "rh_salario",
   "tasks",
   "uniformes",
   "estoque_material",
