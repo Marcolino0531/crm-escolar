@@ -12,6 +12,13 @@ import FolhasPagamentoVT from "./FolhasPagamentoVT";
 import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
+import {
+  ColunaOrdenacao,
+  ORDENACAO_PADRAO,
+  OrdenacaoRh,
+  alternarOrdenacao,
+  ordenarFuncionarios,
+} from "@/lib/rh-ordenacao";
 
 interface RHPageProps {
   rhHook: ReturnType<typeof useFuncionarios>;
@@ -145,6 +152,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [exportModalAberto, setExportModalAberto] = useState(false);
   const [colunasExport, setColunasExport] = useState<string[]>(COLUNAS_EXPORT.map((c) => c.id));
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
+  const [ordenacao, setOrdenacao] = useState<OrdenacaoRh>(ORDENACAO_PADRAO);
   const [abaRh, setAbaRh] = useState<
     "funcionarios" | "terceirizados" | "folhas" | "contracheques" | "ponto"
   >("funcionarios");
@@ -154,17 +162,37 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [periodo, setPeriodo] = useState<PeriodoRh>(() => periodoAtual());
 
   const isAtivo = (f: Funcionario) => !f.dataRescisao;
-  const funcionariosFiltrados = funcionarios.filter((f) =>
-    abaStatus === "ativos" ? isAtivo(f) : !isAtivo(f),
+  const funcionariosFiltrados = ordenarFuncionarios(
+    funcionarios.filter((f) => (abaStatus === "ativos" ? isAtivo(f) : !isAtivo(f))),
+    ordenacao,
   );
-  // Na aba de desligados, ordena pela data de rescisão (desligamento) do mais
-  // recente para o mais antigo. dataRescisao é ISO (YYYY-MM-DD), então a
-  // comparação lexicográfica coincide com a cronológica.
-  if (abaStatus === "desligados") {
-    funcionariosFiltrados.sort((a, b) =>
-      (b.dataRescisao ?? "").localeCompare(a.dataRescisao ?? ""),
+  const trocarAbaStatus = (aba: "ativos" | "desligados") => {
+    setAbaStatus(aba);
+    setOrdenacao(ORDENACAO_PADRAO);
+  };
+  const thOrdenavel = (coluna: ColunaOrdenacao, rotulo: string) => {
+    const ativa = ordenacao.coluna === coluna;
+    return (
+      <th
+        key={coluna}
+        aria-sort={ativa ? (ordenacao.direcao === "asc" ? "ascending" : "descending") : "none"}
+        className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider"
+      >
+        <button
+          type="button"
+          onClick={() => setOrdenacao((o) => alternarOrdenacao(o, coluna))}
+          className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-800 ${
+            ativa ? "text-emerald-700" : ""
+          }`}
+        >
+          {rotulo}
+          <span className={`text-[10px] ${ativa ? "" : "text-gray-300"}`}>
+            {ativa ? (ordenacao.direcao === "asc" ? "▲" : "▼") : "⇅"}
+          </span>
+        </button>
+      </th>
     );
-  }
+  };
   const totalAtivos = funcionarios.filter(isAtivo).length;
   const totalDesligados = funcionarios.length - totalAtivos;
 
@@ -313,7 +341,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
               <button
                 key={aba.id}
                 type="button"
-                onClick={() => setAbaStatus(aba.id)}
+                onClick={() => trocarAbaStatus(aba.id)}
                 className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
                   abaStatus === aba.id
                     ? "border-emerald-600 text-emerald-700"
@@ -339,29 +367,13 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
                 <table className="w-full">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Nome
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        CPF
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Cargo
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Admissão
-                      </th>
-                      {abaStatus === "desligados" && (
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          Rescisão
-                        </th>
-                      )}
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Horário
-                      </th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
+                      {thOrdenavel("nome", "Nome")}
+                      {thOrdenavel("cpf", "CPF")}
+                      {thOrdenavel("cargo", "Cargo")}
+                      {thOrdenavel("admissao", "Admissão")}
+                      {abaStatus === "desligados" && thOrdenavel("rescisao", "Rescisão")}
+                      {thOrdenavel("horario", "Horário")}
+                      {thOrdenavel("status", "Status")}
                       {isAdmin && (
                         <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                           Ações
