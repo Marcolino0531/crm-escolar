@@ -663,6 +663,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
       supabaseAdmin
         .from("hr_transport_batches" as never)
         .select("school_id, reference_month, total_amount")
+        .eq("tipo", "vt")
         .in("school_id", ids)
         .gte("reference_month", filtro.mesInicio)
         .lte("reference_month", filtro.mesFim),

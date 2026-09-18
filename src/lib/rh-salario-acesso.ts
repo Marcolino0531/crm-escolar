@@ -18,13 +18,24 @@ export function acessoSalario(p: PermissoesRhSalario): AcessoSalario {
   return { visivel, editavel: visivel && p.canEditRhSalario };
 }
 
-// Sub-visão de Pagamentos que abre por padrão; "salario" nunca é aceita sem
-// permissão (ex.: valor vindo da URL).
-export type SubPagamentos = "vt" | "salario";
+// Sub-visões de Pagamentos, na ordem da tela: Salário, Vale Transporte, Folhas
+// Salvas. "salario" nunca é aceita sem permissão (ex.: valor vindo da URL).
+export type SubPagamentos = "salario" | "vt" | "folhas";
+
+export function subAbasPagamentos(
+  acesso: AcessoSalario,
+): ReadonlyArray<{ id: SubPagamentos; label: string }> {
+  const abas: { id: SubPagamentos; label: string }[] = [];
+  if (acesso.visivel) abas.push({ id: "salario", label: "Salário" });
+  abas.push({ id: "vt", label: "Vale Transporte" }, { id: "folhas", label: "Folhas Salvas" });
+  return abas;
+}
 
 export function subPagamentosPermitida(
   pedida: string | null | undefined,
   acesso: AcessoSalario,
 ): SubPagamentos {
-  return pedida === "salario" && acesso.visivel ? "salario" : "vt";
+  if (pedida === "salario") return acesso.visivel ? "salario" : "vt";
+  if (pedida === "folhas") return "folhas";
+  return "vt";
 }

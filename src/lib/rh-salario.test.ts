@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   competenciaAtual,
+  competenciaDe,
   competenciaValida,
   historicoDoFuncionario,
+  partesCompetencia,
+  preenchimentoSalario,
   rotuloCompetencia,
   salarioVigente,
   validarSalario,
@@ -14,12 +17,15 @@ const reg = (
   competencia: string,
   valor: number,
   id = `${funcionarioId}-${competencia}`,
+  valorLiquido: number | null = null,
+  observacao = "",
 ): SalarioRegistro => ({
   id,
   funcionarioId,
   competencia,
   valor,
-  observacao: "",
+  valorLiquido,
+  observacao,
   criadoEm: "2026-01-01T00:00:00Z",
   criadoPor: "Teste",
 });
@@ -76,7 +82,79 @@ describe("salarioVigente", () => {
   });
 });
 
+describe("competenciaDe / partesCompetencia", () => {
+  it("mês+ano ⇄ YYYY-MM", () => {
+    expect(competenciaDe(2026, 9)).toBe("2026-09");
+    expect(competenciaDe(2027, 12)).toBe("2027-12");
+    expect(partesCompetencia("2026-09")).toEqual({ ano: 2026, mes: 9 });
+  });
+});
+
+describe("preenchimentoSalario (pré-preenchimento do cadastro)", () => {
+  const regs = [
+    reg("a", "2026-07", 2200, undefined, 1900, "reajuste"),
+    reg("a", "2026-01", 2000, undefined, 1750),
+  ];
+
+  it("competência sem registro próprio herda bruto e líquido do vigente (virada do mês)", () => {
+    expect(preenchimentoSalario(regs, "a", "2026-08")).toEqual({
+      valor: 2200,
+      valorLiquido: 1900,
+      observacao: "",
+      proprio: false,
+      origem: "2026-07",
+    });
+  });
+
+  it("competência com registro próprio devolve o próprio (inclusive observação)", () => {
+    expect(preenchimentoSalario(regs, "a", "2026-07")).toEqual({
+      valor: 2200,
+      valorLiquido: 1900,
+      observacao: "reajuste",
+      proprio: true,
+      origem: "2026-07",
+    });
+  });
+
+  it("competência entre dois registros herda do anterior, não do posterior", () => {
+    expect(preenchimentoSalario(regs, "a", "2026-04")).toMatchObject({
+      valor: 2000,
+      valorLiquido: 1750,
+      proprio: false,
+      origem: "2026-01",
+    });
+  });
+
+  it("sem histórico anterior → campos vazios", () => {
+    expect(preenchimentoSalario(regs, "a", "2025-12")).toEqual({
+      valor: null,
+      valorLiquido: null,
+      observacao: "",
+      proprio: false,
+      origem: null,
+    });
+    expect(preenchimentoSalario(regs, "zz", "2026-08").valor).toBeNull();
+  });
+
+  it("não muta os registros (salvar só cria a competência selecionada)", () => {
+    const antes = JSON.stringify(regs);
+    preenchimentoSalario(regs, "a", "2026-08");
+    expect(JSON.stringify(regs)).toBe(antes);
+  });
+});
+
 describe("validarSalario", () => {
+  it("líquido é opcional, mas se vier precisa ser >= 0", () => {
+    expect(validarSalario({ competencia: "2026-09", valor: 100, valorLiquido: null })).toEqual({});
+    expect(validarSalario({ competencia: "2026-09", valor: 100, valorLiquido: 90 })).toEqual({});
+    expect(
+      validarSalario({ competencia: "2026-09", valor: 100, valorLiquido: -1 }).valorLiquido,
+    ).toBeTruthy();
+    expect(
+      validarSalario({ competencia: "2026-09", valor: 100, valorLiquido: NaN }).valorLiquido,
+    ).toBeTruthy();
+  });
+
   it("aceita competência válida e valor >= 0", () => {
     expect(validarSalario({ competencia: "2026-09", valor: 0 })).toEqual({});
     expect(validarSalario({ competencia: "2026-09", valor: 2500.5 })).toEqual({});
