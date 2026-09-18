@@ -13,6 +13,7 @@ type SalarioRow = {
   funcionario_id: string;
   competencia: string;
   valor: number | string;
+  valor_liquido: number | string | null;
   observacao: string | null;
   created_at: string;
   created_by_nome: string | null;
@@ -38,6 +39,7 @@ const paraRegistro = (r: SalarioRow): SalarioRegistro => ({
   funcionarioId: r.funcionario_id,
   competencia: r.competencia,
   valor: Number(r.valor),
+  valorLiquido: r.valor_liquido == null ? null : Number(r.valor_liquido),
   observacao: r.observacao ?? "",
   criadoEm: r.created_at,
   criadoPor: r.created_by_nome ?? "",
@@ -54,7 +56,7 @@ export const listarSalarios = createServerFn({ method: "POST" })
     let q = supabaseAdmin
       .from("funcionarios_salarios" as never)
       .select(
-        "id, funcionario_id, competencia, valor, observacao, created_at, created_by_nome, funcionarios!inner(school_id)",
+        "id, funcionario_id, competencia, valor, valor_liquido, observacao, created_at, created_by_nome, funcionarios!inner(school_id)",
       )
       .order("competencia", { ascending: false });
     if (data.schoolId) q = q.eq("funcionarios.school_id", data.schoolId);
@@ -71,6 +73,7 @@ export const salvarSalario = createServerFn({ method: "POST" })
         funcionarioId: z.string().uuid(),
         competencia: z.string(),
         valor: z.number(),
+        valorLiquido: z.number().nullable().optional(),
         observacao: z.string().max(500).optional(),
       })
       .parse(input),
@@ -79,13 +82,18 @@ export const salvarSalario = createServerFn({ method: "POST" })
     await exigirPermissaoSalario(context.userId, true);
     if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
     if (!Number.isFinite(data.valor) || data.valor < 0) {
-      throw new Error("Informe um valor maior ou igual a zero.");
+      throw new Error("Informe um valor bruto maior ou igual a zero.");
+    }
+    const liquido = data.valorLiquido ?? null;
+    if (liquido != null && (!Number.isFinite(liquido) || liquido < 0)) {
+      throw new Error("Informe um valor líquido maior ou igual a zero.");
     }
     const { error } = await supabaseAdmin.from("funcionarios_salarios" as never).upsert(
       {
         funcionario_id: data.funcionarioId,
         competencia: data.competencia,
         valor: Math.round(data.valor * 100) / 100,
+        valor_liquido: liquido == null ? null : Math.round(liquido * 100) / 100,
         observacao: data.observacao?.trim() || null,
         created_by: context.userId,
         created_by_nome: await nomeDoUsuario(context.userId),
