@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_MODULES, MODULE_LABELS } from "./app-context";
-import { acessoSalario, subPagamentosPermitida } from "./rh-salario-acesso";
+import { acessoSalario, subAbasPagamentos, subPagamentosPermitida } from "./rh-salario-acesso";
 
 describe("módulo rh_salario", () => {
   it("existe em ALL_MODULES com rótulo próprio (aparece na Gestão de Acessos)", () => {
@@ -52,5 +52,26 @@ describe("subPagamentosPermitida (acesso direto pela URL)", () => {
   it("valor ausente ou desconhecido abre Vale Transporte", () => {
     expect(subPagamentosPermitida(undefined, { visivel: true, editavel: true })).toBe("vt");
     expect(subPagamentosPermitida("xyz", { visivel: true, editavel: true })).toBe("vt");
+  });
+
+  it("?sub=folhas abre Folhas Salvas para qualquer um", () => {
+    expect(subPagamentosPermitida("folhas", { visivel: false, editavel: false })).toBe("folhas");
+  });
+});
+
+describe("subAbasPagamentos", () => {
+  it("ordem Salário, Vale Transporte, Folhas Salvas com permissão", () => {
+    expect(subAbasPagamentos({ visivel: true, editavel: false }).map((a) => a.id)).toEqual([
+      "salario",
+      "vt",
+      "folhas",
+    ]);
+  });
+
+  it("sem rh_salario, Salário não aparece", () => {
+    expect(subAbasPagamentos({ visivel: false, editavel: false }).map((a) => a.id)).toEqual([
+      "vt",
+      "folhas",
+    ]);
   });
 });

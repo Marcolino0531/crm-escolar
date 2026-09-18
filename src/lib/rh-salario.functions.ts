@@ -117,3 +117,63 @@ export const excluirSalario = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// Salva um lote de pagamento de Salário (hr_transport_batches, tipo='salario')
+// com um item por funcionário. Os itens já vêm montados pela lógica pura
+// (montarFolhaSalario) a partir do salário vigente na competência.
+export const salvarFolhaSalario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        schoolId: z.string().uuid(),
+        titulo: z.string().trim().min(1).max(200),
+        competencia: z.string(),
+        dataPagamento: z.string().nullable().optional(),
+        itens: z
+          .array(
+            z.object({
+              employee_id: z.string().uuid(),
+              employee_name: z.string(),
+              total_amount: z.number().positive(),
+            }),
+          )
+          .min(1),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ id: string }> => {
+    await exigirPermissaoSalario(context.userId, true);
+    if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
+    const total = Math.round(data.itens.reduce((acc, i) => acc + i.total_amount, 0) * 100) / 100;
+    const { data: batch, error: bErr } = await supabaseAdmin
+      .from("hr_transport_batches" as never)
+      .insert({
+        school_id: data.schoolId,
+        tipo: "salario",
+        title: data.titulo,
+        payment_date: data.dataPagamento || null,
+        reference_month: data.competencia,
+        total_amount: total,
+      } as never)
+      .select("id")
+      .single();
+    if (bErr || !batch) throw new Error(bErr?.message ?? "Falha ao salvar a folha.");
+    const batchId = (batch as { id: string }).id;
+    const { error: iErr } = await supabaseAdmin.from("hr_transport_batch_items" as never).insert(
+      data.itens.map((i) => ({
+        batch_id: batchId,
+        employee_id: i.employee_id,
+        employee_name: i.employee_name,
+        total_amount: Math.round(i.total_amount * 100) / 100,
+      })) as never,
+    );
+    if (iErr) {
+      await supabaseAdmin
+        .from("hr_transport_batches" as never)
+        .delete()
+        .eq("id", batchId);
+      throw new Error(iErr.message);
+    }
+    return { id: batchId };
+  });

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
 import { usePermissions, useSchool } from "@/lib/app-context";
@@ -14,13 +14,19 @@ import {
   periodoMesAnterior,
 } from "@/lib/rh-periodo";
 import FechamentoVT from "./FechamentoVT";
-import FolhasPagamentoVT from "./FolhasPagamentoVT";
+import FolhasSalvas from "./FolhasSalvas";
 import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
 import SalariosRH from "./SalariosRH";
 import Aniversariantes from "./Aniversariantes";
-import { acessoSalario, subPagamentosPermitida, type SubPagamentos } from "@/lib/rh-salario-acesso";
+import {
+  acessoSalario,
+  subAbasPagamentos,
+  subPagamentosPermitida,
+  type SubPagamentos,
+} from "@/lib/rh-salario-acesso";
+import type { PermissoesLotes } from "@/lib/rh-folhas";
 import {
   ColunaOrdenacao,
   ORDENACAO_PADRAO,
@@ -148,6 +154,14 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
     canEditRhSalario: canEdit("rh_salario"),
   });
   const schoolId = selected !== "all" ? selected : null;
+  const permissoesLotes = useMemo<PermissoesLotes>(
+    () => ({
+      podeEditarRh: isAdmin,
+      podeVerSalario: salario.visivel,
+      podeEditarSalario: salario.editavel,
+    }),
+    [isAdmin, salario.visivel, salario.editavel],
+  );
   const {
     funcionarios,
     adicionarFuncionario,
@@ -406,14 +420,9 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         </div>
       )}
 
-      {abaRh === "folhas" && salario.visivel && (
+      {abaRh === "folhas" && (
         <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 mb-4">
-          {(
-            [
-              { id: "salario", label: "Salário" },
-              { id: "vt", label: "Vale Transporte" },
-            ] as const
-          ).map((sub) => (
+          {subAbasPagamentos(salario).map((sub) => (
             <button
               key={sub.id}
               type="button"
@@ -444,18 +453,22 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             schoolId={schoolId}
             funcionarios={funcionarios}
             podeEditar={salario.editavel}
+            onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
+          />
+        ) : subPagamentosEfetiva === "folhas" ? (
+          <FolhasSalvas
+            schoolId={schoolId}
+            permissoes={permissoesLotes}
+            refreshKey={folhasRefresh}
+          />
+        ) : funcionarios.length > 0 ? (
+          <FechamentoVT
+            funcionarios={funcionarios}
+            schoolId={schoolId}
+            onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
           />
         ) : (
-          <div className="space-y-6">
-            {funcionarios.length > 0 && (
-              <FechamentoVT
-                funcionarios={funcionarios}
-                schoolId={schoolId}
-                onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
-              />
-            )}
-            <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
-          </div>
+          <p className="text-sm text-gray-400 italic">Nenhum funcionário na unidade selecionada.</p>
         )
       ) : abaRh === "aniversarios" ? (
         <Aniversariantes funcionarios={funcionarios} />

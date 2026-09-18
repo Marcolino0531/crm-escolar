@@ -16,13 +16,21 @@ import {
   validarSalario,
 } from "@/lib/rh-salario";
 import { MESES_PT } from "@/lib/rh-periodo";
-import { excluirSalario, listarSalarios, salvarSalario } from "@/lib/rh-salario.functions";
+import {
+  excluirSalario,
+  listarSalarios,
+  salvarFolhaSalario,
+  salvarSalario,
+} from "@/lib/rh-salario.functions";
+import { montarFolhaSalario } from "@/lib/rh-folhas";
 
 interface SalariosRHProps {
   schoolId: string | null;
   funcionarios: Funcionario[];
   // canEdit("rh_salario") — independente de canEdit("rh").
   podeEditar: boolean;
+  // Chamado após salvar uma folha de Salário (recarrega Folhas Salvas).
+  onFolhaSalva?: () => void;
 }
 
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -74,11 +82,20 @@ const SeletorCompetencia: React.FC<{
   );
 };
 
-const SalariosRH: React.FC<SalariosRHProps> = ({ schoolId, funcionarios, podeEditar }) => {
+const SalariosRH: React.FC<SalariosRHProps> = ({
+  schoolId,
+  funcionarios,
+  podeEditar,
+  onFolhaSalva,
+}) => {
   const qc = useQueryClient();
   const listar = useServerFn(listarSalarios);
   const salvar = useServerFn(salvarSalario);
   const excluir = useServerFn(excluirSalario);
+  const salvarFolha = useServerFn(salvarFolhaSalario);
+  const [modalFolha, setModalFolha] = useState(false);
+  const [folhaTitulo, setFolhaTitulo] = useState("");
+  const [folhaData, setFolhaData] = useState("");
 
   const [competenciaRef, setCompetenciaRef] = useState(() => competenciaAtual());
   const [selecionadoId, setSelecionadoId] = useState<string | null>(null);
@@ -132,6 +149,47 @@ const SalariosRH: React.FC<SalariosRHProps> = ({ schoolId, funcionarios, podeEdi
     [funcionarios],
   );
   const registros = useMemo(() => salarios.data ?? [], [salarios.data]);
+  const folha = useMemo(
+    () => montarFolhaSalario(ativos, registros, competenciaRef),
+    [ativos, registros, competenciaRef],
+  );
+
+  const abrirModalFolha = () => {
+    if (!schoolId) {
+      toast.error("Selecione uma unidade específica para salvar a folha.");
+      return;
+    }
+    if (folha.itens.length === 0) {
+      toast.error("Nenhum funcionário com salário vigente nesta competência.");
+      return;
+    }
+    setFolhaTitulo(`Salário ${rotuloCompetencia(competenciaRef)}`);
+    setFolhaData("");
+    setModalFolha(true);
+  };
+
+  const gravarFolha = useMutation({
+    mutationFn: async () => {
+      if (!schoolId) throw new Error("Selecione uma unidade específica.");
+      if (!folhaTitulo.trim()) throw new Error("Informe um nome para a folha.");
+      return salvarFolha({
+        data: {
+          schoolId,
+          titulo: folhaTitulo.trim(),
+          competencia: competenciaRef,
+          dataPagamento: folhaData || null,
+          itens: folha.itens,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Folha de pagamento salva em Folhas Salvas.");
+      setModalFolha(false);
+      onFolhaSalva?.();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
+  });
+
   const selecionado = ativos.find((f) => f.id === selecionadoId) ?? null;
   const historico = selecionado ? historicoDoFuncionario(registros, selecionado.id) : [];
 
@@ -153,10 +211,22 @@ const SalariosRH: React.FC<SalariosRHProps> = ({ schoolId, funcionarios, podeEdi
       <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700">Salário base vigente</h3>
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            Competência
-            <SeletorCompetencia value={competenciaRef} onChange={setCompetenciaRef} compacto />
-          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              Competência
+              <SeletorCompetencia value={competenciaRef} onChange={setCompetenciaRef} compacto />
+            </label>
+            {podeEditar && (
+              <button
+                type="button"
+                onClick={abrirModalFolha}
+                disabled={salarios.isLoading}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Salvar Folha de Pagamento
+              </button>
+            )}
+          </div>
         </div>
         {salarios.isLoading ? (
           <p className="px-4 py-6 text-sm text-gray-400">Carregando…</p>
@@ -358,6 +428,68 @@ const SalariosRH: React.FC<SalariosRHProps> = ({ schoolId, funcionarios, podeEdi
           </>
         )}
       </div>
+
+      {modalFolha && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !gravarFolha.isPending && setModalFolha(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-4 shadow-lg space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-sm font-bold text-gray-800">
+              Salvar folha de Salário — {rotuloCompetencia(competenciaRef)}
+            </h4>
+            <p className="text-xs text-gray-500">
+              {folha.itens.length} funcionário(s) · total {brl(folha.total)}. Usa o líquido quando
+              informado, senão o bruto.
+            </p>
+            {folha.semSalario.length > 0 && (
+              <p className="text-xs text-amber-700">
+                Sem salário vigente (ficam fora): {folha.semSalario.join(", ")}
+              </p>
+            )}
+            <label className="block text-xs text-gray-600">
+              Nome da folha
+              <input
+                type="text"
+                value={folhaTitulo}
+                autoFocus
+                onChange={(e) => setFolhaTitulo(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="block text-xs text-gray-600">
+              Data de pagamento (opcional)
+              <input
+                type="date"
+                value={folhaData}
+                onChange={(e) => setFolhaData(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setModalFolha(false)}
+                disabled={gravarFolha.isPending}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => gravarFolha.mutate()}
+                disabled={gravarFolha.isPending}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {gravarFolha.isPending ? "Salvando…" : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
