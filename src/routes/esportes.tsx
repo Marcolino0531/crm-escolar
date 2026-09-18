@@ -386,7 +386,8 @@ function ConsolidadoUnidades({ modalidades }: { modalidades: Modalidade[] }) {
     queryFn: async (): Promise<Record<string, number>> => {
       const { data, error } = await supabase
         .from("esportes_matriculas" as never)
-        .select("modalidade_id");
+        .select("modalidade_id")
+        .is("cancelado_em", null);
       if (error) throw new Error(error.message);
       const contagem: Record<string, number> = {};
       for (const row of (data ?? []) as unknown as { modalidade_id: string }[]) {
@@ -1653,6 +1654,7 @@ async function carregarMatriculas(modalidadeId: string): Promise<Matricula[]> {
     .from("esportes_matriculas" as never)
     .select("id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana, data_matricula")
     .eq("modalidade_id", modalidadeId)
+    .is("cancelado_em", null)
     .order("aluno_nome", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as Matricula[];
@@ -2040,6 +2042,8 @@ function AlunosDaModalidade({
           // Dia de hoje em BRT: o default do banco (`current_date`) roda em UTC
           // e viraria o dia seguinte num cadastro feito à noite.
           data_matricula: hojeYMD(),
+          // Revincular aluno cancelado reativa a mesma linha (chave modalidade+aluno).
+          cancelado_em: null,
           created_by: session?.user?.id ?? null,
           created_by_nome: meta?.full_name || session?.user?.email || "",
         } as never,
@@ -2058,10 +2062,13 @@ function AlunosDaModalidade({
 
   const remover = useMutation({
     mutationFn: async (id: string) => {
+      // Cancelamento com data, sem apagar: a arrecadação dos meses anteriores
+      // continua enxergando o aluno. Já cancelado → no-op silencioso.
       const { error } = await supabase
         .from("esportes_matriculas" as never)
-        .delete()
-        .eq("id", id);
+        .update({ cancelado_em: hojeYMD() } as never)
+        .eq("id", id)
+        .is("cancelado_em", null);
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {

@@ -277,6 +277,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
       supabaseAdmin
         .from("esportes_matriculas" as never)
         .select("modalidade_id, turma")
+        .is("cancelado_em", null)
         .in("modalidade_id", ids),
     ]);
     if (parceiros.error) throw new Error(parceiros.error.message);
