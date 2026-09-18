@@ -19,6 +19,7 @@ import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
 import SalariosRH from "./SalariosRH";
+import Aniversariantes from "./Aniversariantes";
 import { acessoSalario, subPagamentosPermitida, type SubPagamentos } from "@/lib/rh-salario-acesso";
 import {
   ColunaOrdenacao,
@@ -167,7 +168,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [abaStatus, setAbaStatus] = useState<"ativos" | "desligados">("ativos");
   const [ordenacao, setOrdenacao] = useState<OrdenacaoRh>(ORDENACAO_PADRAO);
   const [abaRh, setAbaRh] = useState<
-    "funcionarios" | "folhas" | "contracheques" | "ponto" | "estatistica"
+    "funcionarios" | "folhas" | "contracheques" | "ponto" | "estatistica" | "aniversarios"
   >("funcionarios");
   const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados">("efetivos");
   const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
@@ -175,7 +176,10 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   // ?sub=salario na URL só abre Salário com permissão; senão cai em Vale Transporte.
   const [subPagamentos, setSubPagamentos] = useState<SubPagamentos>(() =>
     subPagamentosPermitida(
-      typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("sub"),
+      (typeof window === "undefined"
+        ? null
+        : new URLSearchParams(window.location.search).get("sub")) ??
+        (salario.visivel ? "salario" : null),
       salario,
     ),
   );
@@ -235,12 +239,12 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
           }
           className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
         >
+          <option value="ano">Todos os meses</option>
           {MESES_PT.map((m, i) => (
             <option key={m} value={i + 1}>
               {m}
             </option>
           ))}
-          <option value="ano">Ano inteiro</option>
         </select>
         <select
           value={periodo.ano}
@@ -360,6 +364,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             { id: "contracheques", label: "Contracheques" },
             { id: "ponto", label: "Folha de Ponto" },
             { id: "estatistica", label: "Estatística" },
+            { id: "aniversarios", label: "Aniversários" },
           ] as const
         ).map((aba) => (
           <button
@@ -405,8 +410,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 mb-4">
           {(
             [
-              { id: "vt", label: "Vale Transporte" },
               { id: "salario", label: "Salário" },
+              { id: "vt", label: "Vale Transporte" },
             ] as const
           ).map((sub) => (
             <button
@@ -441,8 +446,19 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             podeEditar={salario.editavel}
           />
         ) : (
-          <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+          <div className="space-y-6">
+            {funcionarios.length > 0 && (
+              <FechamentoVT
+                funcionarios={funcionarios}
+                schoolId={schoolId}
+                onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
+              />
+            )}
+            <FolhasPagamentoVT schoolId={schoolId} isAdmin={isAdmin} refreshKey={folhasRefresh} />
+          </div>
         )
+      ) : abaRh === "aniversarios" ? (
+        <Aniversariantes funcionarios={funcionarios} />
       ) : abaRh === "estatistica" ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <div className="space-y-4">
@@ -594,16 +610,6 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             </div>
           </div>
         </>
-      )}
-
-      {mostraEfetivos && funcionarios.length > 0 && (
-        <div className="mt-6">
-          <FechamentoVT
-            funcionarios={funcionarios}
-            schoolId={schoolId}
-            onFolhaSalva={() => setFolhasRefresh((n) => n + 1)}
-          />
-        </div>
       )}
 
       {modalAberto && (
