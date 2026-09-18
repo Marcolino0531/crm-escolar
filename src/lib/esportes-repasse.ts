@@ -448,3 +448,32 @@ export function modalidadesVisiveis<T extends ModalidadeVisivel>(
   if (!restritoPorModalidade(modalidadeIdsDoUsuario, isAdmin)) return modalidades;
   return modalidades.filter((m) => modalidadeIdsDoUsuario.includes(m.id));
 }
+
+// ---- Cancelamento com data (cancelado_em) ----------------------------------
+
+// Matrícula ainda vale para o mês de referência (YYYY-MM)? Ativa (sem
+// cancelamento) sempre; cancelada só se o cancelamento foi DEPOIS do mês, ou
+// seja, o aluno ainda estava matriculado naquele mês. Cancelado em 2026-03-15
+// conta para 2026-03 e antes; some a partir de 2026-04.
+export function matriculadoNoMes(
+  canceladoEm: string | null | undefined,
+  mesReferencia: string,
+): boolean {
+  if (!canceladoEm) return true;
+  return canceladoEm.slice(0, 7) >= mesReferencia.slice(0, 7);
+}
+
+export function matriculaAtiva(m: { cancelado_em?: string | null }): boolean {
+  return !m.cancelado_em;
+}
+
+export function matriculasDoMes<T extends { cancelado_em?: string | null }>(
+  matriculas: readonly T[],
+  mesReferencia: string,
+): T[] {
+  return matriculas.filter((m) => matriculadoNoMes(m.cancelado_em, mesReferencia));
+}
+
+export function contarAtivas(matriculas: readonly { cancelado_em?: string | null }[]): number {
+  return matriculas.filter(matriculaAtiva).length;
+}

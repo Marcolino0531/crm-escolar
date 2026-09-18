@@ -19,6 +19,7 @@ import {
   pagamentoDoAluno,
   parcelasAlunoNaModalidade,
   statusMesModalidade,
+  matriculasDoMes,
   totalArrecadado,
   totalEsperado,
   type AjustesDoMes,
@@ -62,6 +63,7 @@ interface MatriculaRow {
   turma: string;
   frequencia_id: string | null;
   dias_semana: number[] | null;
+  cancelado_em: string | null;
 }
 
 interface FrequenciaRow {
@@ -143,11 +145,13 @@ export const fetchParcelasModalidade = createServerFn({ method: "POST" })
 
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
-      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana")
+      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana, cancelado_em")
       .eq("modalidade_id", modalidadeId)
       .order("aluno_nome", { ascending: true });
     if (matErr)
       return { ...vazio, categoriaSponte: modalidade.categoria_sponte, error: matErr.message };
+    // Inclui canceladas: as parcelas cobrem meses passados em que o aluno ainda
+    // estava matriculado; o filtro por mês acontece na tela (parcelasDoMes).
     const matriculas = (matRows ?? []) as unknown as MatriculaRow[];
 
     const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
@@ -259,11 +263,11 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
 
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
-      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana")
+      .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana, cancelado_em")
       .eq("modalidade_id", modalidadeId)
       .order("aluno_nome", { ascending: true });
     if (matErr) return { ...vazio, statusMes, error: matErr.message };
-    const matriculas = (matRows ?? []) as unknown as MatriculaRow[];
+    const matriculas = matriculasDoMes((matRows ?? []) as unknown as MatriculaRow[], mesReferencia);
 
     // Frequências da modalidade (2x/semana, 1x/semana...) para saber o valor
     // esperado de cada aluno. Inclui as inativas: um aluno pode continuar numa
