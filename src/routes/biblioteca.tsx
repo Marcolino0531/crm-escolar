@@ -41,6 +41,9 @@ import {
   ROTULO_BLOQUEIO,
   ROTULO_STATUS_EXEMPLAR,
   calcularDevolucao,
+  resolverValoresBiblioteca,
+  type BibliotecaValores,
+  type BibliotecaValoresRegistro,
   dataPrevistaSugerida,
   emprestimoAtrasado,
   formatarCodigoExemplar,
@@ -148,6 +151,40 @@ async function carregarExemplares(schoolId: string): Promise<Exemplar[]> {
   );
 }
 
+type ValoresRow = {
+  id: string;
+  school_id: string;
+  ano_letivo: number;
+  multa_por_dia_util: number | string;
+  multa_teto: number | string;
+  prazo_padrao_dias: number;
+};
+
+async function carregarValores(schoolId: string): Promise<BibliotecaValoresRegistro[]> {
+  const { data, error } = await supabase
+    .from("biblioteca_valores" as never)
+    .select("id, school_id, ano_letivo, multa_por_dia_util, multa_teto, prazo_padrao_dias")
+    .eq("school_id", schoolId)
+    .returns<ValoresRow[]>();
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    schoolId: r.school_id,
+    unidade: "",
+    anoLetivo: Number(r.ano_letivo),
+    multaPorDiaUtil: Number(r.multa_por_dia_util),
+    multaTeto: Number(r.multa_teto),
+    prazoPadraoDias: Number(r.prazo_padrao_dias),
+    atualizadoEm: "",
+    atualizadoPor: "",
+  }));
+}
+
+// Valores (multa/teto/prazo) da unidade para o ano da data informada.
+function valoresPara(ctx: Ctx, ymd: string): BibliotecaValores {
+  return resolverValoresBiblioteca(ctx.valores, ctx.schoolId, Number(ymd.slice(0, 4))).valores;
+}
+
 async function carregarEmprestimos(schoolId: string): Promise<Emprestimo[]> {
   const rows = await selectAll<Emprestimo>(() =>
     supabase
@@ -229,8 +266,12 @@ function BibliotecaUnidade({
     queryKey: ["biblioteca_emprestimos", schoolId],
     queryFn: () => carregarEmprestimos(schoolId),
   });
+  const valores = useQuery({
+    queryKey: ["biblioteca_valores", schoolId],
+    queryFn: () => carregarValores(schoolId),
+  });
 
-  if (titulos.isLoading || exemplares.isLoading || emprestimos.isLoading) {
+  if (titulos.isLoading || exemplares.isLoading || emprestimos.isLoading || valores.isLoading) {
     return <Skeleton className="h-64 w-full" />;
   }
   if (titulos.isError || exemplares.isError || emprestimos.isError) {
@@ -248,6 +289,7 @@ function BibliotecaUnidade({
     titulos: titulos.data ?? [],
     exemplares: exemplares.data ?? [],
     emprestimos: emprestimos.data ?? [],
+    valores: valores.data ?? [],
   };
 
   const abertos = ctx.emprestimos.filter((e) => e.data_devolucao === null).length;
@@ -289,6 +331,7 @@ interface Ctx {
   titulos: Titulo[];
   exemplares: Exemplar[];
   emprestimos: Emprestimo[];
+  valores: BibliotecaValoresRegistro[];
 }
 
 function useInvalidar(schoolId: string) {
@@ -737,7 +780,9 @@ function NovoEmprestimo({ ctx }: { ctx: Ctx }) {
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [aluno, setAluno] = useState<AlunoBuscaSponte | null>(null);
   const [codigo, setCodigo] = useState("");
-  const [dataPrevista, setDataPrevista] = useState(() => dataPrevistaSugerida(hojeYMD()));
+  const [dataPrevista, setDataPrevista] = useState(() =>
+    dataPrevistaSugerida(hojeYMD(), valoresPara(ctx, hojeYMD()).prazoPadraoDias),
+  );
   const [scanAberto, setScanAberto] = useState(false);
 
   const hoje = hojeYMD();
@@ -993,11 +1038,17 @@ function Devolucao({ ctx }: { ctx: Ctx }) {
     return emprestimos.find((e) => e.exemplar_id === ex.id && e.data_devolucao === null) ?? null;
   }, [codigo, exemplares, emprestimos]);
 
-  const calc = emprestimo ? calcularDevolucao(emprestimo.data_prevista, hoje) : null;
+  const calc = emprestimo
+    ? calcularDevolucao(
+        emprestimo.data_prevista,
+        hoje,
+        valoresPara(ctx, emprestimo.data_emprestimo),
+      )
+    : null;
 
   const devolver = useMutation({
     mutationFn: async (alvo: Emprestimo) => {
-      const r = calcularDevolucao(alvo.data_prevista, hoje);
+      const r = calcularDevolucao(alvo.data_prevista, hoje, valoresPara(ctx, alvo.data_emprestimo));
       // Exemplar perdido: encerra sem multa em dinheiro (reposição física).
       const multa = perdido ? 0 : r.multa;
       const { error } = await supabase
@@ -1166,7 +1217,9 @@ function EmprestimosAbertos({ ctx }: { ctx: Ctx }) {
               {abertos.map((e) => {
                 const ex = mapaEx.get(e.exemplar_id);
                 const atrasado = emprestimoAtrasado(e, hoje);
-                const c = atrasado ? calcularDevolucao(e.data_prevista, hoje) : null;
+                const c = atrasado
+                  ? calcularDevolucao(e.data_prevista, hoje, valoresPara(ctx, e.data_emprestimo))
+                  : null;
                 return (
                   <tr key={e.id} className="border-t border-border">
                     <td className="px-3 py-2 font-medium">{e.aluno_nome}</td>
