@@ -40,6 +40,8 @@ import {
   Menu,
   UtensilsCrossed,
   GraduationCap,
+  School,
+  Presentation,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -59,6 +61,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ehRotaPublica } from "@/lib/rotas-publicas";
+import { useProfessor } from "@/lib/use-professor";
 import {
   isExpanded,
   toggleExclusive,
@@ -366,6 +369,10 @@ function AuthGate() {
 
 function AppShell() {
   const { canView, canEdit, loading: permsLoading } = usePermissions();
+  // Professor com login vinculado: entrada própria "Minhas Turmas", sem
+  // depender de nenhum app_module (a RLS limita o que ele enxerga).
+  const { professor, loading: professorLoading } = useProfessor();
+  const showProfessor = professor !== null;
   const { noSchoolAccess } = useSchool();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -386,6 +393,7 @@ function AppShell() {
   const showDocumentos = canView("documentos");
   const showCantina = canView("cantina");
   const showRematricula = canView("rematricula");
+  const showPedagogico = canView("pedagogico");
   // Financeiro sub-tabs: each link is gated independently.
   const showDashboard = canView("financeiro_dashboard");
   const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
@@ -459,6 +467,18 @@ function AppShell() {
         }),
       ]),
       ...group("pedagogico", "Pedagógico", [
+        ...item(showPedagogico, {
+          kind: "item",
+          to: "/pedagogico",
+          icon: School,
+          label: "Secretaria",
+        }),
+        ...item(showProfessor, {
+          kind: "item",
+          to: "/professor",
+          icon: Presentation,
+          label: "Minhas Turmas",
+        }),
         ...item(showDiario, {
           kind: "item",
           to: "/diario",
@@ -589,6 +609,8 @@ function AppShell() {
     ];
   }, [
     showMainDashboard,
+    showPedagogico,
+    showProfessor,
     showAgenda,
     showAdmissoes,
     showOnboarding,
@@ -644,12 +666,12 @@ function AppShell() {
   // permissões antes de qualquer decisão.
   const didRedirect = useRef(false);
   useEffect(() => {
-    if (permsLoading || didRedirect.current) return;
+    if (permsLoading || professorLoading || didRedirect.current) return;
     didRedirect.current = true;
     if (pathname === "/" && !showMainDashboard && firstAllowed && firstAllowed !== "/") {
       router.navigate({ to: firstAllowed });
     }
-  }, [permsLoading, showMainDashboard, firstAllowed, router, pathname]);
+  }, [permsLoading, professorLoading, showMainDashboard, firstAllowed, router, pathname]);
 
   return (
     <div className="flex min-h-screen bg-background">

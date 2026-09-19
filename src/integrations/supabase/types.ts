@@ -231,6 +231,7 @@ export type Database = {
       };
       funcionarios: {
         Row: {
+          auth_user_id: string | null;
           cargo: string | null;
           cpf: string | null;
           created_at: string;
@@ -255,6 +256,7 @@ export type Database = {
           valor_diario_vt: number;
         };
         Insert: {
+          auth_user_id?: string | null;
           cargo?: string | null;
           cpf?: string | null;
           created_at?: string;
@@ -279,6 +281,7 @@ export type Database = {
           valor_diario_vt?: number;
         };
         Update: {
+          auth_user_id?: string | null;
           cargo?: string | null;
           cpf?: string | null;
           created_at?: string;

@@ -16,6 +16,8 @@ import { Route as RhRouteImport } from './routes/rh'
 import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
 import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as PedagogicoRouteImport } from './routes/pedagogico'
+import { Route as ProfessorRouteImport } from './routes/professor'
 import { Route as MatriculasRouteImport } from './routes/matriculas'
 import { Route as MatriculaRouteImport } from './routes/matricula'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
@@ -78,6 +80,16 @@ const PortalCantinaRoute = PortalCantinaRouteImport.update({
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedagogicoRoute = PedagogicoRouteImport.update({
+  id: '/pedagogico',
+  path: '/pedagogico',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfessorRoute = ProfessorRouteImport.update({
+  id: '/professor',
+  path: '/professor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MatriculasRoute = MatriculasRouteImport.update({
@@ -241,6 +253,8 @@ export interface FileRoutesByFullPath {
   '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/pedagogico': typeof PedagogicoRoute
+  '/professor': typeof ProfessorRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
@@ -277,6 +291,8 @@ export interface FileRoutesByTo {
   '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/pedagogico': typeof PedagogicoRoute
+  '/professor': typeof ProfessorRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
@@ -314,6 +330,8 @@ export interface FileRoutesById {
   '/matricula': typeof MatriculaRoute
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
+  '/pedagogico': typeof PedagogicoRoute
+  '/professor': typeof ProfessorRoute
   '/portal-cantina': typeof PortalCantinaRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
@@ -352,6 +370,8 @@ export interface FileRouteTypes {
     | '/matricula'
     | '/matriculas'
     | '/onboarding'
+    | '/pedagogico'
+    | '/professor'
     | '/portal-cantina'
     | '/rematricula-acompanhamento'
     | '/rh'
@@ -388,6 +408,8 @@ export interface FileRouteTypes {
     | '/matricula'
     | '/matriculas'
     | '/onboarding'
+    | '/pedagogico'
+    | '/professor'
     | '/portal-cantina'
     | '/rematricula-acompanhamento'
     | '/rh'
@@ -424,6 +446,8 @@ export interface FileRouteTypes {
     | '/matricula'
     | '/matriculas'
     | '/onboarding'
+    | '/pedagogico'
+    | '/professor'
     | '/portal-cantina'
     | '/rematricula-acompanhamento'
     | '/rh'
@@ -461,6 +485,8 @@ export interface RootRouteChildren {
   MatriculaRoute: typeof MatriculaRoute
   MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
+  PedagogicoRoute: typeof PedagogicoRoute
+  ProfessorRoute: typeof ProfessorRoute
   PortalCantinaRoute: typeof PortalCantinaRoute
   RematriculaAcompanhamentoRoute: typeof RematriculaAcompanhamentoRoute
   RhRoute: typeof RhRoute
@@ -522,6 +548,20 @@ declare module '@tanstack/react-router' {
       path: '/onboarding'
       fullPath: '/onboarding'
       preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedagogico': {
+      id: '/pedagogico'
+      path: '/pedagogico'
+      fullPath: '/pedagogico'
+      preLoaderRoute: typeof PedagogicoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/professor': {
+      id: '/professor'
+      path: '/professor'
+      fullPath: '/professor'
+      preLoaderRoute: typeof ProfessorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/matriculas': {
@@ -741,6 +781,8 @@ const rootRouteChildren: RootRouteChildren = {
   MatriculaRoute: MatriculaRoute,
   MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
+  PedagogicoRoute: PedagogicoRoute,
+  ProfessorRoute: ProfessorRoute,
   PortalCantinaRoute: PortalCantinaRoute,
   RematriculaAcompanhamentoRoute: RematriculaAcompanhamentoRoute,
   RhRoute: RhRoute,

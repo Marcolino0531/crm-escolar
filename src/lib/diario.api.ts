@@ -9,7 +9,12 @@
 // vínculos aluno × ano (diario_matriculas_ano) ao fim do expediente.
 // Agendado no vercel.json para 00:00 UTC (= 21:00 no horário de Brasília).
 
-import { runDiarioSponteSync, type DiarioSyncResult } from "@/lib/sponte.functions";
+import {
+  coletarAlunosVigentesDoAno,
+  runDiarioSponteSync,
+  runPedagogicoSponteSync,
+  type DiarioSyncResult,
+} from "@/lib/sponte.functions";
 import { runAuditoriaDiarioSponte } from "@/lib/diario-auditoria.functions";
 import { anoVigenteConfigurado } from "@/lib/rematricula.functions";
 
@@ -50,12 +55,21 @@ export async function handleDiarioApi(request: Request): Promise<Response | null
         : await anoVigenteConfigurado().then((v) => [v, v + 1]);
       const resultados: DiarioSyncResult[] = [];
       for (const ano of anos) {
-        const res = await runDiarioSponteSync(ano);
+        // Uma leitura do Sponte por ano, compartilhada entre Diário e Pedagógico.
+        const coleta = await coletarAlunosVigentesDoAno(ano);
+        const res = await runDiarioSponteSync(ano, coleta);
         if (res.error) throw new Error(`${ano}: ${res.error}`);
         console.log(
           `[diario] cron ${ano}: ${res.alunos} aluno(s), ${res.turmas} turma(s), ${res.inativados} inativado(s).`,
         );
         resultados.push(res);
+        // Falha do Pedagógico (Secretaria) não derruba o Diário.
+        const ped = await runPedagogicoSponteSync(ano, coleta);
+        if (ped.error) console.error(`[pedagogico] cron ${ano} falhou: ${ped.error}`);
+        else
+          console.log(
+            `[pedagogico] cron ${ano}: ${ped.alunos} aluno(s), ${ped.turmas} turma(s), ${ped.inativados} inativado(s).`,
+          );
       }
       return json({ ok: true, anos: resultados });
     } catch (e) {
