@@ -34,6 +34,7 @@ import {
   Shirt,
   Package,
   BookOpen,
+  Library,
   PartyPopper,
   Dumbbell,
   CreditCard,
@@ -390,6 +391,7 @@ function AppShell() {
   const showDiario = canView("diario") || canView("diario_financeiro");
   const showColonia = canView("colonia") || canView("colonia_financeiro");
   const showEsportes = canView("esportes");
+  const showBiblioteca = canView("biblioteca");
   const showDocumentos = canView("documentos");
   const showCantina = canView("cantina");
   const showRematricula = canView("rematricula");
@@ -509,6 +511,12 @@ function AppShell() {
           icon: Dumbbell,
           label: "Esportes",
         }),
+        ...item(showBiblioteca, {
+          kind: "item",
+          to: "/biblioteca",
+          icon: Library,
+          label: "Biblioteca",
+        }),
       ]),
       ...group("operacional", "Operacional", [
         ...item(showRh, { kind: "item", to: "/rh", icon: Users, label: "Recursos Humanos" }),
@@ -621,6 +629,8 @@ function AppShell() {
     showDiario,
     showColonia,
     showEsportes,
+    showBiblioteca,
+    showCantina,
     showDocumentos,
     showRematricula,
     showFinanceiro,
