@@ -309,7 +309,7 @@ async function buscarAlunoPorNome(
 
 // Cadastro de responsável como o Sponte devolve, incluindo os alunos aos quais
 // ele já está vinculado (bloco <Alunos>, um <wsAlunos> por vínculo).
-interface ResponsavelSponte {
+export interface ResponsavelSponte {
   id: number;
   nome: string;
   cpf: string;
@@ -330,7 +330,7 @@ interface ResponsavelSponte {
   vinculos: { alunoId: number; parentesco: string }[];
 }
 
-function lerResponsavel(bloco: string): ResponsavelSponte | null {
+export function lerResponsavel(bloco: string): ResponsavelSponte | null {
   const id = parseInt(parseXmlValue(bloco, "ResponsavelID"), 10);
   if (!Number.isFinite(id) || id <= 0) return null;
   const vinculos = (bloco.match(/<wsAlunos>[\s\S]*?<\/wsAlunos>/g) ?? [])
@@ -390,7 +390,7 @@ async function conferirResponsavel(
 // Procura um responsável JÁ CADASTRADO pelo CPF. É o que destrava o erro
 // "29 - O CPF informado já está associado a outro cadastro": o responsável do
 // irmão mais velho existe e precisa ser reaproveitado, não recriado.
-async function buscarResponsavelPorCpf(
+export async function buscarResponsavelPorCpf(
   cpf: string,
   codigoCliente: string,
   token: string,

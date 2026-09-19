@@ -4,7 +4,7 @@
 // passa pelo login interno nem pelo shell do app. Os painéis internos
 // equivalentes (/matriculas, /rematricula-acompanhamento) continuam exigindo
 // login: a comparação é por segmento, nunca por prefixo de string.
-export const ROTAS_PUBLICAS = ["/portal-cantina", "/matricula", "/rematricula"] as const;
+export const ROTAS_PUBLICAS = ["/portal-cantina", "/matricula", "/rematricula", "/portal"] as const;
 
 export function ehRotaPublica(pathname: string): boolean {
   const limpo = pathname.replace(/\/+$/, "") || "/";
