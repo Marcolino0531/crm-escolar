@@ -24,6 +24,7 @@ import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
 import { Route as EstoqueMaterialRouteImport } from './routes/estoque-material'
 import { Route as EsportesRouteImport } from './routes/esportes'
+import { Route as BibliotecaRouteImport } from './routes/biblioteca'
 import { Route as DocumentosRouteImport } from './routes/documentos'
 import { Route as DiarioRouteImport } from './routes/diario'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
@@ -118,6 +119,11 @@ const EstoqueMaterialRoute = EstoqueMaterialRouteImport.update({
 const EsportesRoute = EsportesRouteImport.update({
   id: '/esportes',
   path: '/esportes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BibliotecaRoute = BibliotecaRouteImport.update({
+  id: '/biblioteca',
+  path: '/biblioteca',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocumentosRoute = DocumentosRouteImport.update({
@@ -233,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -269,6 +276,7 @@ export interface FileRoutesByTo {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -306,6 +314,7 @@ export interface FileRoutesById {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -344,6 +353,7 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
+    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -380,6 +390,7 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
+    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -416,6 +427,7 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
+    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -453,6 +465,7 @@ export interface RootRouteChildren {
   DiarioRoute: typeof DiarioRoute
   DocumentosRoute: typeof DocumentosRoute
   EsportesRoute: typeof EsportesRoute
+  BibliotecaRoute: typeof BibliotecaRoute
   EstoqueMaterialRoute: typeof EstoqueMaterialRoute
   ExtratoBancarioRoute: typeof ExtratoBancarioRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
@@ -578,6 +591,13 @@ declare module '@tanstack/react-router' {
       path: '/esportes'
       fullPath: '/esportes'
       preLoaderRoute: typeof EsportesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/biblioteca': {
+      id: '/biblioteca'
+      path: '/biblioteca'
+      fullPath: '/biblioteca'
+      preLoaderRoute: typeof BibliotecaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/documentos': {
@@ -733,6 +753,7 @@ const rootRouteChildren: RootRouteChildren = {
   DiarioRoute: DiarioRoute,
   DocumentosRoute: DocumentosRoute,
   EsportesRoute: EsportesRoute,
+  BibliotecaRoute: BibliotecaRoute,
   EstoqueMaterialRoute: EstoqueMaterialRoute,
   ExtratoBancarioRoute: ExtratoBancarioRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
