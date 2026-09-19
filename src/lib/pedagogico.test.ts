@@ -3,13 +3,24 @@ import { alunosVigentesDoAno, type ContratoSponte } from "@/lib/diario-sync";
 import {
   atribuicaoDuplicada,
   atribuicoesDoProfessor,
+  aulasDoDia,
+  diaSemanaISO,
   ehCargoDeProfessor,
+  filtrarPorAtribuicao,
+  horarioConflita,
+  montarChamada,
+  professorLecionaDisciplina,
+  resumoChamada,
+  validarHorario,
+  validarLancamento,
   planejarSincronizacaoPedagogico,
   professorLecionaTurma,
   trimestresDoCalendario,
   turmasDoAnoPedagogico,
   validarCalendario,
   type Atribuicao,
+  type FrequenciaRow,
+  type Horario,
   type MatriculaAnoRow,
 } from "@/lib/pedagogico";
 
@@ -249,5 +260,263 @@ describe("calendário letivo", () => {
       { data: "2027-09-01", tipo: "fim_trimestre", trimestre: null, descricao: "" },
     ]);
     expect(erros).toHaveLength(3);
+  });
+});
+
+describe("Fase 1 — só o professor da atribuição lança conteúdo e frequência", () => {
+  // Ana (p1) leciona Matemática no 6º Ano; Bruno (p2) leciona História no
+  // 6º Ano e Matemática no 7º Ano. Nenhum dos dois pode lançar na aula do outro.
+  const atr: Atribuicao[] = [
+    {
+      id: "a",
+      school_id: CEC,
+      professor_id: "p1",
+      turma_nome: "6º Ano",
+      disciplina_id: "mat",
+      ano_letivo: 2027,
+    },
+    {
+      id: "b",
+      school_id: CEC,
+      professor_id: "p2",
+      turma_nome: "6º Ano",
+      disciplina_id: "his",
+      ano_letivo: 2027,
+    },
+    {
+      id: "c",
+      school_id: CEC,
+      professor_id: "p2",
+      turma_nome: "7º Ano",
+      disciplina_id: "mat",
+      ano_letivo: 2027,
+    },
+  ];
+  const aula = {
+    schoolId: CEC,
+    anoLetivo: 2027,
+    turmaNome: "6º Ano",
+    disciplinaId: "mat",
+    data: "2027-03-10",
+  };
+
+  it("professor responsável pela turma+disciplina é autorizado", () => {
+    expect(professorLecionaDisciplina(atr, "p1", CEC, 2027, "6º Ano", "mat")).toBe(true);
+    expect(validarLancamento(atr, { ...aula, professorId: "p1" })).toBeNull();
+  });
+
+  it("professor da mesma turma em OUTRA disciplina, ou da mesma disciplina em OUTRA turma, é barrado", () => {
+    // Bruno dá aula no 6º Ano (História) e dá Matemática (7º Ano) — mas não Matemática no 6º.
+    expect(professorLecionaDisciplina(atr, "p2", CEC, 2027, "6º Ano", "mat")).toBe(false);
+    expect(validarLancamento(atr, { ...aula, professorId: "p2" })).toMatch(/não leciona/);
+    // Outra unidade e outro ano também barram.
+    expect(professorLecionaDisciplina(atr, "p1", BABY, 2027, "6º Ano", "mat")).toBe(false);
+    expect(professorLecionaDisciplina(atr, "p1", CEC, 2026, "6º Ano", "mat")).toBe(false);
+  });
+
+  it("data fora do ano letivo é rejeitada mesmo para o professor certo", () => {
+    expect(validarLancamento(atr, { ...aula, professorId: "p1", data: "2026-12-10" })).toMatch(
+      /ano letivo/,
+    );
+  });
+
+  it("filtrarPorAtribuicao devolve só as linhas das aulas do professor", () => {
+    const linhas: FrequenciaRow[] = [
+      {
+        school_id: CEC,
+        ano_letivo: 2027,
+        turma_nome: "6º Ano",
+        disciplina_id: "mat",
+        data: "2027-03-10",
+        sponte_aluno_id: "1",
+        presente: true,
+      },
+      {
+        school_id: CEC,
+        ano_letivo: 2027,
+        turma_nome: "6º Ano",
+        disciplina_id: "his",
+        data: "2027-03-10",
+        sponte_aluno_id: "1",
+        presente: false,
+      },
+      {
+        school_id: CEC,
+        ano_letivo: 2027,
+        turma_nome: "7º Ano",
+        disciplina_id: "mat",
+        data: "2027-03-10",
+        sponte_aluno_id: "9",
+        presente: true,
+      },
+    ];
+    expect(filtrarPorAtribuicao(linhas, atr, "p1").map((l) => l.disciplina_id)).toEqual(["mat"]);
+    expect(filtrarPorAtribuicao(linhas, atr, "p2").map((l) => l.turma_nome)).toEqual([
+      "6º Ano",
+      "7º Ano",
+    ]);
+    expect(filtrarPorAtribuicao(linhas, atr, "p3")).toEqual([]);
+  });
+});
+
+describe("Fase 1 — grade de horários e aulas do dia", () => {
+  const atr: Atribuicao[] = [
+    {
+      id: "a",
+      school_id: CEC,
+      professor_id: "p1",
+      turma_nome: "6º Ano",
+      disciplina_id: "mat",
+      ano_letivo: 2027,
+    },
+    {
+      id: "b",
+      school_id: CEC,
+      professor_id: "p1",
+      turma_nome: "Maternal 2",
+      disciplina_id: "infantil",
+      ano_letivo: 2027,
+    },
+    {
+      id: "c",
+      school_id: CEC,
+      professor_id: "p2",
+      turma_nome: "6º Ano",
+      disciplina_id: "his",
+      ano_letivo: 2027,
+    },
+  ];
+  const h = (p: Partial<Horario>): Horario => ({
+    id: "h",
+    school_id: CEC,
+    ano_letivo: 2027,
+    turma_nome: "6º Ano",
+    disciplina_id: "mat",
+    dia_semana: 3,
+    horario_inicio: "07:00:00",
+    horario_fim: "07:50:00",
+    ...p,
+  });
+  const grade: Horario[] = [
+    h({ id: "1", dia_semana: 3, horario_inicio: "07:00:00", horario_fim: "07:50:00" }),
+    h({ id: "2", dia_semana: 3, horario_inicio: "10:00:00", horario_fim: "10:50:00" }),
+    h({ id: "3", dia_semana: 5, horario_inicio: "08:00:00", horario_fim: "08:50:00" }),
+    h({
+      id: "4",
+      disciplina_id: "his",
+      dia_semana: 3,
+      horario_inicio: "08:00:00",
+      horario_fim: "08:50:00",
+    }),
+  ];
+
+  it("dia da semana ISO (10/03/2027 é quarta-feira; 14/03/2027 é domingo)", () => {
+    expect(diaSemanaISO("2027-03-10")).toBe(3);
+    expect(diaSemanaISO("2027-03-14")).toBe(7);
+  });
+
+  it("aulas do dia: só as da grade do professor no dia; atribuição sem grade entra sem horário", () => {
+    const aulas = aulasDoDia(grade, atr, "p1", "2027-03-10");
+    expect(aulas.map((a) => [a.turmaNome, a.horarioInicio])).toEqual([
+      ["6º Ano", "07:00"],
+      ["6º Ano", "10:00"],
+      ["Maternal 2", null], // Infantil sem grade: lançável mesmo assim
+    ]);
+    // História do 6º Ano (p2) não aparece para p1.
+    expect(aulas.some((a) => a.disciplinaId === "his")).toBe(false);
+    // Sexta: só a aula das 08:00 (e a do Infantil sem grade).
+    expect(aulasDoDia(grade, atr, "p1", "2027-03-12").map((a) => a.horarioInicio)).toEqual([
+      "08:00",
+      null,
+    ]);
+    // Turma com grade cadastrada mas sem aula no dia não aparece.
+    expect(aulasDoDia(grade, atr, "p2", "2027-03-12")).toEqual([]);
+  });
+
+  it("valida horário e detecta sobreposição na mesma turma/dia", () => {
+    expect(validarHorario("07:00", "07:50")).toBeNull();
+    expect(validarHorario("07:50", "07:00")).toMatch(/depois do início/);
+    expect(validarHorario("7:00", "07:50")).toMatch(/HH:MM/);
+    const novo = h({
+      disciplina_id: "por",
+      dia_semana: 3,
+      horario_inicio: "07:30",
+      horario_fim: "08:20",
+    });
+    expect(horarioConflita(grade, novo)?.id).toBe("1");
+    expect(
+      horarioConflita(grade, h({ dia_semana: 3, horario_inicio: "07:50", horario_fim: "08:00" })),
+    ).toBeNull();
+    expect(
+      horarioConflita(
+        grade,
+        h({ turma_nome: "7º Ano", dia_semana: 3, horario_inicio: "07:00", horario_fim: "07:50" }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("Fase 1 — chamada", () => {
+  const alunos: (MatriculaAnoRow & { aluno_nome: string })[] = [
+    {
+      school_id: CEC,
+      sponte_aluno_id: "1",
+      aluno_nome: "Maria",
+      ano_letivo: 2027,
+      turma_nome: "6º Ano",
+      ativo: true,
+    },
+    {
+      school_id: CEC,
+      sponte_aluno_id: "2",
+      aluno_nome: "João",
+      ano_letivo: 2027,
+      turma_nome: "6º Ano",
+      ativo: true,
+    },
+    {
+      school_id: CEC,
+      sponte_aluno_id: "3",
+      aluno_nome: "Ana",
+      ano_letivo: 2027,
+      turma_nome: "6º Ano",
+      ativo: false,
+    },
+    {
+      school_id: CEC,
+      sponte_aluno_id: "4",
+      aluno_nome: "Pedro",
+      ano_letivo: 2027,
+      turma_nome: "7º Ano",
+      ativo: true,
+    },
+    {
+      school_id: CEC,
+      sponte_aluno_id: "5",
+      aluno_nome: "Lia",
+      ano_letivo: 2026,
+      turma_nome: "6º Ano",
+      ativo: true,
+    },
+  ];
+
+  it("lista só ativos da turma/ano, ordenados por nome, presença padrão true e faltas já lançadas", () => {
+    const lancadas: FrequenciaRow[] = [
+      {
+        school_id: CEC,
+        ano_letivo: 2027,
+        turma_nome: "6º Ano",
+        disciplina_id: "mat",
+        data: "2027-03-10",
+        sponte_aluno_id: "2",
+        presente: false,
+      },
+    ];
+    const chamada = montarChamada(alunos, CEC, 2027, "6º Ano", lancadas);
+    expect(chamada).toEqual([
+      { sponteAlunoId: "2", nome: "João", presente: false },
+      { sponteAlunoId: "1", nome: "Maria", presente: true },
+    ]);
+    expect(resumoChamada(chamada)).toEqual({ total: 2, presentes: 1, faltas: 1 });
   });
 });
