@@ -34,6 +34,7 @@ import {
   type ContratoSponte,
   type VinculoAno,
 } from "@/lib/diario-sync";
+import { planejarSincronizacaoPedagogico, type MatriculaAnoRow } from "@/lib/pedagogico";
 import { selectAll } from "@/lib/supabase-paginate";
 
 export { escapeXml };
@@ -3277,12 +3278,15 @@ const vazio = (anoLetivo: number): DiarioSyncResult => ({
   turmasCorrigidas: {},
 });
 
-// Núcleo do sync do Diário (sem auth) — reutilizado pelo botão manual (admin) e
-// pelo cron diário (/api/diario/cron). Escreve via service role.
-export async function runDiarioSponteSync(anoLetivo: number): Promise<DiarioSyncResult> {
-  if (!Number.isInteger(anoLetivo) || anoLetivo < 2024 || anoLetivo > 2100) {
-    return { ...vazio(anoLetivo), error: "Ano letivo inválido." };
-  }
+// Alunos com contrato vigente no ano, em TODAS as credenciais Sponte, já
+// roteados para a unidade do School Hub (CEC × CEC Baby pela turma do ano).
+// Compartilhado pelo Diário e pelo Pedagógico — a leitura do Sponte é uma só;
+// o que muda entre os módulos é só onde o vínculo é gravado.
+export type ColetaAlunosAno =
+  | { ok: true; coletados: { schoolName: string; schoolId: string; aluno: AlunoDoAno }[] }
+  | { ok: false; error: string };
+
+export async function coletarAlunosVigentesDoAno(anoLetivo: number): Promise<ColetaAlunosAno> {
   const { data: schoolRows } = await supabaseAdmin.from("schools").select("id, name");
   const schoolIdByName: Record<string, string> = {};
   for (const s of (schoolRows ?? []) as { id: string; name: string }[])
@@ -3311,14 +3315,31 @@ export async function runDiarioSponteSync(anoLetivo: number): Promise<DiarioSync
       }
     }
   } catch (e) {
-    return {
-      ...vazio(anoLetivo),
-      error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
-    };
+    return { ok: false, error: e instanceof Error ? e.message : "Falha ao consultar o Sponte." };
   }
+  return {
+    ok: true,
+    coletados: coletados
+      .filter((c) => schoolIdByName[c.schoolName])
+      .map((c) => ({ ...c, schoolId: schoolIdByName[c.schoolName] })),
+  };
+}
 
-  const validos = coletados.filter((c) => schoolIdByName[c.schoolName]);
+// Núcleo do sync do Diário (sem auth) — reutilizado pelo botão manual (admin) e
+// pelo cron diário (/api/diario/cron). Escreve via service role.
+export async function runDiarioSponteSync(
+  anoLetivo: number,
+  coletaPronta?: ColetaAlunosAno,
+): Promise<DiarioSyncResult> {
+  if (!Number.isInteger(anoLetivo) || anoLetivo < 2024 || anoLetivo > 2100) {
+    return { ...vazio(anoLetivo), error: "Ano letivo inválido." };
+  }
+  const coleta = coletaPronta ?? (await coletarAlunosVigentesDoAno(anoLetivo));
+  if (!coleta.ok) return { ...vazio(anoLetivo), error: coleta.error };
+  const validos = coleta.coletados;
   if (validos.length === 0) return { ...vazio(anoLetivo), indisponivel: true };
+  const schoolIdByName: Record<string, string> = {};
+  for (const c of validos) schoolIdByName[c.schoolName] = c.schoolId;
 
   // ── Turmas do ano (distinct por school_id + nome). ──
   const turmaKeys = new Set<string>();
@@ -3482,6 +3503,104 @@ export const syncDiarioSponte = createServerFn({ method: "POST" })
       return { ...vazio(data.anoLetivo), error: "Apenas administradores podem sincronizar." };
     }
     return runDiarioSponteSync(data.anoLetivo);
+  });
+
+// ─── Pedagógico: aluno × ano letivo × turma (pedagogico_matriculas_ano) ─────────
+// Mesma coleta e mesma reconciliação do Diário; grava direto por
+// (school_id, sponte_aluno_id, ano_letivo), sem tabela de identidade.
+
+export interface PedagogicoSyncResult {
+  anoLetivo: number;
+  alunos: number;
+  turmas: number;
+  porUnidade: Record<string, number>;
+  inativados: number;
+  indisponivel?: boolean;
+  error?: string;
+}
+
+const vazioPedagogico = (anoLetivo: number): PedagogicoSyncResult => ({
+  anoLetivo,
+  alunos: 0,
+  turmas: 0,
+  porUnidade: {},
+  inativados: 0,
+});
+
+export async function runPedagogicoSponteSync(
+  anoLetivo: number,
+  coletaPronta?: ColetaAlunosAno,
+): Promise<PedagogicoSyncResult> {
+  if (!Number.isInteger(anoLetivo) || anoLetivo < 2024 || anoLetivo > 2100) {
+    return { ...vazioPedagogico(anoLetivo), error: "Ano letivo inválido." };
+  }
+  const coleta = coletaPronta ?? (await coletarAlunosVigentesDoAno(anoLetivo));
+  if (!coleta.ok) return { ...vazioPedagogico(anoLetivo), error: coleta.error };
+  if (coleta.coletados.length === 0) return { ...vazioPedagogico(anoLetivo), indisponivel: true };
+
+  const existentes = await selectAll<MatriculaAnoRow>(() =>
+    supabaseAdmin
+      .from("pedagogico_matriculas_ano" as never)
+      .select("school_id, sponte_aluno_id, ano_letivo, turma_nome, ativo")
+      .eq("ano_letivo", anoLetivo)
+      .order("id"),
+  );
+  const plano = planejarSincronizacaoPedagogico(anoLetivo, coleta.coletados, existentes);
+
+  const agora = new Date().toISOString();
+  for (let i = 0; i < plano.upserts.length; i += 500) {
+    const { error } = await supabaseAdmin
+      .from("pedagogico_matriculas_ano" as never)
+      .upsert(plano.upserts.slice(i, i + 500).map((u) => ({ ...u, updated_at: agora })) as never, {
+        onConflict: "school_id,sponte_aluno_id,ano_letivo",
+      });
+    if (error) return { ...vazioPedagogico(anoLetivo), error: error.message };
+  }
+  const inativarPorEscola = new Map<string, string[]>();
+  for (const v of plano.inativar)
+    inativarPorEscola.set(v.school_id, [
+      ...(inativarPorEscola.get(v.school_id) ?? []),
+      v.sponte_aluno_id,
+    ]);
+  for (const [schoolId, ids] of inativarPorEscola) {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabaseAdmin
+        .from("pedagogico_matriculas_ano" as never)
+        .update({ ativo: false, updated_at: agora } as never)
+        .eq("school_id", schoolId)
+        .eq("ano_letivo", anoLetivo)
+        .in("sponte_aluno_id", ids.slice(i, i + 200));
+      if (error) return { ...vazioPedagogico(anoLetivo), error: error.message };
+    }
+  }
+
+  const porUnidade: Record<string, number> = {};
+  const turmas = new Set<string>();
+  for (const c of coleta.coletados) {
+    porUnidade[c.schoolName] = (porUnidade[c.schoolName] ?? 0) + 1;
+    if (c.aluno.turma) turmas.add(`${c.schoolId}::${c.aluno.turma}`);
+  }
+  return {
+    anoLetivo,
+    alunos: plano.upserts.length,
+    turmas: turmas.size,
+    porUnidade,
+    inativados: plano.inativar.length,
+  };
+}
+
+export const syncPedagogicoSponte = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SyncDiarioSchema.parse(input))
+  .handler(async ({ data, context }): Promise<PedagogicoSyncResult> => {
+    const allowed = await allowedSponteUnidades(context.userId);
+    if (allowed !== null) {
+      return {
+        ...vazioPedagogico(data.anoLetivo),
+        error: "Apenas administradores podem sincronizar.",
+      };
+    }
+    return runPedagogicoSponteSync(data.anoLetivo);
   });
 
 // ─── Envio em lote da Declaração de IR (leitura) ─────────────────────────────

@@ -20,6 +20,7 @@ const APP_MODULES = [
   "colonia_financeiro",
   "esportes",
   "biblioteca",
+  "pedagogico",
   "documentos",
   "cantina",
   "rematricula",
@@ -294,4 +295,95 @@ export const deleteManagedUser = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.auth.admin.deleteUser(data.userId);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ─── Acesso de professor (Pedagógico — Fase 0) ───────────────────────────────
+// Um professor é um funcionário que ganha uma conta de login. A conta NÃO
+// recebe nenhum módulo (nem 'pedagogico'): o que ele enxerga é decidido pela
+// RLS a partir de funcionarios.auth_user_id × pedagogico_atribuicoes. Só a
+// unidade do funcionário entra em user_schools (fail-closed do resto).
+
+export const criarAcessoProfessor = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        funcionarioId: z.string().uuid(),
+        email: z.string().trim().email().max(255),
+        password: z.string().min(6).max(72),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.userId);
+    const { data: func, error: fErr } = await supabaseAdmin
+      .from("funcionarios")
+      .select("id, nome_completo, school_id, auth_user_id, data_rescisao")
+      .eq("id", data.funcionarioId)
+      .maybeSingle();
+    if (fErr) throw new Error(fErr.message);
+    if (!func) throw new Error("Funcionário não encontrado.");
+    if (func.auth_user_id) throw new Error("Este funcionário já possui acesso.");
+    if (func.data_rescisao) throw new Error("Funcionário desligado não pode receber acesso.");
+
+    const { data: created, error } = await supabaseAdmin.auth.admin.createUser({
+      email: data.email,
+      password: data.password,
+      email_confirm: true,
+      user_metadata: { full_name: func.nome_completo, professor_funcionario_id: func.id },
+    });
+    if (error) throw new Error(error.message);
+    const userId = created.user?.id;
+    if (!userId) throw new Error("Falha ao criar usuário.");
+    await persistAccess(userId, false, []);
+    await persistSchools(userId, [func.school_id]);
+    const { error: upErr } = await supabaseAdmin
+      .from("funcionarios")
+      .update({ auth_user_id: userId })
+      .eq("id", func.id);
+    if (upErr) {
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      throw new Error(upErr.message);
+    }
+    return { userId, email: data.email };
+  });
+
+export const revogarAcessoProfessor = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ funcionarioId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.userId);
+    const { data: func, error: fErr } = await supabaseAdmin
+      .from("funcionarios")
+      .select("id, auth_user_id")
+      .eq("id", data.funcionarioId)
+      .maybeSingle();
+    if (fErr) throw new Error(fErr.message);
+    if (!func?.auth_user_id) throw new Error("Este funcionário não possui acesso.");
+    if (func.auth_user_id === context.userId) {
+      throw new Error("Você não pode revogar o próprio acesso.");
+    }
+    // ON DELETE SET NULL limpa funcionarios.auth_user_id.
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(func.auth_user_id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Emails dos professores com acesso (para a tela de administração).
+export const listarAcessosProfessores = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.userId);
+    const { data: rows, error } = await supabaseAdmin
+      .from("funcionarios")
+      .select("id, auth_user_id")
+      .not("auth_user_id", "is", null);
+    if (error) throw new Error(error.message);
+    const out: Record<string, string> = {};
+    for (const r of rows ?? []) {
+      if (!r.auth_user_id) continue;
+      const { data: u } = await supabaseAdmin.auth.admin.getUserById(r.auth_user_id);
+      out[r.id] = u.user?.email ?? "";
+    }
+    return out;
   });
