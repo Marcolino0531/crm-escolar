@@ -172,6 +172,261 @@ export function ehCargoDeProfessor(cargo: string | null | undefined): boolean {
   return /\bprof(essor|essora|\.)?\b/.test(c);
 }
 
+// Professor tem atribuição exatamente nesta turma+disciplina (mesma regra da
+// RLS professor_leciona_disciplina — é o que autoriza conteúdo e frequência).
+export function professorLecionaDisciplina(
+  atribuicoes: readonly Atribuicao[],
+  professorId: string,
+  schoolId: string,
+  anoLetivo: number,
+  turmaNome: string,
+  disciplinaId: string,
+): boolean {
+  return atribuicoes.some(
+    (a) =>
+      a.professor_id === professorId &&
+      a.school_id === schoolId &&
+      a.ano_letivo === anoLetivo &&
+      a.turma_nome === turmaNome &&
+      a.disciplina_id === disciplinaId,
+  );
+}
+
+// ─── Fase 1: grade, conteúdo e frequência ───────────────────────────────────
+
+// ISO: 1 = segunda … 7 = domingo (igual à coluna dia_semana).
+export const DIAS_SEMANA_LETIVOS = [1, 2, 3, 4, 5, 6] as const;
+export const ROTULO_DIA_SEMANA: Record<number, string> = {
+  1: "Segunda",
+  2: "Terça",
+  3: "Quarta",
+  4: "Quinta",
+  5: "Sexta",
+  6: "Sábado",
+  7: "Domingo",
+};
+
+export function diaSemanaISO(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const js = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = domingo
+  return js === 0 ? 7 : js;
+}
+
+export interface Horario {
+  id: string;
+  school_id: string;
+  ano_letivo: number;
+  turma_nome: string;
+  disciplina_id: string;
+  dia_semana: number;
+  horario_inicio: string; // HH:MM[:SS]
+  horario_fim: string;
+}
+
+export const hhmm = (t: string): string => t.slice(0, 5);
+
+export function validarHorario(inicio: string, fim: string): string | null {
+  const re = /^\d{2}:\d{2}$/;
+  if (!re.test(inicio) || !re.test(fim)) return "Informe os horários no formato HH:MM.";
+  if (fim <= inicio) return "O horário de fim deve ser depois do início.";
+  return null;
+}
+
+// Dois horários da mesma turma no mesmo dia não podem se sobrepor.
+export function horarioConflita(
+  existentes: readonly Horario[],
+  novo: Omit<Horario, "id">,
+  ignorarId?: string,
+): Horario | null {
+  const ini = hhmm(novo.horario_inicio);
+  const fim = hhmm(novo.horario_fim);
+  return (
+    existentes.find(
+      (h) =>
+        h.id !== ignorarId &&
+        h.school_id === novo.school_id &&
+        h.ano_letivo === novo.ano_letivo &&
+        h.turma_nome === novo.turma_nome &&
+        h.dia_semana === novo.dia_semana &&
+        hhmm(h.horario_inicio) < fim &&
+        hhmm(h.horario_fim) > ini,
+    ) ?? null
+  );
+}
+
+export interface AulaDoDia {
+  schoolId: string;
+  anoLetivo: number;
+  turmaNome: string;
+  disciplinaId: string;
+  // Sem horário na grade: atribuição existe, mas a secretaria ainda não
+  // cadastrou a aula naquele dia (Infantil, por exemplo). Continua lançável.
+  horarioInicio: string | null;
+  horarioFim: string | null;
+}
+
+// Aulas do professor em uma data: a grade das SUAS atribuições no dia da
+// semana correspondente. Atribuições sem nenhum horário cadastrado na grade
+// da turma aparecem como aula sem horário, para o lançamento não ficar
+// bloqueado pela falta da grade.
+export function aulasDoDia(
+  horarios: readonly Horario[],
+  atribuicoes: readonly Atribuicao[],
+  professorId: string,
+  ymd: string,
+): AulaDoDia[] {
+  const dia = diaSemanaISO(ymd);
+  const ano = Number(ymd.slice(0, 4));
+  const minhas = atribuicoes.filter((a) => a.professor_id === professorId && a.ano_letivo === ano);
+  const out: AulaDoDia[] = [];
+  for (const a of minhas) {
+    const grade = horarios.filter(
+      (h) =>
+        h.school_id === a.school_id &&
+        h.ano_letivo === a.ano_letivo &&
+        h.turma_nome === a.turma_nome &&
+        h.disciplina_id === a.disciplina_id,
+    );
+    const hoje = grade.filter((h) => h.dia_semana === dia);
+    if (hoje.length > 0) {
+      for (const h of hoje)
+        out.push({
+          schoolId: a.school_id,
+          anoLetivo: a.ano_letivo,
+          turmaNome: a.turma_nome,
+          disciplinaId: a.disciplina_id,
+          horarioInicio: hhmm(h.horario_inicio),
+          horarioFim: hhmm(h.horario_fim),
+        });
+    } else if (grade.length === 0) {
+      out.push({
+        schoolId: a.school_id,
+        anoLetivo: a.ano_letivo,
+        turmaNome: a.turma_nome,
+        disciplinaId: a.disciplina_id,
+        horarioInicio: null,
+        horarioFim: null,
+      });
+    }
+  }
+  return out.sort(
+    (x, y) =>
+      (x.horarioInicio ?? "99:99").localeCompare(y.horarioInicio ?? "99:99") ||
+      x.turmaNome.localeCompare(y.turmaNome, "pt-BR"),
+  );
+}
+
+export interface Lancamento {
+  professorId: string;
+  schoolId: string;
+  anoLetivo: number;
+  turmaNome: string;
+  disciplinaId: string;
+  data: string; // YYYY-MM-DD
+}
+
+// Erro (ou null) antes de gravar conteúdo/frequência: só o professor
+// responsável pela atribuição, e a data precisa estar no ano letivo.
+export function validarLancamento(
+  atribuicoes: readonly Atribuicao[],
+  l: Lancamento,
+): string | null {
+  if (Number(l.data.slice(0, 4)) !== l.anoLetivo)
+    return "A data da aula precisa estar dentro do ano letivo.";
+  if (
+    !professorLecionaDisciplina(
+      atribuicoes,
+      l.professorId,
+      l.schoolId,
+      l.anoLetivo,
+      l.turmaNome,
+      l.disciplinaId,
+    )
+  )
+    return "Você não leciona esta disciplina nesta turma.";
+  return null;
+}
+
+export interface ConteudoRow {
+  school_id: string;
+  ano_letivo: number;
+  turma_nome: string;
+  disciplina_id: string;
+  professor_id: string;
+  data: string;
+  conteudo: string;
+  licao_casa: string | null;
+}
+
+export interface FrequenciaRow {
+  school_id: string;
+  ano_letivo: number;
+  turma_nome: string;
+  disciplina_id: string;
+  data: string;
+  sponte_aluno_id: string;
+  presente: boolean;
+}
+
+// Só os lançamentos das atribuições do professor (espelho, no cliente, do que
+// a RLS já devolve; garante que a tela do professor nunca mostre aula alheia).
+export function filtrarPorAtribuicao<
+  T extends { school_id: string; ano_letivo: number; turma_nome: string; disciplina_id: string },
+>(linhas: readonly T[], atribuicoes: readonly Atribuicao[], professorId: string): T[] {
+  return linhas.filter((r) =>
+    professorLecionaDisciplina(
+      atribuicoes,
+      professorId,
+      r.school_id,
+      r.ano_letivo,
+      r.turma_nome,
+      r.disciplina_id,
+    ),
+  );
+}
+
+export interface ChamadaAluno {
+  sponteAlunoId: string;
+  nome: string;
+  presente: boolean;
+}
+
+// Lista de chamada da aula: alunos ativos da turma no ano, com o que já foi
+// lançado; quem ainda não tem registro entra como presente (o professor marca
+// só as faltas).
+export function montarChamada(
+  alunos: readonly (MatriculaAnoRow & { aluno_nome: string })[],
+  schoolId: string,
+  anoLetivo: number,
+  turmaNome: string,
+  lancadas: readonly FrequenciaRow[],
+): ChamadaAluno[] {
+  const registro = new Map(lancadas.map((f) => [f.sponte_aluno_id, f.presente]));
+  return alunos
+    .filter(
+      (a) =>
+        a.ativo &&
+        a.school_id === schoolId &&
+        a.ano_letivo === anoLetivo &&
+        a.turma_nome === turmaNome,
+    )
+    .map((a) => ({
+      sponteAlunoId: a.sponte_aluno_id,
+      nome: a.aluno_nome,
+      presente: registro.get(a.sponte_aluno_id) ?? true,
+    }))
+    .sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+}
+
+export function resumoChamada(chamada: readonly ChamadaAluno[]): {
+  total: number;
+  presentes: number;
+  faltas: number;
+} {
+  const presentes = chamada.filter((c) => c.presente).length;
+  return { total: chamada.length, presentes, faltas: chamada.length - presentes };
+}
+
 // ─── Calendário ─────────────────────────────────────────────────────────────
 
 export const TIPOS_CALENDARIO = [

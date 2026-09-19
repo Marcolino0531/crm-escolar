@@ -16,9 +16,15 @@ import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import { selectAll } from "@/lib/supabase-paginate";
 import { TURMAS_POR_IDADE } from "@/lib/crm/mecCutoff";
 import {
+  DIAS_SEMANA_LETIVOS,
+  ROTULO_DIA_SEMANA,
   ROTULO_TIPO_CALENDARIO,
   TIPOS_CALENDARIO,
   anoLetivoSugerido,
+  hhmm,
+  horarioConflita,
+  validarHorario,
+  type Horario,
   atribuicaoDuplicada,
   contarDiasLetivos,
   ehCargoDeProfessor,
@@ -156,6 +162,7 @@ function PedagogicoPage() {
             <TabsTrigger value="turmas">Turmas do ano</TabsTrigger>
             <TabsTrigger value="disciplinas">Disciplinas</TabsTrigger>
             <TabsTrigger value="atribuicoes">Atribuições</TabsTrigger>
+            <TabsTrigger value="horarios">Grade de horários</TabsTrigger>
             <TabsTrigger value="calendario">Calendário letivo</TabsTrigger>
             {isAdmin && <TabsTrigger value="acessos">Acesso de professores</TabsTrigger>}
           </TabsList>
@@ -167,6 +174,9 @@ function PedagogicoPage() {
           </TabsContent>
           <TabsContent value="atribuicoes">
             <Atribuicoes schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+          </TabsContent>
+          <TabsContent value="horarios">
+            <GradeHorarios schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
           </TabsContent>
           <TabsContent value="calendario">
             <Calendario schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
@@ -663,6 +673,219 @@ function Atribuicoes({
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ─── Grade de horários ──────────────────────────────────────────────────────
+
+function GradeHorarios({
+  schoolId,
+  ano,
+  podeEditar,
+}: {
+  schoolId: string;
+  ano: number;
+  podeEditar: boolean;
+}) {
+  const qc = useQueryClient();
+  const { data: disciplinas = [] } = useDisciplinas(schoolId);
+  const { data: matriculas = [] } = useMatriculasAno(schoolId, ano);
+  const { data: horarios = [] } = useQuery({
+    queryKey: ["pedagogico_horarios", schoolId, ano],
+    queryFn: () =>
+      selectAll<Horario>(() =>
+        supabase
+          .from("pedagogico_horarios" as never)
+          .select(
+            "id, school_id, ano_letivo, turma_nome, disciplina_id, dia_semana, horario_inicio, horario_fim",
+          )
+          .eq("school_id", schoolId)
+          .eq("ano_letivo", ano)
+          .order("dia_semana")
+          .order("horario_inicio"),
+      ),
+  });
+  const chave = ["pedagogico_horarios", schoolId, ano];
+
+  const turmasSponte = turmasDoAnoPedagogico(matriculas, schoolId, ano);
+  const turmas = useMemo(() => {
+    const set = new Set<string>(turmasSponte);
+    for (const h of horarios) set.add(h.turma_nome);
+    return [...set].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [turmasSponte, horarios]);
+  const nomeDisc = new Map(disciplinas.map((d) => [d.id, d.nome]));
+
+  const [turma, setTurma] = useState("");
+  const [dia, setDia] = useState("1");
+  const [disciplinaId, setDisciplinaId] = useState("");
+  const [inicio, setInicio] = useState("07:00");
+  const [fim, setFim] = useState("07:50");
+  const turmaSel = turma || turmas[0] || "";
+  const daTurma = horarios.filter((h) => h.turma_nome === turmaSel);
+
+  const criar = useMutation({
+    mutationFn: async () => {
+      if (!turmaSel || !disciplinaId) throw new Error("Escolha turma e disciplina.");
+      const erro = validarHorario(inicio, fim);
+      if (erro) throw new Error(erro);
+      const novo = {
+        school_id: schoolId,
+        ano_letivo: ano,
+        turma_nome: turmaSel,
+        disciplina_id: disciplinaId,
+        dia_semana: Number(dia),
+        horario_inicio: inicio,
+        horario_fim: fim,
+      };
+      const conflito = horarioConflita(horarios, novo);
+      if (conflito)
+        throw new Error(
+          `Conflita com ${nomeDisc.get(conflito.disciplina_id) ?? "outra aula"} (${hhmm(conflito.horario_inicio)}–${hhmm(conflito.horario_fim)}).`,
+        );
+      const { error } = await supabase.from("pedagogico_horarios" as never).insert(novo as never);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      toast.success("Aula adicionada à grade.");
+      qc.invalidateQueries({ queryKey: chave });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const excluir = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("pedagogico_horarios" as never)
+        .delete()
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: chave }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Label className="text-sm">Turma</Label>
+        <Select value={turmaSel} onValueChange={setTurma}>
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="Selecione" />
+          </SelectTrigger>
+          <SelectContent>
+            {turmas.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {turmas.length === 0 && (
+          <span className="text-sm text-muted-foreground">
+            Nenhuma turma sincronizada em {ano}.
+          </span>
+        )}
+      </div>
+
+      {podeEditar && turmaSel && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Nova aula — {turmaSel} · {ano}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-5">
+            <div className="space-y-1">
+              <Label>Dia</Label>
+              <Select value={dia} onValueChange={setDia}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DIAS_SEMANA_LETIVOS.map((d) => (
+                    <SelectItem key={d} value={String(d)}>
+                      {ROTULO_DIA_SEMANA[d]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Disciplina</Label>
+              <Select value={disciplinaId} onValueChange={setDisciplinaId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {disciplinas
+                    .filter((d) => d.ativo)
+                    .map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        {d.nome}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Início</Label>
+              <Input type="time" value={inicio} onChange={(e) => setInicio(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Fim</Label>
+              <Input type="time" value={fim} onChange={(e) => setFim(e.target.value)} />
+            </div>
+            <div className="flex items-end">
+              <Button onClick={() => criar.mutate()} disabled={criar.isPending} className="w-full">
+                <Plus className="mr-2 h-4 w-4" /> Adicionar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {turmaSel && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {DIAS_SEMANA_LETIVOS.map((d) => {
+            const aulas = daTurma.filter((h) => h.dia_semana === d);
+            if (d === 6 && aulas.length === 0) return null;
+            return (
+              <Card key={d}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{ROTULO_DIA_SEMANA[d]}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {aulas.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Sem aulas.</p>
+                  ) : (
+                    <ul className="space-y-1 text-sm">
+                      {aulas.map((h) => (
+                        <li key={h.id} className="flex items-center gap-2">
+                          <span className="w-28 tabular-nums text-muted-foreground">
+                            {hhmm(h.horario_inicio)}–{hhmm(h.horario_fim)}
+                          </span>
+                          <span className="flex-1">{nomeDisc.get(h.disciplina_id) ?? "—"}</span>
+                          {podeEditar && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => excluir.mutate(h.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
