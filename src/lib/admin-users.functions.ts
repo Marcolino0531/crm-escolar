@@ -19,6 +19,7 @@ const APP_MODULES = [
   "colonia",
   "colonia_financeiro",
   "esportes",
+  "biblioteca",
   "documentos",
   "cantina",
   "rematricula",
