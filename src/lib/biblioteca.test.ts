@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BIBLIOTECA_VALORES_PADRAO,
   MULTA_TETO,
   calcularDevolucao,
   calcularMulta,
@@ -8,8 +9,11 @@ import {
   formatarCodigoExemplar,
   normalizarCodigoExemplar,
   pendenciasDoAluno,
+  resolverValoresBiblioteca,
   resumirPendencias,
   saldoMultasAberto,
+  valoresBibliotecaValidos,
+  type BibliotecaValoresRegistro,
   validarNovoEmprestimo,
   type EmprestimoBase,
 } from "./biblioteca";
@@ -170,5 +174,54 @@ describe("código do exemplar", () => {
     expect(normalizarCodigoExemplar(" 0000 0000 0042 ")).toBe("000000000042");
     expect(normalizarCodigoExemplar("42")).toBe("");
     expect(formatarCodigoExemplar("000000000042")).toBe("0000 0000 0042");
+  });
+});
+
+describe("Valor Biblioteca por unidade × ano", () => {
+  const registro: BibliotecaValoresRegistro = {
+    id: "r1",
+    schoolId: "cec",
+    unidade: "CEC",
+    anoLetivo: 2027,
+    multaPorDiaUtil: 3.5,
+    multaTeto: 20,
+    prazoPadraoDias: 14,
+    atualizadoEm: "",
+    atualizadoPor: "",
+  };
+
+  it("sem cadastro cai no padrão e o cálculo é idêntico ao de hoje", () => {
+    const r = resolverValoresBiblioteca([registro], "cec", 2026);
+    expect(r.padrao).toBe(true);
+    expect(r.valores).toEqual(BIBLIOTECA_VALORES_PADRAO);
+    expect(calcularDevolucao("2026-10-02", "2026-10-06", r.valores)).toEqual(
+      calcularDevolucao("2026-10-02", "2026-10-06"),
+    );
+    expect(calcularMulta(400, r.valores)).toBe(30);
+    expect(dataPrevistaSugerida("2026-09-25", r.valores.prazoPadraoDias)).toBe("2026-10-02");
+  });
+
+  it("outra unidade no mesmo ano também cai no padrão", () => {
+    expect(resolverValoresBiblioteca([registro], "belvedere", 2027).padrao).toBe(true);
+  });
+
+  it("com cadastro usa os valores da unidade/ano (multa, teto e prazo)", () => {
+    const r = resolverValoresBiblioteca([registro], "cec", 2027);
+    expect(r.padrao).toBe(false);
+    // sex 02/10 → ter 06/10: 2 dias úteis × R$3,50
+    expect(calcularDevolucao("2026-10-02", "2026-10-06", r.valores)).toEqual({
+      diasAtraso: 2,
+      multa: 7,
+    });
+    expect(calcularMulta(6, r.valores)).toBe(20); // 21 > teto 20
+    // sex 25/09 + 14 dias = sex 09/10 (dia útil)
+    expect(dataPrevistaSugerida("2026-09-25", r.valores.prazoPadraoDias)).toBe("2026-10-09");
+  });
+
+  it("valida os campos do cadastro", () => {
+    expect(valoresBibliotecaValidos(registro)).toBeNull();
+    expect(valoresBibliotecaValidos({ ...registro, multaPorDiaUtil: -1 })).toMatch(/dia útil/);
+    expect(valoresBibliotecaValidos({ ...registro, multaTeto: 1 })).toMatch(/menor que a multa/);
+    expect(valoresBibliotecaValidos({ ...registro, prazoPadraoDias: 0 })).toMatch(/Prazo/);
   });
 });

@@ -7,18 +7,20 @@ import {
   MaterialPedagogicoSeries,
   ValoresMatricula,
 } from "@/components/rematricula/MaterialPedagogicoSeries";
+import { ValoresBiblioteca } from "@/components/configuracoes/ValoresBiblioteca";
 import { ValoresColonia } from "@/components/configuracoes/ValoresColonia";
 import { usePermissions, useSchool, type AppModule } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { anosLetivosDiario } from "@/lib/rematricula.functions";
 
 // Cadastros de valor por unidade × ano letivo. Cada sub-aba segue a permissão
-// do módulo dono do dado (Matrícula, Diário financeiro, Colônia).
+// do módulo dono do dado (Matrícula, Diário financeiro, Colônia, Biblioteca).
 export function abasCadastrosGerais(canView: (m: AppModule) => boolean): string[] {
   const abas: string[] = [];
   if (canView("rematricula")) abas.push("material", "matricula");
   if (canView("diario_financeiro")) abas.push("diario");
   if (canView("colonia") || canView("colonia_financeiro")) abas.push("colonia");
+  if (canView("biblioteca")) abas.push("biblioteca");
   return abas;
 }
 
@@ -48,6 +50,9 @@ export function CadastrosGerais() {
         {abas.includes("colonia") && (
           <TabsTrigger value="colonia">Valor Colônia de Férias</TabsTrigger>
         )}
+        {abas.includes("biblioteca") && (
+          <TabsTrigger value="biblioteca">Valor Biblioteca</TabsTrigger>
+        )}
       </TabsList>
       {abas.includes("material") && (
         <TabsContent value="material" className="mt-4">
@@ -71,6 +76,11 @@ export function CadastrosGerais() {
       {abas.includes("colonia") && (
         <TabsContent value="colonia" className="mt-4">
           <ValoresColonia podeEditar={canEdit("colonia_financeiro")} />
+        </TabsContent>
+      )}
+      {abas.includes("biblioteca") && (
+        <TabsContent value="biblioteca" className="mt-4">
+          <ValoresBiblioteca podeEditar={canEdit("biblioteca")} />
         </TabsContent>
       )}
     </Tabs>

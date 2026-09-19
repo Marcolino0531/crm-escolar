@@ -12,6 +12,66 @@ export const MULTA_TETO = 30;
 // Prazo padrão sugerido para a devolução (dias corridos), ajustado ao dia útil.
 export const PRAZO_PADRAO_DIAS = 7;
 
+// Valores por unidade × ano letivo (Configurações → Cadastros Gerais → Valor
+// Biblioteca). Sem cadastro, valem as constantes acima.
+export type BibliotecaValores = {
+  multaPorDiaUtil: number;
+  multaTeto: number;
+  prazoPadraoDias: number;
+};
+
+export const BIBLIOTECA_VALORES_PADRAO: BibliotecaValores = {
+  multaPorDiaUtil: MULTA_POR_DIA_UTIL,
+  multaTeto: MULTA_TETO,
+  prazoPadraoDias: PRAZO_PADRAO_DIAS,
+};
+
+export interface BibliotecaValoresRegistro extends BibliotecaValores {
+  id: string;
+  schoolId: string;
+  unidade: string;
+  anoLetivo: number;
+  atualizadoEm: string;
+  atualizadoPor: string;
+}
+
+export type BibliotecaValoresResolvidos = {
+  valores: BibliotecaValores;
+  padrao: boolean;
+};
+
+// Valores de uma unidade/ano; cai no padrão quando não há cadastro.
+export function resolverValoresBiblioteca(
+  registros: readonly BibliotecaValoresRegistro[],
+  schoolId: string,
+  anoLetivo: number,
+): BibliotecaValoresResolvidos {
+  const r = registros.find((x) => x.schoolId === schoolId && x.anoLetivo === anoLetivo);
+  if (r) {
+    return {
+      valores: {
+        multaPorDiaUtil: r.multaPorDiaUtil,
+        multaTeto: r.multaTeto,
+        prazoPadraoDias: r.prazoPadraoDias,
+      },
+      padrao: false,
+    };
+  }
+  return { valores: BIBLIOTECA_VALORES_PADRAO, padrao: true };
+}
+
+export function valoresBibliotecaValidos(v: BibliotecaValores): string | null {
+  if (!Number.isFinite(v.multaPorDiaUtil) || v.multaPorDiaUtil < 0)
+    return "Multa por dia útil: informe um valor maior ou igual a zero.";
+  if (!Number.isFinite(v.multaTeto) || v.multaTeto < 0)
+    return "Teto da multa: informe um valor maior ou igual a zero.";
+  if (v.multaTeto < v.multaPorDiaUtil)
+    return "Teto da multa: não pode ser menor que a multa de um dia.";
+  if (!Number.isInteger(v.prazoPadraoDias) || v.prazoPadraoDias < 1 || v.prazoPadraoDias > 365)
+    return "Prazo padrão (dias): informe um inteiro entre 1 e 365.";
+  return null;
+}
+
 export type StatusExemplar = "disponivel" | "emprestado" | "manutencao" | "perdido";
 
 export const ROTULO_STATUS_EXEMPLAR: Record<StatusExemplar, string> = {
@@ -46,10 +106,14 @@ export function diasUteisAtraso(dataPrevista: string, dataDevolucao: string): nu
   return dias;
 }
 
-// R$2,00 por dia útil de atraso, teto de R$30,00 por empréstimo.
-export function calcularMulta(diasUteis: number): number {
+// Valor por dia útil de atraso, com teto por empréstimo (padrão R$2 / R$30).
+export function calcularMulta(
+  diasUteis: number,
+  valores: BibliotecaValores = BIBLIOTECA_VALORES_PADRAO,
+): number {
   if (diasUteis <= 0) return 0;
-  return Math.min(MULTA_TETO, diasUteis * MULTA_POR_DIA_UTIL);
+  const bruto = Math.round(diasUteis * valores.multaPorDiaUtil * 100) / 100;
+  return Math.min(valores.multaTeto, bruto);
 }
 
 export interface ResultadoDevolucao {
@@ -57,9 +121,13 @@ export interface ResultadoDevolucao {
   multa: number;
 }
 
-export function calcularDevolucao(dataPrevista: string, dataDevolucao: string): ResultadoDevolucao {
+export function calcularDevolucao(
+  dataPrevista: string,
+  dataDevolucao: string,
+  valores: BibliotecaValores = BIBLIOTECA_VALORES_PADRAO,
+): ResultadoDevolucao {
   const diasAtraso = diasUteisAtraso(dataPrevista, dataDevolucao);
-  return { diasAtraso, multa: calcularMulta(diasAtraso) };
+  return { diasAtraso, multa: calcularMulta(diasAtraso, valores) };
 }
 
 // Data prevista sugerida: hoje + prazo padrão, empurrada para o próximo dia
