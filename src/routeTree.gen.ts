@@ -14,10 +14,11 @@ import { Route as UniformesRouteImport } from './routes/uniformes'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as RhRouteImport } from './routes/rh'
 import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
-import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
-import { Route as OnboardingRouteImport } from './routes/onboarding'
-import { Route as PedagogicoRouteImport } from './routes/pedagogico'
 import { Route as ProfessorRouteImport } from './routes/professor'
+import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
+import { Route as PortalRouteImport } from './routes/portal'
+import { Route as PedagogicoRouteImport } from './routes/pedagogico'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MatriculasRouteImport } from './routes/matriculas'
 import { Route as MatriculaRouteImport } from './routes/matricula'
 import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
@@ -26,7 +27,6 @@ import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
 import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
 import { Route as EstoqueMaterialRouteImport } from './routes/estoque-material'
 import { Route as EsportesRouteImport } from './routes/esportes'
-import { Route as BibliotecaRouteImport } from './routes/biblioteca'
 import { Route as DocumentosRouteImport } from './routes/documentos'
 import { Route as DiarioRouteImport } from './routes/diario'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
@@ -36,6 +36,7 @@ import { Route as CobrancaAutomaticaRouteImport } from './routes/cobranca-automa
 import { Route as CobrancaRouteImport } from './routes/cobranca'
 import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
 import { Route as CantinaRouteImport } from './routes/cantina'
+import { Route as BibliotecaRouteImport } from './routes/biblioteca'
 import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
 import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AnalisesIaRouteImport } from './routes/analises-ia'
@@ -73,14 +74,19 @@ const RematriculaAcompanhamentoRoute =
     path: '/rematricula-acompanhamento',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ProfessorRoute = ProfessorRouteImport.update({
+  id: '/professor',
+  path: '/professor',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PortalCantinaRoute = PortalCantinaRouteImport.update({
   id: '/portal-cantina',
   path: '/portal-cantina',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OnboardingRoute = OnboardingRouteImport.update({
-  id: '/onboarding',
-  path: '/onboarding',
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PedagogicoRoute = PedagogicoRouteImport.update({
@@ -88,9 +94,9 @@ const PedagogicoRoute = PedagogicoRouteImport.update({
   path: '/pedagogico',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProfessorRoute = ProfessorRouteImport.update({
-  id: '/professor',
-  path: '/professor',
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MatriculasRoute = MatriculasRouteImport.update({
@@ -131,11 +137,6 @@ const EstoqueMaterialRoute = EstoqueMaterialRouteImport.update({
 const EsportesRoute = EsportesRouteImport.update({
   id: '/esportes',
   path: '/esportes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BibliotecaRoute = BibliotecaRouteImport.update({
-  id: '/biblioteca',
-  path: '/biblioteca',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocumentosRoute = DocumentosRouteImport.update({
@@ -181,6 +182,11 @@ const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
 const CantinaRoute = CantinaRouteImport.update({
   id: '/cantina',
   path: '/cantina',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BibliotecaRoute = BibliotecaRouteImport.update({
+  id: '/biblioteca',
+  path: '/biblioteca',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AtendimentoIaRoute = AtendimentoIaRouteImport.update({
@@ -241,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
@@ -251,7 +258,6 @@ export interface FileRoutesByFullPath {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
-  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -261,8 +267,9 @@ export interface FileRoutesByFullPath {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/pedagogico': typeof PedagogicoRoute
-  '/professor': typeof ProfessorRoute
+  '/portal': typeof PortalRoute
   '/portal-cantina': typeof PortalCantinaRoute
+  '/professor': typeof ProfessorRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -280,6 +287,7 @@ export interface FileRoutesByTo {
   '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
@@ -290,7 +298,6 @@ export interface FileRoutesByTo {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
-  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -300,8 +307,9 @@ export interface FileRoutesByTo {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/pedagogico': typeof PedagogicoRoute
-  '/professor': typeof ProfessorRoute
+  '/portal': typeof PortalRoute
   '/portal-cantina': typeof PortalCantinaRoute
+  '/professor': typeof ProfessorRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -320,6 +328,7 @@ export interface FileRoutesById {
   '/analises-ia': typeof AnalisesIaRoute
   '/atendimento': typeof AtendimentoRoute
   '/atendimento-ia': typeof AtendimentoIaRoute
+  '/biblioteca': typeof BibliotecaRoute
   '/cantina': typeof CantinaRoute
   '/cartao-credito': typeof CartaoCreditoRoute
   '/cobranca': typeof CobrancaRoute
@@ -330,7 +339,6 @@ export interface FileRoutesById {
   '/diario': typeof DiarioRoute
   '/documentos': typeof DocumentosRoute
   '/esportes': typeof EsportesRoute
-  '/biblioteca': typeof BibliotecaRoute
   '/estoque-material': typeof EstoqueMaterialRoute
   '/extrato-bancario': typeof ExtratoBancarioRoute
   '/fluxo-futuro': typeof FluxoFuturoRoute
@@ -340,8 +348,9 @@ export interface FileRoutesById {
   '/matriculas': typeof MatriculasRoute
   '/onboarding': typeof OnboardingRoute
   '/pedagogico': typeof PedagogicoRoute
-  '/professor': typeof ProfessorRoute
+  '/portal': typeof PortalRoute
   '/portal-cantina': typeof PortalCantinaRoute
+  '/professor': typeof ProfessorRoute
   '/rematricula-acompanhamento': typeof RematriculaAcompanhamentoRoute
   '/rh': typeof RhRoute
   '/tasks': typeof TasksRoute
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/biblioteca'
     | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
@@ -371,7 +381,6 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
-    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -381,8 +390,9 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/pedagogico'
-    | '/professor'
+    | '/portal'
     | '/portal-cantina'
+    | '/professor'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
@@ -400,6 +410,7 @@ export interface FileRouteTypes {
     | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/biblioteca'
     | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
@@ -410,7 +421,6 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
-    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -420,8 +430,9 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/pedagogico'
-    | '/professor'
+    | '/portal'
     | '/portal-cantina'
+    | '/professor'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
@@ -439,6 +450,7 @@ export interface FileRouteTypes {
     | '/analises-ia'
     | '/atendimento'
     | '/atendimento-ia'
+    | '/biblioteca'
     | '/cantina'
     | '/cartao-credito'
     | '/cobranca'
@@ -449,7 +461,6 @@ export interface FileRouteTypes {
     | '/diario'
     | '/documentos'
     | '/esportes'
-    | '/biblioteca'
     | '/estoque-material'
     | '/extrato-bancario'
     | '/fluxo-futuro'
@@ -459,8 +470,9 @@ export interface FileRouteTypes {
     | '/matriculas'
     | '/onboarding'
     | '/pedagogico'
-    | '/professor'
+    | '/portal'
     | '/portal-cantina'
+    | '/professor'
     | '/rematricula-acompanhamento'
     | '/rh'
     | '/tasks'
@@ -479,6 +491,7 @@ export interface RootRouteChildren {
   AnalisesIaRoute: typeof AnalisesIaRoute
   AtendimentoRoute: typeof AtendimentoRoute
   AtendimentoIaRoute: typeof AtendimentoIaRoute
+  BibliotecaRoute: typeof BibliotecaRoute
   CantinaRoute: typeof CantinaRoute
   CartaoCreditoRoute: typeof CartaoCreditoRoute
   CobrancaRoute: typeof CobrancaRoute
@@ -489,7 +502,6 @@ export interface RootRouteChildren {
   DiarioRoute: typeof DiarioRoute
   DocumentosRoute: typeof DocumentosRoute
   EsportesRoute: typeof EsportesRoute
-  BibliotecaRoute: typeof BibliotecaRoute
   EstoqueMaterialRoute: typeof EstoqueMaterialRoute
   ExtratoBancarioRoute: typeof ExtratoBancarioRoute
   FluxoFuturoRoute: typeof FluxoFuturoRoute
@@ -499,8 +511,9 @@ export interface RootRouteChildren {
   MatriculasRoute: typeof MatriculasRoute
   OnboardingRoute: typeof OnboardingRoute
   PedagogicoRoute: typeof PedagogicoRoute
-  ProfessorRoute: typeof ProfessorRoute
+  PortalRoute: typeof PortalRoute
   PortalCantinaRoute: typeof PortalCantinaRoute
+  ProfessorRoute: typeof ProfessorRoute
   RematriculaAcompanhamentoRoute: typeof RematriculaAcompanhamentoRoute
   RhRoute: typeof RhRoute
   TasksRoute: typeof TasksRoute
@@ -549,6 +562,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RematriculaAcompanhamentoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/professor': {
+      id: '/professor'
+      path: '/professor'
+      fullPath: '/professor'
+      preLoaderRoute: typeof ProfessorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/portal-cantina': {
       id: '/portal-cantina'
       path: '/portal-cantina'
@@ -556,11 +576,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalCantinaRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/onboarding': {
-      id: '/onboarding'
-      path: '/onboarding'
-      fullPath: '/onboarding'
-      preLoaderRoute: typeof OnboardingRouteImport
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pedagogico': {
@@ -570,11 +590,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PedagogicoRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/professor': {
-      id: '/professor'
-      path: '/professor'
-      fullPath: '/professor'
-      preLoaderRoute: typeof ProfessorRouteImport
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/matriculas': {
@@ -631,13 +651,6 @@ declare module '@tanstack/react-router' {
       path: '/esportes'
       fullPath: '/esportes'
       preLoaderRoute: typeof EsportesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/biblioteca': {
-      id: '/biblioteca'
-      path: '/biblioteca'
-      fullPath: '/biblioteca'
-      preLoaderRoute: typeof BibliotecaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/documentos': {
@@ -701,6 +714,13 @@ declare module '@tanstack/react-router' {
       path: '/cantina'
       fullPath: '/cantina'
       preLoaderRoute: typeof CantinaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/biblioteca': {
+      id: '/biblioteca'
+      path: '/biblioteca'
+      fullPath: '/biblioteca'
+      preLoaderRoute: typeof BibliotecaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/atendimento-ia': {
@@ -783,6 +803,7 @@ const rootRouteChildren: RootRouteChildren = {
   AnalisesIaRoute: AnalisesIaRoute,
   AtendimentoRoute: AtendimentoRoute,
   AtendimentoIaRoute: AtendimentoIaRoute,
+  BibliotecaRoute: BibliotecaRoute,
   CantinaRoute: CantinaRoute,
   CartaoCreditoRoute: CartaoCreditoRoute,
   CobrancaRoute: CobrancaRoute,
@@ -793,7 +814,6 @@ const rootRouteChildren: RootRouteChildren = {
   DiarioRoute: DiarioRoute,
   DocumentosRoute: DocumentosRoute,
   EsportesRoute: EsportesRoute,
-  BibliotecaRoute: BibliotecaRoute,
   EstoqueMaterialRoute: EstoqueMaterialRoute,
   ExtratoBancarioRoute: ExtratoBancarioRoute,
   FluxoFuturoRoute: FluxoFuturoRoute,
@@ -803,8 +823,9 @@ const rootRouteChildren: RootRouteChildren = {
   MatriculasRoute: MatriculasRoute,
   OnboardingRoute: OnboardingRoute,
   PedagogicoRoute: PedagogicoRoute,
-  ProfessorRoute: ProfessorRoute,
+  PortalRoute: PortalRoute,
   PortalCantinaRoute: PortalCantinaRoute,
+  ProfessorRoute: ProfessorRoute,
   RematriculaAcompanhamentoRoute: RematriculaAcompanhamentoRoute,
   RhRoute: RhRoute,
   TasksRoute: TasksRoute,

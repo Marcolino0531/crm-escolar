@@ -36,6 +36,7 @@ import {
 } from "@/lib/diario-sync";
 import { planejarSincronizacaoPedagogico, type MatriculaAnoRow } from "@/lib/pedagogico";
 import { selectAll } from "@/lib/supabase-paginate";
+import { agruparUnidadesPorCredencial } from "@/lib/portal-responsavel";
 
 export { escapeXml };
 
@@ -98,6 +99,20 @@ const SPONTE_UNIDADES: Record<string, UnidadeSponteConfig> = {
 };
 
 export const UNIDADES_SPONTE = Object.keys(SPONTE_UNIDADES);
+
+/** Uma entrada por credencial distinta (CEC e CEC Baby compartilham a base). */
+export function credenciaisDistintas(): {
+  unidades: string[];
+  codigoCliente: string;
+  token: string;
+}[] {
+  const saida: { unidades: string[]; codigoCliente: string; token: string }[] = [];
+  for (const { unidades } of agruparUnidadesPorCredencial(SPONTE_UNIDADES)) {
+    const creds = resolverCredenciais(unidades[0]);
+    if (creds) saida.push({ unidades, codigoCliente: creds.codigoCliente, token: creds.token });
+  }
+  return saida;
+}
 
 interface SponteCreds {
   codigoCliente: string;
@@ -1345,72 +1360,81 @@ export const buscarDadosCadastraisAluno = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
     }
-    const creds = resolverCredenciais(unidade);
-    if (!creds) return { aluno: null, responsaveis: [], error: "Unidade sem integração Sponte." };
-
-    let xmlAluno: string;
-    let xmlResp: string;
-    try {
-      [xmlAluno, xmlResp] = await Promise.all([
-        callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
-        callSponte("GetResponsaveis", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
-      ]);
-    } catch (e) {
-      return {
-        aluno: null,
-        responsaveis: [],
-        error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
-      };
-    }
-    const fault = checkFault(xmlAluno) || checkFault(xmlResp);
-    if (fault) return { aluno: null, responsaveis: [], error: fault };
-
-    const nodeAluno = parseXmlList(xmlAluno, "wsAluno").find((n) =>
-      parseXmlValue(n, "RetornoOperacao").startsWith("01"),
-    );
-    if (!nodeAluno) return { aluno: null, responsaveis: [], error: "Aluno não encontrado." };
-
-    const respFinanceiroId = parseXmlValue(nodeAluno, "ResponsavelFinanceiroID");
-    const aluno: AlunoCadastroSponte = {
-      alunoId,
-      nome: parseXmlValue(nodeAluno, "Nome"),
-      cpf: parseXmlValue(nodeAluno, "CPF") || parseXmlValue(nodeAluno, "CPFCNPJ"),
-      turma: parseXmlValue(nodeAluno, "TurmaAtual"),
-      matricula: parseXmlValue(nodeAluno, "NumeroMatricula"),
-      situacao: parseXmlValue(nodeAluno, "Situacao"),
-    };
-
-    const responsaveis: ResponsavelCadastroSponte[] = [];
-    for (const node of parseXmlList(xmlResp, "wsResponsavel")) {
-      if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
-      const responsavelId = parseXmlValue(node, "ResponsavelID");
-      const nome = parseXmlValue(node, "Nome");
-      if (!responsavelId || !nome) continue;
-      responsaveis.push({
-        responsavelId,
-        nome,
-        cpf: parseXmlValue(node, "CPFCNPJ") || parseXmlValue(node, "CPF"),
-        parentesco: parseXmlValue(node, "Parentesco"),
-        dataNascimento: paraYMD(parseXmlValue(node, "DataNascimento")) ?? "",
-        endereco: parseXmlValue(node, "Endereco"),
-        numero: parseXmlValue(node, "NumeroEndereco"),
-        bairro: parseXmlValue(node, "Bairro"),
-        cidade: parseXmlValue(node, "Cidade"),
-        uf: parseXmlValue(node, "Estado") || parseXmlValue(node, "UF"),
-        cep: parseXmlValue(node, "CEP"),
-        email: parseXmlValue(node, "Email"),
-        telefone: parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone"),
-        financeiro: responsavelId === respFinanceiroId,
-      });
-    }
-
-    // Responsável financeiro primeiro (escolha mais comum no recibo).
-    responsaveis.sort(
-      (a, b) => Number(b.financeiro) - Number(a.financeiro) || a.nome.localeCompare(b.nome),
-    );
-
-    return { aluno, responsaveis };
+    return coletarCadastroAluno(unidade, alunoId);
   });
+
+// Cadastro do aluno + responsáveis. Não checa acesso: quem chama autoriza
+// (tela interna por unidade; Portal do Responsável pela sessão).
+export async function coletarCadastroAluno(
+  unidade: string,
+  alunoId: string,
+): Promise<DadosCadastraisAlunoResult> {
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return { aluno: null, responsaveis: [], error: "Unidade sem integração Sponte." };
+
+  let xmlAluno: string;
+  let xmlResp: string;
+  try {
+    [xmlAluno, xmlResp] = await Promise.all([
+      callSponte("GetAlunos", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+      callSponte("GetResponsaveis", `AlunoID=${alunoId}`, creds.codigoCliente, creds.token),
+    ]);
+  } catch (e) {
+    return {
+      aluno: null,
+      responsaveis: [],
+      error: e instanceof Error ? e.message : "Falha ao consultar o Sponte.",
+    };
+  }
+  const fault = checkFault(xmlAluno) || checkFault(xmlResp);
+  if (fault) return { aluno: null, responsaveis: [], error: fault };
+
+  const nodeAluno = parseXmlList(xmlAluno, "wsAluno").find((n) =>
+    parseXmlValue(n, "RetornoOperacao").startsWith("01"),
+  );
+  if (!nodeAluno) return { aluno: null, responsaveis: [], error: "Aluno não encontrado." };
+
+  const respFinanceiroId = parseXmlValue(nodeAluno, "ResponsavelFinanceiroID");
+  const aluno: AlunoCadastroSponte = {
+    alunoId,
+    nome: parseXmlValue(nodeAluno, "Nome"),
+    cpf: parseXmlValue(nodeAluno, "CPF") || parseXmlValue(nodeAluno, "CPFCNPJ"),
+    turma: parseXmlValue(nodeAluno, "TurmaAtual"),
+    matricula: parseXmlValue(nodeAluno, "NumeroMatricula"),
+    situacao: parseXmlValue(nodeAluno, "Situacao"),
+  };
+
+  const responsaveis: ResponsavelCadastroSponte[] = [];
+  for (const node of parseXmlList(xmlResp, "wsResponsavel")) {
+    if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
+    const responsavelId = parseXmlValue(node, "ResponsavelID");
+    const nome = parseXmlValue(node, "Nome");
+    if (!responsavelId || !nome) continue;
+    responsaveis.push({
+      responsavelId,
+      nome,
+      cpf: parseXmlValue(node, "CPFCNPJ") || parseXmlValue(node, "CPF"),
+      parentesco: parseXmlValue(node, "Parentesco"),
+      dataNascimento: paraYMD(parseXmlValue(node, "DataNascimento")) ?? "",
+      endereco: parseXmlValue(node, "Endereco"),
+      numero: parseXmlValue(node, "NumeroEndereco"),
+      bairro: parseXmlValue(node, "Bairro"),
+      cidade: parseXmlValue(node, "Cidade"),
+      uf: parseXmlValue(node, "Estado") || parseXmlValue(node, "UF"),
+      cep: parseXmlValue(node, "CEP"),
+      email: parseXmlValue(node, "Email"),
+      telefone: parseXmlValue(node, "Celular") || parseXmlValue(node, "Telefone"),
+      financeiro: responsavelId === respFinanceiroId,
+    });
+  }
+
+  // Responsável financeiro primeiro (escolha mais comum no recibo).
+  responsaveis.sort(
+    (a, b) => Number(b.financeiro) - Number(a.financeiro) || a.nome.localeCompare(b.nome),
+  );
+
+  return { aluno, responsaveis };
+}
 
 export interface TituloSponteAluno {
   contaReceberID: string;
