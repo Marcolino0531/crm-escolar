@@ -41,6 +41,10 @@ import {
   listarAcessosProfessores,
   revogarAcessoProfessor,
 } from "@/lib/admin-users.functions";
+import { useProfessor } from "@/lib/use-professor";
+import { segmentoDaTurma } from "@/lib/pedagogico-notas";
+import { Avaliacoes } from "@/components/pedagogico/Avaliacoes";
+import { Pareceres } from "@/components/pedagogico/Pareceres";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -164,6 +168,7 @@ function PedagogicoPage() {
             <TabsTrigger value="atribuicoes">Atribuições</TabsTrigger>
             <TabsTrigger value="horarios">Grade de horários</TabsTrigger>
             <TabsTrigger value="calendario">Calendário letivo</TabsTrigger>
+            <TabsTrigger value="notas">Notas e pareceres</TabsTrigger>
             {isAdmin && <TabsTrigger value="acessos">Acesso de professores</TabsTrigger>}
           </TabsList>
           <TabsContent value="turmas">
@@ -180,6 +185,9 @@ function PedagogicoPage() {
           </TabsContent>
           <TabsContent value="calendario">
             <Calendario schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+          </TabsContent>
+          <TabsContent value="notas">
+            <NotasConsolidadas schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
           </TabsContent>
           {isAdmin && (
             <TabsContent value="acessos">
@@ -238,6 +246,120 @@ function useFuncionarios(schoolId: string) {
           .order("nome_completo"),
       ),
   });
+}
+
+// ─── Notas e pareceres (visão consolidada) ──────────────────────────────────
+
+function NotasConsolidadas({
+  schoolId,
+  ano,
+  podeEditar,
+}: {
+  schoolId: string;
+  ano: number;
+  podeEditar: boolean;
+}) {
+  const { professor } = useProfessor();
+  const { data: disciplinas = [] } = useDisciplinas(schoolId);
+  const { data: matriculas = [] } = useMatriculasAno(schoolId, ano);
+  const turmas = turmasDoAnoPedagogico(matriculas, schoolId, ano);
+  const [turmaSel, setTurmaSel] = useState("");
+  const turma = turmas.includes(turmaSel) ? turmaSel : turmas[0];
+  const [discSel, setDiscSel] = useState("");
+  const disc = disciplinas.find((d) => d.id === discSel) ?? disciplinas[0];
+
+  if (!turma)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nenhuma turma sincronizada em {ano}. Sincronize em "Turmas do ano".
+      </p>
+    );
+
+  const segmento = segmentoDaTurma(turma);
+  const alunos = matriculas
+    .filter((m) => m.turma_nome === turma)
+    .sort((a, b) => a.aluno_nome.localeCompare(b.aluno_nome, "pt-BR"));
+  // Atividades e pareceres exigem um funcionário responsável; usuário da
+  // secretaria sem vínculo em `funcionarios` só consulta e lança a recuperação final.
+  const lancadorId = professor?.id ?? null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm">Turma</Label>
+          <Select value={turma} onValueChange={setTurmaSel}>
+            <SelectTrigger className="w-72">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {turmas.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {segmento === "fundamental" && disc && (
+          <div className="flex items-center gap-2">
+            <Label className="text-sm">Disciplina</Label>
+            <Select value={disc.id} onValueChange={setDiscSel}>
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {disciplinas.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        <Badge variant="outline">
+          {segmento === "infantil"
+            ? "Infantil — parecer descritivo"
+            : segmento === "fundamental"
+              ? "Fundamental — notas por trimestre"
+              : "Segmento não identificado"}
+        </Badge>
+      </div>
+
+      {segmento === "infantil" ? (
+        <Pareceres
+          schoolId={schoolId}
+          ano={ano}
+          turmaNome={turma}
+          alunos={alunos}
+          professorId={lancadorId}
+          podeEditar={podeEditar && !!lancadorId}
+        />
+      ) : segmento === "fundamental" ? (
+        disc ? (
+          <Avaliacoes
+            schoolId={schoolId}
+            ano={ano}
+            turmaNome={turma}
+            disciplinaId={disc.id}
+            disciplinaNome={disc.nome}
+            alunos={alunos}
+            lancadorId={lancadorId}
+            podeEditar={podeEditar && !!lancadorId}
+            podeLancarRecuperacaoFinal={podeEditar}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">Cadastre disciplinas para esta unidade.</p>
+        )
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          A turma "{turma}" não casa com nenhuma série conhecida (Berçário a 9º Ano); não é possível
+          decidir entre notas e parecer.
+        </p>
+      )}
+    </div>
+  );
 }
 
 // ─── Turmas do ano ──────────────────────────────────────────────────────────
