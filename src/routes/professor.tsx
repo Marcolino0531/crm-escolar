@@ -31,6 +31,9 @@ import {
   type MatriculaAnoRow,
   type TipoCalendario,
 } from "@/lib/pedagogico";
+import { segmentoDaTurma } from "@/lib/pedagogico-notas";
+import { Avaliacoes } from "@/components/pedagogico/Avaliacoes";
+import { Pareceres } from "@/components/pedagogico/Pareceres";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -180,8 +183,18 @@ function ProfessorPage({ professorId, nome }: { professorId: string; nome: strin
         <Tabs defaultValue="diario">
           <TabsList>
             <TabsTrigger value="diario">Diário do dia</TabsTrigger>
+            <TabsTrigger value="avaliacoes">Avaliações e pareceres</TabsTrigger>
             <TabsTrigger value="turmas">Turmas</TabsTrigger>
           </TabsList>
+          <TabsContent value="avaliacoes">
+            <AvaliacoesProfessor
+              professorId={professorId}
+              ano={ano}
+              atribuicoes={atribuicoes}
+              alunos={alunos}
+              nomeDisc={nomeDisc}
+            />
+          </TabsContent>
           <TabsContent value="diario">
             <DiarioDoDia
               professorId={professorId}
@@ -252,6 +265,114 @@ function ProfessorPage({ professorId, nome }: { professorId: string; nome: strin
             </ul>
           </CardContent>
         </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── Avaliações (Fundamental) / Pareceres (Infantil) ───────────────────────
+
+function AvaliacoesProfessor({
+  professorId,
+  ano,
+  atribuicoes,
+  alunos,
+  nomeDisc,
+}: {
+  professorId: string;
+  ano: number;
+  atribuicoes: Atribuicao[];
+  alunos: AlunoRow[];
+  nomeDisc: Map<string, string>;
+}) {
+  const minhas = atribuicoes.filter((a) => a.professor_id === professorId && a.ano_letivo === ano);
+  const turmas = [...new Map(minhas.map((a) => [`${a.school_id}|${a.turma_nome}`, a])).values()];
+  const [turmaKey, setTurmaKey] = useState("");
+  const turma = turmas.find((t) => `${t.school_id}|${t.turma_nome}` === turmaKey) ?? turmas[0];
+  const discs = turma
+    ? minhas.filter((a) => a.school_id === turma.school_id && a.turma_nome === turma.turma_nome)
+    : [];
+  const [discId, setDiscId] = useState("");
+  const disc = discs.find((d) => d.disciplina_id === discId) ?? discs[0];
+  if (!turma) return null;
+
+  const segmento = segmentoDaTurma(turma.turma_nome);
+  const lista = alunos.filter(
+    (a) => a.school_id === turma.school_id && a.turma_nome === turma.turma_nome,
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm">Turma</Label>
+          <Select
+            value={`${turma.school_id}|${turma.turma_nome}`}
+            onValueChange={(v) => {
+              setTurmaKey(v);
+              setDiscId("");
+            }}
+          >
+            <SelectTrigger className="w-72">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {turmas.map((t) => (
+                <SelectItem
+                  key={`${t.school_id}|${t.turma_nome}`}
+                  value={`${t.school_id}|${t.turma_nome}`}
+                >
+                  {t.turma_nome}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {segmento === "fundamental" && disc && (
+          <div className="flex items-center gap-2">
+            <Label className="text-sm">Disciplina</Label>
+            <Select value={disc.disciplina_id} onValueChange={setDiscId}>
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {discs.map((d) => (
+                  <SelectItem key={d.disciplina_id} value={d.disciplina_id}>
+                    {nomeDisc.get(d.disciplina_id) ?? "Disciplina"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {segmento === "infantil" ? (
+        <Pareceres
+          schoolId={turma.school_id}
+          ano={ano}
+          turmaNome={turma.turma_nome}
+          alunos={lista}
+          professorId={professorId}
+          podeEditar
+        />
+      ) : segmento === "fundamental" && disc ? (
+        <Avaliacoes
+          schoolId={turma.school_id}
+          ano={ano}
+          turmaNome={turma.turma_nome}
+          disciplinaId={disc.disciplina_id}
+          disciplinaNome={nomeDisc.get(disc.disciplina_id) ?? "Disciplina"}
+          alunos={lista}
+          lancadorId={professorId}
+          podeEditar
+          podeLancarRecuperacaoFinal={false}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Não foi possível identificar o segmento (Infantil ou Fundamental) da turma "
+          {turma.turma_nome}". Procure a secretaria.
+        </p>
       )}
     </div>
   );
