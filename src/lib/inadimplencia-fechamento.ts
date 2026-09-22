@@ -308,8 +308,13 @@ export function mesesPendentes(
   return out;
 }
 
-/** O lembrete só aparece a partir do dia 02 (dia 01 ainda não há retorno bancário). */
-export function deveAvisarFechamento(hoje: Date): boolean {
+/**
+ * O mês recém-encerrado (anterior ao atual) só é cobrado a partir do dia 02
+ * (dia 01 ainda não há retorno bancário); meses pendentes mais antigos são
+ * cobrados em qualquer dia.
+ */
+export function deveAvisarFechamento(anoMes: string, hoje: Date): boolean {
+  if (anoMes !== mesAnterior(anoMesDeData(hoje))) return true;
   return hoje.getDate() >= DIA_INICIO_AVISO_FECHAMENTO;
 }
 
@@ -317,15 +322,16 @@ export function textoAvisoFechamento(anoMes: string, unidadeNome: string): strin
   return `Inadimplência de ${rotuloMes(anoMes)} ainda não fechada: ${unidadeNome}`;
 }
 
-/** Avisos do sino: um por unidade × mês pendente; vazio antes do dia 02. */
+/** Avisos do sino: um por unidade × mês pendente, aplicando a regra do dia 02 por mês. */
 export function avisosFechamentoPendente(
   pendentes: readonly MesPendente[],
   nomeUnidade: (schoolId: string) => string,
   hoje: Date,
 ): { school_id: string; ano_mes: string; texto: string }[] {
-  if (!deveAvisarFechamento(hoje)) return [];
-  return pendentes.map((p) => ({
-    ...p,
-    texto: textoAvisoFechamento(p.ano_mes, nomeUnidade(p.school_id)),
-  }));
+  return pendentes
+    .filter((p) => deveAvisarFechamento(p.ano_mes, hoje))
+    .map((p) => ({
+      ...p,
+      texto: textoAvisoFechamento(p.ano_mes, nomeUnidade(p.school_id)),
+    }));
 }

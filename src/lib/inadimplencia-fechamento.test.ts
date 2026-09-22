@@ -257,19 +257,31 @@ describe("meses fecháveis e pendentes", () => {
     ]);
   });
 
-  it("regra do dia 02: dia 01 sem aviso, dia 02 com aviso", () => {
-    expect(deveAvisarFechamento(new Date(2026, 9, 1))).toBe(false);
-    expect(deveAvisarFechamento(new Date(2026, 9, 2))).toBe(true);
-    const pend = [{ school_id: "belv", ano_mes: "2026-09" }];
+  it("regra do dia 02 só para o mês recém-encerrado; meses mais antigos sempre", () => {
+    const dia01 = new Date(2026, 10, 1); // 01/11/2026
+    const dia02 = new Date(2026, 10, 2);
+    expect(deveAvisarFechamento("2026-10", dia01)).toBe(false);
+    expect(deveAvisarFechamento("2026-09", dia01)).toBe(true);
+    expect(deveAvisarFechamento("2026-10", dia02)).toBe(true);
+    expect(deveAvisarFechamento("2026-09", dia02)).toBe(true);
+
+    const pend = [
+      { school_id: "belv", ano_mes: "2026-09" },
+      { school_id: "belv", ano_mes: "2026-10" },
+    ];
     const nome = () => "Núcleo Belvedere";
-    expect(avisosFechamentoPendente(pend, nome, new Date(2026, 9, 1))).toEqual([]);
-    expect(avisosFechamentoPendente(pend, nome, new Date(2026, 9, 2))).toEqual([
-      {
-        school_id: "belv",
-        ano_mes: "2026-09",
-        texto: "Inadimplência de Setembro/2026 ainda não fechada: Núcleo Belvedere",
-      },
-    ]);
+    const setembro = {
+      school_id: "belv",
+      ano_mes: "2026-09",
+      texto: "Inadimplência de Setembro/2026 ainda não fechada: Núcleo Belvedere",
+    };
+    const outubro = {
+      school_id: "belv",
+      ano_mes: "2026-10",
+      texto: "Inadimplência de Outubro/2026 ainda não fechada: Núcleo Belvedere",
+    };
+    expect(avisosFechamentoPendente(pend, nome, dia01)).toEqual([setembro]);
+    expect(avisosFechamentoPendente(pend, nome, dia02)).toEqual([setembro, outubro]);
   });
 
   it("texto do aviso", () => {

@@ -436,14 +436,13 @@ export function NotificationsBell() {
     ? avisoExtrasPendentes(new Date(), unidadesExtrasPendentes.length, unidadesExtrasPendentes)
     : null;
 
-  // --- Fechamento mensal da inadimplência pendente: só admin, a partir do dia
-  // 02 (Brasília), um aviso por unidade × mês. NÃO dismissível — some quando o
-  // fechamento é gravado. ---
+  // --- Fechamento mensal da inadimplência pendente: só admin, um aviso por
+  // unidade × mês; o mês recém-encerrado só a partir do dia 02 (Brasília),
+  // os mais antigos sempre. NÃO dismissível — some quando o fechamento é gravado. ---
   const mesesPendentesFn = useServerFn(mesesPendentesFechamento);
-  const dentroDaJanelaFechamento = deveAvisarFechamento(hojeEmBrasilia());
   const { data: fechamentosPendentes = [] } = useQuery({
     queryKey: [QUERY_PENDENTES_INADIMPLENCIA, today],
-    enabled: !!userId && isAdmin && dentroDaJanelaFechamento,
+    enabled: !!userId && isAdmin,
     refetchInterval: 60000,
     queryFn: async () => {
       try {
@@ -453,13 +452,15 @@ export function NotificationsBell() {
       }
     },
   });
-  const avisosFechamento =
-    isAdmin && dentroDaJanelaFechamento
-      ? fechamentosPendentes.map((p) => ({
+  const hojeBrasilia = hojeEmBrasilia();
+  const avisosFechamento = isAdmin
+    ? fechamentosPendentes
+        .filter((p) => deveAvisarFechamento(p.ano_mes, hojeBrasilia))
+        .map((p) => ({
           ...p,
           texto: textoAvisoFechamento(p.ano_mes, p.unidade),
         }))
-      : [];
+    : [];
 
   // --- Agenda notifications — geradas quando o usuário é incluído no campo
   // "Equipe" de uma reunião. Concluir (check ou reunião que passou) tira da
