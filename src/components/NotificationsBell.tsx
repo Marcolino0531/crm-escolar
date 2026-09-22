@@ -14,6 +14,7 @@ import {
   FileSpreadsheet,
   UtensilsCrossed,
   UserCheck,
+  Percent,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -64,6 +65,14 @@ import { isDiaUtil } from "@/lib/billing-schedule";
 import { useServerFn } from "@tanstack/react-start";
 import { unidadesComExtrasPendentes } from "@/lib/diario-faturamento.functions";
 import { avisoExtrasPendentes } from "@/lib/diario-aviso-faturamento";
+import { mesesPendentesFechamento } from "@/lib/inadimplencia-fechamento.functions";
+import {
+  deveAvisarFechamento,
+  textoAvisoFechamento,
+  type MesPendente,
+} from "@/lib/inadimplencia-fechamento";
+import { hojeEmBrasilia } from "@/lib/alunos-ativos";
+import { QUERY_PENDENTES_INADIMPLENCIA } from "@/components/dashboard/FechamentoInadimplenciaModal";
 import {
   avisosExperienciaPendentes,
   mensagemAvisoExperiencia,
@@ -163,7 +172,7 @@ function fmtBRL(n: number) {
 
 export function NotificationsBell() {
   const { session } = useAuth();
-  const { canView, canEdit } = usePermissions();
+  const { canView, canEdit, isAdmin } = usePermissions();
   const { schools, setSelected } = useSchool();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -426,6 +435,32 @@ export function NotificationsBell() {
   const avisoExtras = canDiarioFin
     ? avisoExtrasPendentes(new Date(), unidadesExtrasPendentes.length, unidadesExtrasPendentes)
     : null;
+
+  // --- Fechamento mensal da inadimplência pendente: só admin, um aviso por
+  // unidade × mês; o mês recém-encerrado só a partir do dia 02 (Brasília),
+  // os mais antigos sempre. NÃO dismissível — some quando o fechamento é gravado. ---
+  const mesesPendentesFn = useServerFn(mesesPendentesFechamento);
+  const { data: fechamentosPendentes = [] } = useQuery({
+    queryKey: [QUERY_PENDENTES_INADIMPLENCIA, today],
+    enabled: !!userId && isAdmin,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      try {
+        return await mesesPendentesFn({ data: undefined });
+      } catch {
+        return [] as (MesPendente & { unidade: string })[];
+      }
+    },
+  });
+  const hojeBrasilia = hojeEmBrasilia();
+  const avisosFechamento = isAdmin
+    ? fechamentosPendentes
+        .filter((p) => deveAvisarFechamento(p.ano_mes, hojeBrasilia))
+        .map((p) => ({
+          ...p,
+          texto: textoAvisoFechamento(p.ano_mes, p.unidade),
+        }))
+    : [];
 
   // --- Agenda notifications — geradas quando o usuário é incluído no campo
   // "Equipe" de uma reunião. Concluir (check ou reunião que passou) tira da
@@ -787,6 +822,7 @@ export function NotificationsBell() {
     recargasPendentes.length +
     availableReceivables.length +
     (avisoExtras ? 1 : 0) +
+    avisosFechamento.length +
     contadorNaoLidas(agendaTodas, agoraLocal) +
     coloniaPendencias.length +
     coloniaIncompletos.length +
@@ -969,6 +1005,33 @@ export function NotificationsBell() {
                   </div>
                 </div>
               </Link>
+            </div>
+          )}
+
+          {/* Dashboard: fechamento mensal da inadimplência pendente (admin, a partir do dia 02). */}
+          {avisosFechamento.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Inadimplência
+              </div>
+              {avisosFechamento.map((a) => (
+                <Link
+                  key={`${a.school_id}|${a.ano_mes}`}
+                  to="/"
+                  onClick={() => setSelected(a.school_id)}
+                  className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <div className="flex items-start gap-2">
+                    <Percent className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                    <div className="min-w-0">
+                      <div className="font-medium text-amber-600">{a.texto}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Grave o fechamento no Dashboard após o retorno bancário do dia 01.
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
             </div>
           )}
 
@@ -1324,6 +1387,7 @@ export function NotificationsBell() {
             recargasPendentes.length === 0 &&
             availableReceivables.length === 0 &&
             !avisoExtras &&
+            avisosFechamento.length === 0 &&
             coloniaPendencias.length === 0 &&
             coloniaIncompletos.length === 0 &&
             plannerDue.length === 0 &&
