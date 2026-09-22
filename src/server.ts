@@ -7,6 +7,7 @@ import { handleUniformesApi } from "./lib/uniformes.api";
 import { handleCobrancasApi } from "./lib/cobrancas.api";
 import { handleReceivablesApi } from "./lib/receivables.api";
 import { handleDiarioApi } from "./lib/diario.api";
+import { handleAlunosAtivosApi } from "./lib/alunos-ativos.functions";
 import { handleWhatsAppApi } from "./lib/whatsapp.api";
 import { handleAgendaApi } from "./lib/agenda.api";
 import { handleMatriculasApi } from "./lib/matriculas.api";
@@ -102,6 +103,10 @@ export default {
       // Sincronização diária do Diário do Aluno com o Sponte (Vercel Cron).
       const diarioResponse = await handleDiarioApi(request);
       if (diarioResponse) return diarioResponse;
+
+      // Fechamento mensal de alunos ativos por unidade (Vercel Cron, último dia do mês).
+      const alunosAtivosResponse = await handleAlunosAtivosApi(request);
+      if (alunosAtivosResponse) return alunosAtivosResponse;
 
       // Automação de Cobrança por WhatsApp (Cloud API da Meta): cron + webhook.
       const whatsappResponse = await handleWhatsAppApi(request);
