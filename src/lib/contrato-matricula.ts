@@ -109,7 +109,7 @@ export function resumoContratoGerado(campos: Partial<CamposContrato> | null): Re
 export const TEXTO_MATERIAL_SEM_ITENS = "Material Pedagógico da série";
 export const TEXTO_SEM_EXTRAS = "Não há serviços extras contratados nesta rematrícula.";
 
-/** Testemunha do contrato (cadastro global em Configurações). */
+/** Testemunha do contrato (Configurações → Testemunhas de Documentos, por unidade). */
 export interface TestemunhaContrato {
   nome: string;
   cpf: string;
@@ -585,7 +585,7 @@ export function validarContrato(input: MontarContratoInput): string[] {
   }
   if (input.testemunhas.length !== 2) {
     erros.push(
-      `Duas testemunhas ativas (Configurações → Testemunhas do contrato; há ${input.testemunhas.length})`,
+      `Duas testemunhas ativas da unidade (Configurações → Testemunhas de Documentos; há ${input.testemunhas.length})`,
     );
   }
   input.testemunhas.forEach((t, i) => {

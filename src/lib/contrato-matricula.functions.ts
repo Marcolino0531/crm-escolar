@@ -646,11 +646,12 @@ interface TestemunhaRow {
   celular: string;
 }
 
-/** As testemunhas ATIVAS do cadastro global, na ordem em que assinam. */
-async function testemunhasAtivas(): Promise<TestemunhaContrato[]> {
+/** As testemunhas ATIVAS da unidade do contrato, na ordem em que assinam. */
+async function testemunhasAtivas(unidade: string): Promise<TestemunhaContrato[]> {
   const { data, error } = await supabaseAdmin
     .from("contrato_testemunhas" as never)
     .select("nome, cpf, email, celular")
+    .eq("unidade", unidade)
     .eq("ativa", true)
     .order("ordem", { ascending: true });
   if (error) throw new Error(`Falha ao ler as testemunhas do contrato: ${error.message}`);
@@ -717,7 +718,7 @@ export async function montarPdfContrato(
       .maybeSingle<Omit<MatriculaRow, "aluno_id" | "ano_letivo">>(),
     buscarAlunoPorId(unidade, alunoId),
     colegioDaUnidade(unidade),
-    testemunhasAtivas(),
+    testemunhasAtivas(unidade),
   ]);
   if (!matricula.data && !matriculaInformada) {
     throw new Error("Matrícula não encontrada para este aluno.");

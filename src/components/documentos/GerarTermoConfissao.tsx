@@ -19,6 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { useTestemunhasDaUnidade } from "@/lib/testemunhas.hooks";
 import {
   blocoVazio,
   calcularParcelasBlocos,
@@ -145,6 +146,19 @@ export function GerarTermoConfissao() {
     setExtras([]);
     setMarcados([]);
   }, [unidade]);
+
+  // Testemunhas de Documentos da unidade entram pré-preenchidas e continuam
+  // editáveis no termo.
+  const { data: testemunhasCadastradas } = useTestemunhasDaUnidade(unidade || null);
+  useEffect(() => {
+    if (!testemunhasCadastradas) return;
+    setTestemunhas(
+      [0, 1].map((i) => {
+        const t = testemunhasCadastradas[i];
+        return { nome: t?.nome ?? "", cpf: t?.cpf ?? "" };
+      }),
+    );
+  }, [testemunhasCadastradas]);
 
   const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
   const colegioTermo = colegio ? paraColegioRecibo(colegio) : null;
