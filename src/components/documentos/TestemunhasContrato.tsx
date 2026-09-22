@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/app-context";
 import { formatarCelular, formatarCpf } from "@/lib/matricula-form";
@@ -14,6 +15,7 @@ import { formatarDataBR } from "@/lib/recibos";
 
 export type TestemunhaRow = {
   id: string;
+  unidade: string;
   ordem: number;
   nome: string;
   cpf: string;
@@ -32,15 +34,19 @@ const CAMPOS: { key: "nome" | "cpf" | "email" | "celular"; label: string; placeh
     { key: "celular", label: "Celular (assinatura na ZapSign)", placeholder: "(31) 99999-9999" },
   ];
 
-// Cadastro GLOBAL (vale para as três escolas) das duas testemunhas que assinam
-// todo Contrato de Matrícula na ZapSign. São duas linhas fixas, não uma lista.
+// Duas testemunhas por unidade (a do seletor global do topo) que assinam o
+// Contrato de Matrícula, o Termo de Confissão de Dívida e documentos avulsos da
+// ZapSign. São duas linhas fixas por unidade, não uma lista.
 export function TestemunhasContrato({ podeEditar }: { podeEditar: boolean }) {
+  const unidade = useUnidadeAtiva();
   const { data, isLoading } = useQuery({
-    queryKey: ["contrato_testemunhas"],
+    queryKey: ["contrato_testemunhas", unidade],
+    enabled: !!unidade,
     queryFn: async (): Promise<TestemunhaRow[]> => {
       const { data, error } = await supabase
         .from("contrato_testemunhas" as never)
-        .select("id, ordem, nome, cpf, email, celular, ativa, updated_at, updated_by_nome")
+        .select("id, unidade, ordem, nome, cpf, email, celular, ativa, updated_at, updated_by_nome")
+        .eq("unidade", unidade ?? "")
         .eq("ativa", true)
         .order("ordem", { ascending: true });
       if (error) throw error;
@@ -48,20 +54,30 @@ export function TestemunhasContrato({ podeEditar }: { podeEditar: boolean }) {
     },
   });
 
+  if (!unidade) return <SelecioneUnidade acao="O cadastro das testemunhas" />;
+
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-sm font-semibold">Testemunhas do Contrato de Matrícula</h3>
+        <h3 className="text-sm font-semibold">Testemunhas de Documentos</h3>
         <p className="text-xs text-muted-foreground">
-          As mesmas duas pessoas assinam digitalmente todos os contratos das três escolas. Sem
+          Duas pessoas por unidade que assinam digitalmente o Contrato de Matrícula, o Termo de
+          Confissão de Dívida e os documentos avulsos da aba ZapSign emitidos por {unidade}. Sem
           e-mail e celular preenchidos, o contrato não é gerado.
         </p>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-[11px] text-muted-foreground">Unidade</Label>
+        <div className="flex h-9 w-64 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+          {unidade}
+        </div>
       </div>
       {isLoading ? (
         <Skeleton className="h-40 w-full" />
       ) : (data ?? []).length === 0 ? (
         <p className="text-sm text-red-700">
-          Nenhuma testemunha ativa cadastrada (a migration de testemunhas ainda não foi aplicada).
+          Nenhuma testemunha ativa cadastrada para {unidade} (a migration de testemunhas por unidade
+          ainda não foi aplicada).
         </p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -105,7 +121,8 @@ function FormularioTestemunha({
     },
     onSuccess: () => {
       toast.success(`Testemunha ${testemunha.ordem} salva.`);
-      void qc.invalidateQueries({ queryKey: ["contrato_testemunhas"] });
+      void qc.invalidateQueries({ queryKey: ["contrato_testemunhas", testemunha.unidade] });
+      void qc.invalidateQueries({ queryKey: ["testemunhas_documentos", testemunha.unidade] });
     },
     onError: (e: Error) => toast.error(`Erro ao salvar: ${e.message}`),
   });

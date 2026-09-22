@@ -447,7 +447,7 @@ describe("validarContrato / numeroContrato / preencherModelo", () => {
     const e = entrada();
     e.testemunhas = [e.testemunhas[0]];
     expect(validarContrato(e)).toEqual([
-      "Duas testemunhas ativas (Configurações → Testemunhas do contrato; há 1)",
+      "Duas testemunhas ativas da unidade (Configurações → Testemunhas de Documentos; há 1)",
     ]);
   });
 });
