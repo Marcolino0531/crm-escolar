@@ -52,7 +52,7 @@ function corpo(doc: Doc, recibo: ReciboDocumento, y: number): number {
     `${a.matricula ? `, matrícula ${a.matricula}` : ""}${a.turma ? `, turma ${a.turma}` : ""}.`;
 
   const linhas = doc.splitTextToSize(texto, CONTEUDO) as string[];
-  doc.text(linhas, MARGEM, y);
+  doc.text(linhas, MARGEM, y, { align: "justify", maxWidth: CONTEUDO });
   y += linhas.length * 5 + 4;
 
   if (recibo.enderecoResponsavel) {

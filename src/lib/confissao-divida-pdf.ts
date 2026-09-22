@@ -57,8 +57,26 @@ function garantirEspaco(doc: Doc, y: number, necessario: number): number {
 }
 
 /**
- * Parágrafo com negrito nos termos jurídicos, quebrando linha na largura útil e
- * paginando sozinho. Devolve o Y após o parágrafo.
+ * Espaço entre palavras de uma linha justificada: o espaço normal mais a sobra
+ * da linha distribuída igualmente entre os intervalos. Última linha do parágrafo
+ * e linha de uma palavra só ficam com o espaço normal.
+ */
+export function espacoJustificado(
+  larguraLinha: number,
+  numPalavras: number,
+  espaco: number,
+  ultima: boolean,
+  largura = CONTEUDO,
+): number {
+  if (ultima || numPalavras < 2) return espaco;
+  const sobra = largura - larguraLinha;
+  if (sobra <= 0) return espaco;
+  return espaco + sobra / (numPalavras - 1);
+}
+
+/**
+ * Parágrafo justificado com negrito nos termos jurídicos, quebrando linha na
+ * largura útil e paginando sozinho. Devolve o Y após o parágrafo.
  */
 function paragrafoRico(doc: Doc, texto: string, y: number, alturaLinha = 5): number {
   const palavras = palavrasRicas(texto);
@@ -67,10 +85,11 @@ function paragrafoRico(doc: Doc, texto: string, y: number, alturaLinha = 5): num
   let linha: Segmento[][] = [];
   let larguraLinha = 0;
 
-  const imprimir = (atual: Segmento[][], yLinha: number) => {
+  const imprimir = (atual: Segmento[][], yLinha: number, largura: number, ultima: boolean) => {
+    const gap = espacoJustificado(largura, atual.length, espaco, ultima);
     let x = MARGEM;
     for (let i = 0; i < atual.length; i++) {
-      if (i > 0) x += espaco;
+      if (i > 0) x += gap;
       for (const seg of atual[i]) {
         doc.setFont("helvetica", seg.negrito ? "bold" : "normal");
         doc.text(seg.texto, x, yLinha);
@@ -84,7 +103,7 @@ function paragrafoRico(doc: Doc, texto: string, y: number, alturaLinha = 5): num
     const projetada = linha.length === 0 ? w : larguraLinha + espaco + w;
     if (projetada > CONTEUDO && linha.length > 0) {
       y = garantirEspaco(doc, y, alturaLinha);
-      imprimir(linha, y);
+      imprimir(linha, y, larguraLinha, false);
       y += alturaLinha;
       linha = [palavra];
       larguraLinha = w;
@@ -95,7 +114,7 @@ function paragrafoRico(doc: Doc, texto: string, y: number, alturaLinha = 5): num
   }
   if (linha.length) {
     y = garantirEspaco(doc, y, alturaLinha);
-    imprimir(linha, y);
+    imprimir(linha, y, larguraLinha, true);
     y += alturaLinha;
   }
   doc.setFont("helvetica", "normal");
