@@ -19,7 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
-import { useTestemunhasDaUnidade } from "@/lib/testemunhas.client";
+import { useTestemunhasDaUnidade } from "@/lib/testemunhas.hooks";
 import {
   blocoVazio,
   calcularParcelasBlocos,
