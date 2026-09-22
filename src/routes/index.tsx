@@ -61,6 +61,22 @@ import {
 } from "@/lib/dashboard-financeiro";
 import { faturamentoRecebido, type ReceitaExtrato } from "@/lib/inadimplencia-faturamento";
 import { useCatalogosFinanceiros } from "@/hooks/use-catalogos-financeiros";
+import { fetchHistoricoInadimplencia } from "@/lib/inadimplencia-fechamento.functions";
+import {
+  anoMesDeData,
+  formatarPercentual,
+  mesAnterior,
+  resumoMesPorUnidade,
+  rotuloMes,
+  serieInadimplencia,
+  ultimoFechamento,
+  type PontoInadimplencia,
+} from "@/lib/inadimplencia-fechamento";
+import { hojeEmBrasilia } from "@/lib/alunos-ativos";
+import {
+  FechamentoInadimplenciaModal,
+  QUERY_HISTORICO_INADIMPLENCIA,
+} from "@/components/dashboard/FechamentoInadimplenciaModal";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -115,8 +131,10 @@ function formatBRL(v: number): string {
 
 function MainDashboard() {
   const { selected, schools, schoolFilterIds } = useSchool();
+  const { isAdmin } = usePermissions();
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth());
   const [endDate, setEndDate] = useState<string>(lastDayOfMonth());
+  const [fechamentoAberto, setFechamentoAberto] = useState(false);
 
   const fetchAlunosFn = useServerFn(fetchAlunosAtivosAno);
   const fetchHistoricoFn = useServerFn(fetchAlunosAtivosHistorico);
@@ -255,6 +273,29 @@ function MainDashboard() {
   const anualCarregando = anualFetching || receitasAnoFetching;
   const anualErro = anual?.error ?? null;
   const anualParcialAte = anual?.parcialAte ?? null;
+
+  // ── Fechamento mensal da inadimplência (histórico gravado manualmente) ───
+  const fetchHistInadFn = useServerFn(fetchHistoricoInadimplencia);
+  const { data: historicoInad, isFetching: historicoInadFetching } = useQuery({
+    queryKey: [QUERY_HISTORICO_INADIMPLENCIA, schoolFilterIds],
+    staleTime: 5 * 60_000,
+    queryFn: () => fetchHistInadFn({ data: { schoolIds: schoolFilterIds ?? undefined } }),
+  });
+  const unidadesSponte = useMemo(
+    () => schools.filter((s) => UNIDADES_SPONTE.includes(s.name)),
+    [schools],
+  );
+  const serieInad = useMemo(() => {
+    const exigidas =
+      selected === "all" ? unidadesSponte.map((s) => s.id) : (schoolFilterIds ?? [selected]);
+    return serieInadimplencia(historicoInad ?? [], exigidas);
+  }, [historicoInad, selected, schoolFilterIds, unidadesSponte]);
+  const ultimoInad = ultimoFechamento(serieInad);
+  const mesAnteriorRef = mesAnterior(anoMesDeData(hojeEmBrasilia()));
+  const resumoMesAnterior =
+    selected === "all" && unidadesSponte.length > 0
+      ? resumoMesPorUnidade(historicoInad ?? [], mesAnteriorRef, unidadesSponte)
+      : null;
 
   // ── Fechamento mensal (Extrato Bancário) ─────────────────────────────────
   // Histórico completo da(s) unidade(s), igual ao Extrato Bancário: o Saldo
@@ -696,169 +737,326 @@ function MainDashboard() {
             financeiro do mês.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <MetricCard
-            size="sm"
-            label="Alunos Matriculados Ativos"
-            icon={GraduationCap}
-            tone="primary"
-            loading={alunosFetching}
-            value={alunosSemNenhumDado ? "—" : String(alunos?.total ?? 0)}
-            hint={alunosHint}
-          />
-          <MetricCard
-            size="sm"
-            label="Inadimplência Anual"
-            icon={Percent}
-            tone="warning"
-            loading={anualCarregando}
-            value={
-              !retroativoConfigurado
-                ? "—"
-                : anualErro
-                  ? "Erro"
-                  : `${indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
-            }
-            hint={
-              !retroativoConfigurado
-                ? "Faturamento retroativo (Jan–Mai) não informado"
-                : anualErro
-                  ? anualErro
-                  : anualParcialAte
-                    ? `Parcial: ${formatBRL(inadimplenteAno)} — boletos varridos só até ${anualParcialAte.split("-").reverse().join("/")}`
-                    : `${formatBRL(inadimplenteAno)} inadimplente no ano`
-            }
-          />
-          <MetricCard
-            size="sm"
-            label="Criação de Leads"
-            icon={UserPlus}
-            tone="primary"
-            loading={leadsFetching}
-            value={String(totalLeads)}
-            hint="Leads no período (Admissões)"
-          />
-          <MetricCard
-            size="sm"
-            label="Matrículas Efetivadas"
-            icon={CheckCircle2}
-            tone="success"
-            loading={leadsFetching}
-            value={String(matriculasEfetivadas)}
-            hint="Leads convertidas em matrícula"
-          />
-          <MetricCard
-            size="sm"
-            label="Conversão de Leads"
-            icon={CheckCircle2}
-            tone="primary"
-            loading={leadsFetching}
-            value={
-              totalLeads > 0 ? `${Math.round((matriculasEfetivadas / totalLeads) * 100)}%` : "—"
-            }
-            hint="Matrículas ÷ Leads do período"
-          />
-        </div>
 
-        {/* Evolução de Alunos Ativos (histórico mensal, só meses já capturados) */}
+        {/* Quadro 1 — Alunos Matriculados Ativos */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <LineChartIcon className="h-5 w-5 text-muted-foreground" />
-              Evolução de Alunos Ativos
-              <AjudaTooltip
-                texto="Total de alunos matriculados ativos no fechamento de cada mês (último dia), por unidade. Só aparecem os meses já capturados — sem estimativa retroativa."
-                rotulo="Ajuda: Evolução de Alunos Ativos"
-              />
+              <GraduationCap className="h-5 w-5 text-muted-foreground" />
+              Alunos Matriculados Ativos
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            {historicoFetching ? (
-              <Skeleton className="h-72 w-full" />
-            ) : serieAlunos.length === 0 ? (
-              <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                <AlertTriangle className="h-6 w-6" />
-                Nenhum fechamento mensal registrado ainda para esta unidade. O primeiro ponto entra
-                no último dia do mês.
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-1">
+              <MetricCard
+                size="sm"
+                flat
+                label="Alunos Matriculados Ativos"
+                icon={GraduationCap}
+                tone="primary"
+                loading={alunosFetching}
+                value={alunosSemNenhumDado ? "—" : String(alunos?.total ?? 0)}
+                hint={alunosHint}
+              />
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <LineChartIcon className="h-4 w-4 text-muted-foreground" />
+                Evolução de Alunos Ativos
+                <AjudaTooltip
+                  texto="Total de alunos matriculados ativos no fechamento de cada mês (último dia), por unidade. Só aparecem os meses já capturados — sem estimativa retroativa."
+                  rotulo="Ajuda: Evolução de Alunos Ativos"
+                />
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={serieAlunos} margin={{ top: 10, right: 24, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
-                  />
-                  <YAxis
-                    allowDecimals={false}
-                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
-                  />
-                  <Tooltip
-                    formatter={(v: number) => [`${v} aluno(s)`, "Ativos"]}
-                    contentStyle={{
-                      background: "var(--color-card)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 8,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="total"
-                    name="Alunos ativos"
-                    stroke="#6366f1"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+              {historicoFetching ? (
+                <Skeleton className="h-72 w-full" />
+              ) : serieAlunos.length === 0 ? (
+                <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <AlertTriangle className="h-6 w-6" />
+                  Nenhum fechamento mensal registrado ainda para esta unidade. O primeiro ponto
+                  entra no último dia do mês.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={serieAlunos} margin={{ top: 10, right: 24, left: 8, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
+                    />
+                    <Tooltip
+                      formatter={(v: number) => [`${v} aluno(s)`, "Ativos"]}
+                      contentStyle={{
+                        background: "var(--color-card)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 8,
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="total"
+                      name="Alunos ativos"
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </CardContent>
         </Card>
 
-        {/* Origem das Leads */}
+        {/* Quadro 2 — Inadimplência */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              <Percent className="h-5 w-5 text-muted-foreground" />
+              Inadimplência
+              {isAdmin && selected !== "all" && integracaoDisponivel && unidadeNome && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto"
+                  onClick={() => setFechamentoAberto(true)}
+                >
+                  Fechar inadimplência do mês
+                </Button>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricCard
+                size="sm"
+                flat
+                label="Inadimplência anual"
+                icon={Percent}
+                tone="warning"
+                loading={anualCarregando}
+                value={
+                  !retroativoConfigurado
+                    ? "—"
+                    : anualErro
+                      ? "Erro"
+                      : `${indiceAnual.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+                }
+                hint={
+                  !retroativoConfigurado
+                    ? "Faturamento retroativo (Jan–Mai) não informado"
+                    : anualErro
+                      ? anualErro
+                      : anualParcialAte
+                        ? `Parcial: ${formatBRL(inadimplenteAno)} — boletos varridos só até ${anualParcialAte.split("-").reverse().join("/")}`
+                        : `${formatBRL(inadimplenteAno)} inadimplente no ano`
+                }
+              />
+              <MetricCard
+                size="sm"
+                flat
+                label="Último mês fechado"
+                icon={Percent}
+                tone="warning"
+                loading={historicoInadFetching}
+                value={ultimoInad ? formatarPercentual(ultimoInad.mensal) : "—"}
+                hint={
+                  ultimoInad
+                    ? `${rotuloMes(ultimoInad.anoMes)}, ${formatBRL(ultimoInad.inadimplenteMes)} inadimplente`
+                    : "Nenhum mês fechado ainda"
+                }
+              />
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <LineChartIcon className="h-4 w-4 text-muted-foreground" />
+                Evolução da Inadimplência
+                <AjudaTooltip
+                  texto="Percentual de inadimplência (mensal e acumulada no ano) de cada mês fechado. Os pontos são gravados manualmente pelo botão de fechamento, após o retorno bancário do dia 01. Em Todas as Unidades só aparecem os meses fechados nas quatro unidades, com o percentual calculado sobre a soma dos valores em R$."
+                  rotulo="Ajuda: Evolução da Inadimplência"
+                />
+              </div>
+              {historicoInadFetching ? (
+                <Skeleton className="h-72 w-full" />
+              ) : serieInad.pontos.length === 0 ? (
+                <div className="flex h-72 flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                  <AlertTriangle className="h-6 w-6" />
+                  Nenhum fechamento de inadimplência registrado ainda. O primeiro ponto é gravado
+                  pelo botão de fechamento após o retorno bancário.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart
+                    data={serieInad.pontos}
+                    margin={{ top: 10, right: 24, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+                    />
+                    <YAxis
+                      tickFormatter={(v: number) => `${v.toLocaleString("pt-BR")}%`}
+                      tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
+                    />
+                    <Tooltip
+                      formatter={(
+                        v: number,
+                        name: string,
+                        item: { payload?: PontoInadimplencia },
+                      ) => {
+                        const p = item.payload;
+                        const reais =
+                          name === "Mensal" ? p?.inadimplenteMes : p?.inadimplenteAcumulado;
+                        return [
+                          `${formatarPercentual(v)}${reais != null ? ` — ${formatBRL(reais)} inadimplente` : ""}`,
+                          name,
+                        ];
+                      }}
+                      contentStyle={{
+                        background: "var(--color-card)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 8,
+                      }}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="mensal"
+                      name="Mensal"
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      connectNulls
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="acumulada"
+                      name="Acumulada no ano"
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+              {serieInad.parciais.length > 0 && (
+                <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                  {serieInad.parciais.map((p) => (
+                    <li key={p.anoMes}>
+                      Fechamento parcial: {rotuloMes(p.anoMes)} (faltam:{" "}
+                      {p.faltam
+                        .map((id) => schools.find((s) => s.id === id)?.name ?? id)
+                        .join(", ")}
+                      )
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {resumoMesAnterior && (
+                <p className="mt-2 text-xs text-muted-foreground">{resumoMesAnterior}</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Quadro 3 — Leads */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <PieChartIcon className="h-5 w-5 text-muted-foreground" />
-              Origem das Leads
+              <UserPlus className="h-5 w-5 text-muted-foreground" />
+              Leads
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            {leadsFetching ? (
-              <Skeleton className="h-72 w-full" />
-            ) : origemData.length === 0 ? (
-              <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                <AlertTriangle className="h-6 w-6" />
-                Nenhuma lead criada no período selecionado.
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricCard
+                size="sm"
+                flat
+                label="Criação de Leads"
+                icon={UserPlus}
+                tone="primary"
+                loading={leadsFetching}
+                value={String(totalLeads)}
+                hint="Leads no período (Admissões)"
+              />
+              <MetricCard
+                size="sm"
+                flat
+                label="Matrículas Efetivadas"
+                icon={CheckCircle2}
+                tone="success"
+                loading={leadsFetching}
+                value={String(matriculasEfetivadas)}
+                hint="Leads convertidas em matrícula"
+              />
+              <MetricCard
+                size="sm"
+                flat
+                label="Conversão de Leads"
+                icon={CheckCircle2}
+                tone="primary"
+                loading={leadsFetching}
+                value={
+                  totalLeads > 0 ? `${Math.round((matriculasEfetivadas / totalLeads) * 100)}%` : "—"
+                }
+                hint="Matrículas ÷ Leads do período"
+              />
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <PieChartIcon className="h-4 w-4 text-muted-foreground" />
+                Origem das Leads
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={origemData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={70}
-                    outerRadius={110}
-                    paddingAngle={2}
-                    label={(entry) => `${entry.name}: ${entry.value}`}
-                  >
-                    {origemData.map((entry, i) => (
-                      <Cell key={entry.name} fill={ORIGEM_CORES[i % ORIGEM_CORES.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: number, name: string) => [`${value} lead(s)`, name]}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+              {leadsFetching ? (
+                <Skeleton className="h-72 w-full" />
+              ) : origemData.length === 0 ? (
+                <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <AlertTriangle className="h-6 w-6" />
+                  Nenhuma lead criada no período selecionado.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={origemData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={70}
+                      outerRadius={110}
+                      paddingAngle={2}
+                      label={(entry) => `${entry.name}: ${entry.value}`}
+                    >
+                      {origemData.map((entry, i) => (
+                        <Cell key={entry.name} fill={ORIGEM_CORES[i % ORIGEM_CORES.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value: number, name: string) => [`${value} lead(s)`, name]}
+                    />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </CardContent>
         </Card>
       </section>
+
+      {unidadeNome && (
+        <FechamentoInadimplenciaModal
+          open={fechamentoAberto}
+          onOpenChange={setFechamentoAberto}
+          unidade={unidadeNome}
+        />
+      )}
     </div>
   );
 }
@@ -974,6 +1172,7 @@ function MetricCard({
   ajuda,
   loading,
   size = "md",
+  flat = false,
 }: {
   label: string;
   value: string;
@@ -983,42 +1182,48 @@ function MetricCard({
   ajuda?: string;
   loading?: boolean;
   size?: "sm" | "md" | "lg";
+  /** Dentro de um quadro: borda leve em vez de Card aninhado. */
+  flat?: boolean;
 }) {
   const toneClass = toneClasses(tone);
   const iconBox = size === "lg" ? "h-14 w-14" : size === "sm" ? "h-9 w-9" : "h-11 w-11";
   const iconSize = size === "lg" ? "h-7 w-7" : size === "sm" ? "h-4 w-4" : "h-5 w-5";
   const valueSize = size === "lg" ? "text-3xl" : size === "sm" ? "text-xl" : "text-2xl";
   const padding = size === "lg" ? "p-6" : size === "sm" ? "p-4" : "p-5";
+  const conteudo = (
+    <div className={`flex items-start gap-4 ${padding}`}>
+      <div
+        className={`flex ${iconBox} shrink-0 items-center justify-center rounded-lg ${toneClass}`}
+      >
+        <Icon className={iconSize} />
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
+          {label}
+          {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
+        </div>
+        {loading ? (
+          <Skeleton className={`mt-1 ${size === "lg" ? "h-10 w-40" : "h-7 w-24"}`} />
+        ) : (
+          <div className={`${valueSize} font-bold tabular-nums`}>{value}</div>
+        )}
+        {hint && (
+          <TooltipProvider>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</div>
+              </TooltipTrigger>
+              <TooltipContent>{hint}</TooltipContent>
+            </UITooltip>
+          </TooltipProvider>
+        )}
+      </div>
+    </div>
+  );
+  if (flat) return <div className="rounded-lg border bg-muted/30">{conteudo}</div>;
   return (
     <Card className={size === "lg" ? "shadow-md" : undefined}>
-      <CardContent className={`flex items-start gap-4 ${padding}`}>
-        <div
-          className={`flex ${iconBox} shrink-0 items-center justify-center rounded-lg ${toneClass}`}
-        >
-          <Icon className={iconSize} />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1 text-xs uppercase tracking-wide text-muted-foreground">
-            {label}
-            {ajuda && <AjudaTooltip texto={ajuda} rotulo={`Ajuda: ${label}`} />}
-          </div>
-          {loading ? (
-            <Skeleton className={`mt-1 ${size === "lg" ? "h-10 w-40" : "h-7 w-24"}`} />
-          ) : (
-            <div className={`${valueSize} font-bold tabular-nums`}>{value}</div>
-          )}
-          {hint && (
-            <TooltipProvider>
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</div>
-                </TooltipTrigger>
-                <TooltipContent>{hint}</TooltipContent>
-              </UITooltip>
-            </TooltipProvider>
-          )}
-        </div>
-      </CardContent>
+      <CardContent className="p-0">{conteudo}</CardContent>
     </Card>
   );
 }
