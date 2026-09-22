@@ -46,7 +46,9 @@ import {
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
-import { fetchSponteAlunosAtivos, fetchSponteInadimplenciaAnual } from "@/lib/sponte.functions";
+import { fetchSponteInadimplenciaAnual } from "@/lib/sponte.functions";
+import { fetchAlunosAtivosAno, fetchAlunosAtivosHistorico } from "@/lib/alunos-ativos.functions";
+import { serieHistorico } from "@/lib/alunos-ativos";
 import { saldosDoPeriodo, transacoesDoPeriodo } from "@/lib/extrato-lista";
 import { serieTotalPatrimonio, seriePatrimonioPorFundo } from "@/lib/fundos";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
@@ -116,7 +118,8 @@ function MainDashboard() {
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth());
   const [endDate, setEndDate] = useState<string>(lastDayOfMonth());
 
-  const fetchAlunosFn = useServerFn(fetchSponteAlunosAtivos);
+  const fetchAlunosFn = useServerFn(fetchAlunosAtivosAno);
+  const fetchHistoricoFn = useServerFn(fetchAlunosAtivosHistorico);
   const fetchAnualFn = useServerFn(fetchSponteInadimplenciaAnual);
 
   // Mapeia o seletor global de Unidade (school_id) para a unidade do Sponte.
@@ -126,13 +129,21 @@ function MainDashboard() {
   const schoolLabel =
     selected === "all" ? "Todas as Unidades" : (schools.find((s) => s.id === selected)?.name ?? "");
 
-  // ── Card 1: Alunos Matriculados Ativos (Sponte) ──────────────────────────
+  // ── Card 1: Alunos Matriculados Ativos (diario_matriculas_ano, ano vigente) ──
   const { data: alunos, isFetching: alunosFetching } = useQuery({
-    queryKey: ["dash-alunos-ativos", unidadeNome ?? "consolidado"],
-    enabled: integracaoDisponivel,
+    queryKey: ["dash-alunos-ativos", schoolFilterIds],
     staleTime: 5 * 60_000,
-    queryFn: () => fetchAlunosFn({ data: { unidade: unidadeNome ?? undefined } }),
+    queryFn: () => fetchAlunosFn({ data: { schoolIds: schoolFilterIds ?? undefined } }),
   });
+  const { data: historicoAlunos, isFetching: historicoFetching } = useQuery({
+    queryKey: ["dash-alunos-ativos-historico"],
+    staleTime: 5 * 60_000,
+    queryFn: () => fetchHistoricoFn({ data: undefined }),
+  });
+  const serieAlunos = useMemo(
+    () => serieHistorico(historicoAlunos ?? [], schoolFilterIds),
+    [historicoAlunos, schoolFilterIds],
+  );
 
   // ── Card 4/5/6: Leads do período (Admissões) ─────────────────────────────
   const { data: leads, isFetching: leadsFetching } = useQuery({
@@ -365,8 +376,15 @@ function MainDashboard() {
     setEndDate(lastDayOfMonth());
   }
 
-  const alunosErro = alunos?.error ?? null;
-  const alunosIndisponivel = alunos?.indisponivel ?? false;
+  const nomeEscola = (id: string) => schools.find((s) => s.id === id)?.name ?? id;
+  const alunosSemDados = alunos?.semDados ?? [];
+  // Nenhuma unidade do filtro tem vínculo sincronizado no ano: não há número a mostrar.
+  const alunosSemNenhumDado = !!alunos && Object.keys(alunos.porUnidade).length === 0;
+  const alunosHint = alunosSemNenhumDado
+    ? `Sem sincronização de ${alunos?.ano ?? ""} para esta unidade`
+    : alunosSemDados.length > 0
+      ? `Sem sincronização de ${alunos?.ano}: ${alunosSemDados.map(nomeEscola).join(", ")}`
+      : `Fonte: matrículas do ano letivo ${alunos?.ano ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -685,14 +703,8 @@ function MainDashboard() {
             icon={GraduationCap}
             tone="primary"
             loading={alunosFetching}
-            value={
-              !integracaoDisponivel || alunosIndisponivel
-                ? "—"
-                : alunosErro
-                  ? "Erro"
-                  : String(alunos?.total ?? 0)
-            }
-            hint={alunosErro ?? (alunosIndisponivel ? "Integração indisponível" : "Fonte: Sponte")}
+            value={alunosSemNenhumDado ? "—" : String(alunos?.total ?? 0)}
+            hint={alunosHint}
           />
           <MetricCard
             size="sm"
@@ -747,6 +759,61 @@ function MainDashboard() {
             hint="Matrículas ÷ Leads do período"
           />
         </div>
+
+        {/* Evolução de Alunos Ativos (histórico mensal, só meses já capturados) */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <LineChartIcon className="h-5 w-5 text-muted-foreground" />
+              Evolução de Alunos Ativos
+              <AjudaTooltip
+                texto="Total de alunos matriculados ativos no fechamento de cada mês (último dia), por unidade. Só aparecem os meses já capturados — sem estimativa retroativa."
+                rotulo="Ajuda: Evolução de Alunos Ativos"
+              />
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {historicoFetching ? (
+              <Skeleton className="h-72 w-full" />
+            ) : serieAlunos.length === 0 ? (
+              <div className="flex h-72 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-6 w-6" />
+                Nenhum fechamento mensal registrado ainda para esta unidade. O primeiro ponto entra
+                no último dia do mês.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={serieAlunos} margin={{ top: 10, right: 24, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    formatter={(v: number) => [`${v} aluno(s)`, "Ativos"]}
+                    contentStyle={{
+                      background: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    name="Alunos ativos"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Origem das Leads */}
         <Card>

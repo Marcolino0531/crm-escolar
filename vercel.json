@@ -17,6 +17,10 @@
       "schedule": "0 0 * * *"
     },
     {
+      "path": "/api/alunos-ativos/cron",
+      "schedule": "0 1 * * *"
+    },
+    {
       "path": "/api/diario/auditoria?unidade=CEC",
       "schedule": "0 5 * * *"
     },
