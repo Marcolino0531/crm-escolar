@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  UserPlus,
   Webhook,
 } from "lucide-react";
 
@@ -31,7 +32,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { useColegios } from "@/lib/colegios";
+import {
+  preencherSignatario,
+  signatariosCadastradosDaUnidade,
+  type SignatarioPreenchido,
+} from "@/lib/signatarios-cadastrados";
+import { useTestemunhasDaUnidade } from "@/lib/testemunhas.hooks";
 import { usePermissions } from "@/lib/app-context";
 import { pdfParaBase64 } from "@/lib/documento-pdf";
 import {
@@ -253,6 +267,46 @@ function CamposSignatario({
   );
 }
 
+function AdicionarCadastrado({
+  unidade,
+  onEscolher,
+  disabled,
+}: {
+  unidade: string | null;
+  onEscolher: (s: SignatarioPreenchido) => void;
+  disabled?: boolean;
+}) {
+  const colegios = useColegios();
+  const testemunhas = useTestemunhasDaUnidade(unidade);
+  const pessoas = unidade
+    ? signatariosCadastradosDaUnidade(unidade, colegios.data ?? [], testemunhas.data ?? [])
+    : [];
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || !unidade}>
+          <UserPlus className="mr-1 h-3.5 w-3.5" /> Adicionar cadastrado
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {pessoas.map((p) => (
+          <DropdownMenuItem
+            key={p.id}
+            disabled={!p.completo}
+            onSelect={() => onEscolher(preencherSignatario(p))}
+          >
+            <div className="flex flex-col">
+              <span className="text-xs text-muted-foreground">{p.papel}</span>
+              <span>{p.completo ? p.nome : "Não cadastrado(a) para esta unidade"}</span>
+            </div>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function mostrarLinks(links: { nome: string; signUrl: string }[]) {
   toast.success("Documento criado na ZapSign", {
     description: `${links.length} link(s) de assinatura disponível(is) na tabela abaixo.`,
@@ -328,6 +382,17 @@ function CriarViaPdf({ unidade, onCriado }: { unidade: string | null; onCriado: 
           >
             <Plus className="mr-1 h-3.5 w-3.5" /> Signatário
           </Button>
+          <AdicionarCadastrado
+            unidade={unidade}
+            disabled={signatarios.length >= 5}
+            onEscolher={(p) => {
+              const vazios = signatarios.filter((s) => !s.nome.trim() && !s.cpf.trim());
+              const alvo = vazios.length ? signatarios.indexOf(vazios[0]) : -1;
+              setSignatarios(
+                alvo >= 0 ? signatarios.map((s, j) => (j === alvo ? p : s)) : [...signatarios, p],
+              );
+            }}
+          />
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={ordem} onCheckedChange={(v) => setOrdem(v === true)} />
             Assinatura em ordem sequencial
@@ -457,6 +522,7 @@ function CriarViaTemplate({ unidade, onCriado }: { unidade: string | null; onCri
           )}
         </div>
         <CamposSignatario s={signatario} onChange={setSignatario} podeRemover={false} />
+        <AdicionarCadastrado unidade={unidade} onEscolher={setSignatario} />
         <div className="space-y-2">
           <Label className="text-xs">Campos dinâmicos (de → para)</Label>
           {campos.map((c, i) => (
