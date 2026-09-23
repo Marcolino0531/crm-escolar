@@ -49,7 +49,7 @@ const LOG = "[cobrança manual]";
 
 // ─── Permissões ──────────────────────────────────────────────────────────────
 
-async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
+export async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
   const { data, error } = await supabaseAdmin.rpc(
     (edicao ? "can_edit_module" : "can_view_module") as never,
     { _user_id: userId, _module: "financeiro_cobranca" } as never,
@@ -63,13 +63,13 @@ async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
   );
 }
 
-async function exigirUnidade(userId: string, unidade: string): Promise<void> {
+export async function exigirUnidade(userId: string, unidade: string): Promise<void> {
   const allowed = await allowedSponteUnidades(userId);
   if (allowed !== null && !allowed.includes(unidade))
     throw new Error("Sem permissão para esta unidade.");
 }
 
-function hojeYMD(): string {
+export function hojeYMD(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 }
 
@@ -90,7 +90,7 @@ function paraCaso(r: CasoRow): CasoCompleto {
   };
 }
 
-async function carregarCasoRow(casoId: string): Promise<CasoCompleto> {
+export async function carregarCasoRow(casoId: string): Promise<CasoCompleto> {
   const { data, error } = await supabaseAdmin
     .from("cobranca_casos" as never)
     .select(SELECT_CASO)
@@ -125,11 +125,11 @@ async function carregarAnexos(casoId: string): Promise<AnexoCaso[]> {
   return data ?? [];
 }
 
-function exigirAberto(caso: CasoCompleto): void {
+export function exigirAberto(caso: CasoCompleto): void {
   if (caso.status === "encerrado") throw new Error("Cobrança encerrada: somente leitura.");
 }
 
-async function arquivoExiste(path: string): Promise<boolean> {
+export async function arquivoExiste(path: string): Promise<boolean> {
   const barra = path.lastIndexOf("/");
   const pasta = barra === -1 ? "" : path.slice(0, barra);
   const nome = path.slice(barra + 1);
@@ -140,7 +140,7 @@ async function arquivoExiste(path: string): Promise<boolean> {
   return (data ?? []).some((f) => f.name === nome);
 }
 
-async function linkAssinado(path: string): Promise<string | null> {
+export async function linkAssinado(path: string): Promise<string | null> {
   const { data } = await supabaseAdmin.storage
     .from(BUCKET_COBRANCA)
     .createSignedUrl(path, VALIDADE_LINK);

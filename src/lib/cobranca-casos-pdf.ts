@@ -19,6 +19,15 @@ import {
   type EtapaCaso,
   type EventoTimeline,
 } from "@/lib/cobranca-casos";
+import {
+  labelTipoAcao,
+  labelTipoAndamento,
+  labelTipoRecebimento,
+  painelProcesso,
+  type AndamentoProcesso,
+  type ProcessoCaso,
+  type RecebimentoProcesso,
+} from "@/lib/cobranca-processos";
 import { cabecalhoTimbrado, CONTEUDO, LARGURA, MARGEM, type LogoRecibo } from "@/lib/documento-pdf";
 import type { NotificacaoDocumento } from "@/lib/notificacao-extrajudicial";
 import { dataPorExtenso, enderecoLinha, type ColegioRecibo } from "@/lib/recibos";
@@ -316,6 +325,12 @@ export interface DossieInput {
   anexos: readonly (AnexoCaso & { url: string | null })[];
   /** Prints das mensagens, na ordem das mensagens. */
   prints: readonly { titulo: string; url: string; tipo: string }[];
+  /** Processo judicial (PR 3), quando iniciado. */
+  processo?: ProcessoCaso | null;
+  andamentos?: readonly AndamentoProcesso[];
+  recebimentos?: readonly RecebimentoProcesso[];
+  /** Anexos de andamentos e recebimentos, em ordem de data. */
+  anexosProcesso?: readonly { titulo: string; url: string; tipo: string }[];
   colegio: ColegioRecibo | null;
   logo: LogoRecibo | null;
   geradoEm: string; // YYYY-MM-DD
@@ -407,8 +422,96 @@ async function capaETimeline(input: DossieInput): Promise<Uint8Array> {
     8.5,
   );
 
+  if (input.processo) {
+    const p = input.processo;
+    const andamentos = input.andamentos ?? [];
+    const recebimentos = input.recebimentos ?? [];
+    const painel = painelProcesso(p, recebimentos);
+    y += 8;
+    y = novaPaginaSeNecessario(doc, y, 60);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Processo judicial", MARGEM, y);
+    y += 6;
+    doc.setFontSize(10.5);
+    const dados = [
+      ["Tipo de ação", labelTipoAcao(p.tipo_acao)],
+      ["Número do processo", p.numero_processo ?? "sem número"],
+      ["Comarca / Vara", [p.comarca, p.vara].filter(Boolean).join(" / ") || "—"],
+      ["Ajuizamento", formatarDataBR(p.data_ajuizamento)],
+      ["Valor da causa", formatarBRL(painel.valorCausa)],
+      ["Total recebido", formatarBRL(painel.totalRecebido)],
+      [
+        "Saldo",
+        formatarBRL(painel.saldo) +
+          (painel.acimaDaCausa ? " (recebido acima do valor da causa)" : ""),
+      ],
+    ];
+    for (const [k, v] of dados) {
+      y = novaPaginaSeNecessario(doc, y, 8);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${k}:`, MARGEM, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(v, MARGEM + 50, y);
+      y += 5.5;
+    }
+    if (andamentos.length > 0) {
+      y += 4;
+      y = novaPaginaSeNecessario(doc, y, 20);
+      doc.setFont("helvetica", "bold");
+      doc.text("Andamentos", MARGEM, y);
+      y += 4;
+      doc.setFont("helvetica", "normal");
+      y = tabela(
+        doc,
+        y,
+        [
+          { titulo: "Data", x, largura: 22 },
+          { titulo: "Tipo", x: x + 22, largura: 34 },
+          { titulo: "Descrição", x: x + 56, largura: 70 },
+          { titulo: "Prazo / audiência", x: x + 126, largura: 48 },
+        ],
+        andamentos.map((a) => [
+          formatarDataBR(a.data),
+          labelTipoAndamento(a.tipo),
+          a.descricao ?? "",
+          a.prazo_data
+            ? `${formatarDataBR(a.prazo_data)}${a.prazo_descricao ? ` — ${a.prazo_descricao}` : ""}`
+            : "",
+        ]),
+        8.5,
+      );
+    }
+    if (recebimentos.length > 0) {
+      y += 4;
+      y = novaPaginaSeNecessario(doc, y, 20);
+      doc.setFont("helvetica", "bold");
+      doc.text("Valores recebidos", MARGEM, y);
+      y += 4;
+      doc.setFont("helvetica", "normal");
+      y = tabela(
+        doc,
+        y,
+        [
+          { titulo: "Data", x, largura: 22 },
+          { titulo: "Tipo", x: x + 22, largura: 36 },
+          { titulo: "Valor", x: x + 58, largura: 28, align: "right" },
+          { titulo: "Observação", x: x + 86, largura: 88 },
+        ],
+        recebimentos.map((r) => [
+          formatarDataBR(r.data),
+          labelTipoRecebimento(r.tipo),
+          formatarBRL(r.valor),
+          r.observacao ?? "",
+        ]),
+        8.5,
+      );
+    }
+  }
+
   const anexosOrdenados = input.anexos;
-  if (anexosOrdenados.length > 0 || input.prints.length > 0) {
+  const anexosProcesso = input.anexosProcesso ?? [];
+  if (anexosOrdenados.length > 0 || input.prints.length > 0 || anexosProcesso.length > 0) {
     y += 8;
     y = novaPaginaSeNecessario(doc, y, 30);
     doc.setFont("helvetica", "bold");
@@ -422,6 +525,11 @@ async function capaETimeline(input: DossieInput): Promise<Uint8Array> {
         String(input.prints.length + i + 1),
         a.nome_personalizado || LABEL_CATEGORIA[a.categoria],
         `${a.nome_arquivo} · ${formatarDataBR(a.created_at.slice(0, 10))}`,
+      ]),
+      ...anexosProcesso.map((p, i) => [
+        String(input.prints.length + anexosOrdenados.length + i + 1),
+        p.titulo,
+        "Processo judicial",
       ]),
     ];
     y = tabela(
@@ -502,6 +610,12 @@ export async function gerarDossie(input: DossieInput): Promise<Uint8Array> {
       subtitulo: `${a.nome_arquivo} · ${formatarDataBR(a.created_at.slice(0, 10))}`,
       url: a.url,
       tipo: a.tipo_arquivo,
+    })),
+    ...(input.anexosProcesso ?? []).map((p) => ({
+      titulo: p.titulo,
+      subtitulo: "Processo judicial",
+      url: p.url,
+      tipo: p.tipo,
     })),
   ];
 

@@ -15,6 +15,7 @@ import {
   UtensilsCrossed,
   UserCheck,
   Percent,
+  Scale,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -66,6 +67,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { unidadesComExtrasPendentes } from "@/lib/diario-faturamento.functions";
 import { avisoExtrasPendentes } from "@/lib/diario-aviso-faturamento";
 import { mesesPendentesFechamento } from "@/lib/inadimplencia-fechamento.functions";
+import { avisosPrazoCobranca, dispensarAvisoPrazo } from "@/lib/cobranca-processos.functions";
+import { textoAvisoPrazo, type AvisoPrazo } from "@/lib/cobranca-processos";
 import {
   deveAvisarFechamento,
   textoAvisoFechamento,
@@ -432,6 +435,28 @@ export function NotificationsBell() {
       }
     },
   });
+  // --- Cobrança: prazos e audiências dos processos (marcos 5/3/1 dias, Brasília),
+  // só para quem edita o módulo; cada marco é dispensável por usuário. ---
+  const avisosPrazoFn = useServerFn(avisosPrazoCobranca);
+  const dispensarPrazoFn = useServerFn(dispensarAvisoPrazo);
+  const { data: avisosPrazo = [] } = useQuery({
+    queryKey: ["cobranca_avisos_prazo", today],
+    enabled: !!userId && canCobranca,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      try {
+        return await avisosPrazoFn({ data: undefined });
+      } catch {
+        return [] as AvisoPrazo[];
+      }
+    },
+  });
+  const dispensarPrazo = useMutation({
+    mutationFn: (a: AvisoPrazo) =>
+      dispensarPrazoFn({ data: { andamentoId: a.andamentoId, marco: a.marco } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cobranca_avisos_prazo"] }),
+  });
+
   const hojeBrasilia = hojeEmBrasilia();
   const avisosFechamento = isAdmin
     ? fechamentosPendentes
@@ -810,6 +835,7 @@ export function NotificationsBell() {
     pendenciasCategoria.length +
     pendenciasFaturamento.length +
     avisosExperiencia.length +
+    avisosPrazo.length +
     (alertaCron ? 1 : 0);
 
   return (
@@ -1087,6 +1113,43 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* Cobrança: prazos e audiências de processos judiciais (5/3/1 dias), dispensáveis. */}
+          {canCobranca && avisosPrazo.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cobrança — Processos
+              </div>
+              {avisosPrazo.map((a) => (
+                <div
+                  key={`prazo-${a.andamentoId}-${a.marco}`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <Scale className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <Link
+                    to="/cobranca"
+                    search={{ unidade: a.unidade, caso: a.casoId }}
+                    className="min-w-0 flex-1 font-medium"
+                  >
+                    <div>{textoAvisoPrazo(a)}</div>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {a.unidade}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Dispensar aviso"
+                    aria-label="Dispensar aviso"
+                    onClick={() => dispensarPrazo.mutate(a)}
+                    disabled={dispensarPrazo.isPending}
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* RH: véspera dos 45 e 90 dias de experiência; some só ao marcar como lido. */}
           {canRh && avisosExperiencia.length > 0 && (
             <div>
@@ -1347,6 +1410,7 @@ export function NotificationsBell() {
             pendenciasCategoria.length === 0 &&
             pendenciasFaturamento.length === 0 &&
             avisosExperiencia.length === 0 &&
+            avisosPrazo.length === 0 &&
             !alertaCron && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
