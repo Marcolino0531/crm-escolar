@@ -19,15 +19,19 @@ import {
   montarDemonstrativo,
   nomeAnexoContrato,
   podeAlterarDataInicio,
+  podeCorrigirDataEnvio,
+  podeSubstituirPrint,
   prazoFinalNotificacao,
   responsavelKey,
   somenteDigitos,
   validarArquivoAnexo,
   validarDataEnvio,
+  validarDataEnvioCorrigida,
   validarDataInicio,
   validarEncerramento,
   validarRegistroMensagem,
   type AlteracaoDataInicio,
+  type SubstituicaoPrint,
   type AlunoCaso,
   type AnexoCaso,
   type CasoCompleto,
@@ -115,13 +119,13 @@ async function carregarMensagens(casoId: string): Promise<MensagemCaso[]> {
   const { data, error } = await supabaseAdmin
     .from("cobranca_mensagens" as never)
     .select(
-      "id, caso_id, ordem, data_prevista, data_envio, enviada_em, enviada_por, print_path, fora_da_data",
+      "id, caso_id, ordem, data_prevista, data_envio, enviada_em, enviada_por, print_path, fora_da_data, print_historico",
     )
     .eq("caso_id", casoId)
     .order("ordem")
     .returns<MensagemCaso[]>();
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return (data ?? []).map((m) => ({ ...m, print_historico: m.print_historico ?? [] }));
 }
 
 async function carregarAnexos(casoId: string): Promise<AnexoCaso[]> {
@@ -717,6 +721,79 @@ export const registrarMensagemCobranca = createServerFn({ method: "POST" })
       if (e2) throw new Error(e2.message);
     }
     return { status };
+  });
+
+const SubstituirPrintSchema = CasoIdSchema.extend({
+  ordem: z.number().int().min(1).max(TOTAL_MENSAGENS),
+  dataEnvio: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  print: ArquivoEnviadoSchema,
+});
+
+/**
+ * Troca o print de uma mensagem já registrada. A data do envio só muda com o
+ * caso em 'mensagens'; o arquivo antigo é apagado só depois de gravar.
+ */
+export const substituirPrintMensagem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => SubstituirPrintSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    const mensagens = await carregarMensagens(caso.id);
+    const alvo = mensagens.find((m) => m.ordem === data.ordem);
+    if (!alvo || !podeSubstituirPrint(caso, alvo) || !alvo.print_path)
+      throw new Error("Esta mensagem ainda não tem print registrado.");
+    if (!data.print.path.startsWith(`${caso.id}/`)) throw new Error("Caminho do print inválido.");
+    if (data.print.path === alvo.print_path) throw new Error("Escolha um arquivo novo.");
+    if (!(await arquivoExiste(data.print.path)))
+      throw new Error("Print não encontrado no armazenamento.");
+
+    const dataAtual = alvo.data_envio;
+    let novaData = dataAtual;
+    if (data.dataEnvio && data.dataEnvio !== dataAtual) {
+      if (!podeCorrigirDataEnvio(caso))
+        throw new Error(
+          "A data não pode ser alterada após a geração da notificação extrajudicial.",
+        );
+      const anterior = mensagens.find((m) => m.ordem === data.ordem - 1);
+      const seguinte = mensagens.find((m) => m.ordem === data.ordem + 1);
+      const invalida = validarDataEnvioCorrigida(
+        data.dataEnvio,
+        hojeYMD(),
+        caso.data_inicio,
+        anterior?.data_envio ?? null,
+        seguinte?.data_envio ?? null,
+      );
+      if (invalida) throw new Error(invalida);
+      novaData = data.dataEnvio;
+    }
+
+    const substituicao: SubstituicaoPrint = {
+      em: new Date().toISOString(),
+      por: context.userId,
+      data_envio_de: dataAtual,
+      data_envio_para: novaData,
+    };
+    const antigo = alvo.print_path;
+    const { error } = await supabaseAdmin
+      .from("cobranca_mensagens" as never)
+      .update({
+        print_path: data.print.path,
+        data_envio: novaData,
+        fora_da_data: novaData !== alvo.data_prevista,
+        print_historico: [...alvo.print_historico, substituicao],
+      } as never)
+      .eq("id", alvo.id);
+    if (error) throw new Error(error.message);
+
+    const { error: eRemove } = await supabaseAdmin.storage.from(BUCKET_COBRANCA).remove([antigo]);
+    if (eRemove) console.error(`${LOG} print antigo não removido (${antigo}): ${eRemove.message}`);
+    return { ok: true };
   });
 
 // ─── Notificação ─────────────────────────────────────────────────────────────
