@@ -22,6 +22,7 @@ const TELAS = [
   "src/routes/cobranca-automatica.tsx",
   "src/routes/upload.tsx",
   "src/routes/fundos.tsx",
+  "src/routes/agenda.tsx",
 ];
 
 const DIR_COBRANCA = "src/components/cobranca";
@@ -39,10 +40,6 @@ const EXCECOES_ROTAS = new Set([
   "portal.tsx", // pública (Portal do Responsável)
   "portal-cantina.tsx", // pública (recarga da cantina)
   "professor.tsx", // login contextual do professor (sem seletor do topo)
-  // Caso em dúvida (listado no PR A, NÃO alterado): o select de unidade do
-  // formulário "Nova reunião" é atributo do registro (a que colégio a reunião
-  // pertence), não filtro da tela; a lista da Agenda segue o topo.
-  "agenda.tsx",
 ]);
 
 // Ações de escrita cujo destino é a unidade: precisam bloquear em "Todas as
@@ -53,6 +50,7 @@ const ACOES_UNIDADE_UNICA = [
   "src/routes/upload.tsx",
   "src/routes/fundos.tsx",
   "src/routes/cobranca.tsx",
+  "src/routes/agenda.tsx",
 ];
 
 function fonte(caminho: string): string {
@@ -101,6 +99,13 @@ describe("telas padronizadas pelo seletor global", () => {
   it("o formulário de extrato não escolhe mais o colégio", () => {
     const src = fonte("src/routes/upload.tsx");
     expect(src).not.toMatch(/Colégio \(obrigatório\)/);
+    expect(src).toMatch(/escolaAtivaId\(selected, schools\)/);
+  });
+
+  it("a nova reunião da Agenda grava a unidade do topo, sem select", () => {
+    const src = fonte("src/routes/agenda.tsx");
+    expect(src).not.toMatch(/setUnitId\b/);
+    expect(src).not.toMatch(/<Select\b/);
     expect(src).toMatch(/escolaAtivaId\(selected, schools\)/);
   });
 
