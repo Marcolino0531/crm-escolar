@@ -412,6 +412,10 @@ export type TipoEvento =
   | "notificacao_enviada"
   | "fim_prazo"
   | "documento"
+  | "processo"
+  | "andamento"
+  | "prazo"
+  | "recebimento"
   | "encerramento";
 
 export interface EventoTimeline {
@@ -438,7 +442,7 @@ export interface CasoCompleto extends CasoResumo {
   observacao_encerramento: string | null;
 }
 
-function chaveOrdem(quando: string): string {
+export function chaveOrdem(quando: string): string {
   // Datas puras ordenam como fim do dia, para "fim do prazo" ficar depois dos
   // eventos daquele dia.
   return quando.length === 10 ? `${quando}T23:59:59.999Z` : quando;

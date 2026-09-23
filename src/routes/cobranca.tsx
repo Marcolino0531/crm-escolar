@@ -27,6 +27,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { HistoricoEnvios } from "@/components/cobranca/HistoricoEnvios";
 import { RegistrarEnvioNotificacao } from "@/components/cobranca/NotificacaoExtrajudicial";
+import { SecaoProcesso, useProcessoCaso } from "@/components/cobranca/Processo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -105,13 +106,29 @@ import {
   gerarPdfDemonstrativo,
   nomeArquivoSeguro,
 } from "@/lib/cobranca-casos-pdf";
+import {
+  eventosProcesso,
+  labelTipoAndamento,
+  labelTipoRecebimento,
+  mesclarTimeline,
+} from "@/lib/cobranca-processos";
+import type { ProcessoDetalhe } from "@/lib/cobranca-processos.functions";
 import { enviarArquivoCobranca } from "@/lib/cobranca-upload";
 import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
 import { displayPhoneBR } from "@/lib/phone";
 
+interface CobrancaSearch {
+  unidade?: string;
+  caso?: string;
+}
+
 export const Route = createFileRoute("/cobranca")({
   head: () => ({ meta: [{ title: "Cobrança — School Hub" }] }),
+  validateSearch: (s: Record<string, unknown>): CobrancaSearch => ({
+    unidade: typeof s.unidade === "string" && s.unidade ? s.unidade : undefined,
+    caso: typeof s.caso === "string" && s.caso ? s.caso : undefined,
+  }),
   component: CobrancaGate,
 });
 
@@ -157,7 +174,11 @@ function CobrancaPage() {
     () => UNIDADES_SPONTE.filter((u) => schools.some((s) => s.name === u)),
     [schools],
   );
-  const [aba, setAba] = useState<string>(unidades[0] ?? "historico");
+  const search = Route.useSearch();
+  const [aba, setAba] = useState<string>(search.unidade ?? unidades[0] ?? "historico");
+  useEffect(() => {
+    if (search.unidade && unidades.includes(search.unidade)) setAba(search.unidade);
+  }, [search.unidade, unidades]);
   useEffect(() => {
     if (aba !== "historico" && !unidades.includes(aba)) setAba(unidades[0] ?? "historico");
   }, [unidades, aba]);
@@ -191,7 +212,7 @@ function CobrancaPage() {
 
         {unidades.map((u) => (
           <TabsContent key={u} value={u}>
-            <AbaUnidade unidade={u} />
+            <AbaUnidade unidade={u} casoInicial={search.unidade === u ? search.caso : undefined} />
           </TabsContent>
         ))}
 
@@ -205,12 +226,15 @@ function CobrancaPage() {
 
 // ─── Aba de uma unidade: lista de casos + iniciar cobrança ──────────────────
 
-function AbaUnidade({ unidade }: { unidade: string }) {
+function AbaUnidade({ unidade, casoInicial }: { unidade: string; casoInicial?: string }) {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("financeiro_cobranca");
   const listar = useServerFn(listarCasosCobranca);
   const [filtro, setFiltro] = useState<EtapaCaso | "todas">("todas");
-  const [casoAberto, setCasoAberto] = useState<string | null>(null);
+  const [casoAberto, setCasoAberto] = useState<string | null>(casoInicial ?? null);
+  useEffect(() => {
+    if (casoInicial) setCasoAberto(casoInicial);
+  }, [casoInicial]);
   const [iniciando, setIniciando] = useState(false);
 
   const casos = useQuery({
@@ -602,9 +626,11 @@ function CasoView({
     queryKey: ["cobranca_caso", casoId],
     queryFn: () => carregar({ data: { casoId } }),
   });
+  const processoQ = useProcessoCaso(casoId);
   const recarregar = () => {
     void qc.invalidateQueries({ queryKey: ["cobranca_caso", casoId] });
     void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });
+    void qc.invalidateQueries({ queryKey: ["cobranca_processo", casoId] });
   };
 
   if (detalhe.isLoading) {
@@ -633,7 +659,11 @@ function CasoView({
   const etapa = etapaDoCaso(caso, d.hojeYMD);
   const encerrado = caso.status === "encerrado";
   const edita = podeEditar && !encerrado;
-  const timeline = montarTimeline(caso, mensagens, anexos, d.hojeYMD);
+  const proc = processoQ.data;
+  const timeline = mesclarTimeline(
+    montarTimeline(caso, mensagens, anexos, d.hojeYMD),
+    proc ? eventosProcesso(proc.processo, proc.andamentos, proc.recebimentos, d.hojeYMD) : [],
+  );
 
   return (
     <div className="space-y-6">
@@ -642,7 +672,7 @@ function CasoView({
           <ArrowLeft className="mr-2 h-4 w-4" /> Voltar à lista
         </Button>
         <div className="flex flex-wrap gap-2">
-          <BotaoDossie detalhe={d} etapa={etapa} />
+          <BotaoDossie detalhe={d} etapa={etapa} processo={proc ?? null} />
           {edita && <EncerrarDialog casoId={casoId} onDone={recarregar} />}
         </div>
       </div>
@@ -690,6 +720,14 @@ function CasoView({
           )}
           {(caso.status === "notificacao" || caso.status === "aguardando_prazo") && (
             <SecaoNotificacao detalhe={d} etapa={etapa} edita={edita} onDone={recarregar} />
+          )}
+          {(etapa === "pronto_processo" || caso.status === "processo" || encerrado) && (
+            <SecaoProcesso
+              caso={caso}
+              prontoParaProcesso={etapa === "pronto_processo"}
+              edita={edita}
+              onDone={recarregar}
+            />
           )}
           {caso.status !== "mensagens" && (
             <SecaoDocumentacao detalhe={d} edita={edita} onDone={recarregar} />
@@ -1154,7 +1192,13 @@ function GerarDemonstrativo({ detalhe, onDone }: { detalhe: CasoDetalhe; onDone:
       const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
       const enviado = await enviarArquivoCobranca(assinar, caso.id, blob, nome);
       await registrarAnexo({
-        data: { casoId: caso.id, categoria: "demonstrativo", arquivo: enviado, origem: "gerado" },
+        data: {
+          casoId: caso.id,
+          categoria: "demonstrativo",
+          arquivo: enviado,
+          origem: "gerado",
+          nomePersonalizado: `Demonstrativo em ${formatarDataBR(dataBase)} — total ${formatarBRL(atual.demonstrativo.total)}`,
+        },
       });
       baixarBytes(bytes, nome);
     },
@@ -1374,14 +1418,52 @@ function tipoPorNome(path: string): string {
   return "application/octet-stream";
 }
 
-function BotaoDossie({ detalhe, etapa }: { detalhe: CasoDetalhe; etapa: EtapaCaso }) {
+function BotaoDossie({
+  detalhe,
+  etapa,
+  processo,
+}: {
+  detalhe: CasoDetalhe;
+  etapa: EtapaCaso;
+  processo: ProcessoDetalhe | null;
+}) {
   const { data: colegios = [] } = useColegios();
   const gerar = useMutation({
     mutationFn: async () => {
       const { caso, mensagens, anexos } = detalhe;
       const row = colegios.find((c) => c.unidade === caso.unidade) ?? null;
       const logo = row ? await carregarLogoDoColegio(row.logo_path ?? null) : null;
-      const timeline = montarTimeline(caso, mensagens, anexos, detalhe.hojeYMD);
+      const timeline = mesclarTimeline(
+        montarTimeline(caso, mensagens, anexos, detalhe.hojeYMD),
+        processo
+          ? eventosProcesso(
+              processo.processo,
+              processo.andamentos,
+              processo.recebimentos,
+              detalhe.hojeYMD,
+            )
+          : [],
+      );
+      const anexosProcesso = processo
+        ? [
+            ...processo.andamentos
+              .filter((a) => a.anexo_url && a.anexo_path)
+              .map((a) => ({
+                titulo: `Andamento ${formatarDataBR(a.data)} — ${labelTipoAndamento(a.tipo)}`,
+                url: a.anexo_url!,
+                tipo: tipoPorNome(a.anexo_path!),
+                quando: a.data,
+              })),
+            ...processo.recebimentos
+              .filter((r) => r.anexo_url && r.anexo_path)
+              .map((r) => ({
+                titulo: `Recebimento ${formatarDataBR(r.data)} — ${labelTipoRecebimento(r.tipo)} ${formatarBRL(r.valor)}`,
+                url: r.anexo_url!,
+                tipo: tipoPorNome(r.anexo_path!),
+                quando: r.data,
+              })),
+          ].sort((a, b) => a.quando.localeCompare(b.quando))
+        : [];
       const prints = [...mensagens]
         .sort((a, b) => a.ordem - b.ordem)
         .filter((m) => m.print_url && m.print_path)
@@ -1396,6 +1478,10 @@ function BotaoDossie({ detalhe, etapa }: { detalhe: CasoDetalhe; etapa: EtapaCas
         timeline,
         anexos: [...anexos].sort((a, b) => a.created_at.localeCompare(b.created_at)),
         prints,
+        processo: processo?.processo ?? null,
+        andamentos: processo?.andamentos ?? [],
+        recebimentos: processo?.recebimentos ?? [],
+        anexosProcesso,
         colegio: row ? paraColegioRecibo(row) : null,
         logo,
         geradoEm: hojeYMD(),
