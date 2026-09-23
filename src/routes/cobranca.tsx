@@ -1,29 +1,45 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
-  HandCoins,
-  RefreshCw,
+  AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   Clock,
-  Users,
-  MessageCircle,
-  Gavel,
+  Download,
   FileText,
-  CalendarCheck,
-  AlertTriangle,
+  Gavel,
+  HandCoins,
   History,
-  Send,
-  Inbox,
+  Loader2,
+  MessageCircle,
+  Paperclip,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  XCircle,
 } from "lucide-react";
-import { useSchool, usePermissions, useAuth } from "@/lib/app-context";
-import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
+import { HistoricoEnvios } from "@/components/cobranca/HistoricoEnvios";
+import { RegistrarEnvioNotificacao } from "@/components/cobranca/NotificacaoExtrajudicial";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -31,7 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -40,15 +56,59 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { supabase } from "@/integrations/supabase/client";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  fetchSponteInadimplencia,
-  fetchResponsavelCobranca,
-  type PendenciaAgrupada,
-  type ResponsavelCobranca,
-} from "@/lib/sponte.functions";
-import { parseISODateLocal, formatDateBR, monthKeyFromISO, todayISOLocal } from "@/lib/date-utils";
-import { toWhatsAppNumber, displayPhoneBR } from "@/lib/phone";
+  CHECKLIST_DOCUMENTACAO,
+  ETAPAS_FILTRO,
+  LABEL_CATEGORIA,
+  MOTIVOS_ENCERRAMENTO,
+  NOTA_REGRA_CALCULO,
+  TIPOS_ANEXO_ACEITOS,
+  TOTAL_MENSAGENS,
+  diasRestantesPrazo,
+  enderecoResponsavelLinha,
+  etapaDoCaso,
+  formatarBRL,
+  formatarCpf,
+  formatarDataBR,
+  labelEtapa,
+  montarTimeline,
+  proximaAcao,
+  validarEncerramento,
+  validarRegistroMensagem,
+  type CategoriaAnexo,
+  type DemonstrativoDebito,
+  type EtapaCaso,
+} from "@/lib/cobranca-casos";
+import {
+  assinarUploadCobranca,
+  carregarCasoCobranca,
+  copiarDocumentosMatricula,
+  debitoAtualCaso,
+  documentosMatriculaDoCaso,
+  encerrarCobranca,
+  iniciarCobranca,
+  listarCasosCobranca,
+  marcarDocumentacaoCobranca,
+  prepararCobranca,
+  registrarAnexoCobranca,
+  registrarMensagemCobranca,
+  removerAnexoCobranca,
+  type CasoDetalhe,
+  type CasoLista,
+  type PreviaCobranca,
+} from "@/lib/cobranca-casos.functions";
+import {
+  baixarBytes,
+  gerarDossie,
+  gerarPdfDemonstrativo,
+  nomeArquivoSeguro,
+} from "@/lib/cobranca-casos-pdf";
+import { enviarArquivoCobranca } from "@/lib/cobranca-upload";
+import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
+import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
+import { displayPhoneBR } from "@/lib/phone";
 
 export const Route = createFileRoute("/cobranca")({
   head: () => ({ meta: [{ title: "Cobrança — School Hub" }] }),
@@ -67,340 +127,73 @@ function CobrancaGate() {
 }
 
 const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
+const ACCEPT_ANEXO = TIPOS_ANEXO_ACEITOS.join(",");
 
-// Régua de cobrança: primeiro alerta em D+2 (poupa o D+1 para o arquivo retorno),
-// depois a cada 2 dias até D+60. Após D+60 a régua regular é interrompida e o
-// caso migra para a fase extrajudicial (pré-judicial).
-const TICK_INICIAL = 2;
-const TICK_FINAL = 60;
-
-function formatarMoeda(v: number): string {
-  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function hojeYMD(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 }
 
-function vencToYMD(v: string): string {
-  if (!v) return "";
-  if (v.includes("/")) {
-    const [d, m, y] = v.split("/");
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
-  }
-  return v.slice(0, 10);
+function formatarDataHora(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function diasDeAtraso(vencYMD: string, hojeYMD: string): number {
-  const a = parseISODateLocal(vencYMD);
-  const b = parseISODateLocal(hojeYMD);
-  if (!a || !b) return 0;
-  return Math.floor((b.getTime() - a.getTime()) / 86_400_000);
+function mensagemErro(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
-
-// Dias do ciclo já "vencidos" (deveriam ter sido cobrados) dado o atraso atual.
-function ticksDevidos(diasAtraso: number): number[] {
-  const ticks: number[] = [];
-  for (let d = TICK_INICIAL; d <= Math.min(diasAtraso, TICK_FINAL); d += 2) ticks.push(d);
-  return ticks;
-}
-
-// Todos os marcos do ciclo (2..60) para desenhar a linha do tempo completa.
-const TODOS_TICKS: number[] = (() => {
-  const arr: number[] = [];
-  for (let d = TICK_INICIAL; d <= TICK_FINAL; d += 2) arr.push(d);
-  return arr;
-})();
-
-function iniciais(nome: string): string {
-  const parts = nome.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-type EnvioRow = {
-  perfil_key: string;
-  competencia: string;
-  tick_dia: number;
-  canal: string;
-};
-
-type PerfilCobranca = {
-  perfilKey: string;
-  nomeResponsavel: string;
-  telefone: string;
-  unidade: string;
-  alunos: string[];
-  alunoIdPrincipal: string;
-  boletos: PendenciaAgrupada[];
-  valorTotal: number;
-  maxDiasAtraso: number;
-  competencia: string; // YYYY-MM-01 do boleto mais atrasado
-};
 
 function CobrancaPage() {
-  const { selected, schools } = useSchool();
-  const { session } = useAuth();
-  const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_cobranca");
-  const qc = useQueryClient();
-  const fetchFn = useServerFn(fetchSponteInadimplencia);
-  const fetchRespFn = useServerFn(fetchResponsavelCobranca);
-
-  const hojeYMD = todayISOLocal();
-  const competenciaAtual = monthKeyFromISO(hojeYMD);
-
-  // Janela de busca: ANO CORRENTE (01/01 → hoje). Visão total de quem está
-  // devendo no ano — inclui casos de longo atraso (30/60/90+ dias), não só os
-  // recentes. A busca anual é mais lenta no Sponte, então a UI usa skeleton.
-  const janela = useMemo(() => {
-    const fim = parseISODateLocal(hojeYMD)!;
-    return { inicio: `${fim.getFullYear()}-01-01`, fim: hojeYMD };
-  }, [hojeYMD]);
-
-  const unidadeNome =
-    selected === "all" ? null : (schools.find((s) => s.id === selected)?.name ?? null);
-  const integracaoDisponivel = unidadeNome === null || UNIDADES_SPONTE.includes(unidadeNome);
-
-  const { data, isFetching, refetch } = useQuery({
-    queryKey: ["cobranca-sponte", janela.inicio, janela.fim, unidadeNome ?? "consolidado"],
-    enabled: integracaoDisponivel,
-    staleTime: 60_000,
-    queryFn: () =>
-      fetchFn({
-        data: { dataInicio: janela.inicio, dataFim: janela.fim, unidade: unidadeNome ?? undefined },
-      }),
-  });
-
-  const serverError = data?.error ?? null;
-
-  // ── Perfis de cobrança (agrupados por Responsável Financeiro) ──────────────
-  const perfis = useMemo<PerfilCobranca[]>(() => {
-    const pend = (data?.pendencias ?? []).filter((p) => {
-      const venc = vencToYMD(p.vencimento);
-      return venc && venc < hojeYMD; // somente vencidos
-    });
-    const map = new Map<string, PerfilCobranca>();
-    for (const p of pend) {
-      const unidade = p.unidade ?? "—";
-      const key = `${unidade}::${p.nomeResponsavel}`;
-      const venc = vencToYMD(p.vencimento);
-      const atraso = diasDeAtraso(venc, hojeYMD);
-      const existing = map.get(key);
-      if (!existing) {
-        map.set(key, {
-          perfilKey: key,
-          nomeResponsavel: p.nomeResponsavel,
-          telefone: p.telefone,
-          unidade,
-          alunos: [p.nomeAluno].filter(Boolean),
-          alunoIdPrincipal: p.alunoId,
-          boletos: [p],
-          valorTotal: p.valorTotalBoleto,
-          maxDiasAtraso: atraso,
-          competencia: monthKeyFromISO(venc),
-        });
-      } else {
-        if (p.nomeAluno && !existing.alunos.includes(p.nomeAluno))
-          existing.alunos.push(p.nomeAluno);
-        existing.boletos.push(p);
-        existing.valorTotal += p.valorTotalBoleto;
-        if (atraso > existing.maxDiasAtraso) {
-          existing.maxDiasAtraso = atraso;
-          existing.competencia = monthKeyFromISO(venc);
-          existing.alunoIdPrincipal = p.alunoId;
-        }
-      }
-    }
-    return [...map.values()].sort((a, b) => b.maxDiasAtraso - a.maxDiasAtraso);
-  }, [data, hojeYMD]);
-
-  // ── Checklist operacional do mês ───────────────────────────────────────────
-  const { data: checklist } = useQuery({
-    queryKey: ["cobranca-checklist", competenciaAtual],
-    queryFn: async () => {
-      const { data: row } = await supabase
-        .from("cobranca_checklist" as never)
-        .select("*")
-        .eq("competencia", competenciaAtual)
-        .maybeSingle();
-      return (row ?? null) as { boletos_enviados: boolean; marcado_em: string | null } | null;
-    },
-  });
-  const boletosEnviados = !!checklist?.boletos_enviados;
-
-  const toggleChecklist = useMutation({
-    mutationFn: async (value: boolean) => {
-      const { error } = await supabase.from("cobranca_checklist" as never).upsert(
-        {
-          competencia: competenciaAtual,
-          boletos_enviados: value,
-          marcado_por: session?.user?.id ?? null,
-          marcado_em: value ? new Date().toISOString() : null,
-        } as never,
-        { onConflict: "competencia" },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cobranca-checklist", competenciaAtual] }),
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao salvar o checklist."),
-  });
-
-  // ── Histórico de envios (régua + extrajudicial) ────────────────────────────
-  const { data: enviosData } = useQuery({
-    queryKey: ["cobranca-envios"],
-    queryFn: async () => {
-      const { data: rows } = await supabase
-        .from("cobranca_envios" as never)
-        .select("perfil_key, competencia, tick_dia, canal");
-      return (rows ?? []) as unknown as EnvioRow[];
-    },
-  });
-
-  const enviosSet = useMemo(() => {
-    const s = new Set<string>();
-    for (const e of enviosData ?? []) {
-      const comp = String(e.competencia).slice(0, 10);
-      s.add(`${e.perfil_key}|${comp}|${e.tick_dia}|${e.canal}`);
-    }
-    return s;
-  }, [enviosData]);
-
-  const registrarEnvio = useMutation({
-    mutationFn: async (args: {
-      perfil: PerfilCobranca;
-      tickDia: number;
-      canal: "regua" | "extrajudicial";
-    }) => {
-      const { perfil, tickDia, canal } = args;
-      const { error } = await supabase.from("cobranca_envios" as never).insert({
-        perfil_key: perfil.perfilKey,
-        aluno_id: perfil.alunoIdPrincipal,
-        responsavel_nome: perfil.nomeResponsavel,
-        competencia: perfil.competencia,
-        tick_dia: tickDia,
-        canal,
-        enviado_por: session?.user?.id ?? null,
-      } as never);
-      if (error) throw error;
-      // Registra o disparo de WhatsApp da régua no Histórico de Envios. O envio
-      // é manual (link wa.me), portanto status sempre 'sucesso'; o campo de erro
-      // fica reservado para a futura integração com a WhatsApp Cloud API.
-      if (canal === "regua") {
-        const { error: logErr } = await supabase.from("whatsapp_billing_logs" as never).insert({
-          responsavel_name: perfil.nomeResponsavel,
-          telefone: perfil.telefone,
-          unidade: perfil.unidade,
-          status: "sucesso",
-          fatura_id: perfil.alunoIdPrincipal,
-          enviado_por: session?.user?.id ?? null,
-        } as never);
-        if (logErr) console.warn("[cobranca] falha ao gravar log de WhatsApp:", logErr.message);
-      }
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["cobranca-envios"] });
-      qc.invalidateQueries({ queryKey: ["cobranca-whatsapp-logs"] });
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao registrar o envio."),
-  });
-
-  // ── Notificação Extrajudicial (D+60): puxa dados do Sponte e gera o PDF ─────
-  const [gerandoKey, setGerandoKey] = useState<string | null>(null);
-  async function gerarExtrajudicial(perfil: PerfilCobranca) {
-    setGerandoKey(perfil.perfilKey);
-    try {
-      const resp = await fetchRespFn({
-        data: { alunoId: perfil.alunoIdPrincipal, unidade: perfil.unidade },
-      });
-      if (resp.error) {
-        toast.error(resp.error);
-        return;
-      }
-      abrirDocumentoExtrajudicial(perfil, resp);
-      if (podeEditar) {
-        registrarEnvio.mutate({ perfil, tickDia: TICK_FINAL, canal: "extrajudicial" });
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao gerar a notificação.");
-    } finally {
-      setGerandoKey(null);
-    }
-  }
-
-  if (!integracaoDisponivel) {
-    return (
-      <div className="space-y-6">
-        <CabecalhoCobranca onRefresh={() => refetch()} isFetching={isFetching} />
-        <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          A unidade selecionada não possui integração com o Sponte.
-        </div>
-      </div>
-    );
-  }
+  const { schools } = useSchool();
+  // `schools` já vem escopado às unidades permitidas do usuário.
+  const unidades = useMemo(
+    () => UNIDADES_SPONTE.filter((u) => schools.some((s) => s.name === u)),
+    [schools],
+  );
+  const [aba, setAba] = useState<string>(unidades[0] ?? "historico");
+  useEffect(() => {
+    if (aba !== "historico" && !unidades.includes(aba)) setAba(unidades[0] ?? "historico");
+  }, [unidades, aba]);
 
   return (
     <div className="space-y-6">
-      <CabecalhoCobranca onRefresh={() => refetch()} isFetching={isFetching} />
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <HandCoins className="h-6 w-6 text-primary" /> Cobrança
+          <AjudaTooltip
+            rotulo="Sobre esta tela"
+            texto="Régua manual de cobrança por responsável financeiro: 5 mensagens em dias úteis, notificação extrajudicial, documentação para o processo e dossiê. Nada aqui envia mensagem automaticamente."
+          />
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Cobrança iniciada por responsável, com registro de cada etapa e prints como comprovação.
+        </p>
+      </div>
 
-      <Tabs defaultValue="regua" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="regua">
-            <HandCoins className="mr-2 h-4 w-4" /> Régua de Cobrança
-          </TabsTrigger>
+      <Tabs value={aba} onValueChange={setAba} className="space-y-6">
+        <TabsList className="flex-wrap">
+          {unidades.map((u) => (
+            <TabsTrigger key={u} value={u}>
+              {u}
+            </TabsTrigger>
+          ))}
           <TabsTrigger value="historico">
             <History className="mr-2 h-4 w-4" /> Histórico de Envios
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="regua" className="space-y-6">
-          {/* Card de Checklist Operacional do Mês */}
-          <ChecklistCard
-            competencia={competenciaAtual}
-            boletosEnviados={boletosEnviados}
-            marcadoEm={checklist?.marcado_em ?? null}
-            podeEditar={podeEditar}
-            saving={toggleChecklist.isPending}
-            onToggle={(v) => toggleChecklist.mutate(v)}
-          />
-
-          {serverError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {serverError}
-            </div>
-          )}
-
-          {/* Lista de inadimplentes em formato de "Cards de Perfil" (estilo Netflix) */}
-          {isFetching && perfis.length === 0 ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-56 w-full rounded-xl" />
-              ))}
-            </div>
-          ) : perfis.length === 0 ? (
-            <div className="rounded-xl border border-border bg-card p-10 text-center">
-              <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
-              <p className="mt-3 text-sm font-medium">Nenhum inadimplente no período.</p>
-              <p className="text-xs text-muted-foreground">
-                Não há boletos vencidos na janela monitorada.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {perfis.map((perfil) => (
-                <PerfilCard
-                  key={perfil.perfilKey}
-                  perfil={perfil}
-                  enviosSet={enviosSet}
-                  podeEditar={podeEditar}
-                  registrando={registrarEnvio.isPending}
-                  gerando={gerandoKey === perfil.perfilKey}
-                  onRegistrar={(tickDia) =>
-                    registrarEnvio.mutate({ perfil, tickDia, canal: "regua" })
-                  }
-                  onExtrajudicial={() => gerarExtrajudicial(perfil)}
-                />
-              ))}
-            </div>
-          )}
-        </TabsContent>
+        {unidades.map((u) => (
+          <TabsContent key={u} value={u}>
+            <AbaUnidade unidade={u} />
+          </TabsContent>
+        ))}
 
         <TabsContent value="historico">
           <HistoricoEnvios />
@@ -410,770 +203,1215 @@ function CobrancaPage() {
   );
 }
 
-function CabecalhoCobranca({
-  onRefresh,
-  isFetching,
-}: {
-  onRefresh: () => void;
-  isFetching: boolean;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold">
-          <HandCoins className="h-5 w-5 text-primary" /> Cobrança
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Régua de cobrança automática (D+2, a cada 2 dias até D+60) e notificação extrajudicial.
-        </p>
-      </div>
-      <Button variant="outline" size="sm" onClick={onRefresh} disabled={isFetching}>
-        <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Atualizar
-      </Button>
-    </div>
-  );
-}
+// ─── Aba de uma unidade: lista de casos + iniciar cobrança ──────────────────
 
-function ChecklistCard({
-  competencia,
-  boletosEnviados,
-  marcadoEm,
-  podeEditar,
-  saving,
-  onToggle,
-}: {
-  competencia: string;
-  boletosEnviados: boolean;
-  marcadoEm: string | null;
-  podeEditar: boolean;
-  saving: boolean;
-  onToggle: (v: boolean) => void;
-}) {
-  const mesLabel = (() => {
-    const d = parseISODateLocal(competencia);
-    if (!d) return "";
-    return d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-  })();
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <CalendarCheck className="h-4 w-4" /> Checklist Operacional · {mesLabel}
-      </div>
-      <label className="mt-3 flex cursor-pointer items-center gap-3">
-        <input
-          type="checkbox"
-          className="h-5 w-5 rounded border-border accent-primary disabled:opacity-50"
-          checked={boletosEnviados}
-          disabled={!podeEditar || saving}
-          onChange={(e) => onToggle(e.target.checked)}
-        />
-        <span className="text-sm font-medium">Boletos de Mensalidade Enviados</span>
-        {boletosEnviados && (
-          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-            <CheckCircle2 className="h-3 w-3" /> Concluído
-          </span>
-        )}
-      </label>
-      {boletosEnviados && marcadoEm && (
-        <p className="mt-1 pl-8 text-[11px] text-muted-foreground">
-          Marcado em {formatDateBR(marcadoEm.slice(0, 10))}.
-        </p>
-      )}
-      {!boletosEnviados && (
-        <p className="mt-1 pl-8 text-[11px] text-amber-600">
-          Lembrete: enviar os boletos de todos os colégios até o dia 25.
-        </p>
-      )}
-    </div>
-  );
-}
+function AbaUnidade({ unidade }: { unidade: string }) {
+  const { canEdit } = usePermissions();
+  const podeEditar = canEdit("financeiro_cobranca");
+  const listar = useServerFn(listarCasosCobranca);
+  const [filtro, setFiltro] = useState<EtapaCaso | "todas">("todas");
+  const [casoAberto, setCasoAberto] = useState<string | null>(null);
+  const [iniciando, setIniciando] = useState(false);
 
-function PerfilCard({
-  perfil,
-  enviosSet,
-  podeEditar,
-  registrando,
-  gerando,
-  onRegistrar,
-  onExtrajudicial,
-}: {
-  perfil: PerfilCobranca;
-  enviosSet: Set<string>;
-  podeEditar: boolean;
-  registrando: boolean;
-  gerando: boolean;
-  onRegistrar: (tickDia: number) => void;
-  onExtrajudicial: () => void;
-}) {
-  const atraso = perfil.maxDiasAtraso;
-  // Fase jurídica/extrajudicial só após ULTRAPASSAR D+60 (em D+60 ainda é régua,
-  // pois D+60 é o último marco do ciclo amigável).
-  const fase: "grace" | "regua" | "juridica" =
-    atraso > TICK_FINAL ? "juridica" : atraso >= TICK_INICIAL ? "regua" : "grace";
-  const devidos = ticksDevidos(atraso);
-  const proximoPendente = devidos.find(
-    (t) => !enviosSet.has(`${perfil.perfilKey}|${perfil.competencia}|${t}|regua`),
-  );
+  const casos = useQuery({
+    queryKey: ["cobranca_casos", unidade],
+    queryFn: () => listar({ data: { unidade } }),
+  });
 
-  const tagAtraso =
-    atraso > TICK_FINAL
-      ? "bg-red-600 text-white"
-      : atraso >= 10
-        ? "bg-amber-500 text-white"
-        : "bg-yellow-100 text-yellow-800";
+  const lista = useMemo(() => {
+    const todos = casos.data ?? [];
+    if (filtro === "todas") return todos.filter((c) => c.status !== "encerrado");
+    return todos.filter((c) => etapaDoCaso(c, c.hojeYMD) === filtro);
+  }, [casos.data, filtro]);
 
-  const whatsappLink = (() => {
-    const numero = toWhatsAppNumber(perfil.telefone);
-    const msg = encodeURIComponent(
-      `Olá, aqui é do setor financeiro do colégio. Identificamos pendência(s) em aberto no valor de ${formatarMoeda(perfil.valorTotal)}. Poderia, por favor, regularizar? Estamos à disposição.`,
+  if (casoAberto) {
+    return (
+      <CasoView casoId={casoAberto} podeEditar={podeEditar} onVoltar={() => setCasoAberto(null)} />
     );
-    return `https://wa.me/${numero}?text=${msg}`;
-  })();
-
-  return (
-    <div
-      className={`flex flex-col rounded-xl border bg-card p-4 transition-shadow hover:shadow-md ${
-        fase === "juridica" ? "border-2 border-red-500" : "border-border"
-      }`}
-    >
-      {/* Perfil principal: Responsável Financeiro */}
-      <div className="flex items-start gap-3">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-bold text-primary">
-          {iniciais(perfil.nomeResponsavel)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold" title={perfil.nomeResponsavel}>
-            {perfil.nomeResponsavel || "Responsável não identificado"}
-          </div>
-          <div className="text-[11px] text-muted-foreground">{perfil.unidade}</div>
-        </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${tagAtraso}`}>
-          {atraso} {atraso === 1 ? "dia" : "dias"}
-        </span>
-      </div>
-
-      {/* Sub-perfis vinculados: alunos (irmãos) */}
-      <div className="mt-3 flex items-center gap-2">
-        <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <div className="flex flex-wrap gap-1.5">
-          {perfil.alunos.map((aluno) => (
-            <span
-              key={aluno}
-              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium"
-              title={aluno}
-            >
-              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-[8px] font-bold text-primary">
-                {iniciais(aluno)}
-              </span>
-              {aluno}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-3 text-sm">
-        <span className="text-muted-foreground">Total em aberto: </span>
-        <span className="font-semibold text-red-600">{formatarMoeda(perfil.valorTotal)}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {" "}
-          · {perfil.boletos.length} boleto(s)
-        </span>
-      </div>
-
-      {/* Linha do tempo da régua (D+2..D+60), em grid de 3 linhas × 10 colunas
-          (2–20 / 22–40 / 42–60). NUNCA é resetada nem escondida: permanece sempre
-          visível, inclusive após 60/90+ dias de atraso, preservando o histórico da
-          cobrança amigável como prova (ação líquida e certa). Em casos de longo
-          atraso, todo o ciclo D+2→D+60 fica marcado. */}
-      <div className="mt-3">
-        <div className="mb-1 text-[11px] font-medium text-muted-foreground">Régua de cobrança</div>
-        <div className="grid grid-cols-10 gap-1">
-          {TODOS_TICKS.map((t) => {
-            const enviado = enviosSet.has(`${perfil.perfilKey}|${perfil.competencia}|${t}|regua`);
-            const devido = devidos.includes(t);
-            const estado = enviado ? "enviado" : devido ? "pendente" : "futuro";
-            const cls =
-              estado === "enviado"
-                ? "bg-emerald-500 text-white"
-                : estado === "pendente"
-                  ? "bg-amber-100 text-amber-700 ring-1 ring-amber-400"
-                  : "bg-muted text-muted-foreground/60";
-            return (
-              <span
-                key={t}
-                title={`D+${t} — ${estado}`}
-                className={`flex aspect-square w-full items-center justify-center rounded text-[10px] font-semibold ${cls}`}
-              >
-                {t}
-              </span>
-            );
-          })}
-        </div>
-        {fase === "juridica" && (
-          <p className="mt-1 text-[10px] font-medium text-red-600">
-            Ciclo amigável concluído (D+2 → D+60). Histórico mantido para fins legais.
-          </p>
-        )}
-      </div>
-
-      {/* Ações */}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <a
-          href={whatsappLink}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-        >
-          <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
-        </a>
-        {podeEditar && fase === "regua" && proximoPendente && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-auto py-1.5 text-xs"
-            disabled={registrando}
-            onClick={() => onRegistrar(proximoPendente)}
-          >
-            <Clock className="mr-1.5 h-3.5 w-3.5" /> Registrar cobrança (D+{proximoPendente})
-          </Button>
-        )}
-        {fase === "juridica" && (
-          <Button
-            size="sm"
-            className="h-auto bg-red-600 py-1.5 text-xs hover:bg-red-700"
-            disabled={gerando}
-            onClick={onExtrajudicial}
-          >
-            {gerando ? (
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileText className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Notificação Extrajudicial (PDF)
-          </Button>
-        )}
-      </div>
-
-      {fase === "juridica" && (
-        <div className="mt-3 flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">
-          <Gavel className="h-3.5 w-3.5" /> Fase Jurídica / Extrajudicial
-        </div>
-      )}
-      {fase === "grace" && (
-        <div className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <AlertTriangle className="h-3.5 w-3.5" /> Aguardando D+2 (arquivo retorno do banco)
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Dados fiscais/de contato do emissor (colégio) por unidade, usados no
-// cabeçalho e na assinatura da Notificação Extrajudicial.
-type EmissorNotificacao = { razao: string; cnpj: string; endereco: string; email: string };
-
-const EMISSORES_NOTIFICACAO: Record<string, EmissorNotificacao> = {
-  CEC: {
-    razao: "MMM Centro de Ensino da Criança EIRELLI",
-    cnpj: "26.326.388/0001-09",
-    endereco: "Avenida Miguel Perrela, 309, Castelo, Belo Horizonte/MG, CEP 31.330-290",
-    email: "centroensinocastelo@gmail.com",
-  },
-  "CEC Baby": {
-    razao: "Nucleo de Ensino Castelo LTDA",
-    cnpj: "51.195.730/0001-26",
-    endereco: "Rua Castelo Santo Ângelo, 94, Castelo, Belo Horizonte/MG, CEP 31330-190",
-    email: "centroensinocastelo@gmail.com",
-  },
-};
-
-// Atualiza o valor de um boleto até a data de emissão: multa fixa de 2% pelo
-// atraso + juros de mora de 1% ao mês (proporcional aos dias de atraso, base
-// 30 dias). Sem atraso (dias <= 0), devolve o valor original.
-function atualizarDebito(valor: number, vencYMD: string, hojeYMD: string) {
-  const dias = Math.max(0, diasDeAtraso(vencYMD, hojeYMD));
-  const multa = dias > 0 ? valor * 0.02 : 0;
-  const juros = dias > 0 ? valor * 0.01 * (dias / 30) : 0;
-  return { dias, multa, juros, atualizado: valor + multa + juros };
-}
-
-// Monta e abre o documento de Notificação Extrajudicial em uma nova janela,
-// pronta para "Salvar como PDF" / imprimir.
-function abrirDocumentoExtrajudicial(perfil: PerfilCobranca, resp: ResponsavelCobranca) {
-  const enderecoCompleto = [
-    [resp.endereco, resp.numero].filter(Boolean).join(", "),
-    resp.complemento,
-    resp.bairro,
-    [resp.cidade, resp.estado].filter(Boolean).join(" - "),
-    resp.cep ? `CEP ${resp.cep}` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  const hojeYMD = todayISOLocal();
-  const hojeFmt = new Date().toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-
-  const emissor = EMISSORES_NOTIFICACAO[perfil.unidade] ?? null;
-
-  let totalAtualizado = 0;
-  const linhas = perfil.boletos
-    .map((b) => {
-      const venc = vencToYMD(b.vencimento);
-      const { atualizado } = atualizarDebito(b.valorTotalBoleto, venc, hojeYMD);
-      totalAtualizado += atualizado;
-      return `<tr>
-        <td>${(b.categorias ?? []).join(", ") || "Mensalidade/Taxas"}</td>
-        <td>${formatDateBR(venc)}</td>
-        <td style="text-align:right">${formatarMoeda(atualizado)}</td>
-      </tr>`;
-    })
-    .join("");
-
-  const esc = (s: string) =>
-    (s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
-
-  const cabecalhoEmissor = emissor
-    ? `<div class="emissor">
-    <div class="emissor-razao">${esc(emissor.razao)}</div>
-    <div>CNPJ: ${esc(emissor.cnpj)}</div>
-    <div>${esc(emissor.endereco)}</div>
-    <div>${esc(emissor.email)}</div>
-  </div>`
-    : "";
-
-  const assinaturaNome = emissor ? esc(emissor.razao) : `Setor Financeiro — ${esc(perfil.unidade)}`;
-
-  const html = `<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8" />
-<title>Notificação Extrajudicial - ${esc(resp.nomeResponsavel)}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; max-width: 760px; margin: 40px auto; padding: 0 32px; line-height: 1.6; }
-  h1 { text-align: center; font-size: 18px; text-transform: uppercase; letter-spacing: 1px; }
-  .emissor { text-align: center; font-size: 12px; color: #333; border-bottom: 1px solid #999; padding-bottom: 12px; margin-bottom: 8px; }
-  .emissor-razao { font-weight: bold; font-size: 13px; text-transform: uppercase; }
-  .meta { margin: 24px 0; font-size: 14px; }
-  .meta strong { display: inline-block; min-width: 120px; }
-  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-  th, td { border: 1px solid #999; padding: 6px 8px; }
-  th { background: #f0f0f0; text-align: left; }
-  .total { text-align: right; font-weight: bold; font-size: 15px; margin-top: 8px; }
-  .nota-atualizacao { font-size: 12px; font-style: italic; color: #333; margin-top: 4px; }
-  p { font-size: 14px; text-align: justify; }
-  .assinatura { margin-top: 56px; text-align: center; font-size: 14px; }
-  .hr { border-top: 1px solid #333; width: 280px; margin: 48px auto 4px; }
-  @media print { body { margin: 0; } }
-</style></head>
-<body onload="window.print()">
-  ${cabecalhoEmissor}
-  <h1>Notificação Extrajudicial<br/>(Comunicação Pré-Judicial de Débito)</h1>
-  <div class="meta">
-    <div><strong>Notificado(a):</strong> ${esc(resp.nomeResponsavel) || "—"}</div>
-    <div><strong>CPF:</strong> ${esc(resp.cpf) || "—"}</div>
-    <div><strong>Endereço:</strong> ${esc(enderecoCompleto) || "—"}</div>
-    <div><strong>Aluno(s):</strong> ${esc(perfil.alunos.join(", ")) || "—"}</div>
-    <div><strong>Unidade:</strong> ${esc(perfil.unidade)}</div>
-  </div>
-  <p>Prezado(a) Senhor(a),</p>
-  <p>
-    Vimos, por meio da presente, notificá-lo(a) extrajudicialmente acerca da
-    existência de débito(s) em aberto referente(s) a serviços educacionais
-    prestados, conforme discriminado abaixo. Até a presente data, constam em nossos
-    registros as seguintes pendências financeiras vencidas há mais de 60 (sessenta)
-    dias:
-  </p>
-  <table>
-    <thead><tr><th>Descrição</th><th>Vencimento</th><th>Valor</th></tr></thead>
-    <tbody>${linhas}</tbody>
-  </table>
-  <div class="total">Total em aberto: ${formatarMoeda(totalAtualizado)}</div>
-  <div class="nota-atualizacao">
-    O valor apresentado encontra-se atualizado com juros e multa até a data de emissão
-    deste documento.
-  </div>
-  <p>
-    Solicitamos a regularização do débito ou formalização de um acordo no prazo de 5
-    dias a contar o recebimento deste.
-  </p>
-  <p>
-    Caso o pagamento já tenha sido efetuado, favor desconsiderar esta comunicação e
-    nos encaminhar o respectivo comprovante.
-  </p>
-  <div class="assinatura">
-    <div>${hojeFmt}</div>
-    <div class="hr"></div>
-    <div>${assinaturaNome}</div>
-  </div>
-</body></html>`;
-
-  const win = window.open("", "_blank", "width=820,height=900");
-  if (!win) {
-    toast.error("Permita pop-ups para gerar o PDF da notificação.");
-    return;
-  }
-  win.document.write(html);
-  win.document.close();
-}
-
-// ─── Aba "Histórico de Envios" (Dashboard de logs de WhatsApp) ───────────────
-
-const STATUS_FILTROS = [
-  { value: "todos", label: "Todos os status" },
-  { value: "pendente", label: "Pendente" },
-  { value: "enviado", label: "Enviado" },
-  { value: "entregue", label: "Entregue" },
-  { value: "lido", label: "Lido" },
-  { value: "falha", label: "Falha" },
-  { value: "sucesso", label: "Sucesso (manual)" },
-  { value: "erro", label: "Erro (manual)" },
-] as const;
-
-type BillingStatus = "sucesso" | "erro" | "pendente" | "enviado" | "entregue" | "lido" | "falha";
-
-type BillingLog = {
-  id: string;
-  data_envio: string;
-  responsavel_name: string;
-  aluno_name: string;
-  telefone: string;
-  unidade: string;
-  valor: number;
-  vencimento: string | null;
-  status: BillingStatus;
-  erro_mensagem: string | null;
-  fatura_id: string | null;
-};
-
-// Tag visual por status (verde = entregue/lido, vermelho = falha, etc.).
-const STATUS_STYLE: Record<BillingStatus, { label: string; cls: string }> = {
-  pendente: { label: "Pendente", cls: "bg-slate-100 text-slate-600" },
-  enviado: { label: "Enviado", cls: "bg-sky-100 text-sky-700" },
-  entregue: { label: "Entregue", cls: "bg-emerald-100 text-emerald-700" },
-  lido: { label: "Lido", cls: "bg-emerald-200 text-emerald-800" },
-  falha: { label: "Falha", cls: "bg-red-100 text-red-700" },
-  sucesso: { label: "Sucesso", cls: "bg-emerald-100 text-emerald-700" },
-  erro: { label: "Erro", cls: "bg-red-100 text-red-700" },
-};
-
-type LogsResponse = {
-  ok: boolean;
-  data: BillingLog[];
-  page: number;
-  per_page: number;
-  total: number;
-  summary: { hoje: number; falhas: number; mes: number };
-  error?: string;
-};
-
-const PER_PAGE = 20;
-
-function formatDataHora(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function HistoricoEnvios() {
-  // Escopo do histórico: unidade do topo (consolidado em "Todas as Unidades").
-  const unidade = useUnidadeAtiva();
-  const [status, setStatus] = useState<string>("todos");
-  const [dateStart, setDateStart] = useState<string>("");
-  const [dateEnd, setDateEnd] = useState<string>("");
-  const [busca, setBusca] = useState<string>("");
-  const [buscaDebounced, setBuscaDebounced] = useState<string>("");
-  const [page, setPage] = useState<number>(1);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setBuscaDebounced(busca.trim());
-      setPage(1);
-    }, 350);
-    return () => clearTimeout(t);
-  }, [busca]);
-
-  // Trocar a unidade no topo recomeça a paginação.
-  useEffect(() => setPage(1), [unidade]);
-
-  const { data, isFetching, isError, error } = useQuery({
-    queryKey: ["cobranca-whatsapp-logs", unidade, status, dateStart, dateEnd, buscaDebounced, page],
-    queryFn: async (): Promise<LogsResponse> => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error("Sessão inválida — faça login novamente.");
-
-      const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
-      if (unidade) params.set("unidade", unidade);
-      if (status !== "todos") params.set("status", status);
-      if (dateStart) params.set("date_start", dateStart);
-      if (dateEnd) params.set("date_end", dateEnd);
-      if (buscaDebounced) params.set("q", buscaDebounced);
-
-      const resp = await fetch(`/api/cobrancas/logs?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const body = (await resp.json()) as LogsResponse;
-      if (!resp.ok || !body.ok) throw new Error(body.error ?? "Falha ao carregar os logs.");
-      return body;
-    },
-  });
-
-  const summary = data?.summary ?? { hoje: 0, falhas: 0, mes: 0 };
-  const rows = data?.data ?? [];
-  const total = data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-
-  function resetFilter(setter: (v: string) => void, value: string) {
-    setter(value);
-    setPage(1);
   }
 
   return (
     <div className="space-y-4">
-      {/* Mini-cards de resumo */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <ResumoCard
-          icon={<Send className="h-5 w-5 text-sky-600" />}
-          label="Envios de Hoje"
-          value={summary.hoje}
-          tone="sky"
-        />
-        <ResumoCard
-          icon={<AlertTriangle className="h-5 w-5 text-red-600" />}
-          label="Falhas Ativas (mês)"
-          value={summary.falhas}
-          tone="red"
-        />
-        <ResumoCard
-          icon={<CalendarCheck className="h-5 w-5 text-emerald-600" />}
-          label="Total do Mês"
-          value={summary.mes}
-          tone="emerald"
-        />
-      </div>
-
-      {/* Filtros */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Unidade</label>
-          <div className="flex h-9 w-52 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
-            {unidade ?? "Todas as Unidades"}
-          </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Status</label>
-          <Select value={status} onValueChange={(v) => resetFilter(setStatus, v)}>
-            <SelectTrigger className="h-9 w-44">
-              <SelectValue placeholder="Status" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Etapa</Label>
+          <Select value={filtro} onValueChange={(v) => setFiltro(v as EtapaCaso | "todas")}>
+            <SelectTrigger className="h-9 w-56">
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {STATUS_FILTROS.map((s) => (
-                <SelectItem key={s.value} value={s.value}>
-                  {s.label}
+              <SelectItem value="todas">Todas em andamento</SelectItem>
+              {ETAPAS_FILTRO.map((e) => (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Período (de)</label>
-          <input
-            type="date"
-            value={dateStart}
-            onChange={(e) => {
-              setDateStart(e.target.value);
-              setPage(1);
-            }}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">Período (até)</label>
-          <input
-            type="date"
-            value={dateEnd}
-            onChange={(e) => {
-              setDateEnd(e.target.value);
-              setPage(1);
-            }}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          />
-        </div>
-        <div className="flex flex-1 flex-col gap-1">
-          <label className="text-[11px] font-medium text-muted-foreground">
-            Buscar por nome (responsável ou aluno)
-          </label>
-          <input
-            type="text"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Digite um nome…"
-            className="h-9 min-w-48 rounded-md border border-input bg-background px-3 text-sm"
-          />
-        </div>
-        {(status !== "todos" || dateStart || dateEnd || busca) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setStatus("todos");
-              setDateStart("");
-              setDateEnd("");
-              setBusca("");
-              setPage(1);
-            }}
-          >
-            Limpar filtros
+        {podeEditar && (
+          <Button onClick={() => setIniciando(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Iniciar cobrança
           </Button>
         )}
       </div>
 
-      {/* Tabela */}
-      <div className="rounded-xl border border-border bg-card">
-        {isError ? (
-          <div className="px-4 py-6 text-sm text-red-600">
-            {error instanceof Error ? error.message : "Falha ao carregar os logs."}
-          </div>
-        ) : isFetching && rows.length === 0 ? (
-          <div className="space-y-2 p-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-            <Inbox className="h-8 w-8 text-muted-foreground/60" />
-            <p className="text-sm font-medium">Nenhum disparo registrado.</p>
-            <p className="text-xs text-muted-foreground">
-              Os envios de WhatsApp da régua aparecem aqui assim que registrados.
-            </p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data e Hora</TableHead>
-                <TableHead>Responsável</TableHead>
-                <TableHead>Aluno</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Unidade</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead>Status do Envio</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((log) => {
-                const style = STATUS_STYLE[log.status] ?? STATUS_STYLE.pendente;
-                const badge = (
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.cls}`}
-                  >
-                    {log.status === "falha" || log.status === "erro" ? (
-                      <AlertTriangle className="h-3 w-3" />
-                    ) : (
-                      <CheckCircle2 className="h-3 w-3" />
-                    )}
-                    {style.label}
-                  </span>
-                );
-                return (
-                  <TableRow key={log.id}>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {formatDataHora(log.data_envio)}
-                    </TableCell>
-                    <TableCell className="text-sm font-medium">
-                      {log.responsavel_name || "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">{log.aluno_name || "—"}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                      {displayPhoneBR(log.telefone) || "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">{log.unidade || "—"}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right text-sm">
-                      {log.valor ? formatarMoeda(log.valor) : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {log.status === "falha" || log.status === "erro" ? (
-                        <TooltipProvider delayDuration={150}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="cursor-help">{badge}</span>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs whitespace-pre-wrap">
-                              {log.erro_mensagem || "Falha no envio (sem detalhes)."}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        badge
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </div>
-
-      {/* Paginação */}
-      {total > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            {total} registro(s) · página {page} de {totalPages}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page <= 1 || isFetching}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Anterior
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= totalPages || isFetching}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Próxima
-            </Button>
-          </div>
+      {casos.error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {mensagemErro(casos.error)}
         </div>
+      )}
+
+      {casos.isLoading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-44 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : lista.length === 0 ? (
+        <div className="rounded-xl border border-border bg-card p-10 text-center">
+          <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
+          <p className="mt-3 text-sm font-medium">Nenhuma cobrança nesta etapa.</p>
+          <p className="text-xs text-muted-foreground">
+            Use &quot;Iniciar cobrança&quot; para abrir um caso a partir de um aluno.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {lista.map((c) => (
+            <CasoCard key={c.id} caso={c} onAbrir={() => setCasoAberto(c.id)} />
+          ))}
+        </div>
+      )}
+
+      {iniciando && (
+        <IniciarCobrancaDialog
+          unidade={unidade}
+          onClose={() => setIniciando(false)}
+          onAbrirCaso={(id) => {
+            setIniciando(false);
+            setCasoAberto(id);
+          }}
+        />
       )}
     </div>
   );
 }
 
-function ResumoCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  tone: "sky" | "red" | "emerald";
-}) {
-  const ring =
-    tone === "red" ? "ring-red-100" : tone === "emerald" ? "ring-emerald-100" : "ring-sky-100";
+function EtapaBadge({ etapa }: { etapa: EtapaCaso }) {
+  const cls: Record<EtapaCaso, string> = {
+    mensagens: "bg-sky-100 text-sky-700",
+    notificacao: "bg-amber-100 text-amber-700",
+    aguardando_prazo: "bg-orange-100 text-orange-700",
+    pronto_processo: "bg-red-100 text-red-700",
+    processo: "bg-purple-100 text-purple-700",
+    encerrado: "bg-slate-100 text-slate-600",
+  };
+  return <Badge className={`${cls[etapa]} hover:${cls[etapa]}`}>{labelEtapa(etapa)}</Badge>;
+}
+
+function CasoCard({ caso, onAbrir }: { caso: CasoLista; onAbrir: () => void }) {
+  const etapa = etapaDoCaso(caso, caso.hojeYMD);
   return (
-    <div className={`rounded-xl border border-border bg-card p-4 ring-1 ${ring}`}>
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {icon} {label}
+    <button
+      type="button"
+      onClick={onAbrir}
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left transition hover:border-primary/50 hover:shadow-sm"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold leading-tight">{caso.responsavel_nome}</p>
+          <p className="text-xs text-muted-foreground">
+            {formatarCpf(caso.responsavel_cpf) || "CPF não informado"}
+          </p>
+        </div>
+        <EtapaBadge etapa={etapa} />
       </div>
-      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+        <Users className="h-3.5 w-3.5" /> {caso.alunos.map((a) => a.nome).join(", ")}
+      </p>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Valor inicial</span>
+        <span className="font-semibold">{formatarBRL(caso.valor_inicial)}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Início {formatarDataBR(caso.iniciado_em.slice(0, 10))}
+      </p>
+      <p className="rounded-md bg-muted px-2 py-1 text-xs">
+        <span className="font-medium">Próxima ação:</span>{" "}
+        {proximaAcao(caso, caso.mensagens, caso.hojeYMD)}
+      </p>
+    </button>
+  );
+}
+
+// ─── Iniciar cobrança ────────────────────────────────────────────────────────
+
+function IniciarCobrancaDialog({
+  unidade,
+  onClose,
+  onAbrirCaso,
+}: {
+  unidade: string;
+  onClose: () => void;
+  onAbrirCaso: (id: string) => void;
+}) {
+  const qc = useQueryClient();
+  const buscar = useServerFn(buscarAlunosSponte);
+  const preparar = useServerFn(prepararCobranca);
+  const iniciar = useServerFn(iniciarCobranca);
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [alunoId, setAlunoId] = useState<string | null>(null);
+
+  const busca = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => setResultados(alunos),
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  const previa = useQuery({
+    queryKey: ["cobranca_previa", unidade, alunoId],
+    queryFn: () => preparar({ data: { unidade, alunoId: alunoId! } }),
+    enabled: !!alunoId,
+    retry: false,
+  });
+
+  const confirmar = useMutation({
+    mutationFn: () => iniciar({ data: { unidade, alunoId: alunoId! } }),
+    onSuccess: ({ casoId }) => {
+      toast.success("Cobrança iniciada.");
+      void qc.invalidateQueries({ queryKey: ["cobranca_casos", unidade] });
+      onAbrirCaso(casoId);
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  const p = previa.data;
+  const semVencidas = !!p && p.demonstrativo.parcelas.length === 0;
+  const podeIniciar = !!p && !semVencidas && !p.casoAtivoId && !confirmar.isPending;
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Iniciar cobrança — {unidade}</DialogTitle>
+          <DialogDescription>
+            Busque o aluno; o caso é aberto para o responsável financeiro dele, reunindo todos os
+            alunos desse responsável na unidade.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (termo.trim().length >= 3) busca.mutate();
+          }}
+        >
+          <Input
+            placeholder="Nome do aluno (mín. 3 letras)"
+            value={termo}
+            onChange={(e) => setTermo(e.target.value)}
+          />
+          <Button type="submit" disabled={busca.isPending || termo.trim().length < 3}>
+            {busca.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+          </Button>
+        </form>
+
+        {resultados && !alunoId && (
+          <div className="max-h-60 overflow-y-auto rounded-lg border border-border">
+            {resultados.length === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">Nenhum aluno encontrado.</p>
+            ) : (
+              resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  onClick={() => setAlunoId(a.alunoId)}
+                  className="flex w-full items-center justify-between border-b border-border px-3 py-2 text-left text-sm last:border-0 hover:bg-muted"
+                >
+                  <span>
+                    {a.nome}
+                    <span className="ml-2 text-xs text-muted-foreground">{a.turma}</span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">{a.situacao}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        {alunoId && previa.isLoading && (
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-1/2" />
+            <Skeleton className="h-32 w-full" />
+          </div>
+        )}
+        {alunoId && previa.error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {mensagemErro(previa.error)}
+            <Button
+              variant="link"
+              size="sm"
+              className="ml-2 h-auto p-0"
+              onClick={() => setAlunoId(null)}
+            >
+              escolher outro aluno
+            </Button>
+          </div>
+        )}
+        {p && (
+          <div className="space-y-3">
+            <div className="grid gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm sm:grid-cols-2">
+              <Info label="Responsável" valor={p.responsavel.nome} />
+              <Info label="CPF" valor={formatarCpf(p.responsavel.cpf) || "—"} />
+              <Info label="Telefone" valor={displayPhoneBR(p.responsavel.telefone) || "—"} />
+              <Info label="Alunos" valor={p.alunos.map((a) => a.nome).join(", ")} />
+            </div>
+            {p.indisponivel && (
+              <Aviso>
+                O Sponte não respondeu para algum aluno; as parcelas podem estar incompletas.
+              </Aviso>
+            )}
+            <TabelaDemonstrativo demonstrativo={p.demonstrativo} />
+            {semVencidas && (
+              <Aviso>Não há parcela vencida: a cobrança não pode ser iniciada.</Aviso>
+            )}
+            {p.casoAtivoId && (
+              <Aviso>
+                Já existe cobrança ativa para este responsável nesta unidade.{" "}
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => onAbrirCaso(p.casoAtivoId!)}
+                >
+                  Abrir a existente
+                </Button>
+              </Aviso>
+            )}
+            {!semVencidas && !p.casoAtivoId && (
+              <p className="text-xs text-muted-foreground">
+                Mensagens previstas para: {p.datasPrevistas.map(formatarDataBR).join(", ")}.
+              </p>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setAlunoId(null)}>
+              Escolher outro aluno
+            </Button>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button disabled={!podeIniciar} onClick={() => confirmar.mutate()}>
+            {confirmar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Confirmar e iniciar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Info({ label, valor }: { label: string; valor: string }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="font-medium">{valor}</p>
     </div>
+  );
+}
+
+function Aviso({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function TabelaDemonstrativo({ demonstrativo }: { demonstrativo: DemonstrativoDebito }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Aluno</TableHead>
+            <TableHead>Descrição</TableHead>
+            <TableHead>Vencimento</TableHead>
+            <TableHead className="text-right">Original</TableHead>
+            <TableHead className="text-right">Multa</TableHead>
+            <TableHead className="text-right">Juros</TableHead>
+            <TableHead className="text-right">Atualizado</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {demonstrativo.parcelas.map((p, i) => (
+            <TableRow key={i}>
+              <TableCell className="text-xs">{p.aluno}</TableCell>
+              <TableCell className="text-xs">{p.descricao}</TableCell>
+              <TableCell className="text-xs">{formatarDataBR(p.vencimento)}</TableCell>
+              <TableCell className="text-right text-xs">{formatarBRL(p.original)}</TableCell>
+              <TableCell className="text-right text-xs">{formatarBRL(p.multa)}</TableCell>
+              <TableCell className="text-right text-xs">{formatarBRL(p.juros)}</TableCell>
+              <TableCell className="text-right text-xs font-medium">
+                {formatarBRL(p.atualizado)}
+              </TableCell>
+            </TableRow>
+          ))}
+          <TableRow>
+            <TableCell colSpan={6} className="text-right text-sm font-semibold">
+              Total em {formatarDataBR(demonstrativo.dataBase)}
+            </TableCell>
+            <TableCell className="text-right text-sm font-semibold">
+              {formatarBRL(demonstrativo.total)}
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+// ─── Tela do caso ────────────────────────────────────────────────────────────
+
+function CasoView({
+  casoId,
+  podeEditar,
+  onVoltar,
+}: {
+  casoId: string;
+  podeEditar: boolean;
+  onVoltar: () => void;
+}) {
+  const qc = useQueryClient();
+  const carregar = useServerFn(carregarCasoCobranca);
+  const detalhe = useQuery({
+    queryKey: ["cobranca_caso", casoId],
+    queryFn: () => carregar({ data: { casoId } }),
+  });
+  const recarregar = () => {
+    void qc.invalidateQueries({ queryKey: ["cobranca_caso", casoId] });
+    void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });
+  };
+
+  if (detalhe.isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+  if (detalhe.error || !detalhe.data) {
+    return (
+      <div className="space-y-3">
+        <Button variant="ghost" size="sm" onClick={onVoltar}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Voltar
+        </Button>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {mensagemErro(detalhe.error ?? "Caso não encontrado.")}
+        </div>
+      </div>
+    );
+  }
+
+  const d = detalhe.data;
+  const { caso, mensagens, anexos } = d;
+  const etapa = etapaDoCaso(caso, d.hojeYMD);
+  const encerrado = caso.status === "encerrado";
+  const edita = podeEditar && !encerrado;
+  const timeline = montarTimeline(caso, mensagens, anexos, d.hojeYMD);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={onVoltar}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Voltar à lista
+        </Button>
+        <div className="flex flex-wrap gap-2">
+          <BotaoDossie detalhe={d} etapa={etapa} />
+          {edita && <EncerrarDialog casoId={casoId} onDone={recarregar} />}
+        </div>
+      </div>
+
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">{caso.responsavel_nome}</h2>
+            <p className="text-sm text-muted-foreground">
+              {formatarCpf(caso.responsavel_cpf) || "CPF não informado"}
+              {caso.responsavel_telefone ? ` · ${displayPhoneBR(caso.responsavel_telefone)}` : ""}
+              {caso.responsavel_email ? ` · ${caso.responsavel_email}` : ""}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {enderecoResponsavelLinha(caso.responsavel_endereco)}
+            </p>
+          </div>
+          <EtapaBadge etapa={etapa} />
+        </div>
+        <div className="mt-3 grid gap-3 text-sm sm:grid-cols-4">
+          <Info label="Unidade" valor={caso.unidade} />
+          <Info label="Alunos" valor={caso.alunos.map((a) => a.nome).join(", ")} />
+          <Info label="Valor inicial" valor={formatarBRL(caso.valor_inicial)} />
+          <Info label="Início" valor={formatarDataBR(caso.iniciado_em.slice(0, 10))} />
+        </div>
+        {!encerrado && (
+          <p className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
+            <span className="font-medium">Próxima ação:</span>{" "}
+            {proximaAcao(caso, mensagens, d.hojeYMD)}
+          </p>
+        )}
+        {encerrado && (
+          <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
+            Encerrada em {caso.encerrado_em ? formatarDataHora(caso.encerrado_em) : "—"} — motivo:{" "}
+            {MOTIVOS_ENCERRAMENTO.find((m) => m.id === caso.motivo_encerramento)?.label ?? "—"}
+            {caso.observacao_encerramento ? ` · ${caso.observacao_encerramento}` : ""}
+          </p>
+        )}
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <div className="space-y-6">
+          {caso.status === "mensagens" && (
+            <SecaoMensagens detalhe={d} edita={edita} onDone={recarregar} />
+          )}
+          {(caso.status === "notificacao" || caso.status === "aguardando_prazo") && (
+            <SecaoNotificacao detalhe={d} etapa={etapa} edita={edita} onDone={recarregar} />
+          )}
+          {caso.status !== "mensagens" && (
+            <SecaoDocumentacao detalhe={d} edita={edita} onDone={recarregar} />
+          )}
+          {encerrado && (
+            <section className="rounded-xl border border-border bg-card p-4">
+              <h3 className="mb-2 font-semibold">Anexos</h3>
+              <ListaAnexos anexos={anexos} edita={false} onDone={recarregar} />
+            </section>
+          )}
+        </div>
+        <section className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 flex items-center gap-2 font-semibold">
+            <Clock className="h-4 w-4" /> Linha do tempo
+          </h3>
+          <ol className="space-y-3 border-l border-border pl-4">
+            {timeline.map((ev, i) => (
+              <li key={i} className="relative text-sm">
+                <span
+                  className={`absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full ${
+                    ev.futuro ? "border border-muted-foreground bg-card" : "bg-primary"
+                  }`}
+                />
+                <p className={`font-medium ${ev.futuro ? "text-muted-foreground" : ""}`}>
+                  {ev.titulo}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {ev.quando.length > 10 ? formatarDataHora(ev.quando) : formatarDataBR(ev.quando)}
+                  {ev.detalhe ? ` · ${ev.detalhe}` : ""}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ─── Upload genérico ─────────────────────────────────────────────────────────
+
+function BotaoArquivo({
+  label,
+  onFile,
+  disabled,
+  pending,
+  variant = "outline",
+}: {
+  label: string;
+  onFile: (f: File) => void;
+  disabled?: boolean;
+  pending?: boolean;
+  variant?: "outline" | "default" | "secondary";
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={ref}
+        type="file"
+        accept={ACCEPT_ANEXO}
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) onFile(f);
+        }}
+      />
+      <Button
+        size="sm"
+        variant={variant}
+        disabled={disabled || pending}
+        onClick={() => ref.current?.click()}
+      >
+        {pending ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Paperclip className="mr-2 h-4 w-4" />
+        )}
+        {label}
+      </Button>
+    </>
+  );
+}
+
+// ─── Etapa Mensagens ─────────────────────────────────────────────────────────
+
+function SecaoMensagens({
+  detalhe,
+  edita,
+  onDone,
+}: {
+  detalhe: CasoDetalhe;
+  edita: boolean;
+  onDone: () => void;
+}) {
+  const assinar = useServerFn(assinarUploadCobranca);
+  const registrar = useServerFn(registrarMensagemCobranca);
+  const [ordemPendente, setOrdemPendente] = useState<number | null>(null);
+
+  const enviar = useMutation({
+    mutationFn: async ({ ordem, arquivo }: { ordem: number; arquivo: File }) => {
+      const print = await enviarArquivoCobranca(assinar, detalhe.caso.id, arquivo, arquivo.name);
+      return registrar({ data: { casoId: detalhe.caso.id, ordem, print } });
+    },
+    onSuccess: () => {
+      toast.success("Envio registrado.");
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+    onSettled: () => setOrdemPendente(null),
+  });
+
+  const mensagens = [...detalhe.mensagens].sort((a, b) => a.ordem - b.ordem);
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-4">
+      <h3 className="mb-1 flex items-center gap-2 font-semibold">
+        <MessageCircle className="h-4 w-4" /> Mensagens (
+        {mensagens.filter((m) => m.enviada_em).length}/{TOTAL_MENSAGENS})
+      </h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        O texto é livre e enviado fora do sistema. Registrar o envio exige o print da conversa.
+      </p>
+      <ul className="divide-y divide-border">
+        {mensagens.map((m) => {
+          const bloqueio = validarRegistroMensagem(mensagens, m.ordem, true);
+          return (
+            <li
+              key={m.id}
+              className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+            >
+              <div>
+                <p className="font-medium">
+                  Mensagem {m.ordem} · prevista para {formatarDataBR(m.data_prevista)}
+                </p>
+                {m.enviada_em ? (
+                  <p className="text-xs text-muted-foreground">
+                    Enviada em {formatarDataHora(m.enviada_em)}
+                    {m.fora_da_data && (
+                      <Badge variant="outline" className="ml-2 border-amber-300 text-amber-700">
+                        enviada fora da data prevista
+                      </Badge>
+                    )}
+                    {m.print_url && (
+                      <a
+                        href={m.print_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-2 underline"
+                      >
+                        ver print
+                      </a>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Pendente</p>
+                )}
+              </div>
+              {edita && !m.enviada_em && (
+                <BotaoArquivo
+                  label="Registrar envio (print)"
+                  variant="default"
+                  disabled={!!bloqueio || enviar.isPending}
+                  pending={ordemPendente === m.ordem}
+                  onFile={(f) => {
+                    setOrdemPendente(m.ordem);
+                    enviar.mutate({ ordem: m.ordem, arquivo: f });
+                  }}
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+// ─── Etapa Notificação ───────────────────────────────────────────────────────
+
+function SecaoNotificacao({
+  detalhe,
+  etapa,
+  edita,
+  onDone,
+}: {
+  detalhe: CasoDetalhe;
+  etapa: EtapaCaso;
+  edita: boolean;
+  onDone: () => void;
+}) {
+  const { caso } = detalhe;
+  const restantes = caso.prazo_final ? diasRestantesPrazo(caso.prazo_final, detalhe.hojeYMD) : null;
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+      <h3 className="flex items-center gap-2 font-semibold">
+        <Gavel className="h-4 w-4" /> Notificação extrajudicial
+      </h3>
+      {caso.status === "notificacao" && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">
+            {caso.notificacao_gerada_em
+              ? `Gerada em ${formatarDataHora(caso.notificacao_gerada_em)}.`
+              : "Ainda não gerada."}
+          </span>
+          {edita && (
+            <Button asChild size="sm" variant={caso.notificacao_gerada_em ? "outline" : "default"}>
+              <Link to="/documentos" search={{ tipo: "notificacao_extrajudicial", caso: caso.id }}>
+                <FileText className="mr-2 h-4 w-4" />
+                {caso.notificacao_gerada_em ? "Gerar novamente em Documentos" : "Gerar notificação"}
+              </Link>
+            </Button>
+          )}
+        </div>
+      )}
+      {caso.status === "aguardando_prazo" && caso.prazo_final && (
+        <div className="rounded-md bg-muted px-3 py-2 text-sm">
+          Recebida em {formatarDataBR(caso.notificacao_recebida_em ?? "")} · prazo final{" "}
+          {formatarDataBR(caso.prazo_final)} ·{" "}
+          {etapa === "pronto_processo" ? (
+            <span className="font-semibold text-red-700">
+              prazo encerrado — pronto para processo
+            </span>
+          ) : (
+            <span className="font-semibold">
+              {restantes === 0 ? "vence hoje" : `faltam ${restantes} dia(s)`}
+            </span>
+          )}
+        </div>
+      )}
+      {edita && caso.status === "notificacao" && (
+        <RegistrarEnvioNotificacao
+          casoId={caso.id}
+          status={caso.status}
+          prazoFinal={caso.prazo_final}
+          onDone={onDone}
+        />
+      )}
+    </section>
+  );
+}
+
+// ─── Documentação para o processo ────────────────────────────────────────────
+
+function SecaoDocumentacao({
+  detalhe,
+  edita,
+  onDone,
+}: {
+  detalhe: CasoDetalhe;
+  edita: boolean;
+  onDone: () => void;
+}) {
+  const { caso, anexos } = detalhe;
+  const assinar = useServerFn(assinarUploadCobranca);
+  const registrarAnexo = useServerFn(registrarAnexoCobranca);
+  const marcar = useServerFn(marcarDocumentacaoCobranca);
+  const [pendente, setPendente] = useState<string | null>(null);
+  const [nomeOutro, setNomeOutro] = useState("");
+
+  const upload = useMutation({
+    mutationFn: async ({
+      categoria,
+      arquivo,
+      nomePersonalizado,
+    }: {
+      categoria: CategoriaAnexo;
+      arquivo: File;
+      nomePersonalizado?: string;
+    }) => {
+      const enviado = await enviarArquivoCobranca(assinar, caso.id, arquivo, arquivo.name);
+      return registrarAnexo({
+        data: { casoId: caso.id, categoria, arquivo: enviado, nomePersonalizado, origem: "upload" },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Documento anexado.");
+      setNomeOutro("");
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+    onSettled: () => setPendente(null),
+  });
+
+  const toggle = useMutation({
+    mutationFn: (v: { categoria: CategoriaAnexo; concluido: boolean }) =>
+      marcar({ data: { casoId: caso.id, ...v } }),
+    onSuccess: onDone,
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  const itens = CHECKLIST_DOCUMENTACAO.filter(
+    (i) => i.categoria !== "notificacao_enviada" && i.categoria !== "print_notificacao",
+  );
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-4">
+      <h3 className="mb-1 flex items-center gap-2 font-semibold">
+        <FileText className="h-4 w-4" /> Documentação para o processo
+      </h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Nenhum item é obrigatório para avançar. Marque como concluído o que já estiver reunido.
+      </p>
+      <ul className="divide-y divide-border">
+        {itens.map((item) => {
+          const doCaso = anexos.filter((a) => a.categoria === item.categoria);
+          const concluido = caso.documentacao_concluida.includes(item.categoria);
+          return (
+            <li key={item.categoria} className="space-y-2 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={concluido}
+                    disabled={!edita || toggle.isPending}
+                    onCheckedChange={(v) =>
+                      toggle.mutate({ categoria: item.categoria, concluido: v === true })
+                    }
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span
+                      className={`font-medium ${concluido ? "line-through text-muted-foreground" : ""}`}
+                    >
+                      {item.label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{item.descricao}</span>
+                  </span>
+                </label>
+                {edita && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {item.categoria === "demonstrativo" && (
+                      <GerarDemonstrativo detalhe={detalhe} onDone={onDone} />
+                    )}
+                    {item.categoria === "docs_responsavel" && (
+                      <BuscarNoSistema casoId={caso.id} onDone={onDone} />
+                    )}
+                    {item.categoria === "outro" && (
+                      <Input
+                        className="h-8 w-44"
+                        placeholder="Nome do documento"
+                        value={nomeOutro}
+                        onChange={(e) => setNomeOutro(e.target.value)}
+                      />
+                    )}
+                    <BotaoArquivo
+                      label="Anexar"
+                      pending={pendente === item.categoria}
+                      disabled={
+                        upload.isPending || (item.categoria === "outro" && !nomeOutro.trim())
+                      }
+                      onFile={(f) => {
+                        setPendente(item.categoria);
+                        upload.mutate({
+                          categoria: item.categoria,
+                          arquivo: f,
+                          nomePersonalizado:
+                            item.categoria === "outro" ? nomeOutro.trim() : undefined,
+                        });
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              {doCaso.length > 0 && <ListaAnexos anexos={doCaso} edita={edita} onDone={onDone} />}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function ListaAnexos({
+  anexos,
+  edita,
+  onDone,
+}: {
+  anexos: CasoDetalhe["anexos"];
+  edita: boolean;
+  onDone: () => void;
+}) {
+  const remover = useServerFn(removerAnexoCobranca);
+  const rm = useMutation({
+    mutationFn: (anexoId: string) => remover({ data: { anexoId } }),
+    onSuccess: onDone,
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+  const ordenados = [...anexos].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return (
+    <ul className="space-y-1 pl-6">
+      {ordenados.map((a) => (
+        <li key={a.id} className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate">
+            {a.url ? (
+              <a href={a.url} target="_blank" rel="noreferrer" className="underline">
+                {a.nome_personalizado || a.nome_arquivo}
+              </a>
+            ) : (
+              a.nome_personalizado || a.nome_arquivo
+            )}
+            <span className="ml-2 text-muted-foreground">
+              {LABEL_CATEGORIA[a.categoria]} · {formatarDataHora(a.created_at)}
+              {a.origem !== "upload" ? ` · ${a.origem}` : ""}
+            </span>
+          </span>
+          {edita && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              disabled={rm.isPending}
+              onClick={() => {
+                if (confirm("Remover este anexo?")) rm.mutate(a.id);
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function GerarDemonstrativo({ detalhe, onDone }: { detalhe: CasoDetalhe; onDone: () => void }) {
+  const { caso } = detalhe;
+  const debito = useServerFn(debitoAtualCaso);
+  const assinar = useServerFn(assinarUploadCobranca);
+  const registrarAnexo = useServerFn(registrarAnexoCobranca);
+  const { data: colegios = [] } = useColegios();
+  const [aberto, setAberto] = useState(false);
+  const [dataBase, setDataBase] = useState(hojeYMD());
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      const row = colegios.find((c) => c.unidade === caso.unidade);
+      if (!row)
+        throw new Error("Preencha os dados da unidade em Configurações → Dados dos Colégios.");
+      const atual = await debito({ data: { casoId: caso.id, dataBase } });
+      if (atual.indisponivel)
+        throw new Error("Sponte indisponível para algum aluno; tente novamente.");
+      if (atual.demonstrativo.parcelas.length === 0)
+        throw new Error("Não há parcela vencida em aberto na data-base informada.");
+      const logo = await carregarLogoDoColegio(row.logo_path ?? null);
+      const doc = await gerarPdfDemonstrativo(
+        {
+          colegio: paraColegioRecibo(row),
+          responsavel: {
+            nome: caso.responsavel_nome,
+            cpf: caso.responsavel_cpf,
+            telefone: caso.responsavel_telefone,
+            endereco: caso.responsavel_endereco,
+          },
+          alunos: caso.alunos,
+          demonstrativo: atual.demonstrativo,
+        },
+        logo,
+      );
+      const bytes = new Uint8Array(doc.output("arraybuffer"));
+      const nome = `${nomeArquivoSeguro(`demonstrativo-${caso.responsavel_nome}-${dataBase}`)}.pdf`;
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+      const enviado = await enviarArquivoCobranca(assinar, caso.id, blob, nome);
+      await registrarAnexo({
+        data: { casoId: caso.id, categoria: "demonstrativo", arquivo: enviado, origem: "gerado" },
+      });
+      baixarBytes(bytes, nome);
+    },
+    onSuccess: () => {
+      toast.success("Demonstrativo gerado e anexado.");
+      setAberto(false);
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setAberto(true)}>
+        <FileText className="mr-2 h-4 w-4" /> Gerar demonstrativo
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Gerar demonstrativo do débito</DialogTitle>
+            <DialogDescription>
+              Busca as parcelas em aberto atuais no Sponte de todos os alunos do caso e aplica a
+              regra oficial na data-base. {NOTA_REGRA_CALCULO}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label className="text-xs">Data-base</Label>
+            <Input type="date" value={dataBase} onChange={(e) => setDataBase(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={gerar.isPending || !dataBase} onClick={() => gerar.mutate()}>
+              {gerar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Gerar e anexar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function BuscarNoSistema({ casoId, onDone }: { casoId: string; onDone: () => void }) {
+  const listar = useServerFn(documentosMatriculaDoCaso);
+  const copiar = useServerFn(copiarDocumentosMatricula);
+  const [aberto, setAberto] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+
+  const docs = useQuery({
+    queryKey: ["cobranca_docs_matricula", casoId],
+    queryFn: () => listar({ data: { casoId } }),
+    enabled: aberto,
+  });
+
+  const cp = useMutation({
+    mutationFn: () => copiar({ data: { casoId, documentoIds: [...sel] } }),
+    onSuccess: ({ copiados }) => {
+      toast.success(`${copiados} documento(s) copiado(s) para o caso.`);
+      setAberto(false);
+      setSel(new Set());
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setAberto(true)}>
+        <Search className="mr-2 h-4 w-4" /> Buscar no sistema
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Documentos enviados na matrícula</DialogTitle>
+            <DialogDescription>
+              Arquivos de matricula_documentos dos alunos do caso. Os selecionados são copiados para
+              o caso com origem &quot;sistema&quot;.
+            </DialogDescription>
+          </DialogHeader>
+          {docs.isLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : docs.error ? (
+            <p className="text-sm text-red-700">{mensagemErro(docs.error)}</p>
+          ) : (docs.data ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhum documento de matrícula encontrado.
+            </p>
+          ) : (
+            <ul className="max-h-72 space-y-2 overflow-y-auto">
+              {docs.data!.map((doc) => (
+                <li key={doc.id}>
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox
+                      checked={sel.has(doc.id)}
+                      onCheckedChange={(v) => {
+                        const n = new Set(sel);
+                        if (v === true) n.add(doc.id);
+                        else n.delete(doc.id);
+                        setSel(n);
+                      }}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-medium">{doc.documento}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {doc.alunoNome} · {doc.nomeArquivo}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={sel.size === 0 || cp.isPending} onClick={() => cp.mutate()}>
+              {cp.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Copiar selecionados
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ─── Encerrar ────────────────────────────────────────────────────────────────
+
+function EncerrarDialog({ casoId, onDone }: { casoId: string; onDone: () => void }) {
+  const encerrar = useServerFn(encerrarCobranca);
+  const [aberto, setAberto] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const erro = motivo ? validarEncerramento(motivo, observacao) : "Escolha o motivo.";
+
+  const mut = useMutation({
+    mutationFn: () => encerrar({ data: { casoId, motivo, observacao: observacao.trim() } }),
+    onSuccess: () => {
+      toast.success("Cobrança encerrada.");
+      setAberto(false);
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setAberto(true)}>
+        <XCircle className="mr-2 h-4 w-4" /> Encerrar cobrança
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Encerrar cobrança</DialogTitle>
+            <DialogDescription>O caso passa a ser somente leitura.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Motivo</Label>
+              <Select value={motivo} onValueChange={setMotivo}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MOTIVOS_ENCERRAMENTO.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">
+                Observação {motivo === "outro" ? "(obrigatória)" : "(opcional)"}
+              </Label>
+              <Textarea
+                rows={3}
+                value={observacao}
+                onChange={(e) => setObservacao(e.target.value)}
+              />
+            </div>
+            {motivo && erro && <p className="text-xs text-red-700">{erro}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!!erro || mut.isPending}
+              onClick={() => mut.mutate()}
+            >
+              {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Encerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ─── Dossiê ──────────────────────────────────────────────────────────────────
+
+function tipoPorNome(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "heic") return "image/heic";
+  return "application/octet-stream";
+}
+
+function BotaoDossie({ detalhe, etapa }: { detalhe: CasoDetalhe; etapa: EtapaCaso }) {
+  const { data: colegios = [] } = useColegios();
+  const gerar = useMutation({
+    mutationFn: async () => {
+      const { caso, mensagens, anexos } = detalhe;
+      const row = colegios.find((c) => c.unidade === caso.unidade) ?? null;
+      const logo = row ? await carregarLogoDoColegio(row.logo_path ?? null) : null;
+      const timeline = montarTimeline(caso, mensagens, anexos, detalhe.hojeYMD);
+      const prints = [...mensagens]
+        .sort((a, b) => a.ordem - b.ordem)
+        .filter((m) => m.print_url && m.print_path)
+        .map((m) => ({
+          titulo: `Mensagem ${m.ordem} — ${formatarDataBR(m.data_prevista)}`,
+          url: m.print_url!,
+          tipo: tipoPorNome(m.print_path!),
+        }));
+      const bytes = await gerarDossie({
+        caso,
+        etapa,
+        timeline,
+        anexos: [...anexos].sort((a, b) => a.created_at.localeCompare(b.created_at)),
+        prints,
+        colegio: row ? paraColegioRecibo(row) : null,
+        logo,
+        geradoEm: hojeYMD(),
+      });
+      baixarBytes(bytes, `${nomeArquivoSeguro(`dossie-${caso.responsavel_nome}`)}.pdf`);
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+  return (
+    <Button variant="outline" size="sm" disabled={gerar.isPending} onClick={() => gerar.mutate()}>
+      {gerar.isPending ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <Download className="mr-2 h-4 w-4" />
+      )}
+      Baixar dossiê
+    </Button>
   );
 }

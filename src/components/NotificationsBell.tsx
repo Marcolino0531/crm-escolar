@@ -264,26 +264,6 @@ export function NotificationsBell() {
   // --- Accounts payable alerts (derived from Fluxo Futuro; NOT dismissible —
   // they persist until the bill's status becomes "paid" / quitada). ---
 
-  // --- Alerta do dia 25: data limite para envio dos boletos de mensalidade.
-  // Aparece a partir do dia 25 e some assim que o checklist do mês é marcado. ---
-  const competenciaAtual = monthKeyFromISO(today);
-  const { data: cobrancaChecklist } = useQuery({
-    queryKey: ["cobranca_checklist_alert", competenciaAtual, userId ?? "anon"],
-    enabled: !!userId && canCobranca,
-    refetchInterval: 60000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("cobranca_checklist" as any)
-        .select("boletos_enviados")
-        .eq("competencia", competenciaAtual)
-        .maybeSingle();
-      if (error) return null;
-      return (data ?? null) as { boletos_enviados: boolean } | null;
-    },
-  });
-  const diaDoMes = new Date().getDate();
-  const alertaBoletos = canCobranca && diaDoMes >= 25 && !cobrancaChecklist?.boletos_enviados;
-
   // --- Cobrança automática: aviso quando nenhuma tentativa do dia foi concluída
   // (disparo perdido) ou quando alguma falhou. Some sozinho quando uma tentativa
   // posterior conclui o dia. ---
@@ -830,7 +810,6 @@ export function NotificationsBell() {
     pendenciasCategoria.length +
     pendenciasFaturamento.length +
     avisosExperiencia.length +
-    (alertaBoletos ? 1 : 0) +
     (alertaCron ? 1 : 0);
 
   return (
@@ -854,32 +833,6 @@ export function NotificationsBell() {
       <PopoverContent align="end" className="w-96 p-0">
         <div className="border-b px-3 py-2 text-sm font-semibold">Notificações</div>
         <div className="max-h-96 overflow-y-auto">
-          {/* Cobrança: data limite (dia 25) para envio dos boletos de mensalidade. */}
-          {alertaBoletos && (
-            <div>
-              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Cobrança
-              </div>
-              <Link
-                to="/cobranca"
-                className="block border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
-              >
-                <div className="flex items-start gap-2">
-                  <HandCoins className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                  <div className="min-w-0">
-                    <div className="font-medium text-amber-600">
-                      Atenção: Data limite para envio dos boletos de mensalidade
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Realize o envio dos boletos de todos os colégios e marque o checklist no
-                      módulo de Cobrança.
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            </div>
-          )}
-
           {/* Cobrança automática: disparo diário perdido ou com falha. */}
           {alertaCron && (
             <div>
@@ -1394,7 +1347,6 @@ export function NotificationsBell() {
             pendenciasCategoria.length === 0 &&
             pendenciasFaturamento.length === 0 &&
             avisosExperiencia.length === 0 &&
-            !alertaBoletos &&
             !alertaCron && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
