@@ -21,6 +21,11 @@ import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { EnvioLoteDeclaracaoIR } from "@/components/documentos/EnvioLoteDeclaracaoIR";
 import { GerarTermoConfissao } from "@/components/documentos/GerarTermoConfissao";
 import { GerarContratoMatricula } from "@/components/documentos/GerarContratoMatricula";
+import {
+  GerarNotificacaoExtrajudicial,
+  type NotificacaoSnapshot,
+} from "@/components/cobranca/NotificacaoExtrajudicial";
+import { gerarPdfNotificacao } from "@/lib/cobranca-casos-pdf";
 import { ZapSignDocumentos } from "@/components/documentos/ZapSignDocumentos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,8 +96,14 @@ import {
   type ResponsavelRecibo,
 } from "@/lib/recibos";
 
+type DocumentosSearch = { tipo?: TipoDocumento; caso?: string };
+
 export const Route = createFileRoute("/documentos")({
   head: () => ({ meta: [{ title: "Documentos — School Hub" }] }),
+  validateSearch: (s: Record<string, unknown>): DocumentosSearch => ({
+    tipo: TIPOS_DOCUMENTO.some((t) => t.id === s.tipo) ? (s.tipo as TipoDocumento) : undefined,
+    caso: typeof s.caso === "string" && s.caso ? s.caso : undefined,
+  }),
   component: DocumentosGate,
 });
 
@@ -144,7 +155,12 @@ type DocumentoRow = {
   valor_total: number;
   created_at: string;
   created_by_nome: string;
-  snapshot: ReciboSnapshot | DeclaracaoSnapshot | DeclaracaoIRSnapshot | TermoConfissaoSnapshot;
+  snapshot:
+    | ReciboSnapshot
+    | DeclaracaoSnapshot
+    | DeclaracaoIRSnapshot
+    | TermoConfissaoSnapshot
+    | NotificacaoSnapshot;
 };
 
 function hojeYMD(): string {
@@ -196,7 +212,8 @@ function DocumentosPage() {
 // tela só escolhe qual renderizar. Modelo novo entra em TIPOS_DOCUMENTO e ganha
 // um case aqui, sem mexer no resto.
 function GerarDocumento() {
-  const [tipo, setTipo] = useState<TipoDocumento | "">("");
+  const search = Route.useSearch();
+  const [tipo, setTipo] = useState<TipoDocumento | "">(search.tipo ?? "");
 
   return (
     <div className="space-y-4">
@@ -232,6 +249,9 @@ function GerarDocumento() {
       {tipo === "declaracao_ir" && <DeclaracaoIRComLote />}
       {tipo === "termo_confissao_divida" && <GerarTermoConfissao />}
       {tipo === "contrato_matricula" && <GerarContratoMatricula />}
+      {tipo === "notificacao_extrajudicial" && (
+        <GerarNotificacaoExtrajudicial casoIdInicial={search.caso} />
+      )}
     </div>
   );
 }
@@ -1480,6 +1500,12 @@ function HistoricoDocumentos() {
       const data = row.data_recibo.slice(0, 10);
       const logoPath = colegios.find((c) => c.unidade === row.unidade)?.logo_path ?? null;
       const logo = await carregarLogoDoColegio(logoPath);
+      if (row.tipo === "notificacao_extrajudicial") {
+        const snap = row.snapshot as NotificacaoSnapshot;
+        const doc = await gerarPdfNotificacao(snap.notificacao, snap.colegio, row.numero, logo);
+        doc.save(`notificacao-extrajudicial-${row.numero}.pdf`);
+        return;
+      }
       if (row.tipo === "termo_confissao_divida") {
         await baixarPdfTermoConfissao(
           montarTermoDoSnapshot(row.numero, data, row.snapshot as TermoConfissaoSnapshot),
