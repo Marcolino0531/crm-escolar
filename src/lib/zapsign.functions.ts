@@ -20,6 +20,7 @@ import {
   type ZapSignAmbiente,
   type ZapSignSignatarioInput,
 } from "@/lib/zapsign.server";
+import { allowedSponteUnidades } from "@/lib/sponte.functions";
 import { guardarArquivoAssinado, linkArquivoAssinado } from "@/lib/zapsign.arquivo";
 import {
   aplicarEstadoDocumento,
@@ -392,7 +393,20 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
       .not("external_id", "like", "contrato-matricula:%")
       .order("enviado_em", { ascending: false })
       .limit(200);
-    if (data.unidade) q = q.eq("unidade", data.unidade);
+    if (data.unidade) {
+      const permitidas = await allowedSponteUnidades(context.userId);
+      if (permitidas !== null && !permitidas.includes(data.unidade))
+        throw new Error("Sem permissão para esta unidade.");
+      q = q.eq("unidade", data.unidade);
+    } else {
+      // "Todas as Unidades": consolidado só das unidades permitidas ao usuário
+      // (documentos sem unidade continuam visíveis).
+      const permitidas = await allowedSponteUnidades(context.userId);
+      if (permitidas !== null) {
+        const lista = permitidas.map((u) => `"${u.replace(/"/g, "")}"`).join(",");
+        q = q.or(`unidade.is.null,unidade.in.(${lista})`);
+      }
+    }
     const [docs, eventos, webhooks] = await Promise.all([
       q.returns<ZapSignDocumentoLista[]>(),
       supabaseAdmin

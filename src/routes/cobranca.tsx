@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { HistoricoEnvios } from "@/components/cobranca/HistoricoEnvios";
 import { RegistrarEnvioNotificacao } from "@/components/cobranca/NotificacaoExtrajudicial";
@@ -118,15 +119,15 @@ import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/col
 import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
 import { displayPhoneBR } from "@/lib/phone";
 
+// A unidade NÃO vem pela URL: a tela segue o seletor global do topo. Abrir um
+// caso de outra unidade troca o seletor (ver CasoView).
 interface CobrancaSearch {
-  unidade?: string;
   caso?: string;
 }
 
 export const Route = createFileRoute("/cobranca")({
   head: () => ({ meta: [{ title: "Cobrança — School Hub" }] }),
   validateSearch: (s: Record<string, unknown>): CobrancaSearch => ({
-    unidade: typeof s.unidade === "string" && s.unidade ? s.unidade : undefined,
     caso: typeof s.caso === "string" && s.caso ? s.caso : undefined,
   }),
   component: CobrancaGate,
@@ -143,7 +144,6 @@ function CobrancaGate() {
   return <CobrancaPage />;
 }
 
-const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale do Sereno"];
 const ACCEPT_ANEXO = TIPOS_ANEXO_ACEITOS.join(",");
 
 function hojeYMD(): string {
@@ -168,20 +168,11 @@ function mensagemErro(e: unknown): string {
 }
 
 function CobrancaPage() {
-  const { schools } = useSchool();
-  // `schools` já vem escopado às unidades permitidas do usuário.
-  const unidades = useMemo(
-    () => UNIDADES_SPONTE.filter((u) => schools.some((s) => s.name === u)),
-    [schools],
-  );
   const search = Route.useSearch();
-  const [aba, setAba] = useState<string>(search.unidade ?? unidades[0] ?? "historico");
+  const [aba, setAba] = useState<string>("cobrancas");
   useEffect(() => {
-    if (search.unidade && unidades.includes(search.unidade)) setAba(search.unidade);
-  }, [search.unidade, unidades]);
-  useEffect(() => {
-    if (aba !== "historico" && !unidades.includes(aba)) setAba(unidades[0] ?? "historico");
-  }, [unidades, aba]);
+    if (search.caso) setAba("cobrancas");
+  }, [search.caso]);
 
   return (
     <div className="space-y-6">
@@ -200,21 +191,17 @@ function CobrancaPage() {
 
       <Tabs value={aba} onValueChange={setAba} className="space-y-6">
         <TabsList className="flex-wrap">
-          {unidades.map((u) => (
-            <TabsTrigger key={u} value={u}>
-              {u}
-            </TabsTrigger>
-          ))}
+          <TabsTrigger value="cobrancas">
+            <HandCoins className="mr-2 h-4 w-4" /> Cobranças
+          </TabsTrigger>
           <TabsTrigger value="historico">
             <History className="mr-2 h-4 w-4" /> Histórico de Envios
           </TabsTrigger>
         </TabsList>
 
-        {unidades.map((u) => (
-          <TabsContent key={u} value={u}>
-            <AbaUnidade unidade={u} casoInicial={search.unidade === u ? search.caso : undefined} />
-          </TabsContent>
-        ))}
+        <TabsContent value="cobrancas">
+          <AbaCobrancas casoInicial={search.caso} />
+        </TabsContent>
 
         <TabsContent value="historico">
           <HistoricoEnvios />
@@ -224,11 +211,13 @@ function CobrancaPage() {
   );
 }
 
-// ─── Aba de uma unidade: lista de casos + iniciar cobrança ──────────────────
+// ─── Cobranças: lista de casos da unidade do topo + iniciar cobrança ───────────
 
-function AbaUnidade({ unidade, casoInicial }: { unidade: string; casoInicial?: string }) {
+function AbaCobrancas({ casoInicial }: { casoInicial?: string }) {
   const { canEdit } = usePermissions();
   const podeEditar = canEdit("financeiro_cobranca");
+  // Unidade do seletor global; `null` = consolidado das unidades permitidas.
+  const unidade = useUnidadeAtiva();
   const listar = useServerFn(listarCasosCobranca);
   const [filtro, setFiltro] = useState<EtapaCaso | "todas">("todas");
   const [casoAberto, setCasoAberto] = useState<string | null>(casoInicial ?? null);
@@ -238,7 +227,7 @@ function AbaUnidade({ unidade, casoInicial }: { unidade: string; casoInicial?: s
   const [iniciando, setIniciando] = useState(false);
 
   const casos = useQuery({
-    queryKey: ["cobranca_casos", unidade],
+    queryKey: ["cobranca_casos", unidade ?? "todas"],
     queryFn: () => listar({ data: { unidade } }),
   });
 
@@ -273,12 +262,14 @@ function AbaUnidade({ unidade, casoInicial }: { unidade: string; casoInicial?: s
             </SelectContent>
           </Select>
         </div>
-        {podeEditar && (
+        {podeEditar && unidade && (
           <Button onClick={() => setIniciando(true)}>
             <Plus className="mr-2 h-4 w-4" /> Iniciar cobrança
           </Button>
         )}
       </div>
+
+      {podeEditar && !unidade && <SelecioneUnidade acao="Iniciar uma cobrança" />}
 
       {casos.error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -303,12 +294,17 @@ function AbaUnidade({ unidade, casoInicial }: { unidade: string; casoInicial?: s
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {lista.map((c) => (
-            <CasoCard key={c.id} caso={c} onAbrir={() => setCasoAberto(c.id)} />
+            <CasoCard
+              key={c.id}
+              caso={c}
+              mostrarUnidade={!unidade}
+              onAbrir={() => setCasoAberto(c.id)}
+            />
           ))}
         </div>
       )}
 
-      {iniciando && (
+      {iniciando && unidade && (
         <IniciarCobrancaDialog
           unidade={unidade}
           onClose={() => setIniciando(false)}
@@ -334,7 +330,15 @@ function EtapaBadge({ etapa }: { etapa: EtapaCaso }) {
   return <Badge className={`${cls[etapa]} hover:${cls[etapa]}`}>{labelEtapa(etapa)}</Badge>;
 }
 
-function CasoCard({ caso, onAbrir }: { caso: CasoLista; onAbrir: () => void }) {
+function CasoCard({
+  caso,
+  mostrarUnidade,
+  onAbrir,
+}: {
+  caso: CasoLista;
+  mostrarUnidade: boolean;
+  onAbrir: () => void;
+}) {
   const etapa = etapaDoCaso(caso, caso.hojeYMD);
   return (
     <button
@@ -351,6 +355,11 @@ function CasoCard({ caso, onAbrir }: { caso: CasoLista; onAbrir: () => void }) {
         </div>
         <EtapaBadge etapa={etapa} />
       </div>
+      {mostrarUnidade && (
+        <Badge variant="outline" className="w-fit text-[11px]">
+          {caso.unidade}
+        </Badge>
+      )}
       <p className="flex items-center gap-1 text-xs text-muted-foreground">
         <Users className="h-3.5 w-3.5" /> {caso.alunos.map((a) => a.nome).join(", ")}
       </p>
@@ -409,7 +418,7 @@ function IniciarCobrancaDialog({
     mutationFn: () => iniciar({ data: { unidade, alunoId: alunoId! } }),
     onSuccess: ({ casoId }) => {
       toast.success("Cobrança iniciada.");
-      void qc.invalidateQueries({ queryKey: ["cobranca_casos", unidade] });
+      void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });
       onAbrirCaso(casoId);
     },
     onError: (e) => toast.error(mensagemErro(e)),
@@ -627,6 +636,29 @@ function CasoView({
     queryFn: () => carregar({ data: { casoId } }),
   });
   const processoQ = useProcessoCaso(casoId);
+  // Caso de outra unidade (link do sino ou parâmetro da URL): o seletor global
+  // acompanha o caso, para que topo e tela mostrem a mesma unidade.
+  const { selected, schools, setSelected } = useSchool();
+  const unidadeCaso = detalhe.data?.caso.unidade;
+  const sincronizado = useRef(false);
+  useEffect(() => {
+    if (!unidadeCaso || sincronizado.current) return;
+    sincronizado.current = true;
+    const alvo = schools.find((s) => s.name === unidadeCaso);
+    if (alvo && selected !== alvo.id) setSelected(alvo.id);
+  }, [unidadeCaso, schools, selected, setSelected]);
+  // Depois disso, trocar o topo para OUTRA unidade fecha o caso (a tela volta
+  // a mostrar só o que o seletor indica).
+  const unidadeTopo = useUnidadeAtiva();
+  const alinhado = useRef(false);
+  useEffect(() => {
+    if (!unidadeCaso) return;
+    if (unidadeTopo === unidadeCaso) {
+      alinhado.current = true;
+      return;
+    }
+    if (alinhado.current && unidadeTopo) onVoltar();
+  }, [unidadeTopo, unidadeCaso, onVoltar]);
   const recarregar = () => {
     void qc.invalidateQueries({ queryKey: ["cobranca_caso", casoId] });
     void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });

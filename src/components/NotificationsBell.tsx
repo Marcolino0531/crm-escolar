@@ -1127,7 +1127,11 @@ export function NotificationsBell() {
                   <Scale className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                   <Link
                     to="/cobranca"
-                    search={{ unidade: a.unidade, caso: a.casoId }}
+                    search={{ caso: a.casoId }}
+                    onClick={() => {
+                      const u = schools.find((s) => s.name === a.unidade);
+                      if (u) setSelected(u.id);
+                    }}
                     className="min-w-0 flex-1 font-medium"
                   >
                     <div>{textoAvisoPrazo(a)}</div>
