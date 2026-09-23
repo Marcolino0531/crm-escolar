@@ -131,7 +131,7 @@ export function GerarNotificacaoExtrajudicial({ casoIdInicial }: { casoIdInicial
       demonstrativo,
       datasMensagens: [...mensagens]
         .sort((a, b) => a.ordem - b.ordem)
-        .map((m) => (m.enviada_em ?? m.data_prevista).slice(0, 10)),
+        .map((m) => m.data_envio ?? m.data_prevista),
       dataEmissao: hojeYMD(),
     });
   }, [colegio, debitoAtual.data]);

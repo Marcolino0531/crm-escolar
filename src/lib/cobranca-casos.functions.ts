@@ -15,12 +15,16 @@ import {
   TOTAL_MENSAGENS,
   datasMensagens,
   montarDemonstrativo,
+  podeAlterarDataInicio,
   prazoFinalNotificacao,
   responsavelKey,
   somenteDigitos,
   validarArquivoAnexo,
+  validarDataEnvio,
+  validarDataInicio,
   validarEncerramento,
   validarRegistroMensagem,
+  type AlteracaoDataInicio,
   type AlunoCaso,
   type AnexoCaso,
   type CasoCompleto,
@@ -78,7 +82,7 @@ export function hojeYMD(): string {
 type CasoRow = Omit<CasoCompleto, "valor_inicial"> & { valor_inicial: number | string };
 
 const SELECT_CASO =
-  "id, unidade, responsavel_key, responsavel_nome, responsavel_cpf, responsavel_telefone, responsavel_email, responsavel_endereco, alunos, debito_inicial, valor_inicial, status, iniciado_em, iniciado_por, notificacao_gerada_em, notificacao_recebida_em, prazo_final, documentacao_concluida, encerrado_em, encerrado_por, motivo_encerramento, observacao_encerramento";
+  "id, unidade, responsavel_key, responsavel_nome, responsavel_cpf, responsavel_telefone, responsavel_email, responsavel_endereco, alunos, debito_inicial, valor_inicial, status, data_inicio, data_inicio_historico, iniciado_em, iniciado_por, notificacao_gerada_em, notificacao_recebida_em, prazo_final, documentacao_concluida, encerrado_em, encerrado_por, motivo_encerramento, observacao_encerramento";
 
 function paraCaso(r: CasoRow): CasoCompleto {
   return {
@@ -86,6 +90,7 @@ function paraCaso(r: CasoRow): CasoCompleto {
     valor_inicial: Number(r.valor_inicial),
     alunos: (r.alunos ?? []) as AlunoCaso[],
     debito_inicial: r.debito_inicial ?? [],
+    data_inicio_historico: r.data_inicio_historico ?? [],
     documentacao_concluida: r.documentacao_concluida ?? [],
   };
 }
@@ -104,7 +109,9 @@ export async function carregarCasoRow(casoId: string): Promise<CasoCompleto> {
 async function carregarMensagens(casoId: string): Promise<MensagemCaso[]> {
   const { data, error } = await supabaseAdmin
     .from("cobranca_mensagens" as never)
-    .select("id, caso_id, ordem, data_prevista, enviada_em, enviada_por, print_path, fora_da_data")
+    .select(
+      "id, caso_id, ordem, data_prevista, data_envio, enviada_em, enviada_por, print_path, fora_da_data",
+    )
     .eq("caso_id", casoId)
     .order("ordem")
     .returns<MensagemCaso[]>();
@@ -313,7 +320,11 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
       let q = supabaseAdmin.from("cobranca_casos" as never).select(SELECT_CASO);
       if (unidade) q = q.eq("unidade", unidade);
       else if (permitidas !== null) q = q.in("unidade", permitidas);
-      return q.order("iniciado_em", { ascending: false }).range(from, to).returns<CasoRow[]>();
+      return q
+        .order("data_inicio", { ascending: false })
+        .order("iniciado_em", { ascending: false })
+        .range(from, to)
+        .returns<CasoRow[]>();
     });
     const ids = rows.map((r) => r.id);
     type MsgLeve = Pick<MensagemCaso, "caso_id" | "ordem" | "enviada_em">;
@@ -344,7 +355,11 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
 
 // ─── Iniciar cobrança ────────────────────────────────────────────────────────
 
-const PrepararSchema = z.object({ unidade: z.string().min(1), alunoId: z.string().min(1) });
+const PrepararSchema = z.object({
+  unidade: z.string().min(1),
+  alunoId: z.string().min(1),
+  dataInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
 
 export interface PreviaCobranca {
   responsavel: ResponsavelCaso;
@@ -357,15 +372,20 @@ export interface PreviaCobranca {
   datasPrevistas: string[];
 }
 
-async function montarPrevia(unidade: string, alunoId: string): Promise<PreviaCobranca> {
+async function montarPrevia(
+  unidade: string,
+  alunoId: string,
+  dataInicio: string,
+): Promise<PreviaCobranca> {
+  const invalido = validarDataInicio(dataInicio, hojeYMD());
+  if (invalido) throw new Error(invalido);
   const aluno = await lerAluno(unidade, alunoId);
   if (!aluno) throw new Error("Aluno não encontrado nesta unidade do Sponte.");
   const responsavel = await lerResponsavelFinanceiro(unidade, alunoId);
   if (!responsavel?.nome) throw new Error("O aluno não tem responsável financeiro no Sponte.");
   const alunos = await alunosDoResponsavel(unidade, aluno, responsavel);
   const { parcelas, indisponivel } = await parcelasAbertasDosAlunos(unidade, alunos);
-  const hoje = hojeYMD();
-  const demonstrativo = montarDemonstrativo(parcelas, hoje);
+  const demonstrativo = montarDemonstrativo(parcelas, dataInicio);
 
   const key = responsavelKey(responsavel.cpf, responsavel.nome);
   const { data: ativo } = await supabaseAdmin
@@ -382,7 +402,7 @@ async function montarPrevia(unidade: string, alunoId: string): Promise<PreviaCob
     demonstrativo,
     casoAtivoId: ativo?.id ?? null,
     indisponivel,
-    datasPrevistas: datasMensagens(hoje),
+    datasPrevistas: datasMensagens(dataInicio),
   };
 }
 
@@ -392,7 +412,7 @@ export const prepararCobranca = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<PreviaCobranca> => {
     await exigirPermissao(context.userId, true);
     await exigirUnidade(context.userId, data.unidade);
-    return montarPrevia(data.unidade, data.alunoId);
+    return montarPrevia(data.unidade, data.alunoId, data.dataInicio);
   });
 
 export const iniciarCobranca = createServerFn({ method: "POST" })
@@ -402,7 +422,7 @@ export const iniciarCobranca = createServerFn({ method: "POST" })
     await exigirPermissao(context.userId, true);
     await exigirUnidade(context.userId, data.unidade);
     // Recalcula no servidor: nunca confia nos valores vindos da tela.
-    const previa = await montarPrevia(data.unidade, data.alunoId);
+    const previa = await montarPrevia(data.unidade, data.alunoId, data.dataInicio);
     if (previa.casoAtivoId) throw new Error("Já existe uma cobrança ativa para este responsável.");
     if (previa.indisponivel) throw new Error("Sponte indisponível: tente novamente em instantes.");
     if (previa.demonstrativo.parcelas.length === 0)
@@ -423,6 +443,7 @@ export const iniciarCobranca = createServerFn({ method: "POST" })
         debito_inicial: previa.demonstrativo.parcelas,
         valor_inicial: previa.demonstrativo.total,
         status: "mensagens",
+        data_inicio: data.dataInicio,
         iniciado_por: context.userId,
       } as never)
       .select("id")
@@ -442,6 +463,68 @@ export const iniciarCobranca = createServerFn({ method: "POST" })
     );
     if (errMsg) throw new Error(errMsg.message);
     return { casoId: caso.id };
+  });
+
+// ─── Alterar data de início ──────────────────────────────────────────────────
+
+const AlterarDataInicioSchema = z.object({
+  casoId: z.string().uuid(),
+  dataInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+/**
+ * Recalcula as 5 datas previstas, o snapshot e o valor inicial com a nova
+ * data-base. Recusado no servidor se qualquer mensagem já tiver print.
+ */
+export const alterarDataInicioCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => AlterarDataInicioSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ valorInicial: number }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    const invalido = validarDataInicio(data.dataInicio, hojeYMD());
+    if (invalido) throw new Error(invalido);
+    const mensagens = await carregarMensagens(caso.id);
+    if (!podeAlterarDataInicio(caso, mensagens))
+      throw new Error(
+        "A data de início não pode ser alterada: já há mensagem com print registrado.",
+      );
+    if (data.dataInicio === caso.data_inicio) throw new Error("A data de início não mudou.");
+
+    const { parcelas, indisponivel } = await parcelasAbertasDosAlunos(caso.unidade, caso.alunos);
+    if (indisponivel) throw new Error("Sponte indisponível: tente novamente em instantes.");
+    const demonstrativo = montarDemonstrativo(parcelas, data.dataInicio);
+    if (demonstrativo.parcelas.length === 0)
+      throw new Error("Nenhuma parcela vencida na nova data de início.");
+
+    const alteracao: AlteracaoDataInicio = {
+      de: caso.data_inicio,
+      para: data.dataInicio,
+      em: new Date().toISOString(),
+      por: context.userId,
+    };
+    const { error } = await supabaseAdmin
+      .from("cobranca_casos" as never)
+      .update({
+        data_inicio: data.dataInicio,
+        data_inicio_historico: [...caso.data_inicio_historico, alteracao],
+        debito_inicial: demonstrativo.parcelas,
+        valor_inicial: demonstrativo.total,
+      } as never)
+      .eq("id", caso.id);
+    if (error) throw new Error(error.message);
+
+    const datas = datasMensagens(data.dataInicio);
+    for (const m of mensagens) {
+      const { error: e2 } = await supabaseAdmin
+        .from("cobranca_mensagens" as never)
+        .update({ data_prevista: datas[m.ordem - 1] } as never)
+        .eq("id", m.id);
+      if (e2) throw new Error(e2.message);
+    }
+    return { valorInicial: demonstrativo.total };
   });
 
 // ─── Caso completo ───────────────────────────────────────────────────────────
@@ -568,6 +651,7 @@ async function inserirAnexo(
 
 const RegistrarMensagemSchema = CasoIdSchema.extend({
   ordem: z.number().int().min(1).max(TOTAL_MENSAGENS),
+  dataEnvio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   print: ArquivoEnviadoSchema,
 });
 
@@ -588,14 +672,22 @@ export const registrarMensagemCobranca = createServerFn({ method: "POST" })
       throw new Error("Print não encontrado no armazenamento.");
 
     const alvo = mensagens.find((m) => m.ordem === data.ordem)!;
-    const hoje = hojeYMD();
+    const anterior = mensagens.find((m) => m.ordem === data.ordem - 1);
+    const dataInvalida = validarDataEnvio(
+      data.dataEnvio,
+      hojeYMD(),
+      caso.data_inicio,
+      anterior?.data_envio ?? null,
+    );
+    if (dataInvalida) throw new Error(dataInvalida);
     const { error } = await supabaseAdmin
       .from("cobranca_mensagens" as never)
       .update({
+        data_envio: data.dataEnvio,
         enviada_em: new Date().toISOString(),
         enviada_por: context.userId,
         print_path: data.print.path,
-        fora_da_data: hoje !== alvo.data_prevista,
+        fora_da_data: data.dataEnvio !== alvo.data_prevista,
       } as never)
       .eq("id", alvo.id);
     if (error) throw new Error(error.message);

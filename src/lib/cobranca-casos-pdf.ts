@@ -356,7 +356,7 @@ async function capaETimeline(input: DossieInput): Promise<Uint8Array> {
     ["Aluno(s)", caso.alunos.map((a) => a.nome).join(", ")],
     ["Valor inicial", formatarBRL(caso.valor_inicial)],
     ["Etapa atual", labelEtapa(input.etapa)],
-    ["Início da cobrança", formatarDataBR(caso.iniciado_em.slice(0, 10))],
+    ["Início da cobrança", formatarDataBR(caso.data_inicio)],
     ["Gerado em", dataPorExtenso(input.geradoEm)],
   ];
   for (const [k, v] of linhas) {

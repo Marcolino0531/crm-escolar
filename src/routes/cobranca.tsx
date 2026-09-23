@@ -19,6 +19,7 @@ import {
   Plus,
   Search,
   Trash2,
+  Upload,
   Users,
   XCircle,
 } from "lucide-react";
@@ -39,6 +40,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,6 +70,7 @@ import {
   NOTA_REGRA_CALCULO,
   TIPOS_ANEXO_ACEITOS,
   TOTAL_MENSAGENS,
+  dataEnvioSugerida,
   diasRestantesPrazo,
   enderecoResponsavelLinha,
   etapaDoCaso,
@@ -76,7 +79,10 @@ import {
   formatarDataBR,
   labelEtapa,
   montarTimeline,
+  podeAlterarDataInicio,
   proximaAcao,
+  validarDataEnvio,
+  validarDataInicio,
   validarEncerramento,
   validarRegistroMensagem,
   type CategoriaAnexo,
@@ -84,6 +90,7 @@ import {
   type EtapaCaso,
 } from "@/lib/cobranca-casos";
 import {
+  alterarDataInicioCobranca,
   assinarUploadCobranca,
   carregarCasoCobranca,
   copiarDocumentosMatricula,
@@ -99,6 +106,7 @@ import {
   removerAnexoCobranca,
   type CasoDetalhe,
   type CasoLista,
+  type MensagemComLink,
   type PreviaCobranca,
 } from "@/lib/cobranca-casos.functions";
 import {
@@ -367,9 +375,7 @@ function CasoCard({
         <span className="text-muted-foreground">Valor inicial</span>
         <span className="font-semibold">{formatarBRL(caso.valor_inicial)}</span>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Início {formatarDataBR(caso.iniciado_em.slice(0, 10))}
-      </p>
+      <p className="text-xs text-muted-foreground">Início {formatarDataBR(caso.data_inicio)}</p>
       <p className="rounded-md bg-muted px-2 py-1 text-xs">
         <span className="font-medium">Próxima ação:</span>{" "}
         {proximaAcao(caso, caso.mensagens, caso.hojeYMD)}
@@ -396,6 +402,9 @@ function IniciarCobrancaDialog({
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
   const [alunoId, setAlunoId] = useState<string | null>(null);
+  const hoje = hojeYMD();
+  const [dataInicio, setDataInicio] = useState(hoje);
+  const dataInvalida = validarDataInicio(dataInicio, hoje);
 
   const busca = useMutation({
     mutationFn: async () => {
@@ -408,14 +417,14 @@ function IniciarCobrancaDialog({
   });
 
   const previa = useQuery({
-    queryKey: ["cobranca_previa", unidade, alunoId],
-    queryFn: () => preparar({ data: { unidade, alunoId: alunoId! } }),
-    enabled: !!alunoId,
+    queryKey: ["cobranca_previa", unidade, alunoId, dataInicio],
+    queryFn: () => preparar({ data: { unidade, alunoId: alunoId!, dataInicio } }),
+    enabled: !!alunoId && !dataInvalida,
     retry: false,
   });
 
   const confirmar = useMutation({
-    mutationFn: () => iniciar({ data: { unidade, alunoId: alunoId! } }),
+    mutationFn: () => iniciar({ data: { unidade, alunoId: alunoId!, dataInicio } }),
     onSuccess: ({ casoId }) => {
       toast.success("Cobrança iniciada.");
       void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });
@@ -426,7 +435,8 @@ function IniciarCobrancaDialog({
 
   const p = previa.data;
   const semVencidas = !!p && p.demonstrativo.parcelas.length === 0;
-  const podeIniciar = !!p && !semVencidas && !p.casoAtivoId && !confirmar.isPending;
+  const podeIniciar =
+    !!p && !semVencidas && !p.casoAtivoId && !dataInvalida && !confirmar.isPending;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -459,6 +469,26 @@ function IniciarCobrancaDialog({
             )}
           </Button>
         </form>
+
+        <div className="space-y-1">
+          <Label htmlFor="cobranca-data-inicio">Data de início da cobrança</Label>
+          <Input
+            id="cobranca-data-inicio"
+            type="date"
+            required
+            max={hoje}
+            value={dataInicio}
+            onChange={(e) => setDataInicio(e.target.value)}
+            className="w-fit"
+          />
+          {dataInvalida ? (
+            <p className="text-xs text-red-600">{dataInvalida}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Data-base do débito e da 1ª mensagem. Pode ser alterada até o primeiro print.
+            </p>
+          )}
+        </div>
 
         {resultados && !alunoId && (
           <div className="max-h-60 overflow-y-auto rounded-lg border border-border">
@@ -728,7 +758,17 @@ function CasoView({
           <Info label="Unidade" valor={caso.unidade} />
           <Info label="Alunos" valor={caso.alunos.map((a) => a.nome).join(", ")} />
           <Info label="Valor inicial" valor={formatarBRL(caso.valor_inicial)} />
-          <Info label="Início" valor={formatarDataBR(caso.iniciado_em.slice(0, 10))} />
+          <div>
+            <Info label="Início" valor={formatarDataBR(caso.data_inicio)} />
+            {edita && podeAlterarDataInicio(caso, mensagens) && (
+              <AlterarDataInicioDialog
+                casoId={caso.id}
+                dataAtual={caso.data_inicio}
+                hoje={d.hojeYMD}
+                onDone={recarregar}
+              />
+            )}
+          </div>
         </div>
         {!encerrado && (
           <p className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
@@ -856,23 +896,7 @@ function SecaoMensagens({
   edita: boolean;
   onDone: () => void;
 }) {
-  const assinar = useServerFn(assinarUploadCobranca);
-  const registrar = useServerFn(registrarMensagemCobranca);
-  const [ordemPendente, setOrdemPendente] = useState<number | null>(null);
-
-  const enviar = useMutation({
-    mutationFn: async ({ ordem, arquivo }: { ordem: number; arquivo: File }) => {
-      const print = await enviarArquivoCobranca(assinar, detalhe.caso.id, arquivo, arquivo.name);
-      return registrar({ data: { casoId: detalhe.caso.id, ordem, print } });
-    },
-    onSuccess: () => {
-      toast.success("Envio registrado.");
-      onDone();
-    },
-    onError: (e) => toast.error(mensagemErro(e)),
-    onSettled: () => setOrdemPendente(null),
-  });
-
+  const [registrando, setRegistrando] = useState<MensagemComLink | null>(null);
   const mensagens = [...detalhe.mensagens].sort((a, b) => a.ordem - b.ordem);
 
   return (
@@ -882,8 +906,21 @@ function SecaoMensagens({
         {mensagens.filter((m) => m.enviada_em).length}/{TOTAL_MENSAGENS})
       </h3>
       <p className="mb-3 text-xs text-muted-foreground">
-        O texto é livre e enviado fora do sistema. Registrar o envio exige o print da conversa.
+        O texto é livre e enviado fora do sistema. Registrar o envio exige a data do envio e o print
+        da conversa.
       </p>
+      {registrando && (
+        <RegistrarEnvioDialog
+          detalhe={detalhe}
+          mensagem={registrando}
+          anterior={mensagens.find((m) => m.ordem === registrando.ordem - 1) ?? null}
+          onClose={() => setRegistrando(null)}
+          onDone={() => {
+            setRegistrando(null);
+            onDone();
+          }}
+        />
+      )}
       <ul className="divide-y divide-border">
         {mensagens.map((m) => {
           const bloqueio = validarRegistroMensagem(mensagens, m.ordem, true);
@@ -898,7 +935,10 @@ function SecaoMensagens({
                 </p>
                 {m.enviada_em ? (
                   <p className="text-xs text-muted-foreground">
-                    Enviada em {formatarDataHora(m.enviada_em)}
+                    Enviada em {formatarDataBR(m.data_envio ?? m.enviada_em.slice(0, 10))}
+                    <span className="ml-1 text-[11px]">
+                      (registrado {formatarDataHora(m.enviada_em)})
+                    </span>
                     {m.fora_da_data && (
                       <Badge variant="outline" className="ml-2 border-amber-300 text-amber-700">
                         enviada fora da data prevista
@@ -920,22 +960,202 @@ function SecaoMensagens({
                 )}
               </div>
               {edita && !m.enviada_em && (
-                <BotaoArquivo
-                  label="Registrar envio (print)"
-                  variant="default"
-                  disabled={!!bloqueio || enviar.isPending}
-                  pending={ordemPendente === m.ordem}
-                  onFile={(f) => {
-                    setOrdemPendente(m.ordem);
-                    enviar.mutate({ ordem: m.ordem, arquivo: f });
-                  }}
-                />
+                <Button
+                  size="sm"
+                  disabled={!!bloqueio || !!registrando}
+                  onClick={() => setRegistrando(m)}
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Registrar envio
+                </Button>
               )}
             </li>
           );
         })}
       </ul>
     </section>
+  );
+}
+
+function RegistrarEnvioDialog({
+  detalhe,
+  mensagem,
+  anterior,
+  onClose,
+  onDone,
+}: {
+  detalhe: CasoDetalhe;
+  mensagem: MensagemComLink;
+  anterior: MensagemComLink | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const assinar = useServerFn(assinarUploadCobranca);
+  const registrar = useServerFn(registrarMensagemCobranca);
+  const hoje = detalhe.hojeYMD;
+  const [dataEnvio, setDataEnvio] = useState(dataEnvioSugerida(mensagem.data_prevista, hoje));
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const invalida = validarDataEnvio(
+    dataEnvio,
+    hoje,
+    detalhe.caso.data_inicio,
+    anterior?.data_envio ?? null,
+  );
+  const foraDaData = !invalida && dataEnvio !== mensagem.data_prevista;
+
+  const enviar = useMutation({
+    mutationFn: async () => {
+      const print = await enviarArquivoCobranca(assinar, detalhe.caso.id, arquivo!, arquivo!.name);
+      return registrar({
+        data: { casoId: detalhe.caso.id, ordem: mensagem.ordem, dataEnvio, print },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Envio registrado.");
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !enviar.isPending && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            Registrar envio · Mensagem {mensagem.ordem}/{TOTAL_MENSAGENS}
+          </DialogTitle>
+          <DialogDescription>
+            Prevista para {formatarDataBR(mensagem.data_prevista)}. Informe a data em que a mensagem
+            foi realmente enviada e anexe o print da conversa.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="registrar-data-envio">Data do envio</Label>
+            <Input
+              id="registrar-data-envio"
+              type="date"
+              required
+              min={anterior?.data_envio ?? detalhe.caso.data_inicio}
+              max={hoje}
+              value={dataEnvio}
+              onChange={(e) => setDataEnvio(e.target.value)}
+              className="w-fit"
+            />
+            {invalida ? (
+              <p className="text-xs text-red-600">{invalida}</p>
+            ) : foraDaData ? (
+              <p className="text-xs text-amber-700">
+                Será marcada como enviada fora da data prevista.
+              </p>
+            ) : null}
+          </div>
+          <div className="space-y-1">
+            <Label>Print da conversa</Label>
+            <div className="flex items-center gap-2">
+              <BotaoArquivo
+                label={arquivo ? "Trocar print" : "Escolher print"}
+                onFile={setArquivo}
+                disabled={enviar.isPending}
+              />
+              {arquivo && (
+                <span className="truncate text-xs text-muted-foreground">{arquivo.name}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={enviar.isPending}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!!invalida || !arquivo || enviar.isPending}
+            onClick={() => enviar.mutate()}
+          >
+            {enviar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Registrar envio
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Alterar data de início ──────────────────────────────────────────────────
+
+function AlterarDataInicioDialog({
+  casoId,
+  dataAtual,
+  hoje,
+  onDone,
+}: {
+  casoId: string;
+  dataAtual: string;
+  hoje: string;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const alterar = useServerFn(alterarDataInicioCobranca);
+  const [open, setOpen] = useState(false);
+  const [dataInicio, setDataInicio] = useState(dataAtual);
+  const invalida = validarDataInicio(dataInicio, hoje);
+  const mut = useMutation({
+    mutationFn: () => alterar({ data: { casoId, dataInicio } }),
+    onSuccess: ({ valorInicial }) => {
+      toast.success(`Data de início alterada. Novo valor inicial: ${formatarBRL(valorInicial)}.`);
+      void qc.invalidateQueries({ queryKey: ["cobranca_casos"] });
+      setOpen(false);
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setDataInicio(dataAtual);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="link" size="sm" className="h-auto p-0 text-xs">
+          Alterar data de início
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Alterar data de início</DialogTitle>
+          <DialogDescription>
+            As 5 datas previstas, o débito inicial e o valor inicial são recalculados com a nova
+            data. Só é possível enquanto nenhuma mensagem tiver print registrado.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1">
+          <Label htmlFor="alterar-data-inicio">Nova data de início</Label>
+          <Input
+            id="alterar-data-inicio"
+            type="date"
+            max={hoje}
+            value={dataInicio}
+            onChange={(e) => setDataInicio(e.target.value)}
+            className="w-fit"
+          />
+          {invalida && <p className="text-xs text-red-600">{invalida}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!!invalida || dataInicio === dataAtual || mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1500,7 +1720,7 @@ function BotaoDossie({
         .sort((a, b) => a.ordem - b.ordem)
         .filter((m) => m.print_url && m.print_path)
         .map((m) => ({
-          titulo: `Mensagem ${m.ordem} — ${formatarDataBR(m.data_prevista)}`,
+          titulo: `Mensagem ${m.ordem} — ${formatarDataBR(m.data_envio ?? m.data_prevista)}`,
           url: m.print_url!,
           tipo: tipoPorNome(m.print_path!),
         }));
