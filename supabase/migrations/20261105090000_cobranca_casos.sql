@@ -93,38 +93,16 @@ CREATE TABLE IF NOT EXISTS public.cobranca_anexos (
 CREATE INDEX IF NOT EXISTS cobranca_anexos_caso_idx
   ON public.cobranca_anexos (caso_id, created_at);
 
--- ─── RLS (padrão do financeiro_cobranca) ─────────────────────────────────────
+-- ─── Acesso somente via server functions (padrão de inadimplencia_fechamento_mensal) ──
+-- RBAC por unidade é validado no servidor; o navegador não lê nem grava estas tabelas.
 DO $$
 DECLARE
   t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['cobranca_casos', 'cobranca_mensagens', 'cobranca_anexos'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca view %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca insert %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca update %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca delete %s" ON public.%I', t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca view %s" ON public.%I
-      FOR SELECT TO authenticated
-      USING (public.can_view_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca insert %s" ON public.%I
-      FOR INSERT TO authenticated
-      WITH CHECK (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca update %s" ON public.%I
-      FOR UPDATE TO authenticated
-      USING (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-      WITH CHECK (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca delete %s" ON public.%I
-      FOR DELETE TO authenticated
-      USING (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
+    EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);
+    EXECUTE format('GRANT ALL ON public.%I TO service_role', t);
   END LOOP;
 END $$;
 
@@ -142,14 +120,8 @@ ON CONFLICT (id) DO UPDATE
       file_size_limit = EXCLUDED.file_size_limit,
       allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Leitura por link assinado emitido no servidor; upload por URL assinada.
--- A leitura direta fica restrita a quem enxerga a Cobrança.
+-- Sem policy em storage.objects: leitura apenas por link assinado e upload
+-- apenas por URL assinada, ambos emitidos no servidor.
 DROP POLICY IF EXISTS "cobranca casos read" ON storage.objects;
-CREATE POLICY "cobranca casos read" ON storage.objects
-  FOR SELECT TO authenticated
-  USING (
-    bucket_id = 'cobranca-casos'
-    AND public.can_view_module(auth.uid(), 'financeiro_cobranca'::public.app_module)
-  );
 
 NOTIFY pgrst, 'reload schema';
