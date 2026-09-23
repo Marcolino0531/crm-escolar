@@ -1227,10 +1227,11 @@ function ConciliacaoPage() {
                     return (
                       <TableRow key={t.id}>
                         <TableCell className="text-xs">{formatBR(t.date)}</TableCell>
-                        <TableCell className="text-sm max-w-[280px]" title={t.description}>
-                          <span className="truncate inline-block max-w-[200px] align-middle">
-                            {t.description}
-                          </span>
+                        <TableCell
+                          className="w-full whitespace-normal break-words text-sm"
+                          title={t.description}
+                        >
+                          <span className="align-middle">{t.description}</span>
                           {cobCompe && (
                             <Badge
                               variant="outline"
