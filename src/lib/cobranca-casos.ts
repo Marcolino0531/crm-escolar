@@ -178,6 +178,9 @@ export interface CasoResumo {
   alunos: AlunoCaso[];
   valor_inicial: number;
   status: StatusCaso;
+  /** Data-base da cobrança (YYYY-MM-DD), informada e editável até o 1º print. */
+  data_inicio: string;
+  /** Auditoria: quando o caso foi lançado no sistema. */
   iniciado_em: string;
   prazo_final: string | null;
   notificacao_gerada_em: string | null;
@@ -189,6 +192,9 @@ export interface MensagemCaso {
   caso_id: string;
   ordem: number;
   data_prevista: string;
+  /** Data real do envio (YYYY-MM-DD), informada ao registrar. */
+  data_envio: string | null;
+  /** Auditoria: quando o envio foi registrado no sistema. */
   enviada_em: string | null;
   enviada_por: string | null;
   print_path: string | null;
@@ -318,6 +324,45 @@ export function datasMensagens(inicioYMD: string, total = TOTAL_MENSAGENS): stri
   return datas;
 }
 
+/** Data de início: obrigatória, YYYY-MM-DD válida e não futura. */
+export function validarDataInicio(dataInicioYMD: string, hojeYMD: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicioYMD)) return "Informe a data de início da cobrança.";
+  if (dataInicioYMD > hojeYMD) return "A data de início não pode ser futura.";
+  return null;
+}
+
+/**
+ * Data real do envio: não futura, não anterior ao início do caso e não anterior
+ * ao envio da mensagem anterior.
+ */
+export function validarDataEnvio(
+  dataEnvioYMD: string,
+  hojeYMD: string,
+  dataInicioYMD: string,
+  dataEnvioAnteriorYMD: string | null,
+): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataEnvioYMD)) return "Informe a data do envio.";
+  if (dataEnvioYMD > hojeYMD) return "A data do envio não pode ser futura.";
+  if (dataEnvioYMD < dataInicioYMD)
+    return `A data do envio não pode ser anterior ao início da cobrança (${formatarDataBR(dataInicioYMD)}).`;
+  if (dataEnvioAnteriorYMD && dataEnvioYMD < dataEnvioAnteriorYMD)
+    return `A data do envio não pode ser anterior à da mensagem anterior (${formatarDataBR(dataEnvioAnteriorYMD)}).`;
+  return null;
+}
+
+/** Sugestão de data do envio: a prevista, se já passou; senão hoje. */
+export function dataEnvioSugerida(dataPrevistaYMD: string, hojeYMD: string): string {
+  return dataPrevistaYMD < hojeYMD ? dataPrevistaYMD : hojeYMD;
+}
+
+/** A data de início só pode mudar enquanto nenhuma mensagem tiver print registrado. */
+export function podeAlterarDataInicio(
+  caso: Pick<CasoResumo, "status">,
+  mensagens: readonly Pick<MensagemCaso, "print_path">[],
+): boolean {
+  return caso.status === "mensagens" && mensagens.every((m) => !m.print_path);
+}
+
 export function prazoFinalNotificacao(recebimentoYMD: string): string {
   return addDiasYMD(recebimentoYMD, PRAZO_NOTIFICACAO_DIAS);
 }
@@ -429,7 +474,15 @@ export interface EventoTimeline {
   futuro?: boolean;
 }
 
+export interface AlteracaoDataInicio {
+  de: string;
+  para: string;
+  em: string;
+  por: string;
+}
+
 export interface CasoCompleto extends CasoResumo {
+  data_inicio_historico: AlteracaoDataInicio[];
   responsavel_telefone: string | null;
   responsavel_email: string | null;
   responsavel_endereco: EnderecoResponsavel | null;
@@ -458,14 +511,20 @@ export function montarTimeline(
   const eventos: EventoTimeline[] = [];
   eventos.push({
     tipo: "inicio",
-    quando: caso.iniciado_em,
+    quando: caso.data_inicio,
     titulo: "Cobrança iniciada",
     detalhe: `${caso.alunos.length} aluno(s) · valor inicial ${formatarBRL(caso.valor_inicial)}`,
   });
+  for (const alt of caso.data_inicio_historico ?? [])
+    eventos.push({
+      tipo: "inicio",
+      quando: alt.em,
+      titulo: `Data de início alterada de ${formatarDataBR(alt.de)} para ${formatarDataBR(alt.para)}`,
+    });
   for (const m of [...mensagens].sort((a, b) => a.ordem - b.ordem)) {
     eventos.push({
       tipo: "mensagem",
-      quando: m.enviada_em ?? m.data_prevista,
+      quando: m.data_envio ?? m.data_prevista,
       titulo: `Mensagem ${m.ordem}/${TOTAL_MENSAGENS}`,
       detalhe: m.enviada_em
         ? m.fora_da_data

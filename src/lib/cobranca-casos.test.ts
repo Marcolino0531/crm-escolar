@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { calcularTotalVencido, valorAtualizadoParcela } from "@/lib/billing-debt";
+import { calcularTotalVencido, diasEntreYMD, valorAtualizadoParcela } from "@/lib/billing-debt";
 import {
   arredondar2,
   atualizarParcela,
+  dataEnvioSugerida,
   datasMensagens,
   etapaDoCaso,
   montarDemonstrativo,
+  podeAlterarDataInicio,
   prazoFinalNotificacao,
   responsavelKey,
   totalDemonstrativo,
+  validarDataEnvio,
+  validarDataInicio,
   validarRegistroMensagem,
   type ParcelaAbertaAluno,
 } from "@/lib/cobranca-casos";
@@ -195,5 +199,68 @@ describe("cobranca-casos: régua e etapas", () => {
       "CNPJ",
       "E-mail",
     ]);
+  });
+});
+
+describe("cobranca-casos: data de início informada (PR B)", () => {
+  const parcelas = [
+    parcela({ descricao: "Mensalidade 07", vencimento: "2026-07-10", saldo: 1000 }),
+    parcela({ descricao: "Mensalidade 08", vencimento: "2026-08-10", saldo: 1000 }),
+    parcela({ descricao: "Mensalidade 09", vencimento: "2026-09-10", saldo: 1000 }),
+    parcela({ descricao: "Mensalidade 10", vencimento: "2026-10-10", saldo: 1000 }),
+  ];
+
+  it("B.5.1 snapshot com data-base = data_inicio: vencimento igual ou posterior fica fora; multa e juros até a data_inicio", () => {
+    const dataInicio = "2026-09-10";
+    const demo = montarDemonstrativo(parcelas, dataInicio);
+    expect(demo.dataBase).toBe(dataInicio);
+    expect(demo.parcelas.map((p) => p.descricao)).toEqual(["Mensalidade 07", "Mensalidade 08"]);
+    for (const p of demo.parcelas) {
+      expect(p.atualizado).toBe(
+        arredondar2(valorAtualizadoParcela(p.original, p.vencimento, dataInicio)),
+      );
+      expect(p.dias_atraso).toBe(diasEntreYMD(p.vencimento, dataInicio));
+      expect(arredondar2(p.original + p.multa + p.juros)).toBe(p.atualizado);
+    }
+    expect(demo.total).toBe(arredondar2(demo.parcelas.reduce((s, p) => s + p.atualizado, 0)));
+    // Início mais cedo (antes do vencimento de agosto) reduz o snapshot para 1 parcela.
+    expect(montarDemonstrativo(parcelas, "2026-08-05").parcelas.map((p) => p.descricao)).toEqual([
+      "Mensalidade 07",
+    ]);
+  });
+
+  it("B.5.2 alterar a data de início gera valor_inicial igual ao de um caso criado com a nova data", () => {
+    const criadoEm = montarDemonstrativo(parcelas, "2026-09-01");
+    const novaData = "2026-09-18";
+    const recalculado = montarDemonstrativo(parcelas, novaData); // recálculo no alterarDataInicio
+    const criadoDireto = montarDemonstrativo(parcelas, novaData); // caso novo com a mesma data
+    expect(recalculado.total).toBe(criadoDireto.total);
+    expect(recalculado.parcelas).toEqual(criadoDireto.parcelas);
+    expect(recalculado.total).toBeGreaterThan(criadoEm.total);
+    // As 5 datas previstas também seguem a nova data: sex 18/09 -> 18, 21, 22, 23, 24/09.
+    expect(datasMensagens(novaData)).toEqual([
+      "2026-09-18",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+    ]);
+  });
+
+  it("validações de data: início não futuro; envio não futuro, >= início e >= envio anterior; fora_da_data", () => {
+    const hoje = "2026-09-23";
+    expect(validarDataInicio("2026-09-23", hoje)).toBeNull();
+    expect(validarDataInicio("2026-09-24", hoje)).toMatch(/futura/);
+    expect(validarDataInicio("", hoje)).toMatch(/Informe/);
+    expect(validarDataEnvio("2026-09-22", hoje, "2026-09-18", null)).toBeNull();
+    expect(validarDataEnvio("2026-09-24", hoje, "2026-09-18", null)).toMatch(/futura/);
+    expect(validarDataEnvio("2026-09-17", hoje, "2026-09-18", null)).toMatch(/início/);
+    expect(validarDataEnvio("2026-09-20", hoje, "2026-09-18", "2026-09-21")).toMatch(/anterior/);
+    expect(dataEnvioSugerida("2026-09-18", hoje)).toBe("2026-09-18");
+    expect(dataEnvioSugerida("2026-09-30", hoje)).toBe(hoje);
+    expect(
+      podeAlterarDataInicio({ status: "mensagens" }, [{ print_path: null }, { print_path: null }]),
+    ).toBe(true);
+    expect(podeAlterarDataInicio({ status: "mensagens" }, [{ print_path: "x.png" }])).toBe(false);
   });
 });
