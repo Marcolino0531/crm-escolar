@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -70,7 +70,18 @@ import {
 } from "@/lib/rematricula.functions";
 import type { DivergenciaExtraAluno } from "@/lib/rematricula-extras.functions";
 
+type AcompanhamentoSearch = {
+  /** Aba aberta por link interno (ex.: aviso do sino). */
+  aba?: "alunos" | "contratos" | "campanhas";
+  /** Contrato a destacar na aba Contratos. */
+  contrato?: string;
+};
+
 export const Route = createFileRoute("/rematricula-acompanhamento")({
+  validateSearch: (s: Record<string, unknown>): AcompanhamentoSearch => ({
+    aba: s.aba === "alunos" || s.aba === "contratos" || s.aba === "campanhas" ? s.aba : undefined,
+    contrato: typeof s.contrato === "string" && s.contrato ? s.contrato : undefined,
+  }),
   component: RematriculaAcompanhamentoPage,
 });
 
@@ -380,6 +391,11 @@ function RematriculaAcompanhamentoPage() {
   const { canView, canEdit } = usePermissions();
   const { schools, selected } = useSchool();
   const carregar = useServerFn(acompanhamentoRematricula);
+  const { aba: abaInicial, contrato: contratoDestacado } = Route.useSearch();
+  const [aba, setAba] = useState<string>(abaInicial ?? "alunos");
+  useEffect(() => {
+    if (abaInicial) setAba(abaInicial);
+  }, [abaInicial, contratoDestacado]);
 
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusAcompanhamento>("todos");
@@ -477,7 +493,7 @@ function RematriculaAcompanhamentoPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="alunos">
+      <Tabs value={aba} onValueChange={setAba}>
         <TabsList>
           <TabsTrigger value="alunos">Alunos</TabsTrigger>
           <TabsTrigger value="contratos">Contratos</TabsTrigger>
@@ -634,7 +650,7 @@ function RematriculaAcompanhamentoPage() {
         </TabsContent>
 
         <TabsContent value="contratos" className="mt-4">
-          <ContratosMatricula podeEditar={podeEditar} />
+          <ContratosMatricula podeEditar={podeEditar} contratoDestacado={contratoDestacado} />
         </TabsContent>
 
         <TabsContent value="campanhas" className="mt-4 space-y-6">

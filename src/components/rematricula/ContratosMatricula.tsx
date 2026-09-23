@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { abrirPdfBase64 } from "@/lib/abrir-pdf";
@@ -164,40 +164,51 @@ const SIGNER_LABEL: Record<string, string> = {
 // assinou, quem falta e o link individual de cada um.
 export function Signatarios({ signatarios }: { signatarios: SignatarioContratoStatus[] }) {
   if (signatarios.length === 0) return null;
+  // Mini tabela com colunas fixas (papel | nome | selo | link) para os selos de
+  // todas as linhas da tela ficarem na mesma posição vertical.
   return (
-    <ul className="space-y-1 text-left">
+    <div
+      className="grid items-center gap-x-2 gap-y-1 text-left text-xs"
+      style={{ gridTemplateColumns: "7rem minmax(0, 1fr) 6rem 1rem" }}
+    >
       {signatarios.map((s, i) => {
         const assinou = s.status === "signed";
         const recusou = s.status === "refused";
         return (
-          <li key={`${s.papel}-${i}`} className="flex flex-wrap items-center gap-x-2 text-xs">
-            <span className="font-medium">{s.papel}</span>
-            <span className="text-muted-foreground">{s.nome}</span>
+          <div key={`${s.papel}-${i}`} className="contents">
+            <span className="truncate font-medium">{s.papel}</span>
+            <span className="truncate text-muted-foreground" title={s.nome}>
+              {s.nome}
+            </span>
             <Badge
-              className={
+              className={`justify-center whitespace-nowrap ${
                 assinou
                   ? "bg-emerald-100 text-emerald-800"
                   : recusou
                     ? "bg-red-100 text-red-800"
                     : "bg-amber-100 text-amber-900"
-              }
+              }`}
             >
               {SIGNER_LABEL[s.status] ?? s.status}
             </Badge>
-            {!assinou && s.signUrl && (
+            {!assinou && s.signUrl ? (
               <a
                 href={s.signUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center text-primary underline-offset-2 hover:underline"
+                title="Link de assinatura"
+                aria-label={`Link de assinatura de ${s.nome}`}
+                className="inline-flex items-center text-primary hover:opacity-80"
               >
-                <ExternalLink className="mr-1 h-3 w-3" /> Link
+                <ExternalLink className="h-3.5 w-3.5" />
               </a>
+            ) : (
+              <span />
             )}
-          </li>
+          </div>
         );
       })}
-    </ul>
+    </div>
   );
 }
 
@@ -263,7 +274,14 @@ function StatusContrato({ item }: { item: ContratoPendente }) {
   );
 }
 
-export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
+export function ContratosMatricula({
+  podeEditar,
+  contratoDestacado,
+}: {
+  podeEditar: boolean;
+  /** Contrato aberto por link interno (aviso do sino): linha destacada e rolada à vista. */
+  contratoDestacado?: string;
+}) {
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
   const listar = useServerFn(listarContratosMatricula);
@@ -319,6 +337,14 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
       (a, b) => peso(a) - peso(b) || b.enviadaEm.localeCompare(a.enviadaEm),
     );
   }, [consultas, busca]);
+
+  const destacadoNaLista = itens.some((i) => i.contrato?.id === contratoDestacado);
+  useEffect(() => {
+    if (!contratoDestacado || !destacadoNaLista) return;
+    document
+      .getElementById(`contrato-${contratoDestacado}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [contratoDestacado, destacadoNaLista]);
 
   const pendentes = itens.filter((i) => !i.contrato || i.contrato.status === "erro").length;
   const enviados = itens.filter((i) => i.contrato?.status === "enviado").length;
@@ -480,8 +506,14 @@ export function ContratosMatricula({ podeEditar }: { podeEditar: boolean }) {
                 const cancelavel =
                   item.contrato !== null &&
                   contratoCancelavel(item.contrato.status, item.contrato.zapsign?.status ?? null);
+                const destacado =
+                  contratoDestacado !== undefined && item.contrato?.id === contratoDestacado;
                 return (
-                  <TableRow key={chave}>
+                  <TableRow
+                    key={chave}
+                    id={item.contrato ? `contrato-${item.contrato.id}` : undefined}
+                    className={destacado ? "bg-emerald-50 ring-2 ring-inset ring-emerald-400" : ""}
+                  >
                     <TableCell>
                       <p className="font-medium">{item.alunoNome || `AlunoID ${item.alunoId}`}</p>
                       <p className="text-xs text-muted-foreground">

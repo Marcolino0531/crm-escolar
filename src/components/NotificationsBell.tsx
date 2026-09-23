@@ -16,6 +16,7 @@ import {
   UserCheck,
   Percent,
   Scale,
+  FileSignature,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -69,6 +70,11 @@ import { avisoExtrasPendentes } from "@/lib/diario-aviso-faturamento";
 import { mesesPendentesFechamento } from "@/lib/inadimplencia-fechamento.functions";
 import { avisosPrazoCobranca, dispensarAvisoPrazo } from "@/lib/cobranca-processos.functions";
 import { textoAvisoPrazo, type AvisoPrazo } from "@/lib/cobranca-processos";
+import {
+  concluirAvisoBoletoMatricula,
+  listarAvisosBoletoMatricula,
+  type AvisoBoletoMatricula,
+} from "@/lib/contrato-boleto-avisos.functions";
 import {
   deveAvisarFechamento,
   textoAvisoFechamento,
@@ -457,6 +463,27 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cobranca_avisos_prazo"] }),
   });
 
+  // --- Matrícula: "Enviar boleto de matrícula" quando o contrato fica assinado.
+  // O servidor devolve lista vazia para quem não é destinatário cadastrado. ---
+  const avisosBoletoFn = useServerFn(listarAvisosBoletoMatricula);
+  const concluirBoletoFn = useServerFn(concluirAvisoBoletoMatricula);
+  const { data: avisosBoleto = [] } = useQuery({
+    queryKey: ["contratos_boleto_avisos", userId ?? "anon"],
+    enabled: !!userId,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      try {
+        return await avisosBoletoFn({ data: undefined });
+      } catch {
+        return [] as AvisoBoletoMatricula[];
+      }
+    },
+  });
+  const concluirBoleto = useMutation({
+    mutationFn: (avisoId: string) => concluirBoletoFn({ data: { avisoId } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["contratos_boleto_avisos"] }),
+  });
+
   const hojeBrasilia = hojeEmBrasilia();
   const avisosFechamento = isAdmin
     ? fechamentosPendentes
@@ -836,6 +863,7 @@ export function NotificationsBell() {
     pendenciasFaturamento.length +
     avisosExperiencia.length +
     avisosPrazo.length +
+    avisosBoleto.length +
     (alertaCron ? 1 : 0);
 
   return (
@@ -1104,6 +1132,58 @@ export function NotificationsBell() {
                     aria-label="Marcar reunião como concluída"
                     onClick={() => concluirAgenda.mutate([n.id])}
                     disabled={concluirAgenda.isPending}
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Matrícula: contrato totalmente assinado — enviar o boleto. Só some com o check. */}
+          {avisosBoleto.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Matrícula — Contratos
+              </div>
+              {avisosBoleto.map((a) => (
+                <div
+                  key={`boleto-${a.id}`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <FileSignature className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  <Link
+                    to="/rematricula-acompanhamento"
+                    search={{ aba: "contratos", contrato: a.contratoId }}
+                    onClick={() => {
+                      const u = schools.find((s) => s.name === a.unidade);
+                      if (u) setSelected(u.id);
+                    }}
+                    className="min-w-0 flex-1 font-medium"
+                  >
+                    <div>Enviar boleto de matrícula</div>
+                    <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                      {a.alunoNome}
+                      {a.serie ? ` · ${a.serie}` : ""} · {a.anoLetivo} · {a.unidade}
+                    </span>
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      Contratante: {a.responsavelNome} · Contrato {a.numeroContrato}
+                    </span>
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      Assinado em{" "}
+                      {new Date(a.assinadoEm).toLocaleString("pt-BR", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Boleto enviado"
+                    aria-label="Boleto enviado"
+                    onClick={() => concluirBoleto.mutate(a.id)}
+                    disabled={concluirBoleto.isPending}
                     className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600 disabled:opacity-50"
                   >
                     <Check className="h-4 w-4" />

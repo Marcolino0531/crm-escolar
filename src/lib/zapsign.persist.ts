@@ -9,6 +9,10 @@ import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { statusZapSignRecusado } from "@/lib/contrato-cancelamento";
 import { guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
+import {
+  gerarAvisoBoletoMatricula,
+  removerAvisoBoletoMatricula,
+} from "@/lib/contrato-boleto-avisos.server";
 import type {
   ZapSignAmbiente,
   ZapSignDocResposta,
@@ -77,11 +81,12 @@ export async function aplicarEstadoDocumento(
 ): Promise<{ documentoId: string | null }> {
   const { data: atual } = await supabaseAdmin
     .from(T_DOCS)
-    .select("id, signatarios, assinado_em, recusado_em")
+    .select("id, status, signatarios, assinado_em, recusado_em")
     .eq("zapsign_token", zapsignToken)
     .eq("ambiente", ambiente)
     .maybeSingle<{
       id: string;
+      status: string;
       signatarios: SignatarioPersistido[] | null;
       assinado_em: string | null;
       recusado_em: string | null;
@@ -127,9 +132,15 @@ export async function aplicarEstadoDocumento(
       } as never)
       .eq("zapsign_documento_id", atual.id)
       .eq("status", "enviado");
+    if (ambiente === "producao") await removerAvisoBoletoMatricula(atual.id);
   }
 
   if (doc.status === "signed") {
+    // Aviso do sino só na transição para assinado: reprocessar um documento
+    // que já estava "signed" (webhook repetido, Sincronizar) não gera nada.
+    if (ambiente === "producao" && atual.status !== "signed") {
+      await gerarAvisoBoletoMatricula(atual.id, assinadoEm ?? agora);
+    }
     await guardarArquivoAssinado(atual.id, zapsignToken, ambiente, doc.signed_file);
   }
   return { documentoId: atual.id };
