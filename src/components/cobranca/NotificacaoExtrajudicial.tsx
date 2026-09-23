@@ -2,7 +2,7 @@
 // notificação" — compartilhado com a tela do caso em Cobrança. O débito é
 // recalculado no servidor na emissão (parcelas em aberto atuais do Sponte).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth, usePermissions } from "@/lib/app-context";
+import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import {
   formatarCpf,
@@ -60,6 +60,7 @@ export function GerarNotificacaoExtrajudicial({ casoIdInicial }: { casoIdInicial
   const qc = useQueryClient();
   const podeEditar = canEdit("documentos") && canEdit("financeiro_cobranca");
   const unidade = useUnidadeAtiva() ?? "";
+  const { schools, setSelected } = useSchool();
   const { data: colegios = [] } = useColegios();
   const listar = useServerFn(listarCasosParaNotificacao);
   const debito = useServerFn(debitoAtualCaso);
@@ -77,17 +78,38 @@ export function GerarNotificacaoExtrajudicial({ casoIdInicial }: { casoIdInicial
     enabled: !!unidade && podeEditar,
   });
 
-  // Caso vindo da Cobrança pode ser de outra unidade que a do topo: não força.
-  useEffect(() => {
-    if (!casos.data) return;
-    if (casoId && !casos.data.some((c) => c.id === casoId) && !casoIdInicial) setCasoId("");
-  }, [casos.data, casoId, casoIdInicial]);
-
   const debitoAtual = useQuery({
     queryKey: ["cobranca_debito_atual", casoId],
     queryFn: () => debito({ data: { casoId } }),
     enabled: !!casoId,
   });
+
+  // Caso vindo da Cobrança de outra unidade: o seletor global troca para a
+  // unidade do caso (a tela nunca mostra item fora do que o topo indica).
+  const unidadeCaso = debitoAtual.data?.caso.unidade;
+  const casoSincronizado = useRef<string | null>(null);
+  useEffect(() => {
+    if (!unidadeCaso || !casoId || casoSincronizado.current === casoId) return;
+    casoSincronizado.current = casoId;
+    if (unidadeCaso === unidade) return;
+    const alvo = schools.find((s) => s.name === unidadeCaso);
+    if (alvo) setSelected(alvo.id);
+  }, [unidadeCaso, casoId, unidade, schools, setSelected]);
+
+  // Caso selecionado que não pertence à unidade do topo (topo trocado pelo
+  // usuário) sai da seleção.
+  const alinhado = useRef(false);
+  useEffect(() => {
+    if (!casoId || !unidadeCaso) return;
+    if (unidadeCaso === unidade) {
+      alinhado.current = true;
+      return;
+    }
+    if (alinhado.current && unidade) {
+      alinhado.current = false;
+      setCasoId("");
+    }
+  }, [casoId, unidade, unidadeCaso]);
 
   const colegioRow = colegios.find(
     (c) => c.unidade === (debitoAtual.data?.caso.unidade ?? unidade),

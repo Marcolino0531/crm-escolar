@@ -291,6 +291,9 @@ async function parcelasAbertasDosAlunos(
 // ─── Listagem ────────────────────────────────────────────────────────────────
 
 const UnidadeSchema = z.object({ unidade: z.string().min(1) });
+// `unidade` ausente = consolidado do seletor global: todas as unidades
+// permitidas ao usuário.
+const ListarSchema = z.object({ unidade: z.string().min(1).nullable().optional() });
 
 export interface CasoLista extends CasoResumo {
   mensagens: Pick<MensagemCaso, "ordem" | "enviada_em">[];
@@ -299,19 +302,19 @@ export interface CasoLista extends CasoResumo {
 
 export const listarCasosCobranca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: unknown) => UnidadeSchema.parse(i))
+  .inputValidator((i: unknown) => ListarSchema.parse(i))
   .handler(async ({ data, context }): Promise<CasoLista[]> => {
     await exigirPermissao(context.userId, false);
-    await exigirUnidade(context.userId, data.unidade);
-    const rows = await fetchAllRows<CasoRow>((from, to) =>
-      supabaseAdmin
-        .from("cobranca_casos" as never)
-        .select(SELECT_CASO)
-        .eq("unidade", data.unidade)
-        .order("iniciado_em", { ascending: false })
-        .range(from, to)
-        .returns<CasoRow[]>(),
-    );
+    const unidade = data.unidade ?? null;
+    if (unidade) await exigirUnidade(context.userId, unidade);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    if (!unidade && permitidas !== null && permitidas.length === 0) return [];
+    const rows = await fetchAllRows<CasoRow>((from, to) => {
+      let q = supabaseAdmin.from("cobranca_casos" as never).select(SELECT_CASO);
+      if (unidade) q = q.eq("unidade", unidade);
+      else if (permitidas !== null) q = q.in("unidade", permitidas);
+      return q.order("iniciado_em", { ascending: false }).range(from, to).returns<CasoRow[]>();
+    });
     const ids = rows.map((r) => r.id);
     type MsgLeve = Pick<MensagemCaso, "caso_id" | "ordem" | "enviada_em">;
     const msgs = ids.length
