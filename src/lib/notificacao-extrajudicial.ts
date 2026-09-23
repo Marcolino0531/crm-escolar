@@ -98,7 +98,7 @@ export function montarNotificacao(input: NotificacaoInput): NotificacaoDocumento
   ];
 
   const tabela = demonstrativo.parcelas.map((p) => ({
-    descricao: input.alunos.length > 1 ? `${p.descricao} — ${p.aluno}` : p.descricao,
+    descricao: input.alunos.length > 1 ? `${p.descricao} (${p.aluno})` : p.descricao,
     vencimento: formatarDataBR(p.vencimento),
     original: formatarBRL(p.original),
     multa: formatarBRL(p.multa),
