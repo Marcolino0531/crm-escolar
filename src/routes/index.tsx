@@ -59,7 +59,12 @@ import {
   FECHAMENTO_ZERADO,
   type TransacaoFinanceira,
 } from "@/lib/dashboard-financeiro";
-import { faturamentoRecebido, type ReceitaExtrato } from "@/lib/inadimplencia-faturamento";
+import {
+  faturamentoRecebido,
+  janelaAnual,
+  type ReceitaExtrato,
+} from "@/lib/inadimplencia-faturamento";
+import { retroativoParaJanela } from "@/lib/dashboard-inadimplencia-anual";
 import { useCatalogosFinanceiros } from "@/hooks/use-catalogos-financeiros";
 import { fetchHistoricoInadimplencia } from "@/lib/inadimplencia-fechamento.functions";
 import {
@@ -199,11 +204,12 @@ function MainDashboard() {
 
   // ── Card 2: Inadimplência Anual (índice %) ───────────────────────────────
   // % = Total Inadimplente (Sponte, 01/01 → hoje, sem "Acordo") ÷ Faturamento
-  // Total do Ano (retroativo Jan–Mai + receitas reais do extrato Jun → hoje).
+  // Total do Ano. Janela por ano igual à tela de Inadimplência (janelaAnual):
+  // 2026 = retroativo Jan–Mai + extrato 01/06 → hoje; 2027+ = extrato
+  // 01/01 → hoje, sem retroativo.
   const anoAtual = new Date().getFullYear();
-  const anoInicioYMD = `${anoAtual}-01-01`;
-  const anoJunhoYMD = `${anoAtual}-06-01`;
   const hojeYMD = toLocalISO(new Date());
+  const janela = useMemo(() => janelaAnual(anoAtual, hojeYMD), [anoAtual, hojeYMD]);
 
   const { data: schoolsFaturamento } = useQuery({
     queryKey: ["dash-faturamento-schools"],
@@ -220,23 +226,28 @@ function MainDashboard() {
   const { retroativoAno, retroativoConfigurado } = useMemo(() => {
     const map = new Map<string, number | null>();
     for (const s of schoolsFaturamento ?? []) map.set(s.id, s.faturamento_retroativo_jan_mai);
-    if (selected === "all") {
-      const valores = schools.map((s) => map.get(s.id)).filter((v): v is number => v != null);
-      return {
-        retroativoAno: valores.reduce((a, b) => a + b, 0),
-        retroativoConfigurado: valores.length > 0,
-      };
-    }
-    const v = map.get(selected);
-    return { retroativoAno: v ?? 0, retroativoConfigurado: v != null };
-  }, [schoolsFaturamento, selected, schools]);
+    return retroativoParaJanela(
+      janela,
+      selected,
+      schools.map((s) => s.id),
+      map,
+    );
+  }, [schoolsFaturamento, selected, schools, janela]);
 
   const { catalogos, idsFin, idsCarregados } = useCatalogosFinanceiros();
 
   // Mesma fonte e exclusões (resgate de fundo, aporte de outra unidade) da
   // tela de Inadimplência, para o percentual bater nas duas telas.
   const { data: receitasAno, isFetching: receitasAnoFetching } = useQuery({
-    queryKey: ["faturamento-anual", "receitas", anoAtual, selected, schoolFilterIds, idsFin],
+    queryKey: [
+      "faturamento-anual",
+      "receitas",
+      anoAtual,
+      janela.receitasDesdeYMD,
+      selected,
+      schoolFilterIds,
+      idsFin,
+    ],
     enabled: integracaoDisponivel && retroativoConfigurado && idsCarregados,
     staleTime: 60_000,
     queryFn: async () => {
@@ -246,8 +257,8 @@ function MainDashboard() {
           .select("amount, description, revenue_category_id")
           .eq("type", "entrada")
           .is("parent_transaction_id", null)
-          .gte("date", anoJunhoYMD)
-          .lte("date", hojeYMD)
+          .gte("date", janela.receitasDesdeYMD)
+          .lte("date", janela.fimYMD)
           .order("id", { ascending: true })
           .range(from, to);
         if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
@@ -258,12 +269,21 @@ function MainDashboard() {
   });
 
   const { data: anual, isFetching: anualFetching } = useQuery({
-    queryKey: ["dash-inadimplencia-anual", anoAtual, unidadeNome ?? "consolidado"],
+    queryKey: [
+      "dash-inadimplencia-anual",
+      anoAtual,
+      janela.inicioYMD,
+      unidadeNome ?? "consolidado",
+    ],
     enabled: integracaoDisponivel && retroativoConfigurado,
     staleTime: 5 * 60_000,
     queryFn: () =>
       fetchAnualFn({
-        data: { dataInicio: anoInicioYMD, dataFim: hojeYMD, unidade: unidadeNome ?? undefined },
+        data: {
+          dataInicio: janela.inicioYMD,
+          dataFim: janela.fimYMD,
+          unidade: unidadeNome ?? undefined,
+        },
       }),
   });
 
