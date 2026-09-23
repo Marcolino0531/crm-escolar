@@ -19,6 +19,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +40,13 @@ import {
 import { useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
+import {
+  filtrarContratos,
+  STATUS_CONTRATO_LABEL,
+  STATUS_CONTRATO_ORDEM,
+  turmasDosContratos,
+  type StatusContratoFiltro,
+} from "@/lib/contratos-filtros";
 import {
   contratoCancelavel,
   MOTIVO_CANCELAMENTO_MAX,
@@ -290,6 +304,8 @@ export function ContratosMatricula({
   const registrarWebhook = useServerFn(registrarWebhookContratos);
   const cancelar = useServerFn(cancelarContratoMatricula);
   const [busca, setBusca] = useState("");
+  const [filtroTurma, setFiltroTurma] = useState("todas");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusContratoFiltro>("todos");
   const [cancelando, setCancelando] = useState<ContratoPendente | null>(null);
   const [gerandoChave, setGerandoChave] = useState<string | null>(null);
   const [previaChave, setPreviaChave] = useState<string | null>(null);
@@ -319,24 +335,24 @@ export function ContratosMatricula({
   const webhookRegistrado =
     carregadas.length === 0 || carregadas.some((c) => c.data?.webhookProducaoRegistrado);
 
+  // Todos os itens das unidades do topo, sem filtros: base dos 4 quadros.
+  const todos = useMemo(() => consultas.flatMap((c) => c.data?.itens ?? []), [consultas]);
+  const turmas = useMemo(() => turmasDosContratos(todos), [todos]);
+  const turmaAtiva = filtroTurma !== "todas" && turmas.includes(filtroTurma) ? filtroTurma : null;
+
   const itens = useMemo(() => {
-    const todos = consultas.flatMap((c) => c.data?.itens ?? []);
-    const q = busca.trim().toLowerCase();
-    const filtrados = q
-      ? todos.filter(
-          (i) =>
-            i.alunoNome.toLowerCase().includes(q) ||
-            i.alunoId.includes(q) ||
-            (i.contrato?.responsavelNome ?? "").toLowerCase().includes(q),
-        )
-      : todos;
+    const filtrados = filtrarContratos(todos, {
+      busca,
+      turma: turmaAtiva,
+      status: filtroStatus === "todos" ? null : filtroStatus,
+    });
     // Pendentes e com erro primeiro; enviados por último, mais recentes no topo.
     const peso = (i: ContratoPendente) =>
       !i.contrato ? 0 : i.contrato.status === "erro" ? 1 : i.contrato.status === "gerando" ? 2 : 3;
     return [...filtrados].sort(
       (a, b) => peso(a) - peso(b) || b.enviadaEm.localeCompare(a.enviadaEm),
     );
-  }, [consultas, busca]);
+  }, [todos, busca, turmaAtiva, filtroStatus]);
 
   const destacadoNaLista = itens.some((i) => i.contrato?.id === contratoDestacado);
   useEffect(() => {
@@ -346,10 +362,10 @@ export function ContratosMatricula({
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [contratoDestacado, destacadoNaLista]);
 
-  const pendentes = itens.filter((i) => !i.contrato || i.contrato.status === "erro").length;
-  const enviados = itens.filter((i) => i.contrato?.status === "enviado").length;
-  const assinados = itens.filter((i) => i.contrato?.zapsign?.status === "signed").length;
-  const cancelados = itens.filter((i) => i.contrato?.status === "cancelado").length;
+  const pendentes = todos.filter((i) => !i.contrato || i.contrato.status === "erro").length;
+  const enviados = todos.filter((i) => i.contrato?.status === "enviado").length;
+  const assinados = todos.filter((i) => i.contrato?.zapsign?.status === "signed").length;
+  const cancelados = todos.filter((i) => i.contrato?.status === "cancelado").length;
 
   const gerarMutation = useMutation({
     mutationFn: async (item: ContratoPendente) => {
@@ -470,18 +486,58 @@ export function ContratosMatricula({
       )}
       {erros && <p className="text-sm text-red-600">{erros}</p>}
 
-      <Input
-        placeholder="Buscar por aluno, AlunoID ou responsável…"
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        className="max-w-sm"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          placeholder="Buscar por aluno, AlunoID ou responsável"
+          className="max-w-xs"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+        />
+        <Select value={turmaAtiva ?? "todas"} onValueChange={setFiltroTurma}>
+          <SelectTrigger className="w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as turmas</SelectItem>
+            {turmas.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={filtroStatus}
+          onValueChange={(v) => setFiltroStatus(v as "todos" | StatusContratoFiltro)}
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os status</SelectItem>
+            {STATUS_CONTRATO_ORDEM.map((s) => (
+              <SelectItem key={s} value={s}>
+                {STATUS_CONTRATO_LABEL[s]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {!carregando && todos.length > 0 && (
+          <span className="ml-auto text-sm text-muted-foreground">
+            {itens.length} {itens.length === 1 ? "contrato" : "contratos"}
+          </span>
+        )}
+      </div>
 
       {carregando ? (
         <Skeleton className="h-64 w-full" />
-      ) : itens.length === 0 ? (
+      ) : todos.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           Nenhuma matrícula finalizada no portal nem contrato gerado para as unidades selecionadas.
+        </p>
+      ) : itens.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nenhum contrato encontrado com os filtros selecionados
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
