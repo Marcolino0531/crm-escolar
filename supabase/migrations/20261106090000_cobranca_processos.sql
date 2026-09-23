@@ -71,38 +71,16 @@ CREATE TABLE IF NOT EXISTS public.cobranca_avisos_dispensados (
   PRIMARY KEY (andamento_id, marco, user_id)
 );
 
--- ─── RLS (padrão financeiro_cobranca, igual ao PR 2) ─────────────────────────
+-- ─── Acesso somente via server functions (padrão de inadimplencia_fechamento_mensal) ──
+-- RBAC por unidade é validado no servidor; o navegador não lê nem grava estas tabelas.
 DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['cobranca_processos', 'cobranca_andamentos',
                            'cobranca_recebimentos', 'cobranca_avisos_dispensados'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca view %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca insert %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca update %s" ON public.%I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "cobranca delete %s" ON public.%I', t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca view %s" ON public.%I
-      FOR SELECT TO authenticated
-      USING (public.can_view_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca insert %s" ON public.%I
-      FOR INSERT TO authenticated
-      WITH CHECK (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca update %s" ON public.%I
-      FOR UPDATE TO authenticated
-      USING (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-      WITH CHECK (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
-    EXECUTE format($p$
-      CREATE POLICY "cobranca delete %s" ON public.%I
-      FOR DELETE TO authenticated
-      USING (public.can_edit_module(auth.uid(), 'financeiro_cobranca'::public.app_module))
-    $p$, t, t);
+    EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);
+    EXECUTE format('GRANT ALL ON public.%I TO service_role', t);
   END LOOP;
 END $$;
 
