@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
   Users,
   Plus,
   Trash2,
+  Pencil,
   UserRound,
   Building2,
   CheckCircle2,
@@ -20,9 +21,9 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLeads } from "@/lib/crm/hooks";
-import { useReunioes } from "@/lib/agenda.hooks";
+import { useReunioes, type Reuniao, type ReuniaoInput } from "@/lib/agenda.hooks";
 import { listAgendaUsers, type AgendaUser } from "@/lib/agenda.functions";
-import { useSchool, usePermissions } from "@/lib/app-context";
+import { useAuth, useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -107,6 +108,7 @@ type CalEvent = {
   // reuniao
   colaboradores?: string[];
   unitId?: string | null;
+  reuniao?: Reuniao;
 };
 
 // CEC e CEC Baby compartilham a mesma coordenação: uma reunião marcada em uma
@@ -150,13 +152,22 @@ function leadToEvent(lead: Lead, unidade: string): CalEvent {
 
 function AgendaPage() {
   const { leads, isLoading } = useLeads();
-  const { reunioes, isLoading: loadingReunioes, adicionarReuniao, removerReuniao } = useReunioes();
+  const {
+    reunioes,
+    isLoading: loadingReunioes,
+    adicionarReuniao,
+    editarReuniao,
+    removerReuniao,
+  } = useReunioes();
   const { schools, selected, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
+  const { session } = useAuth();
+  const userId = session?.user?.id ?? null;
   const podeEditar = canEdit("agenda");
   const [mode, setMode] = useState<"mes" | "semana">("mes");
   const [cursor, setCursor] = useState(() => new Date());
   const [novaOpen, setNovaOpen] = useState(false);
+  const [editando, setEditando] = useState<Reuniao | null>(null);
 
   const schoolName = (id: string | null | undefined) =>
     (id && schools.find((s) => s.id === id)?.name) || "—";
@@ -204,6 +215,7 @@ function AgendaPage() {
         colaboradores: r.colaboradores,
         unitId: unit,
         unidade: schoolName(unit),
+        reuniao: r,
       });
     }
     for (const arr of map.values()) {
@@ -240,6 +252,14 @@ function AgendaPage() {
   const onRemove = (ev: CalEvent) => {
     if (ev.kind !== "reuniao") return;
     removerReuniao(ev.id.replace("reuniao:", ""));
+  };
+
+  // Só o autor da reunião pode editá-la (a policy de UPDATE exige o mesmo).
+  const podeEditarReuniao = (ev: CalEvent) =>
+    podeEditar && !!ev.reuniao?.createdBy && ev.reuniao.createdBy === userId;
+
+  const onEdit = (ev: CalEvent) => {
+    if (ev.reuniao && podeEditarReuniao(ev)) setEditando(ev.reuniao);
   };
 
   return (
@@ -306,7 +326,9 @@ function AgendaPage() {
           eventsByDay={eventsByDay}
           todayISO={todayISO}
           podeEditar={podeEditar}
+          podeEditarReuniao={podeEditarReuniao}
           onRemove={onRemove}
+          onEdit={onEdit}
         />
       ) : (
         <WeekView
@@ -314,7 +336,9 @@ function AgendaPage() {
           eventsByDay={eventsByDay}
           todayISO={todayISO}
           podeEditar={podeEditar}
+          podeEditarReuniao={podeEditarReuniao}
           onRemove={onRemove}
+          onEdit={onEdit}
         />
       )}
 
@@ -328,6 +352,21 @@ function AgendaPage() {
           onSubmit={(input) => {
             adicionarReuniao(input);
             setNovaOpen(false);
+          }}
+        />
+      )}
+
+      {podeEditar && (
+        <NovaReuniaoDialog
+          open={editando !== null}
+          onOpenChange={(v) => {
+            if (!v) setEditando(null);
+          }}
+          defaultDate={todayISO}
+          reuniao={editando ?? undefined}
+          onSubmit={(input) => {
+            if (editando) editarReuniao(editando.id, input);
+            setEditando(null);
           }}
         />
       )}
@@ -403,13 +442,17 @@ function MonthView({
   eventsByDay,
   todayISO,
   podeEditar,
+  podeEditarReuniao,
   onRemove,
+  onEdit,
 }: {
   cursor: Date;
   eventsByDay: Map<string, CalEvent[]>;
   todayISO: string;
   podeEditar: boolean;
+  podeEditarReuniao: (ev: CalEvent) => boolean;
   onRemove: (ev: CalEvent) => void;
+  onEdit: (ev: CalEvent) => void;
 }) {
   const cells = useMemo(() => {
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -457,7 +500,14 @@ function MonthView({
               </div>
               <div className="flex flex-col gap-1">
                 {events.map((ev) => (
-                  <EventChip key={ev.id} ev={ev} podeEditar={podeEditar} onRemove={onRemove} />
+                  <EventChip
+                    key={ev.id}
+                    ev={ev}
+                    podeEditar={podeEditar}
+                    podeEditarReuniao={podeEditarReuniao(ev)}
+                    onRemove={onRemove}
+                    onEdit={onEdit}
+                  />
                 ))}
               </div>
             </div>
@@ -473,13 +523,17 @@ function WeekView({
   eventsByDay,
   todayISO,
   podeEditar,
+  podeEditarReuniao,
   onRemove,
+  onEdit,
 }: {
   cursor: Date;
   eventsByDay: Map<string, CalEvent[]>;
   todayISO: string;
   podeEditar: boolean;
+  podeEditarReuniao: (ev: CalEvent) => boolean;
   onRemove: (ev: CalEvent) => void;
+  onEdit: (ev: CalEvent) => void;
 }) {
   const days = useMemo(() => {
     const start = startOfWeek(cursor);
@@ -511,7 +565,14 @@ function WeekView({
                 </span>
               ) : (
                 events.map((ev) => (
-                  <EventChip key={ev.id} ev={ev} podeEditar={podeEditar} onRemove={onRemove} />
+                  <EventChip
+                    key={ev.id}
+                    ev={ev}
+                    podeEditar={podeEditar}
+                    podeEditarReuniao={podeEditarReuniao(ev)}
+                    onRemove={onRemove}
+                    onEdit={onEdit}
+                  />
                 ))
               )}
             </div>
@@ -525,11 +586,15 @@ function WeekView({
 function EventChip({
   ev,
   podeEditar,
+  podeEditarReuniao,
   onRemove,
+  onEdit,
 }: {
   ev: CalEvent;
   podeEditar: boolean;
+  podeEditarReuniao: boolean;
   onRemove: (ev: CalEvent) => void;
+  onEdit: (ev: CalEvent) => void;
 }) {
   const isReuniao = ev.kind === "reuniao";
   const colorClasses = isReuniao ? REUNIAO_CLASSES : unitColorClasses(ev.unidade ?? "");
@@ -570,6 +635,16 @@ function EventChip({
               {ev.origem && <Row icon={Compass} text={ev.origem} />}
             </>
           )}
+          {isReuniao && podeEditarReuniao && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-full justify-start"
+              onClick={() => onEdit(ev)}
+            >
+              <Pencil className="h-3.5 w-3.5" /> Editar reunião
+            </Button>
+          )}
           {isReuniao && podeEditar && (
             <Button
               variant="ghost"
@@ -601,26 +676,29 @@ function Row({
   );
 }
 
+// Em modo edição (`reuniao` informado) o formulário abre pré-preenchido e o
+// envio devolve os mesmos campos para `editarReuniao`.
 function NovaReuniaoDialog({
   open,
   onOpenChange,
   defaultDate,
+  reuniao,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   defaultDate: string;
-  onSubmit: (input: {
-    data: string;
-    horario: string;
-    responsavelNome: string;
-    alunoNome: string;
-    colaboradores: string[];
-    participanteIds: string[];
-    unitId: string;
-  }) => void;
+  reuniao?: Reuniao;
+  onSubmit: (input: ReuniaoInput) => void;
 }) {
   const { schools, selected } = useSchool();
+  const { data: usuarios = [] } = useQuery({
+    queryKey: ["agenda_users"],
+    queryFn: () => listAgendaUsers(),
+    staleTime: 5 * 60 * 1000,
+    enabled: !!reuniao,
+  });
+  const editando = !!reuniao;
   const [data, setData] = useState(defaultDate);
   const [horario, setHorario] = useState("");
   const [responsavel, setResponsavel] = useState("");
@@ -631,6 +709,14 @@ function NovaReuniaoDialog({
   // Reseta o formulário sempre que o modal (re)abre. Pré-seleciona a unidade
   // ativa no filtro do topo, quando houver uma específica.
   const reset = () => {
+    if (reuniao) {
+      setData(reuniao.data);
+      setHorario(reuniao.horario);
+      setResponsavel(reuniao.responsavelNome);
+      setAluno(reuniao.alunoNome);
+      setUnitId(reuniao.unitId ?? "");
+      return;
+    }
     setData(defaultDate);
     setHorario("");
     setResponsavel("");
@@ -638,6 +724,21 @@ function NovaReuniaoDialog({
     setParticipantes([]);
     setUnitId(selected !== "all" && schools.some((s) => s.id === selected) ? selected : "");
   };
+
+  // Edição: o modal é montado já aberto, então o preenchimento acontece aqui.
+  // Os participantes são reconstruídos a partir dos IDs gravados (nome atual do
+  // usuário; quem não existe mais mantém o nome do snapshot).
+  useEffect(() => {
+    if (!open || !reuniao) return;
+    reset();
+    const porId = new Map(usuarios.map((u) => [u.id, u]));
+    setParticipantes(
+      reuniao.participanteIds.map(
+        (id, i) => porId.get(id) ?? { id, name: reuniao.colaboradores[i] ?? "", email: "" },
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, reuniao?.id, usuarios]);
 
   const handleOpenChange = (v: boolean) => {
     if (v) reset();
@@ -660,7 +761,7 @@ function NovaReuniaoDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Nova Reunião</DialogTitle>
+          <DialogTitle>{editando ? "Editar reunião" : "Nova Reunião"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
@@ -726,7 +827,7 @@ function NovaReuniaoDialog({
             Cancelar
           </Button>
           <Button onClick={submit} disabled={!data || !unitId}>
-            Agendar
+            {editando ? "Salvar alterações" : "Agendar"}
           </Button>
         </DialogFooter>
       </DialogContent>
