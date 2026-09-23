@@ -76,6 +76,7 @@ import {
   etapaDoCaso,
   formatarBRL,
   formatarCpf,
+  ANO_LETIVO_MINIMO_CONTRATO,
   formatarDataBR,
   labelEtapa,
   montarTimeline,
@@ -93,6 +94,8 @@ import {
   alterarDataInicioCobranca,
   assinarUploadCobranca,
   carregarCasoCobranca,
+  anexarContratosAssinadosCobranca,
+  contratosAssinadosDoCasoCobranca,
   copiarDocumentosMatricula,
   debitoAtualCaso,
   documentosMatriculaDoCaso,
@@ -1317,6 +1320,9 @@ function SecaoDocumentacao({
                     {item.categoria === "docs_responsavel" && (
                       <BuscarNoSistema casoId={caso.id} onDone={onDone} />
                     )}
+                    {item.categoria === "contrato" && (
+                      <BuscarContratoAssinado casoId={caso.id} onDone={onDone} />
+                    )}
                     {item.categoria === "outro" && (
                       <Input
                         className="h-8 w-44"
@@ -1573,6 +1579,102 @@ function BuscarNoSistema({ casoId, onDone }: { casoId: string; onDone: () => voi
             <Button disabled={sel.size === 0 || cp.isPending} onClick={() => cp.mutate()}>
               {cp.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Copiar selecionados
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function BuscarContratoAssinado({ casoId, onDone }: { casoId: string; onDone: () => void }) {
+  const listar = useServerFn(contratosAssinadosDoCasoCobranca);
+  const anexar = useServerFn(anexarContratosAssinadosCobranca);
+  const [aberto, setAberto] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+
+  const contratos = useQuery({
+    queryKey: ["cobranca_contratos_assinados", casoId],
+    queryFn: () => listar({ data: { casoId } }),
+    enabled: aberto,
+  });
+
+  const mut = useMutation({
+    mutationFn: () => anexar({ data: { casoId, contratoIds: [...sel] } }),
+    onSuccess: ({ anexados, repetidos }) => {
+      toast.success(
+        `${anexados} contrato(s) anexado(s) ao caso.${repetidos ? ` ${repetidos} já estava(m) anexado(s).` : ""}`,
+      );
+      setAberto(false);
+      setSel(new Set());
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  const lista = contratos.data ?? [];
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setAberto(true)}>
+        <Search className="mr-2 h-4 w-4" /> Buscar no sistema
+      </Button>
+      <Dialog open={aberto} onOpenChange={setAberto}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Contratos assinados no sistema</DialogTitle>
+            <DialogDescription>
+              Contratos de matrícula de {ANO_LETIVO_MINIMO_CONTRATO} em diante, desta unidade e dos
+              alunos do caso, assinados na ZapSign. O PDF assinado é copiado para o caso.
+            </DialogDescription>
+          </DialogHeader>
+          {contratos.isLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : contratos.error ? (
+            <p className="text-sm text-red-700">{mensagemErro(contratos.error)}</p>
+          ) : lista.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhum contrato assinado de {ANO_LETIVO_MINIMO_CONTRATO} em diante encontrado no
+              sistema para os alunos deste caso. Use o upload.
+            </p>
+          ) : (
+            <ul className="max-h-72 space-y-2 overflow-y-auto">
+              {lista.map((c) => (
+                <li key={c.contratoId}>
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox
+                      checked={sel.has(c.contratoId)}
+                      disabled={c.jaAnexado}
+                      onCheckedChange={(v) => {
+                        const n = new Set(sel);
+                        if (v === true) n.add(c.contratoId);
+                        else n.delete(c.contratoId);
+                        setSel(n);
+                      }}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-medium">
+                        {c.alunoNome} · {c.anoLetivo}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        Nº {c.numeroContrato}
+                        {c.assinadoEm &&
+                          ` · assinado em ${formatarDataBR(c.assinadoEm.slice(0, 10))}`}
+                        {c.jaAnexado && " · já anexado a este caso"}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={sel.size === 0 || mut.isPending} onClick={() => mut.mutate()}>
+              {mut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Anexar selecionados
             </Button>
           </DialogFooter>
         </DialogContent>
