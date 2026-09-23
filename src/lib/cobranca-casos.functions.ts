@@ -9,12 +9,15 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
+  ANO_LETIVO_MINIMO_CONTRATO,
   BUCKET_COBRANCA,
   CATEGORIAS_ANEXO,
   MOTIVOS_ENCERRAMENTO,
   TOTAL_MENSAGENS,
+  contratoElegivelCobranca,
   datasMensagens,
   montarDemonstrativo,
+  nomeAnexoContrato,
   podeAlterarDataInicio,
   prazoFinalNotificacao,
   responsavelKey,
@@ -30,6 +33,7 @@ import {
   type CasoCompleto,
   type CasoResumo,
   type CategoriaAnexo,
+  type ContratoAssinadoDisponivel,
   type DemonstrativoDebito,
   type EnderecoResponsavel,
   type MensagemCaso,
@@ -47,6 +51,7 @@ import {
   resolverCredenciais,
 } from "@/lib/sponte.functions";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { BUCKET_ZAPSIGN_ASSINADOS, guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
 
 const VALIDADE_LINK = 60 * 60; // 1h
 const LOG = "[cobrança manual]";
@@ -145,6 +150,16 @@ export async function arquivoExiste(path: string): Promise<boolean> {
     .list(pasta, { search: nome });
   if (error) return false;
   return (data ?? []).some((f) => f.name === nome);
+}
+
+async function tamanhoArquivo(path: string): Promise<number> {
+  const barra = path.lastIndexOf("/");
+  const nome = path.slice(barra + 1);
+  const { data } = await supabaseAdmin.storage
+    .from(BUCKET_COBRANCA)
+    .list(path.slice(0, Math.max(barra, 0)), { search: nome });
+  const meta = (data ?? []).find((f) => f.name === nome)?.metadata as { size?: number } | undefined;
+  return meta?.size ?? 0;
 }
 
 export async function linkAssinado(path: string): Promise<string | null> {
@@ -996,6 +1011,181 @@ export const copiarDocumentosMatricula = createServerFn({ method: "POST" })
       copiados++;
     }
     return { copiados };
+  });
+
+// ─── Contrato assinado (Buscar no sistema) ───────────────────────────────────
+// Contratos de matrícula (>= 2027, não cancelados) dos alunos do caso, na
+// unidade do caso, com documento ZapSign "signed" e PDF guardado em
+// zapsign-assinados. A cópia para cobranca-casos é feita só no servidor.
+
+const AMBIENTE_CONTRATO = "producao" as const;
+
+interface ContratoRow {
+  id: string;
+  unidade: string;
+  aluno_id: string;
+  ano_letivo: number;
+  numero_contrato: string;
+  aluno_nome: string;
+  status: string;
+  zapsign_documento_id: string | null;
+}
+
+interface ZapDocRow {
+  id: string;
+  ambiente: string;
+  status: string;
+  zapsign_token: string | null;
+  assinado_em: string | null;
+  arquivo_assinado_path: string | null;
+}
+
+interface ContratoAssinado {
+  contrato: ContratoRow;
+  doc: ZapDocRow & { arquivo_assinado_path: string };
+  alunoNome: string;
+  nome: string;
+}
+
+async function contratosAssinadosDoCaso(caso: CasoCompleto): Promise<ContratoAssinado[]> {
+  const alunoIds = caso.alunos.map((a) => a.aluno_id);
+  if (alunoIds.length === 0) return [];
+  const { data: contratos, error } = await supabaseAdmin
+    .from("contratos_matricula" as never)
+    .select(
+      "id, unidade, aluno_id, ano_letivo, numero_contrato, aluno_nome, status, zapsign_documento_id",
+    )
+    .eq("unidade", caso.unidade)
+    .in("aluno_id", alunoIds)
+    .gte("ano_letivo", ANO_LETIVO_MINIMO_CONTRATO)
+    .neq("status", "cancelado")
+    .returns<ContratoRow[]>();
+  if (error) throw new Error(error.message);
+  const elegiveis = (contratos ?? []).filter(
+    (c) => !!c.zapsign_documento_id && contratoElegivelCobranca(c, caso),
+  );
+  if (elegiveis.length === 0) return [];
+
+  const { data: docs, error: eDocs } = await supabaseAdmin
+    .from("zapsign_documentos" as never)
+    .select("id, ambiente, status, zapsign_token, assinado_em, arquivo_assinado_path")
+    .in(
+      "id",
+      elegiveis.map((c) => c.zapsign_documento_id!),
+    )
+    .eq("ambiente", AMBIENTE_CONTRATO)
+    .eq("status", "signed")
+    .returns<ZapDocRow[]>();
+  if (eDocs) throw new Error(eDocs.message);
+  const docPorId = new Map((docs ?? []).map((d) => [d.id, d]));
+
+  const resultado: ContratoAssinado[] = [];
+  for (const contrato of elegiveis) {
+    const doc = docPorId.get(contrato.zapsign_documento_id!);
+    if (!doc) continue;
+    let path = doc.arquivo_assinado_path;
+    if (!path && doc.zapsign_token) {
+      const r = await guardarArquivoAssinado(doc.id, doc.zapsign_token, AMBIENTE_CONTRATO);
+      if (r.ok) path = r.path;
+      else console.error(`${LOG} contrato ${contrato.id} assinado sem arquivo:`, r.erro);
+    }
+    if (!path) continue;
+    const nomeAluno =
+      caso.alunos.find((a) => a.aluno_id === contrato.aluno_id)?.nome || contrato.aluno_nome;
+    resultado.push({
+      contrato,
+      doc: { ...doc, arquivo_assinado_path: path },
+      alunoNome: nomeAluno,
+      nome: nomeAnexoContrato(contrato.ano_letivo, nomeAluno, contrato.numero_contrato),
+    });
+  }
+  return resultado;
+}
+
+async function nomesContratosAnexados(casoId: string): Promise<Set<string>> {
+  const { data, error } = await supabaseAdmin
+    .from("cobranca_anexos" as never)
+    .select("nome_personalizado")
+    .eq("caso_id", casoId)
+    .eq("categoria", "contrato")
+    .eq("origem", "sistema")
+    .returns<{ nome_personalizado: string | null }[]>();
+  if (error) throw new Error(error.message);
+  return new Set((data ?? []).map((a) => a.nome_personalizado).filter((n): n is string => !!n));
+}
+
+export const contratosAssinadosDoCasoCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => CasoIdSchema.parse(i))
+  .handler(async ({ data, context }): Promise<ContratoAssinadoDisponivel[]> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    const [contratos, anexados] = await Promise.all([
+      contratosAssinadosDoCaso(caso),
+      nomesContratosAnexados(caso.id),
+    ]);
+    return contratos
+      .map((c) => ({
+        contratoId: c.contrato.id,
+        alunoNome: c.alunoNome,
+        anoLetivo: c.contrato.ano_letivo,
+        numeroContrato: c.contrato.numero_contrato,
+        assinadoEm: c.doc.assinado_em,
+        jaAnexado: anexados.has(c.nome),
+      }))
+      .sort((a, b) => b.anoLetivo - a.anoLetivo || a.alunoNome.localeCompare(b.alunoNome));
+  });
+
+const AnexarContratoSchema = CasoIdSchema.extend({
+  contratoIds: z.array(z.string().uuid()).min(1),
+});
+
+/** Copia o PDF assinado de zapsign-assinados para cobranca-casos (categoria 'contrato', origem 'sistema'). */
+export const anexarContratosAssinadosCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => AnexarContratoSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ anexados: number; repetidos: number }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    const pedidos = new Set(data.contratoIds);
+    const contratos = (await contratosAssinadosDoCaso(caso)).filter((c) =>
+      pedidos.has(c.contrato.id),
+    );
+    if (contratos.length === 0) throw new Error("Nenhum contrato assinado elegível encontrado.");
+    const anexados = await nomesContratosAnexados(caso.id);
+    let ok = 0;
+    let repetidos = 0;
+    for (const c of contratos) {
+      if (anexados.has(c.nome)) {
+        repetidos++;
+        continue;
+      }
+      const destino = `${caso.id}/${randomUUID()}.pdf`;
+      const { error: eCopy } = await supabaseAdmin.storage
+        .from(BUCKET_ZAPSIGN_ASSINADOS)
+        .copy(c.doc.arquivo_assinado_path, destino, { destinationBucket: BUCKET_COBRANCA });
+      if (eCopy) throw new Error(`Falha ao copiar o contrato assinado: ${eCopy.message}`);
+      const tamanho = await tamanhoArquivo(destino);
+      await inserirAnexo(
+        caso,
+        "contrato",
+        {
+          path: destino,
+          nomeArquivo: `${c.nome}.pdf`,
+          tipoArquivo: "application/pdf",
+          tamanhoBytes: tamanho,
+        },
+        "sistema",
+        context.userId,
+        c.nome,
+      );
+      anexados.add(c.nome);
+      ok++;
+    }
+    return { anexados: ok, repetidos };
   });
 
 // ─── Encerramento ────────────────────────────────────────────────────────────

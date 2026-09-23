@@ -569,7 +569,9 @@ export function montarTimeline(
         a.origem === "gerado"
           ? "Gerado pelo sistema"
           : a.origem === "sistema"
-            ? "Copiado do cadastro de matrícula"
+            ? a.categoria === "contrato"
+              ? "Contrato assinado buscado no sistema (ZapSign)"
+              : "Copiado do cadastro de matrícula"
             : a.nome_arquivo,
       anexo: a,
     });
@@ -617,4 +619,39 @@ export function enderecoResponsavelLinha(e: EnderecoResponsavel | null | undefin
     e.cep ? `CEP ${e.cep}` : "",
   ].filter(Boolean);
   return partes.join(", ");
+}
+
+// ─── Contrato assinado (Buscar no sistema) ───────────────────────────────────
+
+/** Trava fixa: só contratos deste ano letivo em diante entram na Cobrança. */
+export const ANO_LETIVO_MINIMO_CONTRATO = 2027;
+
+export interface ContratoAssinadoDisponivel {
+  contratoId: string;
+  alunoNome: string;
+  anoLetivo: number;
+  numeroContrato: string;
+  assinadoEm: string | null;
+  jaAnexado: boolean;
+}
+
+export function nomeAnexoContrato(anoLetivo: number, alunoNome: string, numero: string): string {
+  return `Contrato ${anoLetivo} - ${alunoNome} - ${numero}`;
+}
+
+export function contratoElegivelCobranca(
+  c: {
+    unidade: string;
+    aluno_id: string;
+    ano_letivo: number;
+    status: string;
+  },
+  caso: Pick<CasoResumo, "unidade" | "alunos">,
+): boolean {
+  return (
+    c.unidade === caso.unidade &&
+    c.ano_letivo >= ANO_LETIVO_MINIMO_CONTRATO &&
+    c.status !== "cancelado" &&
+    caso.alunos.some((a) => a.aluno_id === c.aluno_id)
+  );
 }
