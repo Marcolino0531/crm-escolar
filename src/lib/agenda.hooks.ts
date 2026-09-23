@@ -12,6 +12,7 @@ export type Reuniao = {
   colaboradores: string[];
   participanteIds: string[];
   unitId: string | null;
+  createdBy: string | null;
 };
 
 export type ReuniaoInput = {
@@ -36,6 +37,7 @@ type ReuniaoRow = {
   colaboradores: string[] | null;
   participante_ids: string[] | null;
   unit_id: string | null;
+  created_by: string | null;
 };
 
 function rowToReuniao(r: ReuniaoRow): Reuniao {
@@ -48,6 +50,7 @@ function rowToReuniao(r: ReuniaoRow): Reuniao {
     colaboradores: r.colaboradores ?? [],
     participanteIds: r.participante_ids ?? [],
     unitId: r.unit_id ?? null,
+    createdBy: r.created_by ?? null,
   };
 }
 
@@ -67,7 +70,10 @@ export function useReunioes() {
     },
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["agenda_reunioes"] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["agenda_reunioes"] });
+    qc.invalidateQueries({ queryKey: ["agenda_notifications"] });
+  };
   const m = useMutation({
     mutationFn: async (fn: () => Promise<void>) => fn(),
     onSuccess: invalidate,
@@ -92,6 +98,28 @@ export function useReunioes() {
       toast.success("Reunião agendada.");
     });
 
+  const editarReuniao = (id: string, input: ReuniaoInput) =>
+    m.mutate(async () => {
+      const { data, error } = await supabase
+        .from("agenda_reunioes" as never)
+        .update({
+          data: input.data,
+          horario: input.horario || null,
+          responsavel_nome: toTitleCase(input.responsavelNome) || null,
+          aluno_nome: toTitleCase(input.alunoNome) || null,
+          colaboradores: input.colaboradores,
+          participante_ids: input.participanteIds,
+          unit_id: input.unitId,
+        } as never)
+        .eq("id", id)
+        .select("id");
+      if (error) throw error;
+      if (!data || (data as unknown[]).length === 0) {
+        throw new Error("Somente quem criou a reunião pode editá-la.");
+      }
+      toast.success("Reunião atualizada.");
+    });
+
   const removerReuniao = (id: string) =>
     m.mutate(async () => {
       const { error } = await supabase
@@ -102,7 +130,7 @@ export function useReunioes() {
       toast.success("Reunião removida.");
     });
 
-  return { reunioes, isLoading, adicionarReuniao, removerReuniao };
+  return { reunioes, isLoading, adicionarReuniao, editarReuniao, removerReuniao };
 }
 
 // ---------- Colaboradores (fonte do multi-select) ----------
