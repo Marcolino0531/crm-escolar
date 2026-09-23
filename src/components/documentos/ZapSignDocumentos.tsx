@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   FileText,
@@ -39,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { BaixarAssinadoButton } from "@/components/documentos/BaixarAssinadoButton";
 import { useColegios } from "@/lib/colegios";
 import {
   preencherSignatario,
@@ -53,6 +56,7 @@ import {
   criarDocumentoTesteTemplate,
   criarTemplateTeste,
   listarDocumentosTeste,
+  listarEventosZapSign,
   registrarWebhookTeste,
   sincronizarDocumentoTeste,
   type ZapSignDocumentoLista,
@@ -170,15 +174,53 @@ export function ZapSignDocumentos() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Webhook className="h-4 w-4" /> Eventos recebidos (webhook)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {(lista.data?.eventos.length ?? 0) === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum callback recebido ainda.</p>
+      <EventosWebhook
+        total={lista.data?.totalEventos ?? 0}
+        documentos={lista.data?.documentos ?? []}
+      />
+    </div>
+  );
+}
+
+// Recolhido por padrão (mesmo padrão de AvisosConcluidos da Agenda): só o
+// cabeçalho com a contagem; a tabela só é carregada ao abrir.
+function EventosWebhook({
+  total,
+  documentos,
+}: {
+  total: number;
+  documentos: ZapSignDocumentoLista[];
+}) {
+  const [aberto, setAberto] = useState(false);
+  const listarEventos = useServerFn(listarEventosZapSign);
+  const eventos = useQuery({
+    queryKey: ["zapsign-eventos", AMBIENTE],
+    enabled: aberto,
+    queryFn: () => listarEventos({ data: { ambiente: AMBIENTE } }),
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-accent"
+      >
+        <Webhook className="h-4 w-4" />
+        Eventos recebidos (webhook) ({total})
+        <span className="ml-auto">
+          {aberto ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+      </button>
+
+      {aberto && (
+        <div className="border-t border-border">
+          {eventos.isLoading ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">Carregando…</p>
+          ) : (eventos.data?.length ?? 0) === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              Nenhum callback recebido ainda.
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -190,8 +232,8 @@ export function ZapSignDocumentos() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lista.data?.eventos.map((e) => {
-                  const doc = lista.data?.documentos.find((d) => d.id === e.documento_id);
+                {eventos.data?.map((e) => {
+                  const doc = documentos.find((d) => d.id === e.documento_id);
                   return (
                     <TableRow key={e.id}>
                       <TableCell className="whitespace-nowrap">{dataHora(e.recebido_em)}</TableCell>
@@ -208,8 +250,8 @@ export function ZapSignDocumentos() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }
@@ -719,6 +761,14 @@ function TabelaDocumentos({
               <TableCell className="whitespace-nowrap">{dataHora(d.enviado_em)}</TableCell>
               <TableCell className="whitespace-nowrap">{dataHora(d.assinado_em)}</TableCell>
               <TableCell className="text-right">
+                {d.status === "signed" && (
+                  <BaixarAssinadoButton
+                    documentoId={d.id}
+                    ambiente={AMBIENTE}
+                    erroGuardado={d.arquivo_assinado_path ? null : d.arquivo_assinado_erro}
+                    onAtualizado={onSincronizado}
+                  />
+                )}
                 {podeEditar && d.zapsign_token && (
                   <Button
                     type="button"

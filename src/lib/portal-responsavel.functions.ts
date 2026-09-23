@@ -55,6 +55,7 @@ import { comporLinhasDigitaveis, type ItemBoletoLinha } from "@/lib/billing-recu
 import { signatariosDoDocumento } from "@/lib/contrato-matricula.functions";
 import type { SignatarioPersistido } from "@/lib/zapsign.persist";
 import { detalharDocumento } from "@/lib/zapsign.server";
+import { linkArquivoAssinado } from "@/lib/zapsign.arquivo";
 import {
   pendenciasEmAberto,
   type PendenciasAluno,
@@ -559,10 +560,16 @@ export const listarContratosPortal = createServerFn({ method: "POST" })
         const contratante = signatariosDoDocumento(doc?.signatarios).find(
           (s) => s.papel === "CONTRATANTE",
         );
+        // Cópia própria do PDF (link assinado do bucket); a API da ZapSign só
+        // entra como fallback quando o arquivo ainda não pôde ser guardado.
         let pdfAssinado = "";
-        if (status === "assinado" && doc?.zapsign_token) {
-          const r = await detalharDocumento(doc.zapsign_token, AMBIENTE_ZAPSIGN);
-          if (r.ok) pdfAssinado = r.dados.signed_file ?? "";
+        if (status === "assinado" && doc) {
+          const proprio = await linkArquivoAssinado(doc.id, AMBIENTE_ZAPSIGN);
+          if (proprio.url) pdfAssinado = proprio.url;
+          else if (doc.zapsign_token) {
+            const r = await detalharDocumento(doc.zapsign_token, AMBIENTE_ZAPSIGN);
+            if (r.ok) pdfAssinado = r.dados.signed_file ?? "";
+          }
         }
         return {
           anoLetivo: Number(c.ano_letivo),

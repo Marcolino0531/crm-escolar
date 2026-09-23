@@ -20,6 +20,7 @@ import {
   type ZapSignAmbiente,
   type ZapSignSignatarioInput,
 } from "@/lib/zapsign.server";
+import { guardarArquivoAssinado, linkArquivoAssinado } from "@/lib/zapsign.arquivo";
 import {
   aplicarEstadoDocumento,
   signatarioDoSigner,
@@ -115,6 +116,8 @@ export type ZapSignDocumentoLista = {
   ultima_atualizacao_em: string | null;
   erro: string | null;
   created_by_nome: string;
+  arquivo_assinado_path: string | null;
+  arquivo_assinado_erro: string | null;
 };
 
 function validarBase64Pdf(b64: string): string {
@@ -383,7 +386,7 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
     let q = supabaseAdmin
       .from(T_DOCS)
       .select(
-        "id, origem, nome, unidade, zapsign_token, status, signatarios, enviado_em, assinado_em, ultima_atualizacao_em, erro, created_by_nome",
+        "id, origem, nome, unidade, zapsign_token, status, signatarios, enviado_em, assinado_em, ultima_atualizacao_em, erro, created_by_nome, arquivo_assinado_path, arquivo_assinado_erro",
       )
       .eq("ambiente", data.ambiente)
       .not("external_id", "like", "contrato-matricula:%")
@@ -394,11 +397,8 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
       q.returns<ZapSignDocumentoLista[]>(),
       supabaseAdmin
         .from(T_EVENTOS)
-        .select("id, documento_id, zapsign_token, event_type, status_documento, recebido_em")
-        .eq("sandbox", data.ambiente === "sandbox")
-        .order("recebido_em", { ascending: false })
-        .limit(200)
-        .returns<ZapSignEventoLista[]>(),
+        .select("id", { count: "exact", head: true })
+        .eq("sandbox", data.ambiente === "sandbox"),
       supabaseAdmin
         .from(T_WEBHOOKS)
         .select("id, zapsign_id, url, tipo, created_at, created_by_nome")
@@ -411,7 +411,106 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
     return {
       configurado: zapsignConfigurado(data.ambiente),
       documentos: docs.data ?? [],
-      eventos: eventos.data ?? [],
+      totalEventos: eventos.count ?? 0,
       webhooks: webhooks.data ?? [],
+    };
+  });
+
+/** Eventos recebidos pelo webhook do ambiente; carregados só quando o card é aberto. */
+export const listarEventosZapSign = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ ambiente: AmbienteSchema }).parse(input))
+  .handler(async ({ data, context }) => {
+    await exigirVisualizacao(context.userId, ["documentos"]);
+    const { data: eventos, error } = await supabaseAdmin
+      .from(T_EVENTOS)
+      .select("id, documento_id, zapsign_token, event_type, status_documento, recebido_em")
+      .eq("sandbox", data.ambiente === "sandbox")
+      .order("recebido_em", { ascending: false })
+      .limit(200)
+      .returns<ZapSignEventoLista[]>();
+    if (error) throw new Error(error.message);
+    return eventos ?? [];
+  });
+
+async function exigirVisualizacao(userId: string, modulos: string[]): Promise<void> {
+  const resultados = await Promise.all(
+    modulos.map((m) =>
+      supabaseAdmin.rpc("can_view_module" as never, { _user_id: userId, _module: m } as never),
+    ),
+  );
+  for (const r of resultados) if (r.error) throw new Error(r.error.message);
+  if (!resultados.some((r) => Boolean(r.data))) {
+    throw new Error("Sem permissão para ver este documento.");
+  }
+}
+
+/**
+ * Link assinado de curta duração para o PDF assinado guardado no School Hub.
+ * Mesma regra de quem vê o documento na tela de origem: Documentos (aba
+ * ZapSign) ou Rematrícula (aba Contratos). Se o arquivo ainda não foi
+ * guardado, tenta guardar na hora.
+ */
+export const obterLinkArquivoAssinado = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ ambiente: AmbienteSchema, id: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await exigirVisualizacao(context.userId, ["documentos", "rematricula"]);
+    const r = await linkArquivoAssinado(data.id, data.ambiente);
+    if (r.url === null) throw new Error(r.erro);
+    return { url: r.url };
+  });
+
+export type BackfillCandidato = {
+  id: string;
+  nome: string;
+  unidade: string | null;
+  assinado_em: string | null;
+};
+
+/**
+ * Guarda o PDF dos documentos de PRODUÇÃO já assinados e ainda sem cópia
+ * própria. `dryRun` só lista os candidatos, sem gravar nada.
+ */
+export const backfillArquivosAssinados = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ dryRun: z.boolean() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await exigirEdicaoDocumentos(context.userId);
+    const { data: docs, error } = await supabaseAdmin
+      .from(T_DOCS)
+      .select("id, nome, unidade, assinado_em, zapsign_token")
+      .eq("ambiente", "producao")
+      .eq("status", "signed")
+      .is("arquivo_assinado_path", null)
+      .order("assinado_em", { ascending: true })
+      .returns<(BackfillCandidato & { zapsign_token: string | null })[]>();
+    if (error) throw new Error(error.message);
+    const candidatos = docs ?? [];
+    const sucessos: BackfillCandidato[] = [];
+    const falhas: (BackfillCandidato & { motivo: string })[] = [];
+    if (!data.dryRun) {
+      for (const d of candidatos) {
+        if (!d.zapsign_token) {
+          falhas.push({ ...d, motivo: "Documento sem token da ZapSign." });
+          continue;
+        }
+        const r = await guardarArquivoAssinado(d.id, d.zapsign_token, "producao");
+        if (r.ok) sucessos.push(d);
+        else falhas.push({ ...d, motivo: r.erro });
+      }
+    }
+    return {
+      dryRun: data.dryRun,
+      candidatos: candidatos.map(({ id, nome, unidade, assinado_em }) => ({
+        id,
+        nome,
+        unidade,
+        assinado_em,
+      })),
+      sucessos,
+      falhas,
     };
   });

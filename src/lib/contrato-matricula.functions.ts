@@ -149,11 +149,15 @@ export interface ContratoPendente {
     canceladoPor: string;
     cancelamentoMotivo: string;
     zapsign: {
+      /** `zapsign_documentos.id` (para baixar o PDF assinado guardado). */
+      documentoId: string;
       status: string;
       /** Link do CONTRATANTE (responsável financeiro). */
       signUrl: string;
       assinadoEm: string;
       signatarios: SignatarioContratoStatus[];
+      /** Preenchido quando a captura do PDF assinado falhou e ainda não há cópia. */
+      arquivoErro: string | null;
     } | null;
   } | null;
 }
@@ -214,6 +218,8 @@ interface DocRow {
   status: string;
   assinado_em: string | null;
   signatarios: SignatarioPersistido[] | null;
+  arquivo_assinado_path: string | null;
+  arquivo_assinado_erro: string | null;
 }
 
 export function signatariosDoDocumento(
@@ -342,7 +348,9 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
     if (docIds.length) {
       const { data: rows } = await supabaseAdmin
         .from(T_DOCS)
-        .select("id, status, assinado_em, signatarios")
+        .select(
+          "id, status, assinado_em, signatarios, arquivo_assinado_path, arquivo_assinado_erro",
+        )
         .eq("ambiente", AMBIENTE)
         .in("id", docIds);
       for (const d of (rows ?? []) as unknown as DocRow[]) docs.set(d.id, d);
@@ -403,10 +411,12 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
               cancelamentoMotivo: c.cancelamento_motivo ?? "",
               zapsign: doc
                 ? {
+                    documentoId: doc.id,
                     status: doc.status,
                     signUrl: linkContratante(doc.signatarios),
                     assinadoEm: doc.assinado_em ?? "",
                     signatarios: signatariosDoDocumento(doc.signatarios),
+                    arquivoErro: doc.arquivo_assinado_path ? null : doc.arquivo_assinado_erro,
                   }
                 : null,
             }

@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { statusZapSignRecusado } from "@/lib/contrato-cancelamento";
+import { guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
 import type {
   ZapSignAmbiente,
   ZapSignDocResposta,
@@ -66,7 +67,8 @@ function primeiraAssinaturaCompleta(doc: { status: string; signers?: ZapSignSign
 /**
  * Atualiza status/signatários do documento local a partir de uma resposta da
  * ZapSign (detalhe ou callback). Preserva o CPF e o papel informados na
- * criação, pois a API não os devolve.
+ * criação, pois a API não os devolve. Quando o documento fica "signed",
+ * guarda o PDF assinado no bucket próprio (falha não interrompe o fluxo).
  */
 export async function aplicarEstadoDocumento(
   zapsignToken: string,
@@ -125,6 +127,10 @@ export async function aplicarEstadoDocumento(
       } as never)
       .eq("zapsign_documento_id", atual.id)
       .eq("status", "enviado");
+  }
+
+  if (doc.status === "signed") {
+    await guardarArquivoAssinado(atual.id, zapsignToken, ambiente, doc.signed_file);
   }
   return { documentoId: atual.id };
 }

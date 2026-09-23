@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { avisarExtrasContrato } from "@/lib/contrato-avisos-toast";
 import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
+import { BaixarAssinadoButton } from "@/components/documentos/BaixarAssinadoButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -250,6 +251,13 @@ function StatusContrato({ item }: { item: ContratoPendente }) {
         <p className="text-xs text-muted-foreground">
           Assinado em {formatarDataHora(z.assinadoEm)}
         </p>
+      )}
+      {assinado && z && (
+        <BaixarAssinadoButton
+          documentoId={z.documentoId}
+          erroGuardado={z.arquivoErro}
+          rotulo="Baixar contrato assinado"
+        />
       )}
     </div>
   );
