@@ -25,6 +25,8 @@ import { useReunioes, type Reuniao, type ReuniaoInput } from "@/lib/agenda.hooks
 import { listAgendaUsers, type AgendaUser } from "@/lib/agenda.functions";
 import { useAuth, useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
+import { SelecioneUnidade } from "@/components/SelecioneUnidade";
+import { escolaAtivaId } from "@/lib/unidade-global";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -39,13 +41,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateBR } from "@/lib/date-utils";
 import { displayPhoneBR } from "@/lib/phone";
@@ -159,7 +154,8 @@ function AgendaPage() {
     editarReuniao,
     removerReuniao,
   } = useReunioes();
-  const { schools, selected, schoolFilterIds } = useSchool();
+  const { schools, selected, schoolFilterIds, setSelected } = useSchool();
+  const escolaId = escolaAtivaId(selected, schools);
   const { canEdit } = usePermissions();
   const { session } = useAuth();
   const userId = session?.user?.id ?? null;
@@ -258,8 +254,12 @@ function AgendaPage() {
   const podeEditarReuniao = (ev: CalEvent) =>
     podeEditar && !!ev.reuniao?.createdBy && ev.reuniao.createdBy === userId;
 
+  // Editar reunião de outra unidade troca o seletor global para a dela.
   const onEdit = (ev: CalEvent) => {
-    if (ev.reuniao && podeEditarReuniao(ev)) setEditando(ev.reuniao);
+    if (!ev.reuniao || !podeEditarReuniao(ev)) return;
+    const unit = ev.reuniao.unitId ?? cecId;
+    if (unit && unit !== selected) setSelected(unit);
+    setEditando(ev.reuniao);
   };
 
   return (
@@ -277,13 +277,15 @@ function AgendaPage() {
           <Badge variant="secondary" className="text-xs">
             {totalAgendados} agendamento{totalAgendados === 1 ? "" : "s"}
           </Badge>
-          {podeEditar && (
+          {podeEditar && escolaId && (
             <Button size="sm" onClick={() => setNovaOpen(true)}>
               <Plus className="h-4 w-4" /> Nova Reunião
             </Button>
           )}
         </div>
       </div>
+
+      {podeEditar && !escolaId && <SelecioneUnidade acao="Agendar uma reunião" />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1">
@@ -344,11 +346,12 @@ function AgendaPage() {
 
       <AvisosConcluidos />
 
-      {podeEditar && (
+      {podeEditar && escolaId && (
         <NovaReuniaoDialog
           open={novaOpen}
           onOpenChange={setNovaOpen}
           defaultDate={todayISO}
+          unitId={escolaId}
           onSubmit={(input) => {
             adicionarReuniao(input);
             setNovaOpen(false);
@@ -363,6 +366,7 @@ function AgendaPage() {
             if (!v) setEditando(null);
           }}
           defaultDate={todayISO}
+          unitId={editando ? (editando.unitId ?? cecId ?? "") : ""}
           reuniao={editando ?? undefined}
           onSubmit={(input) => {
             if (editando) editarReuniao(editando.id, input);
@@ -677,21 +681,25 @@ function Row({
 }
 
 // Em modo edição (`reuniao` informado) o formulário abre pré-preenchido e o
-// envio devolve os mesmos campos para `editarReuniao`.
+// envio devolve os mesmos campos para `editarReuniao`. A unidade da reunião
+// (`unitId`) vem do seletor global na criação e é fixa na edição.
 function NovaReuniaoDialog({
   open,
   onOpenChange,
   defaultDate,
+  unitId,
   reuniao,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   defaultDate: string;
+  unitId: string;
   reuniao?: Reuniao;
   onSubmit: (input: ReuniaoInput) => void;
 }) {
-  const { schools, selected } = useSchool();
+  const { schools } = useSchool();
+  const nomeUnidade = schools.find((s) => s.id === unitId)?.name ?? "—";
   const { data: usuarios = [] } = useQuery({
     queryKey: ["agenda_users"],
     queryFn: () => listAgendaUsers(),
@@ -704,17 +712,14 @@ function NovaReuniaoDialog({
   const [responsavel, setResponsavel] = useState("");
   const [aluno, setAluno] = useState("");
   const [participantes, setParticipantes] = useState<AgendaUser[]>([]);
-  const [unitId, setUnitId] = useState("");
 
-  // Reseta o formulário sempre que o modal (re)abre. Pré-seleciona a unidade
-  // ativa no filtro do topo, quando houver uma específica.
+  // Reseta o formulário sempre que o modal (re)abre.
   const reset = () => {
     if (reuniao) {
       setData(reuniao.data);
       setHorario(reuniao.horario);
       setResponsavel(reuniao.responsavelNome);
       setAluno(reuniao.alunoNome);
-      setUnitId(reuniao.unitId ?? "");
       return;
     }
     setData(defaultDate);
@@ -722,7 +727,6 @@ function NovaReuniaoDialog({
     setResponsavel("");
     setAluno("");
     setParticipantes([]);
-    setUnitId(selected !== "all" && schools.some((s) => s.id === selected) ? selected : "");
   };
 
   // Edição: o modal é montado já aberto, então o preenchimento acontece aqui.
@@ -804,18 +808,12 @@ function NovaReuniaoDialog({
           </div>
           <div className="space-y-1">
             <Label>Unidade</Label>
-            <Select value={unitId} onValueChange={setUnitId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione a unidade" />
-              </SelectTrigger>
-              <SelectContent>
-                {schools.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <p className="text-sm">{nomeUnidade}</p>
+            <p className="text-xs text-muted-foreground">
+              {editando
+                ? "A unidade da reunião não pode ser alterada."
+                : "Definida pelo seletor de unidade do topo."}
+            </p>
           </div>
           <div className="space-y-1">
             <Label>Equipe</Label>

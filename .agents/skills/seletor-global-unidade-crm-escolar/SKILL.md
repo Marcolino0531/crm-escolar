@@ -45,9 +45,17 @@ Helpers: `src/lib/unidade-global.ts` (`unidadeAtiva`, `escolaAtivaId`,
 3. Telas públicas sem login (não existe seletor do topo): `/matricula`,
    `/rematricula*`, `/portal`, `/portal-cantina`, `/professor`.
 4. Campo "Unidade" como **atributo de um registro** em formulário de criação
-   (funcionário, terceirizado, lead, reunião da Agenda, permissões por unidade em
-   Configurações): não é filtro da tela. O padrão do campo deve ser a unidade do topo.
+   (funcionário, terceirizado, lead, permissões por unidade em Configurações): não é
+   filtro da tela. O padrão do campo deve ser a unidade do topo.
    Qualquer caso além destes é **dúvida**: listar no PR e NÃO alterar sem o Sérgio.
+
+**Atributo de unidade de um registro novo também vem do topo, sem campo de escolha**
+(decisão do Sérgio na Agenda, PR D): a reunião é sempre criada na unidade selecionada
+no topo; com "Todas as Unidades" a ação fica bloqueada com
+`<SelecioneUnidade acao="Agendar uma reunião" />`; na edição a unidade é exibida só
+como texto (não alterável) e abrir a edição de um registro de outra unidade troca o
+seletor global (`setSelected`) para a unidade do registro. Formulários novos devem
+seguir este padrão; os da exceção 4 são legado a alinhar quando o Sérgio decidir.
 
 ## Trava automática
 
