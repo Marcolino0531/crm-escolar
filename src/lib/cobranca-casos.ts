@@ -199,6 +199,14 @@ export interface MensagemCaso {
   enviada_por: string | null;
   print_path: string | null;
   fora_da_data: boolean;
+  print_historico: SubstituicaoPrint[];
+}
+
+export interface SubstituicaoPrint {
+  em: string;
+  por: string;
+  data_envio_de: string | null;
+  data_envio_para: string | null;
 }
 
 export interface AnexoCaso {
@@ -347,6 +355,37 @@ export function validarDataEnvio(
     return `A data do envio não pode ser anterior ao início da cobrança (${formatarDataBR(dataInicioYMD)}).`;
   if (dataEnvioAnteriorYMD && dataEnvioYMD < dataEnvioAnteriorYMD)
     return `A data do envio não pode ser anterior à da mensagem anterior (${formatarDataBR(dataEnvioAnteriorYMD)}).`;
+  return null;
+}
+
+/** Substituir o print: só em mensagem já registrada e com o caso ainda não encerrado. */
+export function podeSubstituirPrint(
+  caso: Pick<CasoResumo, "status">,
+  mensagem: Pick<MensagemCaso, "print_path">,
+): boolean {
+  return caso.status !== "encerrado" && !!mensagem.print_path;
+}
+
+/** A data do envio só pode ser corrigida antes da notificação extrajudicial (status 'mensagens'). */
+export function podeCorrigirDataEnvio(caso: Pick<CasoResumo, "status">): boolean {
+  return caso.status === "mensagens";
+}
+
+/**
+ * Correção da data do envio de mensagem já registrada: mesmas regras do registro e,
+ * se houver mensagem seguinte já enviada, não posterior à data de envio dela.
+ */
+export function validarDataEnvioCorrigida(
+  dataEnvioYMD: string,
+  hojeYMD: string,
+  dataInicioYMD: string,
+  dataEnvioAnteriorYMD: string | null,
+  dataEnvioSeguinteYMD: string | null,
+): string | null {
+  const base = validarDataEnvio(dataEnvioYMD, hojeYMD, dataInicioYMD, dataEnvioAnteriorYMD);
+  if (base) return base;
+  if (dataEnvioSeguinteYMD && dataEnvioYMD > dataEnvioSeguinteYMD)
+    return `A data do envio não pode ser posterior à da mensagem seguinte (${formatarDataBR(dataEnvioSeguinteYMD)}).`;
   return null;
 }
 
@@ -534,6 +573,16 @@ export function montarTimeline(
       mensagem: m,
       futuro: !m.enviada_em,
     });
+    for (const s of m.print_historico ?? [])
+      eventos.push({
+        tipo: "mensagem",
+        quando: s.em,
+        titulo: `Print da mensagem ${m.ordem} substituído`,
+        detalhe:
+          s.data_envio_de && s.data_envio_para && s.data_envio_de !== s.data_envio_para
+            ? `Data do envio corrigida de ${formatarDataBR(s.data_envio_de)} para ${formatarDataBR(s.data_envio_para)}`
+            : undefined,
+      });
   }
   if (caso.notificacao_gerada_em)
     eventos.push({

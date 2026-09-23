@@ -81,8 +81,11 @@ import {
   labelEtapa,
   montarTimeline,
   podeAlterarDataInicio,
+  podeCorrigirDataEnvio,
+  podeSubstituirPrint,
   proximaAcao,
   validarDataEnvio,
+  validarDataEnvioCorrigida,
   validarDataInicio,
   validarEncerramento,
   validarRegistroMensagem,
@@ -106,6 +109,7 @@ import {
   prepararCobranca,
   registrarAnexoCobranca,
   registrarMensagemCobranca,
+  substituirPrintMensagem,
   removerAnexoCobranca,
   type CasoDetalhe,
   type CasoLista,
@@ -900,6 +904,7 @@ function SecaoMensagens({
   onDone: () => void;
 }) {
   const [registrando, setRegistrando] = useState<MensagemComLink | null>(null);
+  const [substituindo, setSubstituindo] = useState<MensagemComLink | null>(null);
   const mensagens = [...detalhe.mensagens].sort((a, b) => a.ordem - b.ordem);
 
   return (
@@ -920,6 +925,19 @@ function SecaoMensagens({
           onClose={() => setRegistrando(null)}
           onDone={() => {
             setRegistrando(null);
+            onDone();
+          }}
+        />
+      )}
+      {substituindo && (
+        <SubstituirPrintDialog
+          detalhe={detalhe}
+          mensagem={substituindo}
+          anterior={mensagens.find((m) => m.ordem === substituindo.ordem - 1) ?? null}
+          seguinte={mensagens.find((m) => m.ordem === substituindo.ordem + 1) ?? null}
+          onClose={() => setSubstituindo(null)}
+          onDone={() => {
+            setSubstituindo(null);
             onDone();
           }}
         />
@@ -956,6 +974,16 @@ function SecaoMensagens({
                       >
                         ver print
                       </a>
+                    )}
+                    {edita && podeSubstituirPrint(detalhe.caso, m) && (
+                      <button
+                        type="button"
+                        className="ml-2 underline"
+                        disabled={!!substituindo || !!registrando}
+                        onClick={() => setSubstituindo(m)}
+                      >
+                        Substituir print
+                      </button>
                     )}
                   </p>
                 ) : (
@@ -1077,6 +1105,128 @@ function RegistrarEnvioDialog({
           >
             {enviar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Registrar envio
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SubstituirPrintDialog({
+  detalhe,
+  mensagem,
+  anterior,
+  seguinte,
+  onClose,
+  onDone,
+}: {
+  detalhe: CasoDetalhe;
+  mensagem: MensagemComLink;
+  anterior: MensagemComLink | null;
+  seguinte: MensagemComLink | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const assinar = useServerFn(assinarUploadCobranca);
+  const substituir = useServerFn(substituirPrintMensagem);
+  const hoje = detalhe.hojeYMD;
+  const dataAtual = mensagem.data_envio ?? "";
+  const podeCorrigir = podeCorrigirDataEnvio(detalhe.caso);
+  const [dataEnvio, setDataEnvio] = useState(dataAtual);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const invalida = podeCorrigir
+    ? validarDataEnvioCorrigida(
+        dataEnvio,
+        hoje,
+        detalhe.caso.data_inicio,
+        anterior?.data_envio ?? null,
+        seguinte?.data_envio ?? null,
+      )
+    : null;
+  const dataMudou = podeCorrigir && dataEnvio !== dataAtual;
+  const foraDaData = !invalida && podeCorrigir && dataEnvio !== mensagem.data_prevista;
+
+  const enviar = useMutation({
+    mutationFn: async () => {
+      const print = await enviarArquivoCobranca(assinar, detalhe.caso.id, arquivo!, arquivo!.name);
+      return substituir({
+        data: {
+          casoId: detalhe.caso.id,
+          ordem: mensagem.ordem,
+          dataEnvio: dataMudou ? dataEnvio : undefined,
+          print,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Print substituído.");
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !enviar.isPending && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            Substituir print · Mensagem {mensagem.ordem}/{TOTAL_MENSAGENS}
+          </DialogTitle>
+          <DialogDescription>
+            O print atual será trocado pelo novo arquivo. A substituição fica registrada na linha do
+            tempo.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="substituir-data-envio">Data do envio</Label>
+            <Input
+              id="substituir-data-envio"
+              type="date"
+              readOnly={!podeCorrigir}
+              disabled={!podeCorrigir}
+              min={anterior?.data_envio ?? detalhe.caso.data_inicio}
+              max={seguinte?.data_envio ?? hoje}
+              value={dataEnvio}
+              onChange={(e) => setDataEnvio(e.target.value)}
+              className="w-fit"
+            />
+            {!podeCorrigir ? (
+              <p className="text-xs text-muted-foreground">
+                A data não pode ser alterada após a geração da notificação extrajudicial.
+              </p>
+            ) : invalida ? (
+              <p className="text-xs text-red-600">{invalida}</p>
+            ) : foraDaData ? (
+              <p className="text-xs text-amber-700">
+                Será marcada como enviada fora da data prevista.
+              </p>
+            ) : null}
+          </div>
+          <div className="space-y-1">
+            <Label>Novo print da conversa</Label>
+            <div className="flex items-center gap-2">
+              <BotaoArquivo
+                label={arquivo ? "Trocar print" : "Escolher print"}
+                onFile={setArquivo}
+                disabled={enviar.isPending}
+              />
+              {arquivo && (
+                <span className="truncate text-xs text-muted-foreground">{arquivo.name}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={enviar.isPending}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!!invalida || !arquivo || enviar.isPending}
+            onClick={() => enviar.mutate()}
+          >
+            {enviar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Substituir print
           </Button>
         </DialogFooter>
       </DialogContent>
