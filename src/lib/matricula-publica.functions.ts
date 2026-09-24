@@ -53,7 +53,12 @@ import {
   materialAnualDaSerie,
   type ResultadoFaturamento,
 } from "@/lib/matricula-faturamento.sponte";
-import { opcoesParcelamentoMaterialPrimeira, rotuloParcelamentoPrimeira } from "@/lib/rematricula";
+import {
+  opcoesParcelamentoMaterialPrimeira,
+  rotuloParcelamentoPrimeira,
+  type ItemMaterial,
+} from "@/lib/rematricula";
+import { itensMaterialDaSerie } from "@/lib/rematricula.functions";
 import { anosLetivosDisponiveis, turnoDaRotina } from "@/lib/matricula-turma";
 import {
   formalizarMatriculaTurma,
@@ -109,6 +114,7 @@ export interface MaterialMatriculaPublica {
   serie: string;
   valorAnual: number;
   opcoes: OpcaoMaterialPublica[];
+  itens: ItemMaterial[];
 }
 
 const MaterialInput = z.object({
@@ -125,6 +131,7 @@ export const materialMatriculaPublica = createServerFn({ method: "POST" })
       serie: "",
       valorAnual: 0,
       opcoes: [],
+      itens: [],
     };
     if (!UNIDADES_SPONTE.includes(data.unidade)) return vazio;
     if (!anosLetivosDisponiveis(hojeSaoPaulo()).includes(data.anoLetivo)) return vazio;
@@ -139,6 +146,7 @@ export const materialMatriculaPublica = createServerFn({ method: "POST" })
       configurado: true,
       serie: material.serieCadastrada || serie,
       valorAnual: material.valorAnual,
+      itens: await itensMaterialDaSerie(data.unidade, serie, data.anoLetivo),
       opcoes: opcoesParcelamentoMaterialPrimeira(material.valorAnual).map((op) => ({
         parcelas: op.parcelas,
         rotulo: rotuloParcelamentoPrimeira(op),
