@@ -910,7 +910,7 @@ export const dadosContratoDocumentos = createServerFn({ method: "POST" })
     }
     const [aluno, valores, matricula, contrato] = await Promise.all([
       buscarAlunoPorId(unidade, alunoId),
-      valoresMatriculaDoAno(anoLetivo),
+      valoresMatriculaDoAno(unidade, anoLetivo),
       supabaseAdmin
         .from("rematricula_matricula_escolhas" as never)
         .select("aluno_nome, serie, valor, parcelas, primeiro_vencimento")

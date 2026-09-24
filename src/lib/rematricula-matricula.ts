@@ -2,9 +2,9 @@
 // Rematrícula (CEC e CEC Baby). Nada aqui fala com Supabase ou Sponte.
 //
 // MATRÍCULA
-//   O valor depende do segmento da série do PRÓXIMO ano letivo: Educação
-//   Infantil e Fundamental I pagam um valor, Fundamental II outro. A mensalidade
-//   não entra aqui.
+//   O valor depende do colégio e do segmento da série do PRÓXIMO ano letivo:
+//   Ensino Infantil, Fundamental 1 e Fundamental 2, cada um com o seu valor por
+//   colégio × ano. A mensalidade não entra aqui.
 //
 //   Parcelamento: o "mês de referência" é o mês em que o responsável preenche
 //   o formulário quando o dia é até 25; do dia 26 em diante passa a ser o mês
@@ -20,7 +20,7 @@
 //   para a série: o turno é lido do nome/horário da turma (o campo `Turno` da
 //   API chega vazio).
 
-import { TURMAS_POR_IDADE } from "./crm/mecCutoff";
+import { INDICE_PRIMEIRO_ANO, TURMAS_POR_IDADE } from "./crm/mecCutoff";
 import type { RotinaForm } from "./matricula-form";
 import { addMesesYMD } from "./confissao-divida";
 import { chaveSerie, mensalidadesDeReferencia } from "./rematricula";
@@ -30,56 +30,97 @@ import { proximoDiaUtil } from "./billing-schedule";
 
 // ─── Segmento e valor ───────────────────────────────────────────────────────
 
-export type SegmentoMatricula = "infantil_fundamental_1" | "fundamental_2";
+export type SegmentoMatricula = "infantil" | "fundamental_1" | "fundamental_2";
 
 export const SEGMENTOS_MATRICULA: readonly SegmentoMatricula[] = [
-  "infantil_fundamental_1",
+  "infantil",
+  "fundamental_1",
   "fundamental_2",
 ];
 
-// Valor da Matrícula por segmento de UM ano letivo, lido do cadastro
-// (rematricula_matricula_valores). Segmento ausente = ainda não cadastrado.
+// Segmento do cadastro anterior (um valor para Infantil + Fundamental 1). Só
+// aparece no histórico de rematricula_matricula_escolhas; não recebe valor novo.
+export type SegmentoMatriculaLegado = "infantil_fundamental_1";
+export type SegmentoMatriculaHistorico = SegmentoMatricula | SegmentoMatriculaLegado;
+
+// Valor da Matrícula por segmento de UM colégio × ano letivo, lido do cadastro
+// (rematricula_matricula_valores). Segmento ausente = sem valor nesse colégio
+// (nunca cadastrado ou excluído).
 export type ValoresMatricula = Partial<Record<SegmentoMatricula, number>>;
 
 export function segmentosSemValorMatricula(valores: ValoresMatricula): SegmentoMatricula[] {
   return SEGMENTOS_MATRICULA.filter((s) => !(valores[s] && valores[s] > 0));
 }
 
-export const ROTULO_SEGMENTO_MATRICULA: Record<SegmentoMatricula, string> = {
-  infantil_fundamental_1: "Educação Infantil e Ensino Fundamental I",
-  fundamental_2: "Ensino Fundamental II",
+export const ROTULO_SEGMENTO_MATRICULA: Record<SegmentoMatriculaHistorico, string> = {
+  infantil: "Ensino Infantil",
+  fundamental_1: "Ensino Fundamental 1 / Anos Iniciais",
+  fundamental_2: "Ensino Fundamental 2 / Anos Finais",
+  infantil_fundamental_1: "Educação Infantil e Ensino Fundamental I (cadastro antigo)",
 };
 
-// Pendências que impedem abrir a campanha do ano ao público. null = pode abrir.
-export function mensagemPendenciasCampanha(
-  anoLetivo: number,
-  pendencias: { segmentosSemValorMatricula: SegmentoMatricula[] },
-): string | null {
-  if (pendencias.segmentosSemValorMatricula.length === 0) return null;
-  const rotulos = pendencias.segmentosSemValorMatricula
-    .map((s) => ROTULO_SEGMENTO_MATRICULA[s])
-    .join(" e ");
-  return `Não é possível abrir a campanha de ${anoLetivo}: falta cadastrar o valor da Matrícula de ${anoLetivo} para ${rotulos}.`;
+// Pendências por colégio que impedem abrir a campanha do ano ao público.
+export interface PendenciaCampanhaColegio {
+  unidade: string;
+  segmentosSemValorMatricula: SegmentoMatricula[];
 }
 
-const INDICE_SEXTO_ANO = TURMAS_POR_IDADE.indexOf("6º Ano");
+// null = pode abrir. Um colégio sem NENHUM segmento cadastrado bloqueia a
+// abertura; colégio com pelo menos um segmento pode abrir (ex.: CEC Baby só com
+// Infantil), e o portal bloqueia individualmente o aluno sem valor.
+export function mensagemPendenciasCampanha(
+  anoLetivo: number,
+  pendencias: { colegios: PendenciaCampanhaColegio[] },
+): string | null {
+  const semNada = pendencias.colegios.filter(
+    (c) => c.segmentosSemValorMatricula.length >= SEGMENTOS_MATRICULA.length,
+  );
+  if (semNada.length === 0) return null;
+  const nomes = semNada.map((c) => c.unidade).join(", ");
+  return `Não é possível abrir a campanha de ${anoLetivo}: falta cadastrar o valor da Matrícula de ${anoLetivo} para ${nomes} (nenhum segmento cadastrado).`;
+}
 
 function indiceSerie(serie: string): number {
   const alvo = chaveSerie(serie);
   return TURMAS_POR_IDADE.findIndex((s) => chaveSerie(s) === alvo);
 }
 
-// Fundamental II começa no 6º Ano; tudo antes (inclusive Berçário e os Períodos)
-// paga o valor de Educação Infantil/Fundamental I.
-export function segmentoMatricula(serie: string): SegmentoMatricula {
+const INDICE_SEXTO_ANO = TURMAS_POR_IDADE.indexOf("6º Ano");
+
+// Berçário ao 2º Período = infantil; 1º ao 5º Ano = fundamental_1; 6º ao 9º Ano
+// = fundamental_2. Série fora de TURMAS_POR_IDADE não tem segmento (null).
+export function segmentoMatricula(serie: string): SegmentoMatricula | null {
   const indice = indiceSerie(serie);
-  return indice >= INDICE_SEXTO_ANO ? "fundamental_2" : "infantil_fundamental_1";
+  if (indice < 0) return null;
+  if (indice < INDICE_PRIMEIRO_ANO) return "infantil";
+  if (indice < INDICE_SEXTO_ANO) return "fundamental_1";
+  return "fundamental_2";
 }
 
-// null quando o valor do segmento da série ainda não foi cadastrado para o ano.
+// null quando a série não tem segmento ou o segmento não tem valor no colégio.
 export function valorMatricula(valores: ValoresMatricula, serie: string): number | null {
-  const valor = valores[segmentoMatricula(serie)];
+  const segmento = segmentoMatricula(serie);
+  if (!segmento) return null;
+  const valor = valores[segmento];
   return valor && valor > 0 ? valor : null;
+}
+
+// Etapa da Matrícula no portal: segmento, valor e parcelamento disponível na
+// data. null = sem valor no colégio — a etapa é bloqueada e NENHUMA parcela é
+// calculada (nunca com valor 0).
+export function matriculaPortal(
+  valores: ValoresMatricula,
+  serie: string,
+  hoje: string,
+): {
+  segmento: SegmentoMatricula;
+  valor: number;
+  disponivel: ParcelamentoMatriculaDisponivel;
+} | null {
+  const segmento = segmentoMatricula(serie);
+  const valor = valorMatricula(valores, serie);
+  if (!segmento || valor === null) return null;
+  return { segmento, valor, disponivel: parcelamentoMatriculaDisponivel(valor, hoje) };
 }
 
 // ─── Frequência parcial: só até o Maternal 3 ────────────────────────────────

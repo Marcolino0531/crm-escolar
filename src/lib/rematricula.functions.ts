@@ -94,10 +94,11 @@ import {
   cronogramaMatricula,
   normalizarRotinaParaSerie,
   observacaoMatriculaSponte,
+  matriculaPortal,
   parcelamentoMatricula,
-  parcelamentoMatriculaDisponivel,
   parcelasMatriculaValida,
   segmentoMatricula,
+  SEGMENTOS_MATRICULA,
   turnosDisponiveisParaSerie,
   unidadeRestringeTurno,
   validarPrimeiroVencimento,
@@ -107,7 +108,9 @@ import {
   vencimentosMatriculaPelasMensalidades,
   type ParcelaMatriculaLancada,
   type ParcelaMatriculaOpcao,
+  type PendenciaCampanhaColegio,
   type SegmentoMatricula,
+  type SegmentoMatriculaHistorico,
   type TurnosDisponiveis,
   type ValoresMatricula,
 } from "@/lib/rematricula-matricula";
@@ -872,7 +875,10 @@ export interface DadosRematricula {
   responsaveis?: ResponsavelRematricula[];
   mensalidade?: MensalidadeVigente | null;
   material?: MaterialRematricula;
+  // Ausente quando a série do aluno não tem valor de Matrícula no colégio: a
+  // etapa fica bloqueada com `matriculaBloqueio` e nenhuma parcela é calculada.
   matricula?: MatriculaRematricula;
+  matriculaBloqueio?: string;
   // Extras (Lanche da Manhã, Almoço, …) do ano letivo da rematrícula; null sem
   // ano letivo configurado.
   extras?: ExtrasRematricula | null;
@@ -887,25 +893,31 @@ export function hojeBRT(): string {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-interface MatriculaEscolhaResumo {
+export interface MatriculaEscolhaResumo {
   parcelas: number;
   primeiro_vencimento: string;
   updated_at: string;
   status: StatusEscolhaRematricula;
 }
 
-function montarMatricula(
+export function mensagemMatriculaSemValor(anoLetivo: number): string {
+  return `O valor da Matrícula de ${anoLetivo} da série do aluno ainda não foi cadastrado. Fale com a secretaria.`;
+}
+
+// null quando o segmento da série não tem valor no colégio: nunca calcula
+// parcelas com valor 0 — o portal bloqueia a etapa.
+export function montarMatricula(
   valores: ValoresMatricula,
   serie: string,
   escolha: MatriculaEscolhaResumo | null,
-): MatriculaRematricula {
-  // A campanha só abre com todos os segmentos cadastrados; 0 é só defesa.
-  const valor = valorMatricula(valores, serie) ?? 0;
-  const hoje = hojeBRT();
-  const disponivel = parcelamentoMatriculaDisponivel(valor, hoje);
+  hoje: string = hojeBRT(),
+): MatriculaRematricula | null {
+  const portal = matriculaPortal(valores, serie, hoje);
+  if (!portal) return null;
+  const { segmento, valor, disponivel } = portal;
   return {
     serie,
-    segmento: segmentoMatricula(serie),
+    segmento,
     valor,
     dataPreenchimento: hoje,
     mesReferencia: disponivel.mesReferencia,
@@ -1000,7 +1012,7 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       buscarMensalidadeVigente(sessao.unidade, sessao.alunoId, anoLetivo),
       materialDaSerie(sessao.unidade, serieAlvo, anoLetivo),
       carregarExtrasRematricula(sessao.unidade, sessao.alunoId, aluno.nome, anoLetivo),
-      valoresMatriculaDoAno(anoLetivo),
+      valoresMatriculaDoAno(sessao.unidade, anoLetivo),
       supabaseAdmin
         .from("rematricula_escolhas" as never)
         .select("parcelas, updated_at, status")
@@ -1036,6 +1048,8 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       itens: material ? await itensMaterialDaSerie(sessao.unidade, serieAlvo, anoLetivo) : [],
     });
 
+    const matricula = montarMatricula(valoresMatricula, serieAlvo, escolhaMatricula.data ?? null);
+
     return {
       ok: true,
       unidade: sessao.unidade,
@@ -1060,7 +1074,8 @@ export const dadosRematricula = createServerFn({ method: "POST" })
             }
           : null,
       },
-      matricula: montarMatricula(valoresMatricula, serieAlvo, escolhaMatricula.data ?? null),
+      matricula: matricula ?? undefined,
+      matriculaBloqueio: matricula ? undefined : mensagemMatriculaSemValor(anoLetivo),
       extras,
       enviadaEm: envio.data?.enviada_em ?? null,
     };
@@ -1527,7 +1542,7 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         .eq("aluno_id", sessao.alunoId)
         .eq("ano_letivo", anoLetivo)
         .maybeSingle<{ status: StatusEscolhaRematricula }>(),
-      valoresMatriculaDoAno(anoLetivo),
+      valoresMatriculaDoAno(sessao.unidade, anoLetivo),
     ]);
     if (!rotina.data) {
       erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
@@ -1578,13 +1593,11 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const valor = valorMatricula(valoresMatricula, serieAlvo);
-    if (valor === null) {
-      return {
-        ok: false,
-        erro: `O valor da Matrícula de ${anoLetivo} da série do aluno ainda não foi cadastrado. Fale com a secretaria.`,
-      };
+    const portalMatricula = matriculaPortal(valoresMatricula, serieAlvo, hoje);
+    if (!portalMatricula) {
+      return { ok: false, erro: mensagemMatriculaSemValor(anoLetivo) };
     }
+    const { segmento, valor, disponivel } = portalMatricula;
     const parcelamento = parcelamentoMatricula(valor, data.matricula.parcelas);
     const agora = new Date().toISOString();
     const { error } = await supabaseAdmin.from("rematricula_matricula_escolhas" as never).upsert(
@@ -1593,14 +1606,14 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         aluno_id: sessao.alunoId,
         aluno_nome: aluno.nome,
         serie: serieAlvo,
-        segmento: segmentoMatricula(serieAlvo),
+        segmento,
         valor,
         parcelas: parcelamento.parcelas,
         valor_parcela: parcelamento.valorParcela,
         valor_primeira_parcela: parcelamento.valorPrimeiraParcela,
         primeiro_vencimento: data.matricula.primeiroVencimento,
         data_preenchimento: hoje,
-        mes_referencia: parcelamentoMatriculaDisponivel(valor, hoje).mesReferencia,
+        mes_referencia: disponivel.mesReferencia,
         ano_letivo: anoLetivo,
         status: "pendente_lancamento",
         updated_at: agora,
@@ -2012,63 +2025,110 @@ export const salvarAnoVigenteDiario = createServerFn({ method: "POST" })
 // ─── Valor da Matrícula por segmento e ano ──────────────────────────────────
 
 export interface ValorMatriculaSegmento {
+  unidade: string;
   anoLetivo: number;
-  segmento: SegmentoMatricula;
+  // Linhas anteriores à migration por colégio ainda podem trazer o segmento antigo.
+  segmento: SegmentoMatriculaHistorico;
   valor: number;
   atualizadoEm: string;
   atualizadoPor: string;
 }
 
 interface ValorMatriculaRow {
+  unidade: string | null;
   ano_letivo: number;
-  segmento: SegmentoMatricula;
+  segmento: SegmentoMatriculaHistorico;
   valor: number | string;
   updated_at: string;
   updated_by_nome: string | null;
 }
 
-export async function valoresMatriculaDoAno(anoLetivo: number): Promise<ValoresMatricula> {
+// Valores de UM colégio × ano. Sem linha para o segmento = sem valor.
+export async function valoresMatriculaDoAno(
+  unidade: string,
+  anoLetivo: number,
+): Promise<ValoresMatricula> {
   const { data } = await supabaseAdmin
     .from("rematricula_matricula_valores" as never)
     .select("segmento, valor")
+    .eq("unidade", unidade)
     .eq("ano_letivo", anoLetivo)
     .returns<{ segmento: SegmentoMatricula; valor: number | string }[]>();
   const valores: ValoresMatricula = {};
-  for (const r of data ?? []) valores[r.segmento] = Number(r.valor);
+  for (const r of data ?? []) {
+    if (SEGMENTOS_MATRICULA.includes(r.segmento)) valores[r.segmento] = Number(r.valor);
+  }
   return valores;
 }
 
+async function exigirUnidadeValorMatricula(userId: string, unidade: string): Promise<void> {
+  if (!UNIDADES_SPONTE.includes(unidade)) throw new Error("Unidade inválida.");
+  const permitidas = await allowedSponteUnidades(userId);
+  if (permitidas !== null && !permitidas.includes(unidade)) {
+    throw new Error("Sem permissão para esta unidade.");
+  }
+}
+
+const UnidadeOpcionalSchema = z.object({ unidade: z.string().trim().min(1).nullable() });
+
+// unidade null = "Todas as Unidades" do topo: consolidado das unidades permitidas.
 export const listarValoresMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }): Promise<ValorMatriculaSegmento[]> => {
+  .inputValidator((input: unknown) => UnidadeOpcionalSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ValorMatriculaSegmento[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
-    const { data } = await supabaseAdmin
+    const permitidas = await allowedSponteUnidades(context.userId);
+    let query = supabaseAdmin
       .from("rematricula_matricula_valores" as never)
-      .select("ano_letivo, segmento, valor, updated_at, updated_by_nome")
+      .select("unidade, ano_letivo, segmento, valor, updated_at, updated_by_nome")
       .order("ano_letivo", { ascending: false })
-      .returns<ValorMatriculaRow[]>();
-    return (data ?? []).map((r) => ({
-      anoLetivo: Number(r.ano_letivo),
-      segmento: r.segmento,
-      valor: Number(r.valor),
-      atualizadoEm: r.updated_at,
-      atualizadoPor: r.updated_by_nome ?? "",
-    }));
+      .order("unidade", { ascending: true })
+      .order("segmento", { ascending: true });
+    if (data.unidade) {
+      await exigirUnidadeValorMatricula(context.userId, data.unidade);
+      query = query.eq("unidade", data.unidade);
+    } else if (permitidas !== null) {
+      query = query.in("unidade", permitidas);
+    }
+    const { data: rows, error } = await query.returns<ValorMatriculaRow[]>();
+    if (error) throw new Error(error.message);
+    const ordem = (s: SegmentoMatriculaHistorico) =>
+      SEGMENTOS_MATRICULA.indexOf(s as SegmentoMatricula);
+    return (rows ?? [])
+      .map((r) => ({
+        unidade: r.unidade ?? "",
+        anoLetivo: Number(r.ano_letivo),
+        segmento: r.segmento,
+        valor: Number(r.valor),
+        atualizadoEm: r.updated_at,
+        atualizadoPor: r.updated_by_nome ?? "",
+      }))
+      .sort(
+        (a, b) =>
+          b.anoLetivo - a.anoLetivo ||
+          a.unidade.localeCompare(b.unidade, "pt-BR") ||
+          ordem(a.segmento) - ordem(b.segmento),
+      );
   });
 
+const SegmentoMatriculaSchema = z.enum(["infantil", "fundamental_1", "fundamental_2"]);
+
+// Grava só no colégio do seletor global (validado aqui de novo).
 export const salvarValorMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
     z
       .object({
+        unidade: z.string().trim().min(1, "Selecione uma unidade."),
         anoLetivo: z.number().int(),
-        segmento: z.enum(["infantil_fundamental_1", "fundamental_2"]),
+        segmento: SegmentoMatriculaSchema,
         valor: z.number(),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeValorMatricula(context.userId, data.unidade);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }
@@ -2077,6 +2137,7 @@ export const salvarValorMatricula = createServerFn({ method: "POST" })
     }
     const { error } = await supabaseAdmin.from("rematricula_matricula_valores" as never).upsert(
       {
+        unidade: data.unidade,
         ano_letivo: data.anoLetivo,
         segmento: data.segmento,
         valor: Math.round(data.valor * 100) / 100,
@@ -2084,8 +2145,34 @@ export const salvarValorMatricula = createServerFn({ method: "POST" })
         updated_by: context.userId,
         updated_by_nome: await nomeDoUsuario(context.userId),
       } as never,
-      { onConflict: "ano_letivo,segmento" } as never,
+      { onConflict: "unidade,ano_letivo,segmento" } as never,
     );
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Exclui o segmento de UM colégio × ano. Alunos desse segmento ficam sem valor
+// nesse colégio; as escolhas já feitas (rematricula_matricula_escolhas) não mudam.
+export const excluirValorMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        unidade: z.string().trim().min(1, "Selecione uma unidade."),
+        anoLetivo: z.number().int(),
+        segmento: SegmentoMatriculaSchema,
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeValorMatricula(context.userId, data.unidade);
+    const { error } = await supabaseAdmin
+      .from("rematricula_matricula_valores" as never)
+      .delete()
+      .eq("unidade", data.unidade)
+      .eq("ano_letivo", data.anoLetivo)
+      .eq("segmento", data.segmento);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -2093,17 +2180,24 @@ export const salvarValorMatricula = createServerFn({ method: "POST" })
 // ─── Configurações: campanhas (listar, preparar, abrir, fechar) ─────────────
 
 export interface PendenciasCampanha {
-  segmentosSemValorMatricula: SegmentoMatricula[];
+  colegios: PendenciaCampanhaColegio[];
 }
 
 export interface CampanhaConfig extends CampanhaRematricula {
   pendencias: PendenciasCampanha;
 }
 
+// Um item por colégio, com os segmentos que ainda não têm valor no ano.
 async function pendenciasDaCampanha(anoLetivo: number): Promise<PendenciasCampanha> {
-  return {
-    segmentosSemValorMatricula: segmentosSemValorMatricula(await valoresMatriculaDoAno(anoLetivo)),
-  };
+  const colegios = await Promise.all(
+    UNIDADES_SPONTE.map(async (unidade) => ({
+      unidade,
+      segmentosSemValorMatricula: segmentosSemValorMatricula(
+        await valoresMatriculaDoAno(unidade, anoLetivo),
+      ),
+    })),
+  );
+  return { colegios };
 }
 
 export const listarCampanhasRematricula = createServerFn({ method: "POST" })
