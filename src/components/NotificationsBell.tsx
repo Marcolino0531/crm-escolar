@@ -75,6 +75,7 @@ import {
   listarAvisosBoletoMatricula,
   type AvisoBoletoMatricula,
 } from "@/lib/contrato-boleto-avisos.functions";
+import { listarPendenciasMatricula, type PendenciaMatricula } from "@/lib/matriculas.functions";
 import {
   deveAvisarFechamento,
   textoAvisoFechamento,
@@ -484,6 +485,26 @@ export function NotificationsBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["contratos_boleto_avisos"] }),
   });
 
+  // --- Matrícula (formulário de alunos novos): submissão com erro na criação,
+  // turma ou cobrança pendente/erro. Somente admin; o servidor filtra o papel. ---
+  const pendenciasMatriculaFn = useServerFn(listarPendenciasMatricula);
+  const { data: pendenciasMatriculaTodas = [] } = useQuery({
+    queryKey: ["matriculas-pendencias", userId ?? "anon"],
+    enabled: !!userId && isAdmin,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      try {
+        return await pendenciasMatriculaFn({ data: undefined });
+      } catch {
+        return [] as PendenciaMatricula[];
+      }
+    },
+  });
+  const pendenciasMatricula = useMemo(
+    () => pendenciasMatriculaTodas.filter((p) => unidadesPermitidas.includes(p.unidade)),
+    [pendenciasMatriculaTodas, unidadesPermitidas],
+  );
+
   const hojeBrasilia = hojeEmBrasilia();
   const avisosFechamento = isAdmin
     ? fechamentosPendentes
@@ -864,6 +885,7 @@ export function NotificationsBell() {
     avisosExperiencia.length +
     avisosPrazo.length +
     avisosBoleto.length +
+    pendenciasMatricula.length +
     (alertaCron ? 1 : 0);
 
   return (
@@ -1189,6 +1211,43 @@ export function NotificationsBell() {
                     <Check className="h-4 w-4" />
                   </button>
                 </div>
+              ))}
+            </div>
+          )}
+
+          {pendenciasMatricula.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Matrícula — Formulário
+              </div>
+              {pendenciasMatricula.map((p) => (
+                <Link
+                  key={`matricula-${p.id}`}
+                  to="/matriculas"
+                  search={{ id: p.id }}
+                  onClick={() => {
+                    const u = schools.find((s) => s.name === p.unidade);
+                    if (u) setSelected(u.id);
+                  }}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <div className="min-w-0 flex-1 font-medium">
+                    <div>Matrícula com pendência</div>
+                    <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                      {p.alunoNome} · {p.unidade} ·{" "}
+                      {new Date(p.criadoEm).toLocaleString("pt-BR", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </span>
+                    {p.motivos.map((m) => (
+                      <span key={m} className="block text-[11px] font-normal text-muted-foreground">
+                        {m}
+                      </span>
+                    ))}
+                  </div>
+                </Link>
               ))}
             </div>
           )}

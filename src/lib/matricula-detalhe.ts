@@ -7,6 +7,12 @@
 import { z } from "zod";
 import { MEALS, WEEKDAYS } from "@/lib/diario";
 import { DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
+import {
+  montarSecoesFinanceiras,
+  type LancamentoFicha,
+  type SituacaoSubmissao,
+  type SnapshotFinanceiro,
+} from "@/lib/matricula-integracao";
 import type {
   DocumentoSubmissao,
   RotinaSubmissao,
@@ -42,6 +48,12 @@ export interface EntradaDetalhe {
   rotina: RotinaSubmissao | null;
   saude: SaudeSubmissao | null;
   documentos: DocumentoSubmissao[];
+  /** Situação da integração + escolhas financeiras gravadas; ausente = ficha antiga. */
+  financeiro?: {
+    situacao: SituacaoSubmissao;
+    snapshot: SnapshotFinanceiro;
+    lancamentos: LancamentoFicha[];
+  };
 }
 
 const texto = z.string().optional();
@@ -183,9 +195,6 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
         campo("Naturalidade", aluno.naturalidade),
         campo("Nacionalidade", aluno.nacionalidade),
         campo("Estado civil", aluno.estadoCivil),
-        campo("Email", aluno.email),
-        campo("Telefone", aluno.telefone),
-        campo("Celular", aluno.celular),
         campo("Observação", aluno.observacao),
       ],
     },
@@ -346,5 +355,12 @@ export function montarSecoesDetalhe(entrada: EntradaDetalhe): SecaoDetalhe[] {
     secaoRotina(entrada.rotina),
     secaoSaude(entrada.saude),
     secaoDocumentos(entrada.documentos),
+    ...(entrada.financeiro
+      ? montarSecoesFinanceiras(
+          entrada.financeiro.situacao,
+          entrada.financeiro.snapshot,
+          entrada.financeiro.lancamentos,
+        )
+      : []),
   ];
 }

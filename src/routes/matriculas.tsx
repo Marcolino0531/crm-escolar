@@ -58,14 +58,30 @@ import {
   detalheMatricula,
   excluirMatricula,
   reprocessarMatricula,
+  resolverPendenciaMatricula,
   resumoExclusaoMatricula,
 } from "@/lib/matriculas.functions";
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
 import { montarSecoesDetalhe, type SecaoDetalhe } from "@/lib/matricula-detalhe";
+import {
+  FILTRO_OR_PENDENCIA,
+  seloCobranca,
+  seloTurma,
+  temPendencia,
+  type Selo,
+} from "@/lib/matricula-integracao";
 import { gerarPdfFichaMatricula, nomeArquivoFichaMatricula } from "@/lib/matricula-detalhe-pdf";
+
+export interface MatriculasSearch {
+  /** Submissão a abrir na ficha (deep link do aviso do sino). */
+  id?: string;
+}
 
 export const Route = createFileRoute("/matriculas")({
   head: () => ({ meta: [{ title: "Matrículas — School Hub" }] }),
+  validateSearch: (s: Record<string, unknown>): MatriculasSearch => ({
+    id: typeof s.id === "string" && s.id ? s.id : undefined,
+  }),
   component: MatriculasGate,
 });
 
@@ -127,6 +143,7 @@ const STATUS_STYLE: Record<
 
 const STATUS_FILTROS = [
   { value: "todos", label: "Todos os status" },
+  { value: "pendencia", label: "Com pendência" },
   { value: "sucesso", label: "Sucesso" },
   { value: "duplicado", label: "Duplicado" },
   { value: "erros", label: "Todos os erros" },
@@ -173,7 +190,38 @@ type Submissao = {
   tentativas: number | null;
   reprocessado_em: string | null;
   created_at: string;
+  turma_status: string | null;
+  turma_pendencia: string | null;
+  turma_nome: string | null;
+  faturamento_status: string | null;
+  faturamento_pendencia: string | null;
+  matricula_valor: number | null;
+  matricula_parcelas: number | null;
+  matricula_primeiro_vencimento: string | null;
+  material_valor_anual: number | null;
+  material_parcelas: number | null;
+  pendencia_resolvida_em: string | null;
 };
+
+const SELO_CLS: Record<string, string> = {
+  matriculado: "bg-emerald-100 text-emerald-900",
+  lancada: "bg-emerald-100 text-emerald-900",
+  parcial: "bg-amber-100 text-amber-900",
+  pendente: "bg-amber-100 text-amber-900",
+  erro: "bg-red-100 text-red-900",
+};
+
+function SeloIntegracao({ selo }: { selo: Selo<string> | null }) {
+  if (!selo) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <span
+      title={selo.motivo}
+      className={`inline-flex cursor-help items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${SELO_CLS[selo.valor] ?? ""}`}
+    >
+      {selo.rotulo}
+    </span>
+  );
+}
 
 function formatDataHora(iso: string): string {
   const d = new Date(iso);
@@ -214,6 +262,24 @@ function MatriculasPage() {
   const [buscaDebounced, setBuscaDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [detalhe, setDetalhe] = useState<Submissao | null>(null);
+  const { id: idDoAviso } = Route.useSearch();
+
+  // Deep link do sino: abre a ficha da submissão indicada assim que ela carrega.
+  useEffect(() => {
+    if (!idDoAviso) return;
+    let cancelado = false;
+    supabase
+      .from("enrollment_submissions" as never)
+      .select("*")
+      .eq("id", idDoAviso)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (!cancelado && row) setDetalhe(row as unknown as Submissao);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [idDoAviso]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -239,6 +305,8 @@ function MatriculasPage() {
 
       if (unidade) q = q.eq("unidade", unidade);
       if (status === "erros") q = q.in("status", STATUS_ERRO as unknown as string[]);
+      else if (status === "pendencia")
+        q = q.is("pendencia_resolvida_em", null).or(FILTRO_OR_PENDENCIA);
       else if (status !== "todos") q = q.eq("status", status);
       if (buscaDebounced) {
         // Vírgula e parênteses quebram a sintaxe do filtro `or` do PostgREST.
@@ -380,6 +448,8 @@ function MatriculasPage() {
                 <TableHead>CPF</TableHead>
                 <TableHead>Unidade</TableHead>
                 <TableHead>Status da Integração</TableHead>
+                <TableHead>Turma</TableHead>
+                <TableHead>Cobrança</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -401,6 +471,12 @@ function MatriculasPage() {
                   <TableCell className="text-sm">{row.unidade || "—"}</TableCell>
                   <TableCell>
                     <StatusBadge status={row.status} />
+                  </TableCell>
+                  <TableCell>
+                    <SeloIntegracao selo={seloTurma(row)} />
+                  </TableCell>
+                  <TableCell>
+                    <SeloIntegracao selo={seloCobranca(row)} />
                   </TableCell>
                   <TableCell className="text-right">
                     {STATUS_STYLE[row.status]?.reprocessavel && podeReprocessar && (
@@ -744,6 +820,18 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
     staleTime: 0,
     gcTime: 0,
   });
+  const queryClient = useQueryClient();
+  const { isAdmin } = useRole();
+  const resolverFn = useServerFn(resolverPendenciaMatricula);
+  const resolver = useMutation({
+    mutationFn: async () => resolverFn({ data: { id: submissao.id } }),
+    onSuccess: async () => {
+      toast.success("Pendência baixada. O aviso sai do sino.");
+      await queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+      await queryClient.invalidateQueries({ queryKey: ["matriculas-pendencias"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
 
   if (submissionId !== null && isFetching) return <Skeleton className="h-24 w-full" />;
 
@@ -763,6 +851,11 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
     rotina: data?.rotina ?? null,
     saude: data?.saude ?? null,
     documentos: data?.documentos ?? [],
+    financeiro: {
+      situacao: submissao,
+      snapshot: submissao,
+      lancamentos: data?.lancamentos ?? [],
+    },
   });
 
   async function baixarPdf() {
@@ -788,6 +881,25 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
           <Printer className="mr-2 h-3.5 w-3.5" /> Baixar PDF
         </Button>
       </div>
+
+      {isAdmin && temPendencia(submissao) && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <p className="font-semibold">Pendência de integração</p>
+          <p className="mt-1">
+            O aviso some sozinho quando o reprocessamento resolve. Se a turma ou as cobranças foram
+            tratadas manualmente no Sponte, dê baixa aqui.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            disabled={resolver.isPending}
+            onClick={() => resolver.mutate()}
+          >
+            <CheckCircle2 className="mr-2 h-3.5 w-3.5" /> Dar baixa na pendência
+          </Button>
+        </div>
+      )}
 
       {locaisIndisponiveis && (
         <p className="text-xs text-muted-foreground">

@@ -6,11 +6,15 @@
 -- material) para a ficha e para o faturamento não dependerem do cadastro
 -- continuar igual. O status geral ganha 'sem_lancamento' (nenhum tipo pôde ser
 -- lançado); 'sem_plano' e 'nao_aplicavel' continuam válidos para o histórico.
+-- `pendencia_resolvida_em` é a baixa manual do aviso do sino (turma/cobrança
+-- tratadas pela secretaria direto no Sponte): a pendência deixa de aparecer.
 
 ALTER TABLE public.enrollment_submissions
   ADD COLUMN IF NOT EXISTS matricula_valor numeric(12, 2),
   ADD COLUMN IF NOT EXISTS matricula_parcelas integer,
-  ADD COLUMN IF NOT EXISTS matricula_primeiro_vencimento date;
+  ADD COLUMN IF NOT EXISTS matricula_primeiro_vencimento date,
+  ADD COLUMN IF NOT EXISTS pendencia_resolvida_em timestamptz,
+  ADD COLUMN IF NOT EXISTS pendencia_resolvida_por text;
 
 ALTER TABLE public.enrollment_submissions
   DROP CONSTRAINT IF EXISTS enrollment_submissions_matricula_parcelas_check;

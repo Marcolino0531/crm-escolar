@@ -71,10 +71,12 @@ import {
 import { MSG_MATRICULA_SEM_VALOR, opcoesParcelasMaterial } from "@/lib/matricula-faturamento";
 import { anosLetivosDisponiveis, turnoDaRotina } from "@/lib/matricula-turma";
 import {
+  criarOnboardingDaMatricula,
   formalizarMatriculaTurma,
   type ResultadoFormalizacao,
 } from "@/lib/matricula-turma.formalizar";
 import { receberMatricula } from "@/lib/matriculas.receber";
+import { STATUS_ERRO, type SubmissaoStatus } from "@/lib/matriculas.audit";
 
 const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
@@ -660,7 +662,30 @@ async function faturar(
   });
 }
 
-// Matrícula na turma + onboarding, depois do aluno já criado no Sponte. Nada
+// Onboarding assim que o aluno existe no Sponte, sem depender da turma. Falha
+// aqui não interrompe o envio: fica sem onboarding_id para a secretaria ver.
+async function abrirOnboarding(form: MatriculaForm, submissionId: string): Promise<void> {
+  try {
+    const onboardingId = await criarOnboardingDaMatricula({
+      submissionId,
+      unidade: form.unidade,
+      alunoNome: form.aluno.nome.trim(),
+      responsavel: [form.mae, form.pai].map((r) => ({
+        nome: r.nome.trim(),
+        telefone: r.telefone.trim(),
+        email: r.email.trim(),
+      })),
+    });
+    if (onboardingId !== null) await gravarSubmissao(submissionId, { onboarding_id: onboardingId });
+  } catch (e) {
+    console.error(
+      "[matrículas] falha ao abrir o onboarding:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
+// Matrícula na turma + atualização do onboarding, depois do aluno já criado no Sponte. Nada
 // aqui pode desfazer o cadastro nem o faturamento: o que falhar vira pendência
 // própria da turma na submissão, para a secretaria resolver na mão.
 async function formalizar(
@@ -808,6 +833,7 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
         matriculaValor,
       );
       if (alunoId !== null) {
+        await abrirOnboarding(form, submissionId);
         await faturar(
           form,
           rotina,
@@ -836,8 +862,13 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
       };
     }
 
+    // A submissão com status de erro fica gravada e aparece no sino dos admins
+    // (listarPendenciasMatricula): só aí a frase "já foi notificada" é verdadeira.
+    const notificada = STATUS_ERRO.includes(saida.status as SubmissaoStatus);
     return {
       ok: false,
-      erro: "Recebemos os dados, mas houve uma falha ao concluir o cadastro. A secretaria já foi notificada e vai entrar em contato.",
+      erro: notificada
+        ? "Recebemos os dados, mas houve uma falha ao concluir o cadastro. A secretaria já foi notificada e vai entrar em contato."
+        : "Recebemos os dados, mas houve uma falha ao concluir o cadastro. Fale com a secretaria.",
     };
   });
