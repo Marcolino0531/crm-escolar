@@ -978,7 +978,8 @@ function SecaoMensagens({
             >
               <div>
                 <p className="font-medium">
-                  Mensagem {m.ordem} · prevista para {formatarDataBR(m.data_prevista)}
+                  Mensagem {m.ordem}
+                  {!m.enviada_em && ` · prevista para ${formatarDataBR(m.data_prevista)}`}
                   {doDia && (
                     <span className="ml-2 inline-flex">
                       <PrintPendenteBadge ordem={m.ordem} />
@@ -991,11 +992,6 @@ function SecaoMensagens({
                     <span className="ml-1 text-[11px]">
                       (registrado {formatarDataHora(m.enviada_em)})
                     </span>
-                    {m.fora_da_data && (
-                      <Badge variant="outline" className="ml-2 border-amber-300 text-amber-700">
-                        enviada fora da data prevista
-                      </Badge>
-                    )}
                     {m.print_url && (
                       <a
                         href={m.print_url}
@@ -1063,7 +1059,6 @@ function RegistrarEnvioDialog({
     detalhe.caso.data_inicio,
     anterior?.data_envio ?? null,
   );
-  const foraDaData = !invalida && dataEnvio !== mensagem.data_prevista;
 
   const enviar = useMutation({
     mutationFn: async () => {
@@ -1104,13 +1099,7 @@ function RegistrarEnvioDialog({
               onChange={(e) => setDataEnvio(e.target.value)}
               className="w-fit"
             />
-            {invalida ? (
-              <p className="text-xs text-red-600">{invalida}</p>
-            ) : foraDaData ? (
-              <p className="text-xs text-amber-700">
-                Será marcada como enviada fora da data prevista.
-              </p>
-            ) : null}
+            {invalida && <p className="text-xs text-red-600">{invalida}</p>}
           </div>
           <div className="space-y-1">
             <Label>Print da conversa</Label>
@@ -1175,7 +1164,6 @@ function SubstituirPrintDialog({
       )
     : null;
   const dataMudou = podeCorrigir && dataEnvio !== dataAtual;
-  const foraDaData = !invalida && podeCorrigir && dataEnvio !== mensagem.data_prevista;
 
   const enviar = useMutation({
     mutationFn: async () => {
@@ -1228,10 +1216,6 @@ function SubstituirPrintDialog({
               </p>
             ) : invalida ? (
               <p className="text-xs text-red-600">{invalida}</p>
-            ) : foraDaData ? (
-              <p className="text-xs text-amber-700">
-                Será marcada como enviada fora da data prevista.
-              </p>
             ) : null}
           </div>
           <div className="space-y-1">

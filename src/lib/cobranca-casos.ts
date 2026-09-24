@@ -666,11 +666,7 @@ export function montarTimeline(
       tipo: "mensagem",
       quando: m.data_envio ?? m.data_prevista,
       titulo: `Mensagem ${m.ordem}/${TOTAL_MENSAGENS}`,
-      detalhe: m.enviada_em
-        ? m.fora_da_data
-          ? "Enviada fora da data prevista"
-          : "Enviada na data prevista"
-        : `Prevista para ${formatarDataBR(m.data_prevista)}`,
+      detalhe: m.enviada_em ? "Enviada" : `Prevista para ${formatarDataBR(m.data_prevista)}`,
       mensagem: m,
       futuro: !m.enviada_em,
     });
