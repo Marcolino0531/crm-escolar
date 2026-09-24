@@ -1,9 +1,8 @@
-// Página PÚBLICA de matrícula (substitui o Google Forms).
+// Página PÚBLICA de matrícula — único canal de entrada de alunos novos.
 //
 // O responsável preenche aluno + pai/mãe + endereço, o formulário valida antes
-// de enviar (CPF com dígito verificador, datas, telefone, e-mail) e o envio cai
-// no MESMO fluxo do webhook do Forms: `receberMatricula` → Sponte → painel
-// /matriculas. O Forms continua funcionando em paralelo.
+// de enviar (CPF com dígito verificador, datas, telefone, e-mail) e o envio
+// segue `receberMatricula` → Sponte → painel /matriculas.
 
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";

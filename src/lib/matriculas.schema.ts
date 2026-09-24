@@ -1,8 +1,8 @@
-// Contrato do payload de matrícula (Google Forms → School Hub → Sponte).
+// Contrato do payload de matrícula (formulário /matricula → School Hub → Sponte).
 //
 // Fica isolado do handler HTTP porque o reprocessamento do Dashboard de
 // Matrículas revalida o payload gravado na auditoria antes de reenviá-lo — o
-// formato aceito na tela é exatamente o mesmo aceito no webhook.
+// formato aceito na tela é exatamente o mesmo aceito no recebimento.
 
 import { z } from "zod";
 import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
@@ -68,7 +68,7 @@ export const MatriculaSchema = z.object({
 });
 
 // "aluno.nome: Nome completo do aluno é obrigatório" — mensagens prontas para
-// devolver ao formulário (webhook) ou exibir na tela (reprocessamento).
+// devolver ao formulário ou exibir na tela (reprocessamento).
 export function problemasDoPayload(erro: z.ZodError): string[] {
   return erro.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
 }

@@ -2,8 +2,8 @@
 //
 // Ficam isoladas de React e de rede porque são a barreira que evita erro de
 // digitação chegar ao Sponte: validação de CPF (dígito verificador), campos
-// obrigatórios e a montagem do payload no MESMO contrato que o webhook do
-// Google Forms usa hoje (MatriculaSchema → processarMatricula).
+// obrigatórios e a montagem do payload no contrato do recebimento
+// (MatriculaSchema → processarMatricula).
 //
 // A página é pública, então há também o limite de submissões por IP: a contagem
 // vem do banco e a decisão de recusar é tomada aqui.
@@ -26,6 +26,8 @@ export const MAX_SUBMISSOES_POR_IP = 5;
 export const JANELA_LIMITE_MINUTOS = 60;
 
 export const ORIGEM_SITE = "site";
+// Origem histórica: só para exibir as submissões antigas recebidas pelo Google
+// Forms (canal desativado) na lista e na ficha.
 export const ORIGEM_GOOGLE_FORMS = "google_forms";
 
 // Mídias do Sponte são um cadastro fechado (GetMidias devolve ID + descrição) e
@@ -339,7 +341,7 @@ function responsavelPayload(
 
 /**
  * Converte o formulário da página pública no payload que `processarMatricula`
- * (e o webhook do Google Forms) já consomem — nenhuma regra de Sponte é
+ * consome — nenhuma regra de Sponte é
  * reimplementada aqui.
  */
 export function montarPayloadMatricula(
