@@ -345,6 +345,34 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
     ).toEqual(["A — 1 volume", "B — 2 volumes"]);
   });
 
+  it("rótulo do item: periodicidade dos volumes e descrição livre", () => {
+    expect(
+      rotuloItemMaterial({
+        tipo: "volumes",
+        nome: "Bernoulli Coleção Principal",
+        quantidade: 1,
+        periodicidade: "semestre",
+      }),
+    ).toBe("Bernoulli Coleção Principal — 1 volume por semestre");
+    expect(
+      rotuloItemMaterial({ nome: "Cultura Inglesa", quantidade: 1, periodicidade: "ano" }),
+    ).toBe("Cultura Inglesa — 1 volume por ano");
+    expect(
+      rotuloItemMaterial({ nome: "Material de Arte", quantidade: 2, periodicidade: "semestre" }),
+    ).toBe("Material de Arte — 2 volumes por semestre");
+    // Item antigo, ainda sem periodicidade: texto como antes.
+    expect(
+      rotuloItemMaterial({ nome: "Material de Arte", quantidade: 2, periodicidade: null }),
+    ).toBe("Material de Arte — 2 volumes");
+    expect(
+      rotuloItemMaterial({
+        tipo: "descricao",
+        nome: "Robótica",
+        descricao: " materiais usados nas aulas práticas ",
+      }),
+    ).toBe("Robótica — materiais usados nas aulas práticas");
+  });
+
   it("itens vêm do cadastro por unidade × ano × série, inclusive Maternal e CEC Baby", () => {
     const cadastro = [
       { unidade: "CEC Baby", anoLetivo: 2027, serieChave: "maternal 3", ordem: 1, nome: "Inglês" },
