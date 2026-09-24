@@ -13,6 +13,13 @@ import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
+import { BUCKET_DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
+import {
+  existeAlgoNoSponte,
+  resumirIntegracao,
+  type LancamentoResumo,
+  type StatusIntegracao,
+} from "@/lib/matricula-exclusao";
 import {
   MatriculaError,
   processarMatricula,
@@ -368,4 +375,172 @@ export const salvarValoresOpcionais = createServerFn({ method: "POST" })
     );
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ─── Exclusão de submissão (somente admin) ──────────────────────────────────
+//
+// Remove a submissão e TODOS os registros ligados por submission_id no School
+// Hub (student_routine, matricula_saude, matricula_documentos + arquivos do
+// bucket matricula-documentos, onboarding, matricula_faturamento_lancamentos).
+// Nada é alterado no Sponte nem no Diário do Aluno: o resumo do que já existe
+// lá é mostrado na confirmação e gravado em matricula_exclusoes ANTES de
+// apagar. Os arquivos só saem do bucket depois que todas as linhas foram
+// apagadas com sucesso; falha ao apagar arquivo vai para o log.
+
+async function assertAdmin(userId: string) {
+  const { data } = await supabaseAdmin
+    .from("user_roles" as never)
+    .select("role")
+    .eq("user_id", userId);
+  const admin = ((data ?? []) as { role: string }[]).some((r) => r.role === "admin");
+  if (!admin) throw new Error("Apenas administradores podem excluir uma submissão.");
+}
+
+type SubmissaoExclusaoRow = {
+  id: string;
+  submission_id: string | null;
+  unidade: string | null;
+  aluno_nome: string | null;
+  aluno_cpf: string | null;
+  sponte_aluno_id: number | null;
+  turma_status: string | null;
+  turma_nome: string | null;
+  created_at: string;
+};
+
+export interface ResumoExclusaoMatricula {
+  id: string;
+  alunoNome: string;
+  cpf: string;
+  unidade: string;
+  enviadoEm: string;
+  integracao: StatusIntegracao;
+  exigeCiencia: boolean;
+}
+
+async function carregarResumoExclusao(id: string): Promise<{
+  row: SubmissaoExclusaoRow;
+  resumo: ResumoExclusaoMatricula;
+}> {
+  const { data } = await supabaseAdmin
+    .from("enrollment_submissions" as never)
+    .select(
+      "id, submission_id, unidade, aluno_nome, aluno_cpf, sponte_aluno_id, turma_status, turma_nome, created_at",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  const row = data as unknown as SubmissaoExclusaoRow | null;
+  if (!row) throw new Error("Submissão não encontrada.");
+
+  let lancamentos: LancamentoResumo[] = [];
+  if (row.submission_id) {
+    const { data: lanc } = await supabaseAdmin
+      .from("matricula_faturamento_lancamentos" as never)
+      .select("tipo, status")
+      .eq("submission_id", row.submission_id);
+    lancamentos = (lanc ?? []) as unknown as LancamentoResumo[];
+  }
+
+  const integracao = resumirIntegracao({
+    sponteAlunoId: row.sponte_aluno_id,
+    turmaStatus: row.turma_status,
+    turmaNome: row.turma_nome,
+    lancamentos,
+  });
+
+  return {
+    row,
+    resumo: {
+      id: row.id,
+      alunoNome: row.aluno_nome ?? "",
+      cpf: row.aluno_cpf ?? "",
+      unidade: row.unidade ?? "",
+      enviadoEm: row.created_at,
+      integracao,
+      exigeCiencia: existeAlgoNoSponte(integracao),
+    },
+  };
+}
+
+const ExclusaoIdSchema = z.object({ id: z.string().uuid() });
+
+export const resumoExclusaoMatricula = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ExclusaoIdSchema.parse(input))
+  .handler(async ({ data, context }): Promise<ResumoExclusaoMatricula> => {
+    await assertAdmin(context.userId);
+    return (await carregarResumoExclusao(data.id)).resumo;
+  });
+
+const ExcluirInputSchema = z.object({ id: z.string().uuid(), ciente: z.boolean() });
+
+const TABELAS_LIGADAS = [
+  "student_routine",
+  "matricula_saude",
+  "matricula_documentos",
+  "onboarding",
+  "matricula_faturamento_lancamentos",
+] as const;
+
+export const excluirMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ExcluirInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true; arquivosRemovidos: number }> => {
+    await assertAdmin(context.userId);
+    const { row, resumo } = await carregarResumoExclusao(data.id);
+    if (resumo.exigeCiencia && !data.ciente)
+      throw new Error("Confirme que está ciente de que o Sponte não será alterado.");
+
+    const { error: auditErr } = await supabaseAdmin.from("matricula_exclusoes" as never).insert({
+      submission_id: row.submission_id ?? row.id,
+      aluno_nome: resumo.alunoNome,
+      cpf: resumo.cpf,
+      unidade: resumo.unidade,
+      status_integracao: resumo.integracao,
+      enviado_em: row.created_at,
+      excluido_por: context.userId,
+      excluido_por_nome: await nomeDoUsuario(context.userId),
+    } as never);
+    if (auditErr) throw new Error(`Falha ao registrar a exclusão: ${auditErr.message}`);
+
+    let caminhos: string[] = [];
+    if (row.submission_id) {
+      const { data: docs } = await supabaseAdmin
+        .from("matricula_documentos" as never)
+        .select("storage_path")
+        .eq("submission_id", row.submission_id);
+      caminhos = ((docs ?? []) as unknown as { storage_path: string }[]).map((d) => d.storage_path);
+
+      for (const tabela of TABELAS_LIGADAS) {
+        const { error } = await supabaseAdmin
+          .from(tabela as never)
+          .delete()
+          .eq("submission_id", row.submission_id);
+        if (error) throw new Error(`Falha ao apagar ${tabela}: ${error.message}`);
+      }
+    }
+
+    const { error: delErr } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .delete()
+      .eq("id", row.id);
+    if (delErr) throw new Error(`Falha ao apagar a submissão: ${delErr.message}`);
+
+    let arquivosRemovidos = 0;
+    if (caminhos.length > 0) {
+      const { data: removidos, error: stErr } = await supabaseAdmin.storage
+        .from(BUCKET_DOCUMENTOS_MATRICULA)
+        .remove(caminhos);
+      if (stErr) {
+        console.error(
+          `[matrículas] submissão ${row.id} apagada, mas falhou ao remover arquivos do bucket:`,
+          stErr.message,
+          caminhos,
+        );
+      } else {
+        arquivosRemovidos = removidos?.length ?? 0;
+      }
+    }
+
+    return { ok: true, arquivosRemovidos };
   });

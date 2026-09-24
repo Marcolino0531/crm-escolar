@@ -18,9 +18,20 @@ import {
   Printer,
   RefreshCw,
   RotateCw,
+  Trash2,
   Users,
 } from "lucide-react";
-import { usePermissions } from "@/lib/app-context";
+import { usePermissions, useRole } from "@/lib/app-context";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { AVISO_SPONTE, rotuloCobrancas } from "@/lib/matricula-exclusao";
 import { AccessDenied } from "@/components/AccessDenied";
 import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { ValoresOpcionais } from "@/components/matriculas/ValoresOpcionais";
@@ -43,7 +54,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
-import { detalheMatricula, reprocessarMatricula } from "@/lib/matriculas.functions";
+import {
+  detalheMatricula,
+  excluirMatricula,
+  reprocessarMatricula,
+  resumoExclusaoMatricula,
+} from "@/lib/matriculas.functions";
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
 import { montarSecoesDetalhe, type SecaoDetalhe } from "@/lib/matricula-detalhe";
 import { gerarPdfFichaMatricula, nomeArquivoFichaMatricula } from "@/lib/matricula-detalhe-pdf";
@@ -185,9 +201,11 @@ function StatusBadge({ status }: { status: SubmissionStatus }) {
 
 function MatriculasPage() {
   const { canEdit } = usePermissions();
+  const { isAdmin } = useRole();
   const podeReprocessar = canEdit("admissoes");
   const queryClient = useQueryClient();
   const reprocessarFn = useServerFn(reprocessarMatricula);
+  const [excluindo, setExcluindo] = useState<Submissao | null>(null);
 
   // Escopo da listagem: unidade do topo (consolidado em "Todas as Unidades").
   const unidade = useUnidadeAtiva();
@@ -405,6 +423,20 @@ function MatriculasPage() {
                         Reprocessar
                       </Button>
                     )}
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-1 text-red-600 hover:text-red-700"
+                        title="Excluir submissão (somente admin)"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExcluindo(row);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -447,7 +479,132 @@ function MatriculasPage() {
         onReprocessar={(id) => reprocessar.mutate(id)}
         onClose={() => setDetalhe(null)}
       />
+
+      <ExcluirSubmissaoDialog
+        submissao={excluindo}
+        onClose={() => setExcluindo(null)}
+        onExcluida={() => {
+          setExcluindo(null);
+          if (detalhe?.id === excluindo?.id) setDetalhe(null);
+          queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+        }}
+      />
     </div>
+  );
+}
+
+// Confirmação da exclusão (só admin): mostra o que já foi criado no Sponte a
+// partir dos dados gravados e exige "Estou ciente" quando houver algo.
+function ExcluirSubmissaoDialog({
+  submissao,
+  onClose,
+  onExcluida,
+}: {
+  submissao: Submissao | null;
+  onClose: () => void;
+  onExcluida: () => void;
+}) {
+  const resumoFn = useServerFn(resumoExclusaoMatricula);
+  const excluirFn = useServerFn(excluirMatricula);
+  const [ciente, setCiente] = useState(false);
+
+  useEffect(() => setCiente(false), [submissao?.id]);
+
+  const { data: resumo, isLoading } = useQuery({
+    queryKey: ["matricula-exclusao-resumo", submissao?.id],
+    queryFn: () => resumoFn({ data: { id: submissao!.id } }),
+    enabled: !!submissao,
+  });
+
+  const excluir = useMutation({
+    mutationFn: () => excluirFn({ data: { id: submissao!.id, ciente } }),
+    onSuccess: (res) => {
+      toast.success(
+        res.arquivosRemovidos > 0
+          ? `Submissão excluída do School Hub (${res.arquivosRemovidos} arquivo(s) removido(s)).`
+          : "Submissão excluída do School Hub.",
+      );
+      onExcluida();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao excluir a submissão."),
+  });
+
+  const bloqueado = !resumo || excluir.isPending || (resumo.exigeCiencia && !ciente);
+
+  return (
+    <Dialog open={!!submissao} onOpenChange={(o) => !o && !excluir.isPending && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4 text-red-600" /> Excluir submissão
+          </DialogTitle>
+          <DialogDescription>
+            A submissão e todos os registros ligados a ela no School Hub (rotina, saúde, documentos
+            e arquivos, onboarding e lançamentos) serão apagados. Esta ação não pode ser desfeita.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading || !resumo ? (
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-full" />
+            <Skeleton className="h-5 w-2/3" />
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              <dt className="text-muted-foreground">Aluno</dt>
+              <dd className="font-medium">{resumo.alunoNome || "—"}</dd>
+              <dt className="text-muted-foreground">CPF</dt>
+              <dd>{resumo.cpf || "—"}</dd>
+              <dt className="text-muted-foreground">Unidade</dt>
+              <dd>{resumo.unidade || "—"}</dd>
+              <dt className="text-muted-foreground">Envio</dt>
+              <dd>{formatDataHora(resumo.enviadoEm)}</dd>
+            </dl>
+
+            <div className="rounded-md border border-border bg-muted/40 p-3">
+              <p className="mb-1 font-medium">Já criado no Sponte</p>
+              <ul className="space-y-0.5">
+                <li>
+                  Aluno criado:{" "}
+                  {resumo.integracao.alunoCriado
+                    ? `sim (AlunoID ${resumo.integracao.spontAlunoId})`
+                    : "não"}
+                </li>
+                <li>
+                  Matrícula na turma:{" "}
+                  {resumo.integracao.turmaMatriculada
+                    ? `sim${resumo.integracao.turmaNome ? ` (${resumo.integracao.turmaNome})` : ""}`
+                    : "não"}
+                </li>
+                <li>Cobranças lançadas: {rotuloCobrancas(resumo.integracao.cobrancasLancadas)}</li>
+              </ul>
+            </div>
+
+            {resumo.exigeCiencia && (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <p className="flex items-start gap-2 font-semibold">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {AVISO_SPONTE}
+                </p>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Checkbox checked={ciente} onCheckedChange={(v) => setCiente(v === true)} />
+                  Estou ciente
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={excluir.isPending}>
+            Cancelar
+          </Button>
+          <Button variant="destructive" disabled={bloqueado} onClick={() => excluir.mutate()}>
+            {excluir.isPending ? "Excluindo…" : "Excluir do School Hub"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
