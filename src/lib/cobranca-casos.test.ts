@@ -6,6 +6,9 @@ import {
   atualizarParcela,
   dataEnvioSugerida,
   datasMensagens,
+  descreverReagendamento,
+  mensagemDoDiaPendente,
+  reagendarMensagens,
   etapaDoCaso,
   montarDemonstrativo,
   podeAlterarDataInicio,
@@ -262,5 +265,47 @@ describe("cobranca-casos: data de início informada (PR B)", () => {
       podeAlterarDataInicio({ status: "mensagens" }, [{ print_path: null }, { print_path: null }]),
     ).toBe(true);
     expect(podeAlterarDataInicio({ status: "mensagens" }, [{ print_path: "x.png" }])).toBe(false);
+  });
+});
+
+describe("reagendarMensagens", () => {
+  const msgs = [
+    { ordem: 1, data_prevista: "2026-09-18", enviada_em: "x" },
+    { ordem: 2, data_prevista: "2026-09-21", enviada_em: "x" },
+    { ordem: 3, data_prevista: "2026-09-22", enviada_em: "x" },
+    { ordem: 4, data_prevista: "2026-09-23", enviada_em: null },
+    { ordem: 5, data_prevista: "2026-09-24", enviada_em: null },
+  ];
+  it("exemplo Ludymyla: em 24/09, msg 4 → 24/09 e msg 5 → 25/09", () => {
+    expect(reagendarMensagens(msgs, "2026-09-24")).toEqual([
+      { ordem: 4, de: "2026-09-23", para: "2026-09-24" },
+      { ordem: 5, de: "2026-09-24", para: "2026-09-25" },
+    ]);
+  });
+  it("é idempotente e não mexe em registradas nem em pendentes no prazo", () => {
+    expect(reagendarMensagens(msgs, "2026-09-23")).toEqual([]);
+    const aplicadas = msgs.map((m) =>
+      m.ordem === 4
+        ? { ...m, data_prevista: "2026-09-24" }
+        : m.ordem === 5
+          ? { ...m, data_prevista: "2026-09-25" }
+          : m,
+    );
+    expect(reagendarMensagens(aplicadas, "2026-09-24")).toEqual([]);
+  });
+  it("pula fim de semana", () => {
+    // sáb 26/09/2026 → seg 28/09, ter 29/09
+    expect(reagendarMensagens(msgs, "2026-09-26")).toEqual([
+      { ordem: 4, de: "2026-09-23", para: "2026-09-28" },
+      { ordem: 5, de: "2026-09-24", para: "2026-09-29" },
+    ]);
+  });
+  it("descreve o evento e aponta a mensagem do dia", () => {
+    const mud = reagendarMensagens(msgs, "2026-09-24");
+    expect(descreverReagendamento(mud)).toBe(
+      "Mensagens 4 a 5 reagendadas: mensagem 4 de 23/09 para 24/09; mensagem 5 de 24/09 para 25/09",
+    );
+    expect(mensagemDoDiaPendente({ status: "mensagens" }, msgs, "2026-09-23")).toBe(4);
+    expect(mensagemDoDiaPendente({ status: "notificacao" }, msgs, "2026-09-23")).toBeNull();
   });
 });

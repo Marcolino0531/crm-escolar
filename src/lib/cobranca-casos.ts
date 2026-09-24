@@ -332,6 +332,64 @@ export function datasMensagens(inicioYMD: string, total = TOTAL_MENSAGENS): stri
   return datas;
 }
 
+function proximoDiaUtilAPartir(ymd: string): string {
+  let d = ymd;
+  while (!isDiaUtilDespesa(d)) d = addDiasYMD(d, 1);
+  return d;
+}
+
+export interface MudancaPrevista {
+  ordem: number;
+  de: string;
+  para: string;
+}
+
+/**
+ * Reagendamento das mensagens não registradas: se a primeira pendente tem
+ * data prevista anterior a hoje, ela passa para hoje (ou o próximo dia útil) e
+ * cada pendente seguinte para o dia útil seguinte ao da anterior. Mensagens já
+ * registradas nunca mudam. Idempotente: sem pendente atrasada, retorna [].
+ */
+export function reagendarMensagens(
+  mensagens: readonly Pick<MensagemCaso, "ordem" | "data_prevista" | "enviada_em">[],
+  hojeYMD: string,
+): MudancaPrevista[] {
+  const pendentes = [...mensagens].filter((m) => !m.enviada_em).sort((a, b) => a.ordem - b.ordem);
+  if (pendentes.length === 0 || pendentes[0].data_prevista >= hojeYMD) return [];
+  const mudancas: MudancaPrevista[] = [];
+  let data = proximoDiaUtilAPartir(hojeYMD);
+  for (const m of pendentes) {
+    if (m.data_prevista !== data)
+      mudancas.push({ ordem: m.ordem, de: m.data_prevista, para: data });
+    data = proximoDiaUtilAPartir(addDiasYMD(data, 1));
+  }
+  return mudancas;
+}
+
+/** Ordem da mensagem prevista para hoje e ainda sem registro (null se não houver). */
+export function mensagemDoDiaPendente(
+  caso: Pick<CasoResumo, "status">,
+  mensagens: readonly Pick<MensagemCaso, "ordem" | "data_prevista" | "enviada_em">[],
+  hojeYMD: string,
+): number | null {
+  if (caso.status !== "mensagens") return null;
+  const m = mensagens.find((x) => !x.enviada_em && x.data_prevista === hojeYMD);
+  return m ? m.ordem : null;
+}
+
+/** Texto do evento de reagendamento: "Mensagens 4 a 5 reagendadas: mensagem 4 de 23/09 para 24/09; ...". */
+export function descreverReagendamento(mudancas: readonly MudancaPrevista[]): string {
+  const ordens = mudancas.map((m) => m.ordem);
+  const de = Math.min(...ordens);
+  const ate = Math.max(...ordens);
+  const cabecalho =
+    de === ate ? `Mensagem ${de} reagendada` : `Mensagens ${de} a ${ate} reagendadas`;
+  const ddmm = (ymd: string) => formatarDataBR(ymd).slice(0, 5);
+  return `${cabecalho}: ${mudancas
+    .map((m) => `mensagem ${m.ordem} de ${ddmm(m.de)} para ${ddmm(m.para)}`)
+    .join("; ")}`;
+}
+
 /** Data de início: obrigatória, YYYY-MM-DD válida e não futura. */
 export function validarDataInicio(dataInicioYMD: string, hojeYMD: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicioYMD)) return "Informe a data de início da cobrança.";
@@ -520,8 +578,21 @@ export interface AlteracaoDataInicio {
   por: string;
 }
 
+export interface ReagendamentoMensagens {
+  tipo: "reagendamento";
+  em: string;
+  mudancas: MudancaPrevista[];
+}
+
+/** Histórico do caso gravado em `cobranca_casos.data_inicio_historico` (jsonb). */
+export type HistoricoCaso = AlteracaoDataInicio | ReagendamentoMensagens;
+
+export function isReagendamento(h: HistoricoCaso): h is ReagendamentoMensagens {
+  return "tipo" in h && h.tipo === "reagendamento";
+}
+
 export interface CasoCompleto extends CasoResumo {
-  data_inicio_historico: AlteracaoDataInicio[];
+  data_inicio_historico: HistoricoCaso[];
   responsavel_telefone: string | null;
   responsavel_email: string | null;
   responsavel_endereco: EnderecoResponsavel | null;
@@ -555,11 +626,15 @@ export function montarTimeline(
     detalhe: `${caso.alunos.length} aluno(s) · valor inicial ${formatarBRL(caso.valor_inicial)}`,
   });
   for (const alt of caso.data_inicio_historico ?? [])
-    eventos.push({
-      tipo: "inicio",
-      quando: alt.em,
-      titulo: `Data de início alterada de ${formatarDataBR(alt.de)} para ${formatarDataBR(alt.para)}`,
-    });
+    eventos.push(
+      isReagendamento(alt)
+        ? { tipo: "mensagem", quando: alt.em, titulo: descreverReagendamento(alt.mudancas) }
+        : {
+            tipo: "inicio",
+            quando: alt.em,
+            titulo: `Data de início alterada de ${formatarDataBR(alt.de)} para ${formatarDataBR(alt.para)}`,
+          },
+    );
   for (const m of [...mensagens].sort((a, b) => a.ordem - b.ordem)) {
     eventos.push({
       tipo: "mensagem",

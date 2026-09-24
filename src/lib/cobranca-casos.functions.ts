@@ -31,6 +31,9 @@ import {
   validarEncerramento,
   validarRegistroMensagem,
   type AlteracaoDataInicio,
+  mensagemDoDiaPendente,
+  reagendarMensagens,
+  type ReagendamentoMensagens,
   type SubstituicaoPrint,
   type AlunoCaso,
   type AnexoCaso,
@@ -139,6 +142,44 @@ async function carregarAnexos(casoId: string): Promise<AnexoCaso[]> {
     .returns<AnexoCaso[]>();
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+/**
+ * Aplica o reagendamento das mensagens pendentes atrasadas (status 'mensagens'),
+ * gravando as novas datas e um evento no histórico do caso. Idempotente.
+ * Devolve as mensagens já com as datas atualizadas.
+ */
+async function aplicarReagendamento<
+  M extends Pick<MensagemCaso, "id" | "ordem" | "data_prevista" | "enviada_em">,
+>(caso: CasoCompleto, mensagens: M[], hoje: string): Promise<M[]> {
+  if (caso.status !== "mensagens") return mensagens;
+  const mudancas = reagendarMensagens(mensagens, hoje);
+  if (mudancas.length === 0) return mensagens;
+  const porOrdem = new Map(mudancas.map((m) => [m.ordem, m.para]));
+  for (const m of mensagens) {
+    const para = porOrdem.get(m.ordem);
+    if (!para) continue;
+    const { error } = await supabaseAdmin
+      .from("cobranca_mensagens" as never)
+      .update({ data_prevista: para } as never)
+      .eq("id", m.id);
+    if (error) throw new Error(error.message);
+  }
+  const evento: ReagendamentoMensagens = {
+    tipo: "reagendamento",
+    em: new Date().toISOString(),
+    mudancas,
+  };
+  const { error } = await supabaseAdmin
+    .from("cobranca_casos" as never)
+    .update({ data_inicio_historico: [...caso.data_inicio_historico, evento] } as never)
+    .eq("id", caso.id);
+  if (error) throw new Error(error.message);
+  caso.data_inicio_historico = [...caso.data_inicio_historico, evento];
+  return mensagens.map((m) => {
+    const para = porOrdem.get(m.ordem);
+    return para ? { ...m, data_prevista: para } : m;
+  });
 }
 
 export function exigirAberto(caso: CasoCompleto): void {
@@ -324,6 +365,8 @@ const ListarSchema = z.object({ unidade: z.string().min(1).nullable().optional()
 export interface CasoLista extends CasoResumo {
   mensagens: Pick<MensagemCaso, "ordem" | "enviada_em">[];
   hojeYMD: string;
+  /** Ordem da mensagem prevista para hoje sem print (null se não houver). */
+  printPendenteOrdem: number | null;
 }
 
 export const listarCasosCobranca = createServerFn({ method: "POST" })
@@ -346,30 +389,37 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
         .returns<CasoRow[]>();
     });
     const ids = rows.map((r) => r.id);
-    type MsgLeve = Pick<MensagemCaso, "caso_id" | "ordem" | "enviada_em">;
+    type MsgLeve = Pick<MensagemCaso, "id" | "caso_id" | "ordem" | "data_prevista" | "enviada_em">;
     const msgs = ids.length
       ? await fetchAllRows<MsgLeve>((from, to) =>
           supabaseAdmin
             .from("cobranca_mensagens" as never)
-            .select("caso_id, ordem, enviada_em")
+            .select("id, caso_id, ordem, data_prevista, enviada_em")
             .in("caso_id", ids)
             .order("ordem")
             .range(from, to)
             .returns<MsgLeve[]>(),
         )
       : [];
-    const porCaso = new Map<string, Pick<MensagemCaso, "ordem" | "enviada_em">[]>();
+    const porCaso = new Map<string, MsgLeve[]>();
     for (const m of msgs) {
       const lista = porCaso.get(m.caso_id) ?? [];
-      lista.push({ ordem: m.ordem, enviada_em: m.enviada_em });
+      lista.push(m);
       porCaso.set(m.caso_id, lista);
     }
     const hoje = hojeYMD();
-    return rows.map((r) => ({
-      ...paraCaso(r),
-      mensagens: porCaso.get(r.id) ?? [],
-      hojeYMD: hoje,
-    }));
+    const resultado: CasoLista[] = [];
+    for (const r of rows) {
+      const caso = paraCaso(r);
+      const mensagens = await aplicarReagendamento(caso, porCaso.get(r.id) ?? [], hoje);
+      resultado.push({
+        ...caso,
+        mensagens: mensagens.map((m) => ({ ordem: m.ordem, enviada_em: m.enviada_em })),
+        hojeYMD: hoje,
+        printPendenteOrdem: mensagemDoDiaPendente(caso, mensagens, hoje),
+      });
+    }
+    return resultado;
   });
 
 // ─── Iniciar cobrança ────────────────────────────────────────────────────────
@@ -563,14 +613,18 @@ export interface CasoDetalhe {
   mensagens: MensagemComLink[];
   anexos: AnexoComLink[];
   hojeYMD: string;
+  /** Ordem da mensagem prevista para hoje sem print (null se não houver). */
+  printPendenteOrdem: number | null;
 }
 
 async function montarDetalhe(casoId: string): Promise<CasoDetalhe> {
   const caso = await carregarCasoRow(casoId);
-  const [mensagens, anexos] = await Promise.all([
+  const hoje = hojeYMD();
+  const [mensagensBrutas, anexos] = await Promise.all([
     carregarMensagens(casoId),
     carregarAnexos(casoId),
   ]);
+  const mensagens = await aplicarReagendamento(caso, mensagensBrutas, hoje);
   const mensagensComLink: MensagemComLink[] = [];
   for (const m of mensagens)
     mensagensComLink.push({
@@ -579,7 +633,13 @@ async function montarDetalhe(casoId: string): Promise<CasoDetalhe> {
     });
   const anexosComLink: AnexoComLink[] = [];
   for (const a of anexos) anexosComLink.push({ ...a, url: await linkAssinado(a.storage_path) });
-  return { caso, mensagens: mensagensComLink, anexos: anexosComLink, hojeYMD: hojeYMD() };
+  return {
+    caso,
+    mensagens: mensagensComLink,
+    anexos: anexosComLink,
+    hojeYMD: hoje,
+    printPendenteOrdem: mensagemDoDiaPendente(caso, mensagens, hoje),
+  };
 }
 
 export const carregarCasoCobranca = createServerFn({ method: "POST" })
