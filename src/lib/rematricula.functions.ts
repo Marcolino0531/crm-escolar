@@ -59,6 +59,7 @@ import {
   urlLinkRematricula,
   validarLinkMagico,
   vencimentosMaterialPelasMensalidades,
+  ordenarItensMaterial,
   type ItemMaterial,
   type MensalidadeVigente,
   type PeriodicidadeMaterial,
@@ -952,11 +953,9 @@ export async function itensMaterialDaSerie(
     .select("nome_item, tipo, quantidade, periodicidade, descricao")
     .eq("unidade", unidade)
     .eq("ano_letivo", anoLetivo)
-    .eq("serie_chave", chaveSerie(serie))
-    .order("ordem")
-    .order("created_at");
+    .eq("serie_chave", chaveSerie(serie));
   const linhas = (data ?? []) as unknown as LinhaItemMaterial[];
-  return linhas.map(itemMaterialDaLinha);
+  return ordenarItensMaterial(linhas.map(itemMaterialDaLinha));
 }
 
 export const dadosRematricula = createServerFn({ method: "POST" })
@@ -3279,11 +3278,17 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
         .order("unidade")
         .order("ano_letivo", { ascending: false })
         .order("serie_chave")
-        .order("ordem")
-        .order("created_at")
         .order("id"),
     );
-    return linhas.map((r) => ({
+    const grupos = new Map<string, typeof linhas>();
+    for (const r of linhas) {
+      const k = `${r.unidade}|${r.ano_letivo}|${r.serie_chave}`;
+      grupos.set(k, [...(grupos.get(k) ?? []), r]);
+    }
+    const ordenadas = [...grupos.values()].flatMap((g) =>
+      ordenarItensMaterial(g.map((r) => ({ ...r, nome: r.nome_item }))),
+    );
+    return ordenadas.map((r) => ({
       id: r.id,
       unidade: r.unidade,
       anoLetivo: Number(r.ano_letivo),

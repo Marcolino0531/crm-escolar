@@ -801,17 +801,27 @@ export function rotulosItensMaterial(itens: readonly ItemMaterial[]): string[] {
   return itens.map(rotuloItemMaterial);
 }
 
+// Itens do material em ordem alfabética pelo nome (pt-BR, ignorando
+// maiúsculas e acentos). A coluna `ordem` do banco não é usada na exibição.
+export function ordenarItensMaterial<T extends { nome: string }>(itens: readonly T[]): T[] {
+  return [...itens].sort((a, b) =>
+    a.nome.trim().localeCompare(b.nome.trim(), "pt-BR", { sensitivity: "base" }),
+  );
+}
+
 // Itens da série na leitura do cadastro: só os da mesma unidade, ano e série
-// (chave normalizada), na ordem cadastrada. Sem cadastro para o ano, lista
+// (chave normalizada), em ordem alfabética. Sem cadastro para o ano, lista
 // vazia — nunca cai para outro ano ou unidade.
 export function selecionarItensMaterial<
-  T extends { unidade: string; anoLetivo: number; serieChave: string; ordem: number },
+  T extends { unidade: string; anoLetivo: number; serieChave: string; nome: string },
 >(itens: readonly T[], unidade: string, serie: string, anoLetivo: number | null): T[] {
   if (!anoLetivo) return [];
   const chave = chaveSerie(serie);
-  return itens
-    .filter((i) => i.unidade === unidade && i.anoLetivo === anoLetivo && i.serieChave === chave)
-    .sort((a, b) => a.ordem - b.ordem);
+  return ordenarItensMaterial(
+    itens.filter(
+      (i) => i.unidade === unidade && i.anoLetivo === anoLetivo && i.serieChave === chave,
+    ),
+  );
 }
 
 // Valor anual do material por unidade → ano letivo → chave da série.

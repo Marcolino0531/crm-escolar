@@ -34,6 +34,7 @@ import {
   opcoesParcelamentoMaterial,
   rotuloItemMaterial,
   rotuloParcelamento,
+  selecionarItensMaterial,
   type PeriodicidadeMaterial,
 } from "@/lib/rematricula";
 import {
@@ -779,11 +780,11 @@ export function MaterialPedagogicoSeries({ podeEditar }: { podeEditar: boolean }
               </TableRow>
             )}
             {linhas.map((r) => {
-              const itensDaSerie = todosItens.filter(
-                (i) =>
-                  i.unidade === r.unidade &&
-                  i.anoLetivo === r.anoLetivo &&
-                  i.serieChave === r.serieChave,
+              const itensDaSerie = selecionarItensMaterial(
+                todosItens,
+                r.unidade,
+                r.serie,
+                r.anoLetivo,
               );
               const expandida = aberta === r.id;
               return (
