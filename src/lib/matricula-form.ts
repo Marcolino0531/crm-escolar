@@ -20,6 +20,7 @@ import {
 import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { parcelasMaterialValida } from "@/lib/rematricula";
+import { parcelasMatriculaValida, validarPrimeiroVencimento } from "@/lib/rematricula-matricula";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -973,6 +974,37 @@ export function validarMaterialForm(material: MaterialForm, configurado: boolean
   if (!parcelasMaterialValida(material.parcelas))
     return { "material.parcelas": "Escolha em quantas parcelas quer pagar o material." };
   return {};
+}
+
+// ─── Matrícula (parcelas e 1º vencimento escolhidos pelo responsável) ──────
+//
+// Mesma regra da Rematrícula (parcelamentoMatriculaDisponivel): até 5x de
+// setembro a janeiro, só à vista em janeiro ou fora da janela; a 1ª parcela
+// vence entre o preenchimento e o fim do mês. Sem valor cadastrado para o
+// colégio × segmento a escolha não é exigida e a Matrícula vira pendência.
+
+export interface MatriculaCobrancaForm {
+  parcelas: number;
+  primeiroVencimento: string; // YYYY-MM-DD
+}
+
+export const MATRICULA_COBRANCA_FORM_VAZIO: MatriculaCobrancaForm = {
+  parcelas: 0,
+  primeiroVencimento: "",
+};
+
+export function validarMatriculaCobrancaForm(
+  cobranca: MatriculaCobrancaForm,
+  valorDisponivel: boolean,
+  hoje: string,
+): ErrosForm {
+  if (!valorDisponivel) return {};
+  const erros: ErrosForm = {};
+  if (!parcelasMatriculaValida(cobranca.parcelas, hoje))
+    erros["matriculaCobranca.parcelas"] = "Escolha em quantas parcelas quer pagar a Matrícula.";
+  const erroVencimento = validarPrimeiroVencimento(cobranca.primeiroVencimento, hoje);
+  if (erroVencimento) erros["matriculaCobranca.primeiroVencimento"] = erroVencimento;
+  return erros;
 }
 
 // ─── Padronização de capitalização ──────────────────────────────────────────

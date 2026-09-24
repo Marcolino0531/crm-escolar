@@ -1,24 +1,26 @@
 // Faturamento automático da matrícula nova (Fase 3): lógica pura, sem rede.
 //
-// Matrícula e mensalidade vêm do plano NATIVO do Sponte (GetPlanosCursos), lido
-// pelo curso da série e pelo ano letivo escolhido no formulário. Material vem da
-// configuração local "Material Pedagógico por Série" com o número de parcelas
-// que o responsável escolheu (1 a 8). Alimentação e hora extra vêm da
-// configuração própria por unidade, porque o Sponte não tem esses conceitos
-// estruturados.
+// Cada cobrança tem origem própria e é calculada de forma independente:
+// - Matrícula: "Valor da Matrícula" do School Hub (colégio × segmento) com
+//   parcelas e 1º vencimento escolhidos pelo responsável;
+// - Mensalidade: só o VALOR da parcela do plano do curso no Sponte
+//   (GetPlanosCursos); as datas vêm do calendário (dia 05, fev–dez);
+// - Material: valor anual do "Material Pedagógico por Série", parcelas do
+//   formulário limitadas às mensalidades restantes;
+// - Alimentação e hora extra: valores por unidade, nos meses do calendário.
 //
-// Tudo aqui é planejamento: nenhum valor é lançado sem plano válido, e cada
-// lacuna de configuração volta como pendência para a secretaria resolver.
+// Tudo aqui é planejamento: cada lacuna vira pendência só do seu tipo.
 
-import { proximoDiaUtil } from "@/lib/billing-schedule";
+import { addDaysYMD, proximoDiaUtil } from "@/lib/billing-schedule";
 import { addMesesYMD } from "@/lib/confissao-divida";
 import { DIAS_UTEIS, REFEICOES_ROTINA, type RefeicoesRotina } from "@/lib/matricula-form";
 import {
   CATEGORIA_MATERIAL_SPONTE,
+  PARCELAS_MATERIAL_MAX,
   formatarBRL,
-  parcelamentoMaterialPrimeira,
   parcelasMaterialValida,
 } from "@/lib/rematricula";
+import { parcelasMatriculaValida, validarPrimeiroVencimento } from "@/lib/rematricula-matricula";
 import type { Weekday } from "@/lib/diario";
 
 // Categorias do plano de contas do Sponte usadas nos lançamentos. Os nomes são
@@ -83,86 +85,86 @@ export function escolherPlanoDoAnoLetivo(
   return [...doAno].sort((a, b) => peso(b) - peso(a) || b.planoCursoId - a.planoCursoId)[0];
 }
 
-function itemUtilizavel(item: ItemPlanoCurso): boolean {
-  return (
-    Number.isInteger(item.parcelas) &&
-    item.parcelas >= 1 &&
-    Math.round(item.valorParcela * 100) > 0 &&
-    /^\d{4}-\d{2}-\d{2}$/.test(item.dataInicial)
-  );
+function itemComValor(item: ItemPlanoCurso): boolean {
+  return Math.round(item.valorParcela * 100) > 0;
+}
+
+// ─── Calendário (dia 05, fevereiro a dezembro, dia útil de Brasília) ────────
+
+export const DIA_VENCIMENTO_MENSALIDADE = 5;
+export const PRIMEIRO_MES_MENSALIDADE = 2;
+export const ULTIMO_MES_MENSALIDADE = 12;
+
+function ymd(ano: number, mes: number, dia: number): string {
+  return `${ano}-${String(mes).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+}
+
+/** Dia 05 do mês, rolado para o próximo dia útil quando cai em fim de semana ou feriado. */
+export function dia5Util(ano: number, mes: number): string {
+  return proximoDiaUtil(ymd(ano, mes, DIA_VENCIMENTO_MENSALIDADE));
 }
 
 /**
- * Problemas que impedem usar o plano como base do faturamento. Lista vazia = o
- * plano tem matrícula e mensalidade com valor, quantidade e data coerentes.
+ * Vencimentos das mensalidades do ano letivo a partir da data de preenchimento:
+ * - antes de fevereiro (inclusive o ano anterior): 11, de 05/02 a 05/12;
+ * - mês M (fev–dez) até o dia 05: começa em 05/M;
+ * - mês M depois do dia 05: a de M vence no próximo dia útil após o
+ *   preenchimento, as seguintes no dia 05 até dezembro;
+ * - depois do ano letivo: nenhuma.
  */
-export function problemasDoPlano(plano: PlanoCursoSponte, anoLetivo: number): string[] {
-  const problemas: string[] = [];
-  if (!plano.ativo) problemas.push("O plano do curso está inativo no Sponte.");
-  if (anoDoPlanoCurso(plano.descricaoPlano) !== anoLetivo) {
-    problemas.push(`O plano "${plano.descricaoPlano}" não é do ano letivo ${anoLetivo}.`);
+export function vencimentosMensalidade(anoLetivo: number, dataPreenchimento: string): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataPreenchimento)) {
+    throw new Error("Data de preenchimento inválida (esperado YYYY-MM-DD).");
   }
-  if (!itemUtilizavel(plano.matricula)) {
-    problemas.push("O plano do curso não tem valor de matrícula com data de vencimento.");
+  const [ano, mes, dia] = dataPreenchimento.split("-").map(Number);
+  if (ano > anoLetivo) return [];
+  const datas: string[] = [];
+  let mesInicio = PRIMEIRO_MES_MENSALIDADE;
+  if (ano === anoLetivo && mes >= PRIMEIRO_MES_MENSALIDADE) {
+    if (dia > DIA_VENCIMENTO_MENSALIDADE) {
+      datas.push(proximoDiaUtil(addDaysYMD(dataPreenchimento, 1)));
+      mesInicio = mes + 1;
+    } else {
+      mesInicio = mes;
+    }
   }
-  if (!itemUtilizavel(plano.mensalidade)) {
-    problemas.push("O plano do curso não tem valor de mensalidade com data de vencimento.");
-  }
-  return problemas;
+  for (let m = mesInicio; m <= ULTIMO_MES_MENSALIDADE; m++) datas.push(dia5Util(anoLetivo, m));
+  return datas;
 }
 
-// ─── Cronogramas ────────────────────────────────────────────────────────────
-
-/** Vencimentos mensais a partir de `primeiro`, um por parcela, sempre em dia útil. */
-export function vencimentosMensais(primeiro: string, parcelas: number): string[] {
+/**
+ * Vencimentos de um título que segue a mensalidade: a 1ª parcela em `primeiro`
+ * e as demais no dia 05 dos meses seguintes ao mês de `primeiro`.
+ */
+export function vencimentosAPartirDe(primeiro: string, parcelas: number): string[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(primeiro)) {
     throw new Error("Primeiro vencimento inválido (esperado YYYY-MM-DD).");
   }
   const total = Math.trunc(parcelas);
   if (total < 1) return [];
-  const datas: string[] = [];
-  for (let i = 0; i < total; i++) {
-    datas.push(i === 0 ? primeiro : proximoDiaUtil(addMesesYMD(primeiro, i)));
+  const [ano, mes] = primeiro.split("-").map(Number);
+  const datas = [primeiro];
+  for (let i = 1; i < total; i++) {
+    const mesAbs = mes - 1 + i;
+    datas.push(dia5Util(ano + Math.floor(mesAbs / 12), (mesAbs % 12) + 1));
   }
   return datas;
 }
 
-/**
- * Mensalidades que ainda serão cobradas: as do cronograma do plano com
- * vencimento a partir de hoje. Mês já vencido não é recobrado — quando o aluno
- * entra depois do vencimento do mês corrente, o mês de entrada vira o
- * proporcional.
- */
-export function mensalidadesAVencer(
-  plano: PlanoCursoSponte,
-  hojeYMD: string,
-): { vencimentos: string[]; puladas: string[] } {
-  const todos = itemUtilizavel(plano.mensalidade)
-    ? vencimentosMensais(plano.mensalidade.dataInicial, plano.mensalidade.parcelas)
-    : [];
-  return {
-    vencimentos: todos.filter((v) => v >= hojeYMD),
-    puladas: todos.filter((v) => v < hojeYMD),
-  };
+/** Parcelas do material permitidas: no máximo as mensalidades restantes (1 a 8). */
+export function maxParcelasMaterial(mensalidadesRestantes: number): number {
+  return Math.max(1, Math.min(PARCELAS_MATERIAL_MAX, Math.trunc(mensalidadesRestantes)));
 }
 
-function diasNoMes(ano: number, mes: number): number {
-  return new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+/** Opções de parcelas do material exibidas no formulário para a data. */
+export function opcoesParcelasMaterial(anoLetivo: number, dataPreenchimento: string): number[] {
+  const restantes = vencimentosMensalidade(anoLetivo, dataPreenchimento).length;
+  if (restantes === 0) return [1];
+  const max = maxParcelasMaterial(restantes);
+  return Array.from({ length: max }, (_, i) => i + 1);
 }
 
-/**
- * Mensalidade proporcional do mês de entrada: dias restantes (contando o dia da
- * matrícula) ÷ dias do mês × valor da mensalidade. O Sponte não tem cálculo
- * nativo para isso (confirmado na Fase 0), então é lançado como título de uma
- * parcela.
- */
-export function mensalidadeProporcional(valorMensalidade: number, dataMatricula: string): number {
-  const [ano, mes, dia] = dataMatricula.split("-").map((v) => parseInt(v, 10));
-  if (!Number.isFinite(ano) || !Number.isFinite(mes) || !Number.isFinite(dia)) return 0;
-  const total = diasNoMes(ano, mes);
-  const restantes = Math.max(0, Math.min(total, total - dia + 1));
-  return Math.round(valorMensalidade * 100 * (restantes / total)) / 100;
-}
+// ─── Rotina ─────────────────────────────────────────────────────────────────
 
 /** Ocorrências de cada refeição marcada entre duas datas, inclusive. */
 export function contarRefeicoesNoPeriodo(
@@ -195,6 +197,8 @@ export function contarRefeicoesNoPeriodo(
 
 // ─── Plano de faturamento ───────────────────────────────────────────────────
 
+// "proporcional" fica só por compatibilidade com lançamentos antigos: o
+// formulário não gera mais esse tipo.
 export type TipoLancamentoMatricula =
   | "matricula"
   | "mensalidade"
@@ -203,27 +207,56 @@ export type TipoLancamentoMatricula =
   | "alimentacao"
   | "hora_extra";
 
+export const TIPOS_LANCAMENTO_FORMULARIO: readonly TipoLancamentoMatricula[] = [
+  "matricula",
+  "mensalidade",
+  "material",
+  "alimentacao",
+  "hora_extra",
+];
+
+export const ROTULO_TIPO_LANCAMENTO: Record<TipoLancamentoMatricula, string> = {
+  matricula: "Matrícula",
+  mensalidade: "Mensalidade",
+  proporcional: "Mensalidade proporcional",
+  material: "Material pedagógico",
+  alimentacao: "Alimentação",
+  hora_extra: "Hora extra",
+};
+
 export interface LancamentoPlanejado {
   tipo: TipoLancamentoMatricula;
   categoria: string;
   parcelas: number;
   // Valor das parcelas iguais (o que vai em nValorParcelas do InsertPlano).
   valorParcela: number;
-  // Primeira parcela: absorve a sobra de centavos, como na tela nativa. Exige
-  // UpdateParcela quando `ajustaPrimeira`.
+  // Primeira parcela: absorve a sobra de centavos, como na tela nativa.
   valorPrimeiraParcela: number;
   primeiroVencimento: string;
+  // Vencimento real de cada parcela (o Sponte gera mês a mês a partir do 1º;
+  // o que divergir é corrigido com UpdateParcela).
+  vencimentos: string[];
   total: number;
-  ajustaPrimeira: boolean;
   observacao: string;
 }
 
+/** Pendência de um tipo: o que impediu o cálculo, para a secretaria lançar na mão. */
+export interface PendenciaLancamento {
+  tipo: TipoLancamentoMatricula;
+  motivo: string;
+}
+
 export interface EntradaFaturamentoMatricula {
-  plano: PlanoCursoSponte;
+  // Plano do curso no Sponte (só o VALOR da mensalidade é usado); null = sem plano.
+  plano: PlanoCursoSponte | null;
   anoLetivo: number;
-  // Data da matrícula (YYYY-MM-DD), que também é o "hoje" do cronograma.
+  // Data do preenchimento (YYYY-MM-DD), que também é o "hoje" do cronograma.
   dataMatricula: string;
   serie: string;
+  // Matrícula: valor do School Hub (por colégio e segmento) e escolha do responsável.
+  matriculaValor: number | null;
+  matriculaParcelas: number | null;
+  matriculaPrimeiroVencimento: string | null;
   materialValorAnual: number | null;
   materialParcelas: number | null;
   refeicoes: RefeicoesRotina;
@@ -235,17 +268,20 @@ export interface EntradaFaturamentoMatricula {
 
 export interface PlanoFaturamentoMatricula {
   lancamentos: LancamentoPlanejado[];
-  pendencias: string[];
+  pendencias: PendenciaLancamento[];
 }
+
+export const MSG_MATRICULA_SEM_VALOR =
+  "O valor da Matrícula ainda não está disponível. A secretaria vai combinar o pagamento com você.";
 
 function parcelado(
   tipo: TipoLancamentoMatricula,
   categoria: string,
   total: number,
-  parcelas: number,
-  primeiroVencimento: string,
+  vencimentos: string[],
   observacao: string,
 ): LancamentoPlanejado {
+  const parcelas = vencimentos.length;
   const totalCentavos = Math.round(total * 100);
   const base = Math.floor(totalCentavos / parcelas);
   const primeira = totalCentavos - base * (parcelas - 1);
@@ -255,112 +291,157 @@ function parcelado(
     parcelas,
     valorParcela: base / 100,
     valorPrimeiraParcela: primeira / 100,
-    primeiroVencimento,
+    primeiroVencimento: vencimentos[0],
+    vencimentos,
     total: totalCentavos / 100,
-    ajustaPrimeira: primeira !== base,
     observacao,
   };
 }
 
+function mensal(
+  tipo: TipoLancamentoMatricula,
+  categoria: string,
+  valorParcela: number,
+  vencimentos: string[],
+  observacao: string,
+): LancamentoPlanejado {
+  return {
+    tipo,
+    categoria,
+    parcelas: vencimentos.length,
+    valorParcela,
+    valorPrimeiraParcela: valorParcela,
+    primeiroVencimento: vencimentos[0],
+    vencimentos,
+    total: Math.round(valorParcela * vencimentos.length * 100) / 100,
+    observacao,
+  };
+}
+
+/** Motivo pelo qual o plano do Sponte não serve para a mensalidade (null = serve). */
+export function problemaMensalidadeDoPlano(
+  plano: PlanoCursoSponte | null,
+  anoLetivo: number,
+): string | null {
+  if (!plano) return `Nenhum plano de curso de ${anoLetivo} encontrado no Sponte para a série.`;
+  if (anoDoPlanoCurso(plano.descricaoPlano) !== anoLetivo) {
+    return `O plano "${plano.descricaoPlano}" não é do ano letivo ${anoLetivo}.`;
+  }
+  if (!plano.ativo) return "O plano do curso está inativo no Sponte.";
+  if (!itemComValor(plano.mensalidade)) return "O plano do curso não tem valor de mensalidade.";
+  return null;
+}
+
 /**
- * Cronograma financeiro completo da matrícula nova. Retorna os títulos a lançar
- * e as pendências do que não pôde ser calculado — sem plano utilizável nada é
- * lançado, para não gerar cobrança errada.
+ * Cronograma financeiro da matrícula nova. Cada tipo é calculado de forma
+ * independente: o que faltar vira pendência só daquele tipo, e os demais são
+ * lançados normalmente. As datas vêm do calendário (dia 05, fev–dez), nunca do
+ * plano do Sponte.
  */
 export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFaturamentoMatricula {
-  const pendencias = problemasDoPlano(e.plano, e.anoLetivo);
-  if (pendencias.length > 0) return { lancamentos: [], pendencias };
-
   const lancamentos: LancamentoPlanejado[] = [];
+  const pendencias: PendenciaLancamento[] = [];
+  const pendente = (tipo: TipoLancamentoMatricula, motivo: string) =>
+    pendencias.push({ tipo, motivo });
   const fimAnoLetivo = `${e.anoLetivo}-12-31`;
+  const mensalidades = vencimentosMensalidade(e.anoLetivo, e.dataMatricula);
 
-  // Matrícula (taxa única do plano do Sponte).
-  const vencMatricula = e.plano.matricula.dataInicial;
-  lancamentos.push(
-    parcelado(
+  // Matrícula: valor do School Hub, parcelas e 1º vencimento escolhidos pelo responsável.
+  if (e.matriculaValor === null || Math.round(e.matriculaValor * 100) <= 0) {
+    pendente(
       "matricula",
-      CATEGORIA_MATRICULA_SPONTE,
-      e.plano.matricula.valorParcela * e.plano.matricula.parcelas,
-      e.plano.matricula.parcelas,
-      vencMatricula >= e.dataMatricula ? vencMatricula : proximoDiaUtil(e.dataMatricula),
-      `Matrícula ${e.anoLetivo} — ${e.serie}`,
-    ),
-  );
-
-  // Mensalidades do plano, só as que ainda vencem.
-  const { vencimentos, puladas } = mensalidadesAVencer(e.plano, e.dataMatricula);
-  if (vencimentos.length > 0) {
-    lancamentos.push({
-      tipo: "mensalidade",
-      categoria: CATEGORIA_MENSALIDADE_SPONTE,
-      parcelas: vencimentos.length,
-      valorParcela: e.plano.mensalidade.valorParcela,
-      valorPrimeiraParcela: e.plano.mensalidade.valorParcela,
-      primeiroVencimento: vencimentos[0],
-      total: Math.round(e.plano.mensalidade.valorParcela * vencimentos.length * 100) / 100,
-      ajustaPrimeira: false,
-      observacao: `Mensalidade ${e.anoLetivo} — ${e.serie}`,
-    });
-  }
-
-  // Proporcional: só quando a mensalidade do mês de entrada já venceu e o aluno
-  // entra com o mês em curso.
-  const mesEntrada = e.dataMatricula.slice(0, 7);
-  const mensalidadeDoMesJaVencida = puladas.some((v) => v.slice(0, 7) === mesEntrada);
-  if (mensalidadeDoMesJaVencida) {
-    const valor = mensalidadeProporcional(e.plano.mensalidade.valorParcela, e.dataMatricula);
-    if (Math.round(valor * 100) > 0) {
+      `Valor da Matrícula de ${e.anoLetivo} não cadastrado para a série "${e.serie}" no colégio — combine o pagamento com o responsável.`,
+    );
+  } else if (
+    e.matriculaParcelas === null ||
+    !parcelasMatriculaValida(e.matriculaParcelas, e.dataMatricula)
+  ) {
+    pendente(
+      "matricula",
+      "Número de parcelas da Matrícula inválido para a data — confirme com o responsável.",
+    );
+  } else {
+    const erroVencimento =
+      e.matriculaPrimeiroVencimento === null
+        ? "Informe o 1º vencimento."
+        : validarPrimeiroVencimento(e.matriculaPrimeiroVencimento, e.dataMatricula);
+    if (erroVencimento || e.matriculaPrimeiroVencimento === null) {
+      pendente("matricula", `1º vencimento da Matrícula inválido — ${erroVencimento}`);
+    } else {
       lancamentos.push(
         parcelado(
-          "proporcional",
-          CATEGORIA_MENSALIDADE_SPONTE,
-          valor,
-          1,
-          proximoDiaUtil(e.dataMatricula),
-          `Mensalidade proporcional de entrada — ${e.serie}`,
+          "matricula",
+          CATEGORIA_MATRICULA_SPONTE,
+          e.matriculaValor,
+          vencimentosAPartirDe(e.matriculaPrimeiroVencimento, e.matriculaParcelas),
+          `Matrícula ${e.anoLetivo} — ${e.serie}`,
         ),
       );
     }
   }
 
-  // Material: valor anual da configuração local, parcelas escolhidas pelo
-  // responsável, sobra de centavos na 1ª parcela.
+  // Mensalidade: só o valor vem do plano do Sponte; datas do calendário.
+  const problemaMensalidade = problemaMensalidadeDoPlano(e.plano, e.anoLetivo);
+  if (problemaMensalidade) {
+    pendente("mensalidade", problemaMensalidade);
+  } else if (mensalidades.length === 0) {
+    pendente(
+      "mensalidade",
+      `Não há mensalidade de ${e.anoLetivo} a vencer após ${e.dataMatricula}.`,
+    );
+  } else if (e.plano) {
+    lancamentos.push(
+      mensal(
+        "mensalidade",
+        CATEGORIA_MENSALIDADE_SPONTE,
+        e.plano.mensalidade.valorParcela,
+        mensalidades,
+        `Mensalidade ${e.anoLetivo} — ${e.serie}`,
+      ),
+    );
+  }
+
+  // Material: valor anual do School Hub, parcelas limitadas às mensalidades
+  // restantes, 1ª na data da 1ª mensalidade do calendário.
   if (e.materialValorAnual === null || Math.round(e.materialValorAnual * 100) <= 0) {
-    pendencias.push(
+    pendente(
+      "material",
       `Material pedagógico da série "${e.serie}" sem valor configurado — lance na mão.`,
     );
   } else if (e.materialParcelas === null || !parcelasMaterialValida(e.materialParcelas)) {
-    pendencias.push("Número de parcelas do material inválido — confirme com o responsável.");
+    pendente("material", "Número de parcelas do material inválido — confirme com o responsável.");
+  } else if (mensalidades.length === 0) {
+    pendente(
+      "material",
+      `Não há mês de ${e.anoLetivo} a vencer para ancorar o material — lance na mão.`,
+    );
   } else {
-    const op = parcelamentoMaterialPrimeira(e.materialValorAnual, e.materialParcelas);
-    const primeiro = vencimentos[0] ?? proximoDiaUtil(e.dataMatricula);
-    lancamentos.push({
-      tipo: "material",
-      categoria: CATEGORIA_MATERIAL_SPONTE,
-      parcelas: op.parcelas,
-      valorParcela: op.valorParcela,
-      valorPrimeiraParcela: op.valorPrimeiraParcela,
-      primeiroVencimento: primeiro,
-      total: op.total,
-      ajustaPrimeira:
-        Math.round(op.valorPrimeiraParcela * 100) !== Math.round(op.valorParcela * 100),
-      observacao: `Material pedagógico ${e.anoLetivo} — matrícula em ${op.parcelas}x`,
-    });
+    const parcelas = Math.min(e.materialParcelas, maxParcelasMaterial(mensalidades.length));
+    lancamentos.push(
+      parcelado(
+        "material",
+        CATEGORIA_MATERIAL_SPONTE,
+        e.materialValorAnual,
+        mensalidades.slice(0, parcelas),
+        `Material pedagógico ${e.anoLetivo} — matrícula em ${parcelas}x`,
+      ),
+    );
   }
 
   // Alimentação: total real das refeições marcadas até o fim do ano letivo,
-  // dividido nos meses que ainda vencem.
-  const refeicoesContratadas = !e.semRefeicoes;
-  if (refeicoesContratadas) {
+  // dividido nos meses do calendário.
+  if (!e.semRefeicoes) {
     const quantidade = contarRefeicoesNoPeriodo(e.refeicoes, e.dataMatricula, fimAnoLetivo);
     if (quantidade > 0) {
       if (e.valorRefeicao === null || Math.round(e.valorRefeicao * 100) <= 0) {
-        pendencias.push(
+        pendente(
+          "alimentacao",
           "Alimentação marcada na rotina, mas a unidade não tem valor por refeição configurado — lance na mão.",
         );
-      } else if (vencimentos.length === 0) {
-        pendencias.push(
-          "Alimentação marcada na rotina, mas não há mensalidade a vencer para ancorar as parcelas — lance na mão.",
+      } else if (mensalidades.length === 0) {
+        pendente(
+          "alimentacao",
+          "Alimentação marcada na rotina, mas não há mês a vencer para as parcelas — lance na mão.",
         );
       } else {
         lancamentos.push(
@@ -368,8 +449,7 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
             "alimentacao",
             CATEGORIA_ALIMENTACAO_SPONTE,
             Math.round(quantidade * e.valorRefeicao * 100) / 100,
-            vencimentos.length,
-            vencimentos[0],
+            mensalidades,
             `Alimentação ${e.anoLetivo} — ${quantidade} refeições (${formatarBRL(e.valorRefeicao)} cada)`,
           ),
         );
@@ -377,30 +457,63 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
     }
   }
 
-  // Hora extra: mensalidade do horário estendido, uma parcela por mês a vencer.
+  // Hora extra: mensalidade do horário estendido, uma parcela por mês do calendário.
   if (e.horarioEstendido) {
     if (e.valorHoraExtraMensal === null || Math.round(e.valorHoraExtraMensal * 100) <= 0) {
-      pendencias.push(
+      pendente(
+        "hora_extra",
         "Horário estendido contratado, mas a unidade não tem valor de hora extra configurado — lance na mão.",
       );
-    } else if (vencimentos.length === 0) {
-      pendencias.push(
-        "Horário estendido contratado, mas não há mensalidade a vencer para ancorar as parcelas — lance na mão.",
+    } else if (mensalidades.length === 0) {
+      pendente(
+        "hora_extra",
+        "Horário estendido contratado, mas não há mês a vencer para as parcelas — lance na mão.",
       );
     } else {
-      lancamentos.push({
-        tipo: "hora_extra",
-        categoria: CATEGORIA_HORA_EXTRA_SPONTE,
-        parcelas: vencimentos.length,
-        valorParcela: e.valorHoraExtraMensal,
-        valorPrimeiraParcela: e.valorHoraExtraMensal,
-        primeiroVencimento: vencimentos[0],
-        total: Math.round(e.valorHoraExtraMensal * vencimentos.length * 100) / 100,
-        ajustaPrimeira: false,
-        observacao: `Horário estendido ${e.anoLetivo} — ${e.serie}`,
-      });
+      lancamentos.push(
+        mensal(
+          "hora_extra",
+          CATEGORIA_HORA_EXTRA_SPONTE,
+          e.valorHoraExtraMensal,
+          mensalidades,
+          `Horário estendido ${e.anoLetivo} — ${e.serie}`,
+        ),
+      );
     }
   }
 
   return { lancamentos, pendencias };
+}
+
+export type StatusFaturamentoGeral = "lancado" | "parcial" | "sem_lancamento";
+
+/**
+ * Status geral do conjunto: `lancado` (todos os tipos aplicáveis lançados),
+ * `parcial` (algum lançado e algum pendente/erro) ou `sem_lancamento` (nenhum).
+ */
+export function statusGeralFaturamento(
+  lancados: number,
+  comProblema: number,
+): StatusFaturamentoGeral {
+  if (lancados === 0) return "sem_lancamento";
+  return comProblema === 0 ? "lancado" : "parcial";
+}
+
+/** Ajustes parcela a parcela: o que difere do que o Sponte gera a partir do 1º vencimento. */
+export function parcelasComAjuste(
+  l: LancamentoPlanejado,
+): { numero: number; valor: number; vencimento: string }[] {
+  const ajustes: { numero: number; valor: number; vencimento: string }[] = [];
+  for (let i = 0; i < l.parcelas; i++) {
+    const valor = i === 0 ? l.valorPrimeiraParcela : l.valorParcela;
+    const vencimentoNominal = i === 0 ? l.primeiroVencimento : addMesesYMD(l.primeiroVencimento, i);
+    const vencimento = l.vencimentos[i] ?? vencimentoNominal;
+    if (
+      Math.round(valor * 100) !== Math.round(l.valorParcela * 100) ||
+      vencimento !== vencimentoNominal
+    ) {
+      ajustes.push({ numero: i + 1, valor, vencimento });
+    }
+  }
+  return ajustes;
 }

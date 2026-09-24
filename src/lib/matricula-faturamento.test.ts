@@ -9,21 +9,25 @@ import {
   anoDoPlanoCurso,
   contarRefeicoesNoPeriodo,
   escolherPlanoDoAnoLetivo,
-  mensalidadeProporcional,
-  mensalidadesAVencer,
+  maxParcelasMaterial,
   montarPlanoFaturamento,
-  problemasDoPlano,
-  vencimentosMensais,
+  opcoesParcelasMaterial,
+  parcelasComAjuste,
+  problemaMensalidadeDoPlano,
+  statusGeralFaturamento,
+  vencimentosAPartirDe,
+  vencimentosMensalidade,
   type EntradaFaturamentoMatricula,
   type PlanoCursoSponte,
 } from "@/lib/matricula-faturamento";
 import { refeicoesVazias } from "@/lib/matricula-form";
+import { CATEGORIA_MATERIAL_SPONTE } from "@/lib/rematricula";
 import {
-  CATEGORIA_MATERIAL_SPONTE,
-  opcoesParcelamentoMaterialPrimeira,
-  parcelamentoMaterialPrimeira,
-  parcelasMaterialValida,
-} from "@/lib/rematricula";
+  parcelamentoMatriculaDisponivel,
+  segmentoMatricula,
+  valorMatricula,
+  type ValoresMatricula,
+} from "@/lib/rematricula-matricula";
 import {
   contaReceberCriada,
   montarParametrosInsertPlano,
@@ -66,12 +70,17 @@ function planoBase(over: Partial<PlanoCursoSponte> = {}): PlanoCursoSponte {
   };
 }
 
+// Preenchido em 10/09/2025 para o ano letivo 2026 (janela de parcelamento da
+// Matrícula aberta: até 5x; 11 mensalidades de 05/02 a 05/12).
 function entrada(over: Partial<EntradaFaturamentoMatricula> = {}): EntradaFaturamentoMatricula {
   return {
     plano: planoBase(),
     anoLetivo: 2026,
-    dataMatricula: "2026-01-10",
+    dataMatricula: "2025-09-10",
     serie: "1º Ano",
+    matriculaValor: 2057.1,
+    matriculaParcelas: 3,
+    matriculaPrimeiroVencimento: "2025-09-20",
     materialValorAnual: 2209.5,
     materialParcelas: 4,
     refeicoes: refeicoesVazias(),
@@ -81,6 +90,18 @@ function entrada(over: Partial<EntradaFaturamentoMatricula> = {}): EntradaFatura
     valorHoraExtraMensal: null,
     ...over,
   };
+}
+
+function tipos(plano: ReturnType<typeof montarPlanoFaturamento>): string[] {
+  return plano.lancamentos.map((l) => l.tipo).sort();
+}
+
+function tiposPendentes(plano: ReturnType<typeof montarPlanoFaturamento>): string[] {
+  return plano.pendencias.map((p) => p.tipo).sort();
+}
+
+function soma(l: { parcelas: number; valorParcela: number; valorPrimeiraParcela: number }): number {
+  return Math.round((l.valorPrimeiraParcela + l.valorParcela * (l.parcelas - 1)) * 100) / 100;
 }
 
 describe("plano do curso lido do Sponte", () => {
@@ -114,173 +135,323 @@ describe("plano do curso lido do Sponte", () => {
     expect(escolhido?.planoCursoId).toBe(99);
   });
 
-  it("rejeita plano inativo, de outro ano ou sem valores", () => {
-    expect(problemasDoPlano(planoBase(), 2026)).toEqual([]);
-    expect(problemasDoPlano(planoBase({ ativo: false }), 2026)).toHaveLength(1);
-    expect(problemasDoPlano(planoBase(), 2027)).toHaveLength(1);
-    expect(problemasDoPlano(planoBase({ matricula: { ...ITEM_PLANO_VAZIO } }), 2026)).toHaveLength(
-      1,
-    );
+  it("só a mensalidade depende do plano: matrícula ausente no plano não é problema", () => {
+    expect(problemaMensalidadeDoPlano(planoBase(), 2026)).toBeNull();
     expect(
-      problemasDoPlano(planoBase({ mensalidade: { ...ITEM_PLANO_VAZIO } }), 2026),
-    ).toHaveLength(1);
+      problemaMensalidadeDoPlano(planoBase({ matricula: { ...ITEM_PLANO_VAZIO } }), 2026),
+    ).toBeNull();
+    expect(problemaMensalidadeDoPlano(null, 2026)).toMatch(/Nenhum plano/);
+    expect(problemaMensalidadeDoPlano(planoBase({ ativo: false }), 2026)).toMatch(/inativo/);
+    expect(problemaMensalidadeDoPlano(planoBase(), 2027)).toMatch(/não é do ano letivo 2027/);
+    expect(
+      problemaMensalidadeDoPlano(planoBase({ mensalidade: { ...ITEM_PLANO_VAZIO } }), 2026),
+    ).toMatch(/valor de mensalidade/);
   });
 });
 
-describe("cronograma", () => {
-  it("gera um vencimento por parcela, mês a mês", () => {
-    expect(vencimentosMensais("2026-02-05", 3)).toEqual(["2026-02-05", "2026-03-05", "2026-04-06"]);
+describe("calendário das mensalidades (dia 05, fev–dez, Brasília)", () => {
+  it("preenchido em setembro do ano anterior: 11 mensalidades de 05/02 a 05/12", () => {
+    const datas = vencimentosMensalidade(2027, "2026-09-10");
+    expect(datas).toHaveLength(11);
+    expect(datas[0]).toBe("2027-02-05");
+    expect(datas[10]).toBe("2027-12-06"); // 05/12/2027 é domingo → segunda 06/12
+    expect(datas.map((d) => d.slice(5, 7))).toEqual([
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+    ]);
   });
 
-  it("separa as mensalidades já vencidas das que ainda vencem", () => {
-    const { vencimentos, puladas } = mensalidadesAVencer(planoBase(), "2026-04-20");
-    expect(puladas).toEqual(["2026-02-05", "2026-03-05", "2026-04-06"]);
-    expect(vencimentos[0]).toBe("2026-05-05");
-    expect(vencimentos).toHaveLength(8);
+  it("preenchido em janeiro do ano letivo também dá 11 (05/02 a 05/12)", () => {
+    expect(vencimentosMensalidade(2027, "2027-01-20")).toHaveLength(11);
+    expect(vencimentosMensalidade(2027, "2027-01-20")[0]).toBe("2027-02-05");
   });
 
-  it("calcula o proporcional pelos dias restantes do mês de entrada", () => {
-    // 22 dias restantes de 31 (dia 10 inclusive).
-    expect(mensalidadeProporcional(1000, "2026-03-10")).toBe(709.68);
-    expect(mensalidadeProporcional(1000, "2026-03-01")).toBe(1000);
+  it("preenchido em 03/03: 10 mensalidades a partir de 05/03", () => {
+    const datas = vencimentosMensalidade(2027, "2027-03-03");
+    expect(datas).toHaveLength(10);
+    expect(datas[0]).toBe("2027-03-05");
+    expect(datas[1]).toBe("2027-04-05");
+  });
+
+  it("preenchido em 20/03: 10 mensalidades, a de março no próximo dia útil", () => {
+    const datas = vencimentosMensalidade(2027, "2027-03-20"); // sábado
+    expect(datas).toHaveLength(10);
+    expect(datas[0]).toBe("2027-03-22"); // segunda
+    expect(datas[1]).toBe("2027-04-05");
+    expect(datas[9]).toBe("2027-12-06");
+  });
+
+  it("preenchido em 20/12: 1 mensalidade com vencimento imediato (dia útil seguinte)", () => {
+    const datas = vencimentosMensalidade(2027, "2027-12-20"); // segunda
+    expect(datas).toEqual(["2027-12-21"]);
+  });
+
+  it("depois do ano letivo não há mensalidade", () => {
+    expect(vencimentosMensalidade(2026, "2027-01-05")).toEqual([]);
+  });
+
+  it("dia 05 em fim de semana ou feriado rola para o próximo dia útil", () => {
+    expect(vencimentosMensalidade(2026, "2026-04-01")[0]).toBe("2026-04-06"); // 05/04/2026 domingo
+    expect(vencimentosMensalidade(2026, "2026-09-01")[0]).toBe("2026-09-08"); // 05/09 sáb, 07/09 feriado
+  });
+
+  it("título que segue a 1ª mensalidade: demais parcelas no dia 05 dos meses seguintes", () => {
+    expect(vencimentosAPartirDe("2027-03-22", 3)).toEqual([
+      "2027-03-22",
+      "2027-04-05",
+      "2027-05-05",
+    ]);
+    expect(vencimentosAPartirDe("2026-11-20", 3)).toEqual([
+      "2026-11-20",
+      "2026-12-07",
+      "2027-01-05",
+    ]);
   });
 
   it("conta as refeições marcadas dentro do período", () => {
     const refeicoes = refeicoesVazias();
-    refeicoes.lunch = [1, 3];
+    refeicoes.lunch = [1, 2, 3, 4, 5];
     refeicoes.snack = [1];
-    // 05/01/2026 é segunda; até 14/01 há 2 segundas-almoço? (05 e 12), 2 quartas
-    // (07 e 14) e 2 segundas-lanche.
-    expect(contarRefeicoesNoPeriodo(refeicoes, "2026-01-05", "2026-01-14")).toBe(6);
-    expect(contarRefeicoesNoPeriodo(refeicoes, "2026-01-14", "2026-01-05")).toBe(0);
-    expect(contarRefeicoesNoPeriodo(refeicoesVazias(), "2026-01-05", "2026-12-31")).toBe(0);
+    // 02/02/2026 (segunda) a 13/02/2026 (sexta): 10 dias úteis, 2 segundas.
+    expect(contarRefeicoesNoPeriodo(refeicoes, "2026-02-02", "2026-02-13")).toBe(12);
+    expect(contarRefeicoesNoPeriodo(refeicoes, "2026-02-13", "2026-02-02")).toBe(0);
   });
 });
 
-describe("parcelamento do material escolhido pelo responsável", () => {
-  it("aceita só de 1 a 8 parcelas", () => {
-    expect(parcelasMaterialValida(1)).toBe(true);
-    expect(parcelasMaterialValida(8)).toBe(true);
-    expect(parcelasMaterialValida(0)).toBe(false);
-    expect(parcelasMaterialValida(9)).toBe(false);
-    expect(parcelasMaterialValida(2.5)).toBe(false);
+describe("parcelas do material limitadas às mensalidades restantes", () => {
+  it("oferece de 1 até o mínimo entre 8 e as mensalidades restantes", () => {
+    expect(opcoesParcelasMaterial(2027, "2026-09-10")).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(opcoesParcelasMaterial(2027, "2027-06-01")).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(opcoesParcelasMaterial(2027, "2027-12-20")).toEqual([1]);
+    expect(opcoesParcelasMaterial(2026, "2027-01-05")).toEqual([1]);
   });
 
-  it("oferece as oito opções sem perder centavos", () => {
-    const opcoes = opcoesParcelamentoMaterialPrimeira(1000.03);
-    expect(opcoes).toHaveLength(8);
-    for (const op of opcoes) {
-      const soma = op.valorPrimeiraParcela + op.valorParcela * (op.parcelas - 1);
-      expect(Math.round(soma * 100)).toBe(100003);
-    }
+  it("8x pedidas com 7 mensalidades restantes vira 7x e a soma continua igual ao valor anual", () => {
+    expect(maxParcelasMaterial(7)).toBe(7);
+    const plano = montarPlanoFaturamento(
+      entrada({ dataMatricula: "2026-06-01", materialParcelas: 8, materialValorAnual: 2209.5 }),
+    );
+    const material = plano.lancamentos.find((l) => l.tipo === "material");
+    expect(material?.parcelas).toBe(7);
+    expect(material?.vencimentos).toEqual([
+      "2026-06-05",
+      "2026-07-06",
+      "2026-08-05",
+      "2026-09-08",
+      "2026-10-05",
+      "2026-11-05",
+      "2026-12-07",
+    ]);
+    expect(soma(material!)).toBe(2209.5);
   });
 
-  it("joga a sobra de centavos na primeira parcela", () => {
-    const op = parcelamentoMaterialPrimeira(1000, 3);
-    expect(op.valorParcela).toBe(333.33);
-    expect(op.valorPrimeiraParcela).toBe(333.34);
+  it("1ª parcela do material na mesma data da 1ª mensalidade da regra", () => {
+    const plano = montarPlanoFaturamento(
+      entrada({ dataMatricula: "2026-03-20", materialParcelas: 3 }),
+    );
+    const material = plano.lancamentos.find((l) => l.tipo === "material");
+    const mensalidade = plano.lancamentos.find((l) => l.tipo === "mensalidade");
+    expect(material?.primeiroVencimento).toBe(mensalidade?.primeiroVencimento);
+    expect(material?.primeiroVencimento).toBe("2026-03-23");
   });
 });
 
-describe("montagem do plano de faturamento", () => {
-  it("não lança nada quando o plano do Sponte não serve", () => {
-    const r = montarPlanoFaturamento(entrada({ plano: planoBase({ ativo: false }) }));
-    expect(r.lancamentos).toEqual([]);
-    expect(r.pendencias.length).toBeGreaterThan(0);
-  });
-
-  it("lança matrícula, mensalidades e material com as parcelas escolhidas", () => {
-    const r = montarPlanoFaturamento(entrada());
-    const tipos = r.lancamentos.map((l) => l.tipo);
-    expect(tipos).toEqual(["matricula", "mensalidade", "material"]);
-
-    const matricula = r.lancamentos[0];
-    expect(matricula.categoria).toBe(CATEGORIA_MATRICULA_SPONTE);
-    expect(matricula.parcelas).toBe(1);
-    expect(matricula.total).toBe(1847.25);
-
-    const mensalidade = r.lancamentos[1];
+describe("cobranças independentes", () => {
+  it("plano sem matrícula e com mensalidade lança mensalidade, material, alimentação e hora extra", () => {
+    const refeicoes = refeicoesVazias();
+    refeicoes.lunch = [1, 2, 3, 4, 5];
+    const plano = montarPlanoFaturamento(
+      entrada({
+        plano: planoBase({ matricula: { ...ITEM_PLANO_VAZIO } }),
+        refeicoes,
+        semRefeicoes: false,
+        valorRefeicao: 25,
+        horarioEstendido: true,
+        valorHoraExtraMensal: 400,
+      }),
+    );
+    expect(tipos(plano)).toEqual([
+      "alimentacao",
+      "hora_extra",
+      "material",
+      "matricula",
+      "mensalidade",
+    ]);
+    expect(plano.pendencias).toEqual([]);
+    const mensalidade = plano.lancamentos.find((l) => l.tipo === "mensalidade")!;
     expect(mensalidade.categoria).toBe(CATEGORIA_MENSALIDADE_SPONTE);
     expect(mensalidade.parcelas).toBe(11);
-    expect(mensalidade.primeiroVencimento).toBe("2026-02-05");
-
-    const material = r.lancamentos[2];
-    expect(material.categoria).toBe(CATEGORIA_MATERIAL_SPONTE);
-    expect(material.parcelas).toBe(4);
-    expect(material.total).toBe(2209.5);
-    expect(material.primeiroVencimento).toBe("2026-02-05");
+    expect(mensalidade.valorParcela).toBe(1775.95);
+    expect(mensalidade.vencimentos[0]).toBe("2026-02-05");
+    expect(plano.lancamentos.find((l) => l.tipo === "hora_extra")?.categoria).toBe(
+      CATEGORIA_HORA_EXTRA_SPONTE,
+    );
+    expect(plano.lancamentos.find((l) => l.tipo === "alimentacao")?.categoria).toBe(
+      CATEGORIA_ALIMENTACAO_SPONTE,
+    );
   });
 
-  it("gera proporcional quando a mensalidade do mês de entrada já venceu", () => {
-    const r = montarPlanoFaturamento(entrada({ dataMatricula: "2026-02-20" }));
-    const proporcional = r.lancamentos.find((l) => l.tipo === "proporcional");
-    expect(proporcional?.parcelas).toBe(1);
-    expect(proporcional?.total).toBe(mensalidadeProporcional(1775.95, "2026-02-20"));
-    expect(r.lancamentos.find((l) => l.tipo === "mensalidade")?.parcelas).toBe(10);
+  it("plano ausente lança Matrícula (School Hub) e material, com pendência só da mensalidade", () => {
+    const plano = montarPlanoFaturamento(entrada({ plano: null }));
+    expect(tipos(plano)).toEqual(["material", "matricula"]);
+    expect(tiposPendentes(plano)).toEqual(["mensalidade"]);
+    expect(plano.pendencias[0].motivo).toMatch(/Nenhum plano/);
   });
 
-  it("vira pendência (não cobrança) quando falta configuração do material", () => {
-    const r = montarPlanoFaturamento(entrada({ materialValorAnual: null }));
-    expect(r.lancamentos.some((l) => l.tipo === "material")).toBe(false);
-    expect(r.pendencias.join(" ")).toContain("Material pedagógico");
-
-    const semEscolha = montarPlanoFaturamento(entrada({ materialParcelas: null }));
-    expect(semEscolha.lancamentos.some((l) => l.tipo === "material")).toBe(false);
-    expect(semEscolha.pendencias.join(" ")).toContain("parcelas do material");
-  });
-
-  it("cobra alimentação pelas refeições reais e hora extra por mês a vencer", () => {
-    const refeicoes = refeicoesVazias();
-    refeicoes.lunch = [1, 2, 3, 4, 5];
-    const r = montarPlanoFaturamento(
+  it("caso Belvedere/707: plano só com mensalidade e Matrícula do School Hub → tudo lançado", () => {
+    const plano = montarPlanoFaturamento(
       entrada({
-        refeicoes,
-        semRefeicoes: false,
-        valorRefeicao: 30,
-        horarioEstendido: true,
-        valorHoraExtraMensal: 500,
+        plano: planoBase({ descricaoPlano: "2027", matricula: { ...ITEM_PLANO_VAZIO } }),
+        anoLetivo: 2027,
+        dataMatricula: "2026-09-24",
+        serie: "Maternal 3",
+        matriculaParcelas: 1,
+        matriculaPrimeiroVencimento: "2026-09-30",
+        materialParcelas: 6,
+        materialValorAnual: 2152.06,
       }),
     );
-
-    const alimentacao = r.lancamentos.find((l) => l.tipo === "alimentacao");
-    const almocos = contarRefeicoesNoPeriodo(refeicoes, "2026-01-10", "2026-12-31");
-    expect(alimentacao?.categoria).toBe(CATEGORIA_ALIMENTACAO_SPONTE);
-    expect(alimentacao?.total).toBe(almocos * 30);
-    expect(alimentacao?.parcelas).toBe(11);
-
-    const horaExtra = r.lancamentos.find((l) => l.tipo === "hora_extra");
-    expect(horaExtra?.categoria).toBe(CATEGORIA_HORA_EXTRA_SPONTE);
-    expect(horaExtra?.parcelas).toBe(11);
-    expect(horaExtra?.total).toBe(5500);
+    expect(tipos(plano)).toEqual(["material", "matricula", "mensalidade"]);
+    expect(plano.pendencias).toEqual([]);
+    expect(plano.lancamentos.find((l) => l.tipo === "mensalidade")?.parcelas).toBe(11);
   });
 
-  it("não cobra alimentação nem hora extra sem valor configurado na unidade", () => {
+  it("sem valor de Matrícula no colégio: pendência só da matrícula, o resto é lançado", () => {
+    const plano = montarPlanoFaturamento(entrada({ matriculaValor: null }));
+    expect(tipos(plano)).toEqual(["material", "mensalidade"]);
+    expect(tiposPendentes(plano)).toEqual(["matricula"]);
+  });
+
+  it("sem material configurado: pendência só do material", () => {
+    const plano = montarPlanoFaturamento(entrada({ materialValorAnual: null }));
+    expect(tipos(plano)).toEqual(["matricula", "mensalidade"]);
+    expect(tiposPendentes(plano)).toEqual(["material"]);
+  });
+
+  it("alimentação/hora extra sem valor na unidade: pendência própria, sem travar os demais", () => {
     const refeicoes = refeicoesVazias();
     refeicoes.lunch = [1];
-    const r = montarPlanoFaturamento(
-      entrada({ refeicoes, semRefeicoes: false, horarioEstendido: true }),
+    const plano = montarPlanoFaturamento(
+      entrada({ refeicoes, semRefeicoes: false, valorRefeicao: null, horarioEstendido: true }),
     );
-    expect(r.lancamentos.some((l) => l.tipo === "alimentacao")).toBe(false);
-    expect(r.lancamentos.some((l) => l.tipo === "hora_extra")).toBe(false);
-    expect(r.pendencias.join(" ")).toContain("valor por refeição");
-    expect(r.pendencias.join(" ")).toContain("hora extra");
+    expect(tipos(plano)).toEqual(["material", "matricula", "mensalidade"]);
+    expect(tiposPendentes(plano)).toEqual(["alimentacao", "hora_extra"]);
   });
 
-  it("produz no máximo um título por tipo (trava de idempotência do log)", () => {
-    const refeicoes = refeicoesVazias();
-    refeicoes.lunch = [1, 2, 3, 4, 5];
-    const r = montarPlanoFaturamento(
-      entrada({
-        dataMatricula: "2026-03-20",
-        refeicoes,
-        semRefeicoes: false,
-        valorRefeicao: 30,
-        horarioEstendido: true,
-        valorHoraExtraMensal: 500,
-      }),
+  it("nunca gera proporcional e produz no máximo um título por tipo", () => {
+    const plano = montarPlanoFaturamento(entrada({ dataMatricula: "2026-03-20" }));
+    expect(plano.lancamentos.some((l) => l.tipo === "proporcional")).toBe(false);
+    const vistos = new Set(plano.lancamentos.map((l) => l.tipo));
+    expect(vistos.size).toBe(plano.lancamentos.length);
+  });
+
+  it("status geral: lancado (todos), parcial (algum problema), sem_lancamento (nenhum)", () => {
+    expect(statusGeralFaturamento(3, 0)).toBe("lancado");
+    expect(statusGeralFaturamento(2, 1)).toBe("parcial");
+    expect(statusGeralFaturamento(0, 2)).toBe("sem_lancamento");
+  });
+});
+
+describe("Matrícula pelo valor do School Hub (colégio × segmento)", () => {
+  const valores: ValoresMatricula = {
+    infantil: 2057.1,
+    fundamental_1: 2057.1,
+    fundamental_2: 2234.25,
+  };
+
+  it("segmenta pela série", () => {
+    expect(segmentoMatricula("2º Período")).toBe("infantil");
+    expect(segmentoMatricula("1º Ano")).toBe("fundamental_1");
+    expect(segmentoMatricula("5º Ano")).toBe("fundamental_1");
+    expect(segmentoMatricula("6º Ano")).toBe("fundamental_2");
+    expect(segmentoMatricula("Série X")).toBeNull();
+  });
+
+  it("valores diferentes por colégio devolvem o valor de cada um", () => {
+    const belvedere: ValoresMatricula = { ...valores, infantil: 1800 };
+    expect(valorMatricula(valores, "Maternal 3")).toBe(2057.1);
+    expect(valorMatricula(belvedere, "Maternal 3")).toBe(1800);
+  });
+
+  it("segmento sem valor devolve null e o plano não gera parcelas da Matrícula", () => {
+    const semFundamental: ValoresMatricula = {
+      infantil: valores.infantil,
+      fundamental_1: valores.fundamental_1,
+    };
+    expect(valorMatricula(semFundamental, "7º Ano")).toBeNull();
+    const plano = montarPlanoFaturamento(
+      entrada({ serie: "7º Ano", matriculaValor: valorMatricula(semFundamental, "7º Ano") }),
     );
-    const tipos = r.lancamentos.map((l) => l.tipo);
-    expect(new Set(tipos).size).toBe(tipos.length);
+    expect(plano.lancamentos.some((l) => l.tipo === "matricula")).toBe(false);
+    expect(tiposPendentes(plano)).toEqual(["matricula"]);
+  });
+
+  it("opções até janeiro: set 5x … dez 2x, jan só à vista", () => {
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-09-10").maxParcelas).toBe(5);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-12-10").maxParcelas).toBe(2);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-01-10").somenteAVista).toBe(true);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-03-10").somenteAVista).toBe(true);
+  });
+
+  it("1ª na data escolhida, demais no dia 05 dos meses seguintes; soma igual ao valor", () => {
+    const plano = montarPlanoFaturamento(
+      entrada({ matriculaParcelas: 3, matriculaPrimeiroVencimento: "2025-09-20" }),
+    );
+    const matricula = plano.lancamentos.find((l) => l.tipo === "matricula")!;
+    expect(matricula.categoria).toBe(CATEGORIA_MATRICULA_SPONTE);
+    expect(matricula.vencimentos).toEqual(["2025-09-20", "2025-10-06", "2025-11-05"]);
+    expect(soma(matricula)).toBe(2057.1);
+    expect(matricula.valorParcela).toBe(685.7);
+    expect(matricula.valorPrimeiraParcela).toBe(685.7);
+  });
+
+  it("parcelas fora da janela ou 1º vencimento fora do mês viram pendência da matrícula", () => {
+    expect(
+      tiposPendentes(
+        montarPlanoFaturamento(entrada({ dataMatricula: "2026-01-10", matriculaParcelas: 2 })),
+      ),
+    ).toContain("matricula");
+    expect(
+      tiposPendentes(
+        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-10-02" })),
+      ),
+    ).toContain("matricula");
+    expect(
+      tiposPendentes(
+        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-09-05" })),
+      ),
+    ).toContain("matricula");
+  });
+});
+
+describe("ajustes parcela a parcela no Sponte", () => {
+  it("corrige só o que difere do que o Sponte gera a partir do 1º vencimento", () => {
+    const plano = montarPlanoFaturamento(
+      entrada({ dataMatricula: "2026-03-20", materialParcelas: 3 }),
+    );
+    const material = plano.lancamentos.find((l) => l.tipo === "material")!;
+    // 1ª em 23/03 (2210 - 2*736.50 = 736.50 → sem sobra), demais 05/04 e 05/05 ≠ 23/04 e 23/05.
+    const ajustes = parcelasComAjuste(material);
+    expect(ajustes.map((a) => a.numero)).toEqual([2, 3]);
+    expect(ajustes.map((a) => a.vencimento)).toEqual(["2026-04-06", "2026-05-05"]);
+  });
+
+  it("título com centavos na 1ª parcela ajusta a parcela 1", () => {
+    const plano = montarPlanoFaturamento(
+      entrada({ materialParcelas: 4, materialValorAnual: 2209.51 }),
+    );
+    const material = plano.lancamentos.find((l) => l.tipo === "material")!;
+    expect(material.categoria).toBe(CATEGORIA_MATERIAL_SPONTE);
+    expect(parcelasComAjuste(material).some((a) => a.numero === 1)).toBe(true);
   });
 });
 
