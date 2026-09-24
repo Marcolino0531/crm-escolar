@@ -30,6 +30,7 @@ import {
   reajusteMaterial,
   rotuloItemMaterial,
   rotulosItensMaterial,
+  ordenarItensMaterial,
   selecionarItensMaterial,
   serieRematricula,
   concentrarDiferenca,
@@ -375,12 +376,12 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
 
   it("itens vêm do cadastro por unidade × ano × série, inclusive Maternal e CEC Baby", () => {
     const cadastro = [
-      { unidade: "CEC Baby", anoLetivo: 2027, serieChave: "maternal 3", ordem: 1, nome: "Inglês" },
+      { unidade: "CEC Baby", anoLetivo: 2027, serieChave: "maternal 3", ordem: 0, nome: "Inglês" },
       {
         unidade: "CEC Baby",
         anoLetivo: 2027,
         serieChave: "maternal 3",
-        ordem: 0,
+        ordem: 1,
         nome: "Bernoulli",
       },
       {
@@ -403,6 +404,31 @@ describe("apresentação do material ao responsável (CEC 2027)", () => {
     expect(selecionarItensMaterial(cadastro, "CEC Baby", "1º Ano", 2027)).toEqual([]);
     // Sem ano letivo não há fallback para outro ano.
     expect(selecionarItensMaterial(cadastro, "CEC Baby", "Maternal 3", null)).toEqual([]);
+  });
+
+  it("itens em ordem alfabética pt-BR, ignorando maiúsculas, acentos e a coluna ordem", () => {
+    const nomes = (itens: { nome: string }[]) => ordenarItensMaterial(itens).map((i) => i.nome);
+    expect(
+      nomes([
+        { nome: "Robótica" },
+        { nome: "Bernoulli Coleção Principal" },
+        { nome: "Cultura Inglesa" },
+        { nome: "Bernoulli Coleção Eu no Mundo" },
+      ]),
+    ).toEqual([
+      "Bernoulli Coleção Eu no Mundo",
+      "Bernoulli Coleção Principal",
+      "Cultura Inglesa",
+      "Robótica",
+    ]);
+    expect(nomes([{ nome: "ábaco" }, { nome: "Agenda" }, { nome: "  Abelha" }])).toEqual([
+      "ábaco",
+      "  Abelha",
+      "Agenda",
+    ]);
+    const original = [{ nome: "B" }, { nome: "A" }];
+    ordenarItensMaterial(original);
+    expect(original.map((i) => i.nome)).toEqual(["B", "A"]);
   });
 
   it("sem histórico (outra unidade ou ano) mostra só o valor", () => {
