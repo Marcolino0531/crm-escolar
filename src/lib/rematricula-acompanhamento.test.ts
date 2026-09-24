@@ -130,6 +130,16 @@ describe("linhas de acompanhamento da rematrícula", () => {
       filtrarAcompanhamento(linhas, { unidade: null, busca: " car " }).map((l) => l.nome),
     ).toEqual(["Carla"]);
   });
+
+  it("busca ignora acentos no termo e no nome", () => {
+    const comAcento = [...linhas, { ...linhas[0], alunoId: "9", nome: "Sérgio" }];
+    expect(
+      filtrarAcompanhamento(comAcento, { unidade: null, busca: "Ser" }).map((l) => l.nome),
+    ).toEqual(["Sérgio"]);
+    expect(
+      filtrarAcompanhamento(comAcento, { unidade: null, busca: "sér" }).map((l) => l.nome),
+    ).toEqual(["Sérgio"]);
+  });
 });
 
 describe("cards de resumo x tabela filtrada por status", () => {

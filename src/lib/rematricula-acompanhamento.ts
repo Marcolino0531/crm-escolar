@@ -225,15 +225,23 @@ export function filtrarAcompanhamento(
     busca?: string;
   },
 ): LinhaAcompanhamento[] {
-  const termo = (filtros.busca ?? "").trim().toLowerCase();
+  const termo = semAcento(filtros.busca ?? "");
   const permitidas = filtros.unidadesPermitidas ? new Set(filtros.unidadesPermitidas) : null;
   return linhas.filter((l) => {
     if (filtros.unidade ? l.unidade !== filtros.unidade : permitidas && !permitidas.has(l.unidade))
       return false;
     if (filtros.turma && l.turma !== filtros.turma) return false;
     if (!termo) return true;
-    return l.nome.toLowerCase().includes(termo);
+    return semAcento(l.nome).includes(termo);
   });
+}
+
+function semAcento(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 // Opções do filtro de Turma: saem das próprias linhas já restritas à unidade,

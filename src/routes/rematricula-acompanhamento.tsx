@@ -484,7 +484,7 @@ function RematriculaAcompanhamentoPage() {
         <GraduationCap className="h-6 w-6 text-primary" />
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold">
-            Rematrícula — Acompanhamento
+            Matrícula — Acompanhamento
             <AjudaTooltip
               rotulo="Sobre esta tela"
               texto="Uma linha por aluno ativo: quem já confirmou a rematrícula no portal, quem ainda não respondeu e o que está aguardando o lançamento do material no Sponte."
@@ -539,7 +539,7 @@ function RematriculaAcompanhamentoPage() {
               <SelectContent>
                 {campanhas.map((c) => (
                   <SelectItem key={c.anoLetivo} value={String(c.anoLetivo)}>
-                    Rematrícula {c.anoLetivo} {c.aberta ? "(aberta)" : "(fechada)"}
+                    {c.anoLetivo}
                   </SelectItem>
                 ))}
               </SelectContent>
