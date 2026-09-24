@@ -1,5 +1,5 @@
 // Dashboard de Matrículas: auditoria das submissões do formulário de matrícula
-// (Google Forms → webhook → Sponte). Lista o que entrou, mostra o payload
+// (/matricula → Sponte; histórico do antigo Google Forms preservado). Lista o que entrou, mostra o payload
 // original ao lado da resposta do Sponte e reenvia o que falhou.
 
 import { createFileRoute } from "@tanstack/react-router";
@@ -72,7 +72,7 @@ type SubmissionStatus =
 
 // `reprocessavel` separa "badge de erro" de "pode reenviar ao Sponte": erros de
 // validação não têm o que reenviar (o payload gravado continua inválido), então
-// só mostram o motivo — a correção é na origem (Google Forms).
+// só mostram o motivo — a correção é na origem.
 const STATUS_STYLE: Record<
   SubmissionStatus,
   { label: string; cls: string; erro: boolean; reprocessavel: boolean }
@@ -350,7 +350,7 @@ function MatriculasPage() {
             <Inbox className="h-8 w-8 text-muted-foreground/60" />
             <p className="text-sm font-medium">Nenhuma matrícula registrada.</p>
             <p className="text-xs text-muted-foreground">
-              As respostas do formulário aparecem aqui assim que chegam ao webhook.
+              As respostas do formulário aparecem aqui assim que são enviadas.
             </p>
           </div>
         ) : (
@@ -546,7 +546,7 @@ function DetalheSubmissao({
 
               <FichaSubmissao submissao={submissao} />
 
-              <BlocoJson titulo="Payload recebido do Google Forms" valor={submissao.payload} />
+              <BlocoJson titulo="Payload recebido do formulário" valor={submissao.payload} />
               <BlocoJson titulo="Resposta do Sponte" valor={submissao.resultado} />
             </div>
 

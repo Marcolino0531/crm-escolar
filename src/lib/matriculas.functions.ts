@@ -2,7 +2,7 @@
 // que falhou, a partir do payload original gravado na auditoria.
 //
 // A linha existente é ATUALIZADA (não se cria outra) para que o histórico da
-// submissão continue único — o índice de idempotência do webhook depende disso.
+// submissão continue único — o índice de idempotência por submission_id depende disso.
 // Se o aluno já tinha sido criado na tentativa anterior, o reenvio vai direto
 // para os responsáveis (`alunoIdExistente`), sem duplicar o cadastro.
 
@@ -83,7 +83,7 @@ export const reprocessarMatricula = createServerFn({ method: "POST" })
     if (!parsed.success) {
       return {
         ok: false,
-        error: "O payload gravado não atende ao contrato do webhook — corrija na origem.",
+        error: "O payload gravado não atende ao contrato de matrícula — corrija na origem.",
         problemas: problemasDoPayload(parsed.error),
       };
     }
@@ -100,7 +100,7 @@ export const reprocessarMatricula = createServerFn({ method: "POST" })
     let erro: string | null = null;
 
     try {
-      resultado = await processarMatricula(payload, { dryRun: false });
+      resultado = await processarMatricula(payload);
       status = resultado.status;
       erro = resultado.error ?? null;
     } catch (e) {

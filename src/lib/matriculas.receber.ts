@@ -1,16 +1,12 @@
-// Núcleo do recebimento de uma matrícula, compartilhado pelos DOIS caminhos de
-// entrada: o webhook do Google Forms (Apps Script) e o formulário público do
-// próprio School Hub (/matricula).
-//
-// Aqui ficam validação de contrato, idempotência e auditoria; a escrita no
-// Sponte continua sendo `processarMatricula`. Ter um caminho único garante que a
-// página nativa aparece no painel /matriculas exatamente como as submissões do
-// Forms, com o mesmo tratamento de Erro 29 e vínculo de irmãos.
+// Núcleo do recebimento de uma matrícula pelo formulário público do School Hub
+// (/matricula). Aqui ficam validação de contrato, idempotência e auditoria; a
+// escrita no Sponte continua sendo `processarMatricula`. A origem é obrigatória e
+// fica gravada em cada submissão (o histórico do antigo Google Forms continua no
+// painel /matriculas com a origem `google_forms`).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import { extrairDadosBasicos } from "@/lib/matriculas.audit";
-import { ORIGEM_GOOGLE_FORMS } from "@/lib/matricula-form";
 import {
   MatriculaError,
   processarMatricula,
@@ -19,9 +15,7 @@ import {
 } from "@/lib/matriculas.sponte";
 
 export interface ReceberMatriculaOpcoes {
-  // Ensaio (o Apps Script valida antes do envio real): nada é gravado.
-  dryRun?: boolean;
-  origem?: string;
+  origem: string;
   // Hash do IP de origem (formulário público) — nunca o IP em texto.
   ipHash?: string | null;
 }
@@ -54,7 +48,7 @@ async function registrarLog(
     erro,
     payload: bruto,
     resultado,
-    origem: opcoes.origem ?? ORIGEM_GOOGLE_FORMS,
+    origem: opcoes.origem,
     ip_hash: opcoes.ipHash ?? null,
   } as never);
   if (error) console.error("[matrículas] falha ao gravar o log da submissão:", error.message);
@@ -65,7 +59,7 @@ async function registrarLog(
 export async function registrarFalhaValidacao(
   bruto: unknown,
   problemas: string[],
-  opcoes: ReceberMatriculaOpcoes = {},
+  opcoes: ReceberMatriculaOpcoes,
 ): Promise<void> {
   const dados = extrairDadosBasicos(bruto);
   const { error } = await supabaseAdmin.from("enrollment_submissions" as never).insert({
@@ -78,7 +72,7 @@ export async function registrarFalhaValidacao(
     erro: problemas.join("; "),
     payload: bruto ?? {},
     resultado: null,
-    origem: opcoes.origem ?? ORIGEM_GOOGLE_FORMS,
+    origem: opcoes.origem,
     ip_hash: opcoes.ipHash ?? null,
   } as never);
   if (error)
@@ -87,19 +81,17 @@ export async function registrarFalhaValidacao(
 
 /**
  * Valida, deduplica, envia ao Sponte e audita uma submissão de matrícula.
- * Devolve o corpo e o status HTTP já resolvidos (o webhook responde direto com
- * eles; a página pública traduz para a tela).
+ * Devolve o corpo e o status HTTP já resolvidos; a página pública traduz para a
+ * tela.
  */
 export async function receberMatricula(
   bruto: unknown,
-  opcoes: ReceberMatriculaOpcoes = {},
+  opcoes: ReceberMatriculaOpcoes,
 ): Promise<ReceberMatriculaSaida> {
-  const dryRun = opcoes.dryRun === true;
-
   const parsed = MatriculaSchema.safeParse(bruto);
   if (!parsed.success) {
     const problemas = problemasDoPayload(parsed.error);
-    if (!dryRun) await registrarFalhaValidacao(bruto, problemas, opcoes);
+    await registrarFalhaValidacao(bruto, problemas, opcoes);
     return {
       httpStatus: 422,
       corpo: { ok: false, error: "payload inválido", problemas },
@@ -110,8 +102,8 @@ export async function receberMatricula(
 
   const payload = parsed.data as MatriculaPayload;
 
-  // Idempotência: o Apps Script pode reenviar a mesma resposta do formulário.
-  if (!dryRun && payload.submissionId) {
+  // Idempotência: a mesma submissão pode ser reenviada (duplo clique, retry).
+  if (payload.submissionId) {
     const { data } = await supabaseAdmin
       .from("enrollment_submissions" as never)
       .select("sponte_aluno_id")
@@ -136,17 +128,15 @@ export async function receberMatricula(
   }
 
   try {
-    const resultado = await processarMatricula(payload, { dryRun });
-    if (!dryRun) {
-      await registrarLog(
-        payload,
-        bruto,
-        resultado,
-        resultado.status,
-        resultado.error ?? null,
-        opcoes,
-      );
-    }
+    const resultado = await processarMatricula(payload);
+    await registrarLog(
+      payload,
+      bruto,
+      resultado,
+      resultado.status,
+      resultado.error ?? null,
+      opcoes,
+    );
     return {
       httpStatus: resultado.ok ? 200 : resultado.status === "duplicado" ? 409 : 502,
       corpo: resultado as unknown as Record<string, unknown>,
@@ -160,8 +150,7 @@ export async function receberMatricula(
     const mensagem = e instanceof Error ? e.message : String(e);
     console.error("[matrículas] falha ao processar a submissão:", mensagem);
     // 422 é payload malformado: não vira log de auditoria (nada chegou ao Sponte).
-    if (!dryRun && httpStatus !== 422)
-      await registrarLog(payload, bruto, null, status, mensagem, opcoes);
+    if (httpStatus !== 422) await registrarLog(payload, bruto, null, status, mensagem, opcoes);
     return {
       httpStatus,
       corpo: { ok: false, status, error: mensagem },

@@ -1,5 +1,5 @@
-// Helpers puros da auditoria de matrículas (compartilhados entre o webhook e o
-// painel /matriculas). Sem dependências de rede/servidor, para serem testáveis
+// Helpers puros da auditoria de matrículas (compartilhados entre o recebimento
+// e o painel /matriculas). Sem dependências de rede/servidor, para serem testáveis
 // isoladamente.
 
 export type SubmissaoStatus =

@@ -10,7 +10,6 @@ import { handleDiarioApi } from "./lib/diario.api";
 import { handleAlunosAtivosApi } from "./lib/alunos-ativos.functions";
 import { handleWhatsAppApi } from "./lib/whatsapp.api";
 import { handleAgendaApi } from "./lib/agenda.api";
-import { handleMatriculasApi } from "./lib/matriculas.api";
 // TEMPORÁRIO: homologação das escritas da Rematrícula (Fase A). Sai daqui
 // depois da validação do teste.
 import { handleRematriculaHomologacaoApi } from "./lib/rematricula-homologacao.api";
@@ -115,10 +114,6 @@ export default {
       // Lembrete matinal por email das reuniões da Agenda (Vercel Cron).
       const agendaResponse = await handleAgendaApi(request);
       if (agendaResponse) return agendaResponse;
-
-      // Webhook de matrícula (Google Forms → Sponte: aluno + responsáveis).
-      const matriculasResponse = await handleMatriculasApi(request);
-      if (matriculasResponse) return matriculasResponse;
 
       const homologacaoResponse = await handleRematriculaHomologacaoApi(request);
       if (homologacaoResponse) return homologacaoResponse;

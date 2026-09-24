@@ -11,9 +11,9 @@
 //     (`enrollment_submissions.ip_hash`). O IP nunca é gravado em texto: só o
 //     hash SHA-256.
 //
-// O processamento em si é o MESMO do webhook do Google Forms
-// (`receberMatricula`), então tratamento de Erro 29, vínculo de irmãos e o
-// painel /matriculas continuam valendo sem nenhuma reimplementação.
+// O processamento (`receberMatricula`) é o mesmo usado pelo reprocessamento do
+// painel /matriculas, então tratamento de Erro 29 e vínculo de irmãos valem
+// sem nenhuma reimplementação.
 
 import { createHash, randomUUID } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";

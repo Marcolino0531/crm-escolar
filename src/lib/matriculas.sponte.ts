@@ -72,8 +72,8 @@ function mapaParentesco(): Record<string, number> {
 
 // Regra do colégio: a mãe é SEMPRE responsável didática, independentemente do que
 // o formulário marcar. O responsável financeiro continua sendo escolha do
-// formulário. Garantido aqui (e não só no Apps Script) para valer para qualquer
-// origem que chame o webhook.
+// formulário. Garantido aqui para valer para qualquer origem que chame
+// `processarMatricula`.
 export function ehMae(parentesco: string): boolean {
   return normalizar(parentesco).startsWith("mae");
 }
@@ -243,12 +243,7 @@ export interface ResponsavelResultado {
   reaproveitado: boolean;
 }
 
-export type MatriculaStatus =
-  | "sucesso"
-  | "duplicado"
-  | "erro_aluno"
-  | "erro_responsavel"
-  | "dry_run";
+export type MatriculaStatus = "sucesso" | "duplicado" | "erro_aluno" | "erro_responsavel";
 
 export interface MatriculaResultado {
   ok: boolean;
@@ -562,10 +557,7 @@ export class MatriculaError extends Error {
   }
 }
 
-export async function processarMatricula(
-  payload: MatriculaPayload,
-  opcoes: { dryRun: boolean },
-): Promise<MatriculaResultado> {
+export async function processarMatricula(payload: MatriculaPayload): Promise<MatriculaResultado> {
   const creds = resolverCredenciais(payload.unidade);
   if (!creds) {
     throw new MatriculaError(
@@ -627,28 +619,6 @@ export async function processarMatricula(
         error: `Já existe um aluno no Sponte com o CPF informado (AlunoID ${existente}). Nada foi criado.`,
       };
     }
-  }
-
-  if (opcoes.dryRun) {
-    return {
-      ok: true,
-      status: "dry_run",
-      alunoId: null,
-      alunoJaExistia: false,
-      endereco,
-      responsaveis: payload.responsaveis.map((r, i) => ({
-        nome: r.nome,
-        parentesco: r.parentesco,
-        parentescoId: parentescos[i],
-        responsavelFinanceiro: r.responsavelFinanceiro === true,
-        responsavelDidatico: r.responsavelDidatico === true || ehMae(r.parentesco),
-        ok: true,
-        retorno: "dry run — nada foi enviado ao Sponte",
-        responsavelId: null,
-        parentescoConfirmado: null,
-        reaproveitado: false,
-      })),
-    };
   }
 
   const alunoId = payload.alunoIdExistente
