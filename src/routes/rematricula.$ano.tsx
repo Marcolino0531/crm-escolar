@@ -888,6 +888,15 @@ function RematriculaPage() {
               )}
             </div>
 
+            {dados?.matriculaBloqueio && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+                <h2 className="mb-1 text-sm font-semibold">Matrícula</h2>
+                <p data-erro className="text-sm text-destructive">
+                  {dados.matriculaBloqueio}
+                </p>
+              </div>
+            )}
+
             {matricula && limitesVencimento && (
               <div className="rounded-lg border p-4">
                 <h2 className="mb-1 text-sm font-semibold">Matrícula</h2>

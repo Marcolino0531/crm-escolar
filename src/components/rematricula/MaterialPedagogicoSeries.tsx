@@ -48,6 +48,7 @@ import {
   anosLetivosDiario,
   excluirMaterialItem,
   excluirMaterialSerie,
+  excluirValorMatricula,
   listarCampanhasRematricula,
   listarMaterialItens,
   listarMaterialSeries,
@@ -59,6 +60,7 @@ import {
   salvarValorMatricula,
   type MaterialItemRegistro,
   type MaterialSerieRegistro,
+  type ValorMatriculaSegmento,
 } from "@/lib/rematricula.functions";
 
 // Campanhas de rematrícula por ano letivo. Cada ano tem a sua linha: o portal
@@ -190,40 +192,73 @@ export function CampanhasRematricula({ podeEditar }: { podeEditar: boolean }) {
   );
 }
 
-// Valor da Matrícula por segmento e ano letivo (antes fixo no código). O portal
-// usa o valor do ano da campanha em que o responsável está; sem valor para o
-// segmento do aluno, a campanha do ano não abre.
+// Valor da Matrícula por colégio × segmento × ano letivo. Segue o seletor
+// global: em um colégio mostra e grava só nele; em "Todas as Unidades" mostra o
+// consolidado (coluna Colégio) e não permite gravar nem excluir. O portal usa o
+// valor do colégio e do ano da campanha; segmento sem valor = etapa bloqueada.
 export function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
   const qc = useQueryClient();
+  const unidade = useUnidadeAtiva();
   const listar = useServerFn(listarValoresMatricula);
   const salvar = useServerFn(salvarValorMatricula);
+  const excluir = useServerFn(excluirValorMatricula);
   const [ano, setAno] = useState("");
-  const [segmento, setSegmento] = useState<SegmentoMatricula>("infantil_fundamental_1");
+  const [segmento, setSegmento] = useState<SegmentoMatricula>("infantil");
   const [valor, setValor] = useState("");
 
   const valores = useQuery({
-    queryKey: ["rematricula_matricula_valores"],
-    queryFn: async () => listar({ data: undefined }),
+    queryKey: ["rematricula_matricula_valores", unidade],
+    queryFn: async () => listar({ data: { unidade } }),
   });
 
+  const invalidar = () => {
+    void qc.invalidateQueries({ queryKey: ["rematricula_matricula_valores"] });
+    void qc.invalidateQueries({ queryKey: ["rematricula_campanhas"] });
+  };
+
   const gravar = useMutation({
-    mutationFn: async () =>
-      salvar({ data: { anoLetivo: Number(ano), segmento, valor: parseBRLNumber(valor) } }),
+    mutationFn: async () => {
+      if (!unidade) throw new Error("Selecione um colégio no topo da tela.");
+      return salvar({
+        data: { unidade, anoLetivo: Number(ano), segmento, valor: parseBRLNumber(valor) },
+      });
+    },
     onSuccess: () => {
-      toast.success("Valor da Matrícula salvo.");
+      toast.success(`Valor da Matrícula salvo para ${unidade}.`);
       setValor("");
-      void qc.invalidateQueries({ queryKey: ["rematricula_matricula_valores"] });
-      void qc.invalidateQueries({ queryKey: ["rematricula_campanhas"] });
+      invalidar();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível salvar."),
   });
+
+  const remover = useMutation({
+    mutationFn: async (v: ValorMatriculaSegmento) => {
+      if (!unidade || v.unidade !== unidade) {
+        throw new Error("Selecione o colégio da linha no topo da tela para excluir.");
+      }
+      if (!SEGMENTOS_MATRICULA.includes(v.segmento as SegmentoMatricula)) {
+        throw new Error("Segmento antigo: não pode ser excluído por aqui.");
+      }
+      return excluir({
+        data: { unidade, anoLetivo: v.anoLetivo, segmento: v.segmento as SegmentoMatricula },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Segmento excluído.");
+      invalidar();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Não foi possível excluir."),
+  });
+
+  const podeAlterar = podeEditar && unidade !== null;
+  const colunas = (unidade ? 4 : 5) + (podeAlterar ? 1 : 0);
 
   return (
     <div className="rounded-lg border p-4">
       <h3 className="text-sm font-semibold">Valor da Matrícula por segmento e ano</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        Valor cobrado na Matrícula (parcelável de setembro a janeiro) conforme a série que o aluno
-        vai cursar no ano letivo. Precisa existir para os dois segmentos antes de abrir a campanha.
+        Valor cobrado na Matrícula (parcelável de setembro a janeiro) conforme o segmento da série
+        que o aluno vai cursar, por colégio.
       </p>
       {valores.isLoading ? (
         <Skeleton className="mt-3 h-20 w-full" />
@@ -232,48 +267,71 @@ export function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
           <Table>
             <TableHeader>
               <TableRow>
+                {!unidade && <TableHead>Colégio</TableHead>}
                 <TableHead>Ano letivo</TableHead>
                 <TableHead>Segmento</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Atualizado</TableHead>
-                {podeEditar && <TableHead className="w-12" />}
+                {podeAlterar && <TableHead className="w-20" />}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(valores.data ?? []).map((v) => (
-                <TableRow key={`${v.anoLetivo}-${v.segmento}`}>
-                  <TableCell>{v.anoLetivo}</TableCell>
-                  <TableCell>{ROTULO_SEGMENTO_MATRICULA[v.segmento]}</TableCell>
-                  <TableCell className="text-right">{formatarBRL(v.valor)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {new Date(v.atualizadoEm).toLocaleDateString("pt-BR")}
-                    {v.atualizadoPor ? ` · ${v.atualizadoPor}` : ""}
-                  </TableCell>
-                  {podeEditar && (
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Editar"
-                        onClick={() => {
-                          setAno(String(v.anoLetivo));
-                          setSegmento(v.segmento);
-                          setValor(v.valor.toFixed(2).replace(".", ","));
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+              {(valores.data ?? []).map((v) => {
+                const editavel = SEGMENTOS_MATRICULA.includes(v.segmento as SegmentoMatricula);
+                return (
+                  <TableRow key={`${v.unidade}-${v.anoLetivo}-${v.segmento}`}>
+                    {!unidade && <TableCell>{v.unidade}</TableCell>}
+                    <TableCell>{v.anoLetivo}</TableCell>
+                    <TableCell>{ROTULO_SEGMENTO_MATRICULA[v.segmento]}</TableCell>
+                    <TableCell className="text-right">{formatarBRL(v.valor)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {new Date(v.atualizadoEm).toLocaleDateString("pt-BR")}
+                      {v.atualizadoPor ? ` · ${v.atualizadoPor}` : ""}
                     </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                    {podeAlterar && (
+                      <TableCell className="whitespace-nowrap">
+                        {editavel && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Editar"
+                              onClick={() => {
+                                setAno(String(v.anoLetivo));
+                                setSegmento(v.segmento as SegmentoMatricula);
+                                setValor(v.valor.toFixed(2).replace(".", ","));
+                              }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Excluir"
+                              disabled={remover.isPending}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Excluir o segmento ${ROTULO_SEGMENTO_MATRICULA[v.segmento]} de ${v.anoLetivo} do ${v.unidade}? Alunos desse segmento ficam sem valor de Matrícula nesse colégio.`,
+                                  )
+                                ) {
+                                  remover.mutate(v);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
               {valores.data?.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={podeEditar ? 5 : 4}
-                    className="text-center text-muted-foreground"
-                  >
-                    Nenhum valor cadastrado.
+                  <TableCell colSpan={colunas} className="text-center text-muted-foreground">
+                    Nenhum valor cadastrado{unidade ? ` para ${unidade}` : ""}.
                   </TableCell>
                 </TableRow>
               )}
@@ -281,7 +339,12 @@ export function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
           </Table>
         </div>
       )}
-      {podeEditar && (
+      {podeEditar && !unidade && (
+        <div className="mt-3">
+          <SelecioneUnidade acao="O cadastro do valor da Matrícula" />
+        </div>
+      )}
+      {podeAlterar && (
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label className="text-[11px] text-muted-foreground">Ano letivo</Label>
@@ -324,7 +387,7 @@ export function ValoresMatricula({ podeEditar }: { podeEditar: boolean }) {
             onClick={() => gravar.mutate()}
           >
             {gravar.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Salvar valor
+            Salvar valor em {unidade}
           </Button>
         </div>
       )}

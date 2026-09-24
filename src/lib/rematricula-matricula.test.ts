@@ -15,6 +15,8 @@ import {
   unidadeRestringeTurno,
   validarPrimeiroVencimento,
   valorMatricula,
+  matriculaPortal,
+  ROTULO_SEGMENTO_MATRICULA,
   SEGMENTOS_MATRICULA,
   mensagemPendenciasCampanha,
   segmentosSemValorMatricula,
@@ -74,41 +76,90 @@ describe("quantidade de parcelas disponíveis (set–jan, máx 5x)", () => {
 });
 
 describe("valor da matrícula por segmento e ano", () => {
-  const valores2027 = { infantil_fundamental_1: 2057.1, fundamental_2: 2234.25 };
-  it("Educação Infantil e Fundamental I usam o valor cadastrado do segmento", () => {
-    for (const serie of ["Berçário", "Maternal 2", "1º Período", "1º Ano", "5º Ano"]) {
-      expect(segmentoMatricula(serie)).toBe("infantil_fundamental_1");
-      expect(valorMatricula(valores2027, serie)).toBe(2057.1);
+  const cec = { infantil: 2057.1, fundamental_1: 2057.1, fundamental_2: 2234.25 };
+  it("segmento por série: infantil até o 2º Período, fundamental_1 do 1º ao 5º, fundamental_2 do 6º", () => {
+    for (const serie of ["Berçário", "Maternal 2", "1º Período", "2º Período"]) {
+      expect(segmentoMatricula(serie)).toBe("infantil");
     }
-  });
-  it("Fundamental II usa o valor cadastrado do segmento", () => {
+    expect(segmentoMatricula("1º Ano")).toBe("fundamental_1");
+    expect(segmentoMatricula("5º Ano")).toBe("fundamental_1");
     for (const serie of ["6º Ano", "7° Ano", "9º Ano"]) {
       expect(segmentoMatricula(serie)).toBe("fundamental_2");
-      expect(valorMatricula(valores2027, serie)).toBe(2234.25);
     }
   });
-  it("sem valor cadastrado para o segmento do ano devolve null (não cai em outro ano)", () => {
-    expect(valorMatricula({}, "1º Ano")).toBeNull();
-    expect(valorMatricula({ infantil_fundamental_1: 2100 }, "6º Ano")).toBeNull();
-    expect(valorMatricula({ fundamental_2: 0 }, "6º Ano")).toBeNull();
+  it("série desconhecida não tem segmento nem valor (não cai no infantil)", () => {
+    expect(segmentoMatricula("Ensino Médio")).toBeNull();
+    expect(segmentoMatricula("")).toBeNull();
+    expect(valorMatricula(cec, "Ensino Médio")).toBeNull();
+    expect(matriculaPortal(cec, "Ensino Médio", "2026-09-20")).toBeNull();
   });
-  it("lista os segmentos sem valor como pendência para abrir a campanha", () => {
-    expect(segmentosSemValorMatricula(valores2027)).toEqual([]);
-    expect(segmentosSemValorMatricula({ infantil_fundamental_1: 2100 })).toEqual(["fundamental_2"]);
+  it("cada segmento devolve o valor cadastrado", () => {
+    expect(valorMatricula(cec, "2º Período")).toBe(2057.1);
+    expect(valorMatricula(cec, "5º Ano")).toBe(2057.1);
+    expect(valorMatricula(cec, "6º Ano")).toBe(2234.25);
+  });
+  it("mesmo segmento com valores diferentes em dois colégios devolve o valor de cada um", () => {
+    const belvedere = { infantil: 1800, fundamental_1: 1900, fundamental_2: 2000 };
+    expect(valorMatricula(cec, "3º Ano")).toBe(2057.1);
+    expect(valorMatricula(belvedere, "3º Ano")).toBe(1900);
+    expect(valorMatricula(cec, "2º Período")).toBe(2057.1);
+    expect(valorMatricula(belvedere, "2º Período")).toBe(1800);
+  });
+  it("segmento excluído no colégio devolve null e o portal não gera parcelas", () => {
+    const cecBaby = { infantil: 1500 };
+    expect(valorMatricula(cecBaby, "1º Ano")).toBeNull();
+    expect(matriculaPortal(cecBaby, "1º Ano", "2026-09-20")).toBeNull();
+    expect(valorMatricula({ fundamental_2: 0 }, "6º Ano")).toBeNull();
+    expect(matriculaPortal({ fundamental_2: 0 }, "6º Ano", "2026-09-20")).toBeNull();
+    const ok = matriculaPortal(cecBaby, "2º Período", "2026-09-20");
+    expect(ok?.segmento).toBe("infantil");
+    expect(ok?.valor).toBe(1500);
+    expect(ok?.disponivel.opcoes.length).toBeGreaterThan(0);
+  });
+  it("lista os segmentos sem valor do colégio", () => {
+    expect(segmentosSemValorMatricula(cec)).toEqual([]);
+    expect(segmentosSemValorMatricula({ infantil: 2100 })).toEqual([
+      "fundamental_1",
+      "fundamental_2",
+    ]);
     expect(segmentosSemValorMatricula({})).toEqual(SEGMENTOS_MATRICULA);
   });
-  it("mensagem de pendência cita o ano e o segmento que falta", () => {
-    expect(mensagemPendenciasCampanha(2028, { segmentosSemValorMatricula: [] })).toBeNull();
+  it("pendência para abrir a campanha só quando um colégio não tem nenhum segmento, citando o colégio", () => {
+    const todos = [...SEGMENTOS_MATRICULA];
     expect(
-      mensagemPendenciasCampanha(2028, { segmentosSemValorMatricula: ["fundamental_2"] }),
+      mensagemPendenciasCampanha(2028, {
+        colegios: [
+          { unidade: "CEC", segmentosSemValorMatricula: [] },
+          { unidade: "CEC Baby", segmentosSemValorMatricula: ["fundamental_1", "fundamental_2"] },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      mensagemPendenciasCampanha(2028, {
+        colegios: [
+          { unidade: "CEC", segmentosSemValorMatricula: [] },
+          { unidade: "Núcleo Belvedere", segmentosSemValorMatricula: todos },
+        ],
+      }),
     ).toBe(
-      "Não é possível abrir a campanha de 2028: falta cadastrar o valor da Matrícula de 2028 para Ensino Fundamental II.",
+      "Não é possível abrir a campanha de 2028: falta cadastrar o valor da Matrícula de 2028 para Núcleo Belvedere (nenhum segmento cadastrado).",
     );
     expect(
       mensagemPendenciasCampanha(2028, {
-        segmentosSemValorMatricula: ["infantil_fundamental_1", "fundamental_2"],
+        colegios: [
+          { unidade: "Núcleo Belvedere", segmentosSemValorMatricula: todos },
+          { unidade: "Núcleo Vale do Sereno", segmentosSemValorMatricula: todos },
+        ],
       }),
-    ).toContain("Educação Infantil e Ensino Fundamental I e Ensino Fundamental II");
+    ).toContain("Núcleo Belvedere, Núcleo Vale do Sereno");
+  });
+  it("rótulo do segmento antigo fica só para histórico", () => {
+    expect(ROTULO_SEGMENTO_MATRICULA.infantil_fundamental_1).toBe(
+      "Educação Infantil e Ensino Fundamental I (cadastro antigo)",
+    );
+    expect(ROTULO_SEGMENTO_MATRICULA.infantil).toBe("Ensino Infantil");
+    expect(ROTULO_SEGMENTO_MATRICULA.fundamental_1).toBe("Ensino Fundamental 1 / Anos Iniciais");
+    expect(ROTULO_SEGMENTO_MATRICULA.fundamental_2).toBe("Ensino Fundamental 2 / Anos Finais");
   });
   it("divide em parcelas com sobra de centavos na 1ª e soma fecha no total", () => {
     const op = parcelamentoMatricula(2057.1, 3);
