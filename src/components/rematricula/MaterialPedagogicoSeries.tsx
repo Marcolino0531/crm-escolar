@@ -28,10 +28,13 @@ import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade
 import { filtrarPorUnidade } from "@/lib/unidade-global";
 import { parseBRLNumber } from "@/lib/currency";
 import {
+  PERIODICIDADES_MATERIAL,
+  ROTULO_PERIODICIDADE_MATERIAL,
   formatarBRL,
   opcoesParcelamentoMaterial,
   rotuloItemMaterial,
   rotuloParcelamento,
+  type PeriodicidadeMaterial,
 } from "@/lib/rematricula";
 import {
   ROTULO_SEGMENTO_MATRICULA,
@@ -409,12 +412,18 @@ function ItensMaterialSerie({
   const excluir = useServerFn(excluirMaterialItem);
   const [editando, setEditando] = useState<MaterialItemRegistro | null>(null);
   const [nome, setNome] = useState("");
+  const [tipo, setTipo] = useState<"volumes" | "descricao">("volumes");
   const [quantidade, setQuantidade] = useState("1");
+  const [periodicidade, setPeriodicidade] = useState<PeriodicidadeMaterial | "">("");
+  const [descricao, setDescricao] = useState("");
 
   function limpar() {
     setEditando(null);
     setNome("");
+    setTipo("volumes");
     setQuantidade("1");
+    setPeriodicidade("");
+    setDescricao("");
   }
 
   const invalidar = () => void qc.invalidateQueries({ queryKey: ["material_pedagogico_itens"] });
@@ -428,7 +437,13 @@ function ItensMaterialSerie({
           anoLetivo,
           serie,
           nome: nome.trim(),
-          quantidade: Number(quantidade),
+          ...(tipo === "volumes"
+            ? {
+                tipo: "volumes" as const,
+                quantidade: Number(quantidade),
+                periodicidade: periodicidade as PeriodicidadeMaterial,
+              }
+            : { tipo: "descricao" as const, descricao: descricao.trim() }),
         },
       }),
     onSuccess: () => {
@@ -449,7 +464,11 @@ function ItensMaterialSerie({
   });
 
   const qtd = Number(quantidade);
-  const formOk = nome.trim().length > 0 && Number.isInteger(qtd) && qtd > 0;
+  const formOk =
+    nome.trim().length > 0 &&
+    (tipo === "volumes"
+      ? Number.isInteger(qtd) && qtd > 0 && periodicidade !== ""
+      : descricao.trim().length > 0);
 
   return (
     <div className="rounded-md border bg-muted/20 p-3" data-itens-material>
@@ -464,7 +483,18 @@ function ItensMaterialSerie({
         <ul className="mt-2 space-y-1">
           {itens.map((i) => (
             <li key={i.id} className="flex items-center justify-between gap-2 text-sm">
-              <span>{rotuloItemMaterial({ nome: i.nome, quantidade: i.quantidade })}</span>
+              <span>
+                {rotuloItemMaterial(
+                  i.tipo === "descricao"
+                    ? { tipo: "descricao", nome: i.nome, descricao: i.descricao ?? "" }
+                    : {
+                        tipo: "volumes",
+                        nome: i.nome,
+                        quantidade: i.quantidade ?? 1,
+                        periodicidade: i.periodicidade,
+                      },
+                )}
+              </span>
               {podeEditar && (
                 <span className="flex shrink-0">
                   <Button
@@ -474,7 +504,12 @@ function ItensMaterialSerie({
                     onClick={() => {
                       setEditando(i);
                       setNome(i.nome);
-                      setQuantidade(String(i.quantidade));
+                      setTipo(i.tipo);
+                      setQuantidade(String(i.quantidade ?? 1));
+                      // Item antigo sem periodicidade: seletor vem vazio e é
+                      // obrigatório escolher para salvar.
+                      setPeriodicidade(i.periodicidade ?? "");
+                      setDescricao(i.descricao ?? "");
                     }}
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -506,14 +541,58 @@ function ItensMaterialSerie({
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">Volumes</Label>
-            <Input
-              className="h-9 w-20"
-              inputMode="numeric"
-              value={quantidade}
-              onChange={(e) => setQuantidade(e.target.value.replace(/\D/g, "").slice(0, 3))}
-            />
+            <Label className="text-[11px] text-muted-foreground">Tipo</Label>
+            <Select value={tipo} onValueChange={(v) => setTipo(v as "volumes" | "descricao")}>
+              <SelectTrigger className="h-9 w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="volumes">Volumes</SelectItem>
+                <SelectItem value="descricao">Descrição livre</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
+          {tipo === "volumes" ? (
+            <>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Volumes</Label>
+                <Input
+                  className="h-9 w-20"
+                  inputMode="numeric"
+                  value={quantidade}
+                  onChange={(e) => setQuantidade(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Periodicidade</Label>
+                <Select
+                  value={periodicidade}
+                  onValueChange={(v) => setPeriodicidade(v as PeriodicidadeMaterial)}
+                >
+                  <SelectTrigger className="h-9 w-40">
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PERIODICIDADES_MATERIAL.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {ROTULO_PERIODICIDADE_MATERIAL[p]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Descrição</Label>
+              <Input
+                className="h-9 w-72"
+                placeholder="Ex.: materiais usados nas aulas práticas"
+                value={descricao}
+                onChange={(e) => setDescricao(e.target.value)}
+              />
+            </div>
+          )}
           <Button size="sm" disabled={!formOk || gravar.isPending} onClick={() => gravar.mutate()}>
             {gravar.isPending ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

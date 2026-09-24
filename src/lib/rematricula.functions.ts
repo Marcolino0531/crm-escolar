@@ -61,6 +61,8 @@ import {
   vencimentosMaterialPelasMensalidades,
   type ItemMaterial,
   type MensalidadeVigente,
+  type PeriodicidadeMaterial,
+  PERIODICIDADES_MATERIAL,
   type ParcelaMaterial,
   type ParcelaMensalidade,
   type ParcelamentoPrimeira,
@@ -947,14 +949,14 @@ export async function itensMaterialDaSerie(
   if (!anoLetivo) return [];
   const { data } = await supabaseAdmin
     .from("material_pedagogico_itens" as never)
-    .select("nome_item, quantidade")
+    .select("nome_item, tipo, quantidade, periodicidade, descricao")
     .eq("unidade", unidade)
     .eq("ano_letivo", anoLetivo)
     .eq("serie_chave", chaveSerie(serie))
     .order("ordem")
     .order("created_at");
-  const linhas = (data ?? []) as unknown as { nome_item: string; quantidade: number }[];
-  return linhas.map((l) => ({ nome: l.nome_item, quantidade: Number(l.quantidade) }));
+  const linhas = (data ?? []) as unknown as LinhaItemMaterial[];
+  return linhas.map(itemMaterialDaLinha);
 }
 
 export const dadosRematricula = createServerFn({ method: "POST" })
@@ -3106,10 +3108,33 @@ export interface MaterialItemRegistro {
   serie: string;
   serieChave: string;
   nome: string;
-  quantidade: number;
+  tipo: "volumes" | "descricao";
+  quantidade: number | null;
+  periodicidade: PeriodicidadeMaterial | null;
+  descricao: string | null;
   ordem: number;
   atualizadoEm: string;
   atualizadoPor: string;
+}
+
+type LinhaItemMaterial = {
+  nome_item: string;
+  tipo: "volumes" | "descricao";
+  quantidade: number | null;
+  periodicidade: PeriodicidadeMaterial | null;
+  descricao: string | null;
+};
+
+function itemMaterialDaLinha(l: LinhaItemMaterial): ItemMaterial {
+  if (l.tipo === "descricao") {
+    return { tipo: "descricao", nome: l.nome_item, descricao: l.descricao ?? "" };
+  }
+  return {
+    tipo: "volumes",
+    nome: l.nome_item,
+    quantidade: Number(l.quantidade ?? 1),
+    periodicidade: l.periodicidade,
+  };
 }
 
 async function exigirPermissaoMaterialPedagogico(userId: string, edicao: boolean): Promise<void> {
@@ -3238,7 +3263,10 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
       serie: string;
       serie_chave: string;
       nome_item: string;
-      quantidade: number;
+      tipo: "volumes" | "descricao";
+      quantidade: number | null;
+      periodicidade: PeriodicidadeMaterial | null;
+      descricao: string | null;
       ordem: number;
       updated_at: string;
       updated_by_nome: string | null;
@@ -3246,7 +3274,7 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
       supabaseAdmin
         .from("material_pedagogico_itens" as never)
         .select(
-          "id, unidade, ano_letivo, serie, serie_chave, nome_item, quantidade, ordem, updated_at, updated_by_nome",
+          "id, unidade, ano_letivo, serie, serie_chave, nome_item, tipo, quantidade, periodicidade, descricao, ordem, updated_at, updated_by_nome",
         )
         .order("unidade")
         .order("ano_letivo", { ascending: false })
@@ -3262,21 +3290,41 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
       serie: r.serie,
       serieChave: r.serie_chave,
       nome: r.nome_item,
-      quantidade: Number(r.quantidade),
+      tipo: r.tipo,
+      quantidade: r.quantidade === null ? null : Number(r.quantidade),
+      periodicidade: r.periodicidade,
+      descricao: r.descricao,
       ordem: Number(r.ordem),
       atualizadoEm: r.updated_at,
       atualizadoPor: r.updated_by_nome ?? "",
     }));
   });
 
-const SalvarMaterialItemSchema = z.object({
+const SalvarMaterialItemBase = z.object({
   id: z.string().uuid().nullable().optional(),
   unidade: z.string().trim().min(1, "Informe a unidade."),
   anoLetivo: z.number().int().min(ANO_LETIVO_MIN).max(ANO_LETIVO_MAX),
   serie: z.string().trim().min(1, "Informe a série."),
   nome: z.string().trim().min(1, "Informe o nome do item."),
-  quantidade: z.number().int().positive("A quantidade deve ser um inteiro maior que zero."),
 });
+
+// Volumes exigem quantidade e periodicidade; descrição livre exige o texto e
+// não leva quantidade nem periodicidade (mesma regra do CHECK no banco).
+const SalvarMaterialItemSchema = SalvarMaterialItemBase.and(
+  z.discriminatedUnion("tipo", [
+    z.object({
+      tipo: z.literal("volumes"),
+      quantidade: z.number().int().positive("A quantidade deve ser um inteiro maior que zero."),
+      periodicidade: z.enum(PERIODICIDADES_MATERIAL, {
+        message: "Informe a periodicidade dos volumes (por semestre ou por ano).",
+      }),
+    }),
+    z.object({
+      tipo: z.literal("descricao"),
+      descricao: z.string().trim().min(1, "Informe a descrição do item."),
+    }),
+  ]),
+);
 
 export const salvarMaterialItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -3293,7 +3341,10 @@ export const salvarMaterialItem = createServerFn({ method: "POST" })
       serie: data.serie,
       serie_chave: serieChave,
       nome_item: data.nome,
-      quantidade: data.quantidade,
+      tipo: data.tipo,
+      quantidade: data.tipo === "volumes" ? data.quantidade : null,
+      periodicidade: data.tipo === "volumes" ? data.periodicidade : null,
+      descricao: data.tipo === "descricao" ? data.descricao : null,
       updated_at: new Date().toISOString(),
       updated_by: context.userId,
       updated_by_nome: await nomeDoUsuario(context.userId),

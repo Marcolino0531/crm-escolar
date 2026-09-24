@@ -762,15 +762,39 @@ export function serieRematricula(
 // itens vêm do cadastro `material_pedagogico_itens` da mesma unidade × ano ×
 // série do valor; os valores do ano anterior são histórico fixo.
 
-export interface ItemMaterial {
-  nome: string;
-  quantidade: number;
-}
+export const PERIODICIDADES_MATERIAL = ["semestre", "ano"] as const;
+export type PeriodicidadeMaterial = (typeof PERIODICIDADES_MATERIAL)[number];
 
-/** "Coleção Principal (Bernoulli) — 1 volume" / "Cultura Inglesa — 2 volumes". */
+export const ROTULO_PERIODICIDADE_MATERIAL: Record<PeriodicidadeMaterial, string> = {
+  semestre: "Por semestre",
+  ano: "Por ano",
+};
+
+export type ItemMaterial =
+  | {
+      tipo?: "volumes";
+      nome: string;
+      quantidade: number;
+      periodicidade?: PeriodicidadeMaterial | null;
+    }
+  | { tipo: "descricao"; nome: string; descricao: string };
+
+/**
+ * "Coleção Principal (Bernoulli) — 1 volume por semestre",
+ * "Cultura Inglesa — 1 volume por ano", "Material de Arte — 2 volumes" (item
+ * antigo, sem periodicidade) ou "Robótica — materiais usados nas aulas práticas".
+ */
 export function rotuloItemMaterial(item: ItemMaterial): string {
+  const nome = item.nome.trim();
+  if (item.tipo === "descricao") return `${nome} — ${item.descricao.trim()}`;
   const unidade = item.quantidade === 1 ? "volume" : "volumes";
-  return `${item.nome.trim()} — ${item.quantidade} ${unidade}`;
+  const periodo =
+    item.periodicidade === "semestre"
+      ? " por semestre"
+      : item.periodicidade === "ano"
+        ? " por ano"
+        : "";
+  return `${nome} — ${item.quantidade} ${unidade}${periodo}`;
 }
 
 export function rotulosItensMaterial(itens: readonly ItemMaterial[]): string[] {
@@ -861,7 +885,7 @@ export function apresentacaoMaterial(input: {
     serie: input.serie,
     anoLetivo: input.anoLetivo,
     valorAnual: input.valorAnual,
-    itens: input.itens.map((i) => ({ nome: i.nome, quantidade: i.quantidade })),
+    itens: [...input.itens],
     reajuste,
     texto,
   };
