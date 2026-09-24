@@ -8,7 +8,7 @@
 import { Loader2 } from "lucide-react";
 import type { ErrosForm, MaterialForm } from "@/lib/matricula-form";
 import type { MaterialMatriculaPublica } from "@/lib/matricula-publica.functions";
-import { formatarBRL } from "@/lib/rematricula";
+import { formatarBRL, rotuloItemMaterial } from "@/lib/rematricula";
 
 interface Props {
   material: MaterialForm;
@@ -39,9 +39,19 @@ export function MaterialPedagogico({ material, dados, carregando, erros, onChang
       {!carregando && dados?.configurado && (
         <>
           <p className="text-sm text-muted-foreground">
-            Série {dados.serie} — valor anual de {formatarBRL(dados.valorAnual)}. Escolha em quantas
-            parcelas quer pagar.
+            Série {dados.serie} — valor anual de {formatarBRL(dados.valorAnual)}.
           </p>
+          {dados.itens.length > 0 && (
+            <div className="text-sm text-muted-foreground">
+              <p className="mb-1">Itens inclusos:</p>
+              <ul className="list-disc space-y-0.5 pl-5">
+                {dados.itens.map((item) => (
+                  <li key={item.nome}>{rotuloItemMaterial(item)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="text-sm text-muted-foreground">Escolha em quantas parcelas quer pagar.</p>
           <div className="grid gap-2 sm:grid-cols-2">
             {dados.opcoes.map((op) => (
               <button
