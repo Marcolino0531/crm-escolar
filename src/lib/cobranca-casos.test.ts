@@ -9,6 +9,7 @@ import {
   descreverReagendamento,
   mensagemDoDiaPendente,
   reagendarMensagens,
+  mesmasMudancas,
   etapaDoCaso,
   montarDemonstrativo,
   podeAlterarDataInicio,
@@ -268,44 +269,92 @@ describe("cobranca-casos: data de início informada (PR B)", () => {
   });
 });
 
-describe("reagendarMensagens", () => {
-  const msgs = [
-    { ordem: 1, data_prevista: "2026-09-18", enviada_em: "x" },
-    { ordem: 2, data_prevista: "2026-09-21", enviada_em: "x" },
-    { ordem: 3, data_prevista: "2026-09-22", enviada_em: "x" },
-    { ordem: 4, data_prevista: "2026-09-23", enviada_em: null },
-    { ordem: 5, data_prevista: "2026-09-24", enviada_em: null },
+describe("reagendarMensagens (rota ancorada no último envio real)", () => {
+  const reg = (ordem: number, prevista: string, envio: string) => ({
+    ordem,
+    data_prevista: prevista,
+    data_envio: envio,
+    enviada_em: `${envio}T12:00:00Z`,
+  });
+  const pend = (ordem: number, prevista: string) => ({
+    ordem,
+    data_prevista: prevista,
+    data_envio: null,
+    enviada_em: null,
+  });
+  const INICIO = "2026-09-18";
+  const ludymyla = [
+    reg(1, "2026-09-18", "2026-09-18"),
+    reg(2, "2026-09-21", "2026-09-21"),
+    reg(3, "2026-09-22", "2026-09-22"),
+    pend(4, "2026-09-23"),
+    pend(5, "2026-09-24"),
   ];
-  it("exemplo Ludymyla: em 24/09, msg 4 → 24/09 e msg 5 → 25/09", () => {
-    expect(reagendarMensagens(msgs, "2026-09-24")).toEqual([
+  it("caso Juliana: 3 registrada hoje (24/09) → 4 = 25/09 (sex), 5 = 28/09 (seg)", () => {
+    const juliana = [
+      reg(1, "2026-09-18", "2026-09-18"),
+      reg(2, "2026-09-21", "2026-09-23"),
+      reg(3, "2026-09-22", "2026-09-24"),
+      pend(4, "2026-09-24"),
+      pend(5, "2026-09-25"),
+    ];
+    expect(reagendarMensagens(juliana, "2026-09-24", INICIO)).toEqual([
+      { ordem: 4, de: "2026-09-24", para: "2026-09-25" },
+      { ordem: 5, de: "2026-09-25", para: "2026-09-28" },
+    ]);
+  });
+  it("caso Ludymyla: em 24/09, 4 = 24/09 e 5 = 25/09", () => {
+    expect(reagendarMensagens(ludymyla, "2026-09-24", INICIO)).toEqual([
       { ordem: 4, de: "2026-09-23", para: "2026-09-24" },
       { ordem: 5, de: "2026-09-24", para: "2026-09-25" },
     ]);
   });
-  it("é idempotente e não mexe em registradas nem em pendentes no prazo", () => {
-    expect(reagendarMensagens(msgs, "2026-09-23")).toEqual([]);
-    const aplicadas = msgs.map((m) =>
-      m.ordem === 4
-        ? { ...m, data_prevista: "2026-09-24" }
-        : m.ordem === 5
-          ? { ...m, data_prevista: "2026-09-25" }
-          : m,
-    );
-    expect(reagendarMensagens(aplicadas, "2026-09-24")).toEqual([]);
-  });
-  it("pula fim de semana", () => {
-    // sáb 26/09/2026 → seg 28/09, ter 29/09
-    expect(reagendarMensagens(msgs, "2026-09-26")).toEqual([
-      { ordem: 4, de: "2026-09-23", para: "2026-09-28" },
-      { ordem: 5, de: "2026-09-24", para: "2026-09-29" },
+  it("última registrada ontem, nada hoje → primeira pendente = hoje", () => {
+    const msgs = [reg(1, "2026-09-18", "2026-09-22"), pend(2, "2026-09-21"), pend(3, "2026-09-22")];
+    expect(reagendarMensagens(msgs, "2026-09-23", INICIO)).toEqual([
+      { ordem: 2, de: "2026-09-21", para: "2026-09-23" },
+      { ordem: 3, de: "2026-09-22", para: "2026-09-24" },
     ]);
   });
-  it("descreve o evento e aponta a mensagem do dia", () => {
-    const mud = reagendarMensagens(msgs, "2026-09-24");
+  it("nenhuma registrada, data_inicio no passado → mensagem 1 = hoje", () => {
+    const msgs = [pend(1, "2026-09-18"), pend(2, "2026-09-21")];
+    expect(reagendarMensagens(msgs, "2026-09-24", INICIO)).toEqual([
+      { ordem: 1, de: "2026-09-18", para: "2026-09-24" },
+      { ordem: 2, de: "2026-09-21", para: "2026-09-25" },
+    ]);
+    // data_inicio no futuro: rota permanece a partir dela (nada muda)
+    expect(reagendarMensagens(msgs, "2026-09-10", INICIO)).toEqual([]);
+  });
+  it("rodar duas vezes seguidas não gera nova mudança", () => {
+    const mud = reagendarMensagens(ludymyla, "2026-09-24", INICIO);
+    const porOrdem = new Map(mud.map((m) => [m.ordem, m.para]));
+    const aplicadas = ludymyla.map((m) =>
+      porOrdem.has(m.ordem) ? { ...m, data_prevista: porOrdem.get(m.ordem)! } : m,
+    );
+    expect(reagendarMensagens(aplicadas, "2026-09-24", INICIO)).toEqual([]);
+    expect(reagendarMensagens(ludymyla, "2026-09-23", INICIO)).toEqual([]);
+  });
+  it("sexta com envio registrado → próxima na segunda (ou terça se segunda for feriado)", () => {
+    // sex 25/09/2026 → seg 28/09
+    const msgs = [reg(1, "2026-09-25", "2026-09-25"), pend(2, "2026-09-25"), pend(3, "2026-09-28")];
+    expect(reagendarMensagens(msgs, "2026-09-25", INICIO)).toEqual([
+      { ordem: 2, de: "2026-09-25", para: "2026-09-28" },
+      { ordem: 3, de: "2026-09-28", para: "2026-09-29" },
+    ]);
+    // sex 30/10/2026 → seg 02/11 (Finados) → ter 03/11
+    const fer = [reg(1, "2026-10-30", "2026-10-30"), pend(2, "2026-10-30")];
+    expect(reagendarMensagens(fer, "2026-10-30", INICIO)).toEqual([
+      { ordem: 2, de: "2026-10-30", para: "2026-11-03" },
+    ]);
+  });
+  it("mesmasMudancas, descrição do evento e mensagem do dia", () => {
+    const mud = reagendarMensagens(ludymyla, "2026-09-24", INICIO);
+    expect(mesmasMudancas(mud, [...mud])).toBe(true);
+    expect(mesmasMudancas(mud, mud.slice(1))).toBe(false);
     expect(descreverReagendamento(mud)).toBe(
       "Mensagens 4 a 5 reagendadas: mensagem 4 de 23/09 para 24/09; mensagem 5 de 24/09 para 25/09",
     );
-    expect(mensagemDoDiaPendente({ status: "mensagens" }, msgs, "2026-09-23")).toBe(4);
-    expect(mensagemDoDiaPendente({ status: "notificacao" }, msgs, "2026-09-23")).toBeNull();
+    expect(mensagemDoDiaPendente({ status: "mensagens" }, ludymyla, "2026-09-23")).toBe(4);
+    expect(mensagemDoDiaPendente({ status: "notificacao" }, ludymyla, "2026-09-23")).toBeNull();
   });
 });

@@ -33,6 +33,8 @@ import {
   type AlteracaoDataInicio,
   mensagemDoDiaPendente,
   reagendarMensagens,
+  mesmasMudancas,
+  isReagendamento,
   type ReagendamentoMensagens,
   type SubstituicaoPrint,
   type AlunoCaso,
@@ -145,15 +147,16 @@ async function carregarAnexos(casoId: string): Promise<AnexoCaso[]> {
 }
 
 /**
- * Aplica o reagendamento das mensagens pendentes atrasadas (status 'mensagens'),
- * gravando as novas datas e um evento no histórico do caso. Idempotente.
- * Devolve as mensagens já com as datas atualizadas.
+ * Aplica a rota ideal das mensagens pendentes (status 'mensagens'), ancorada no
+ * último envio real, gravando as novas datas e um evento no histórico do caso.
+ * Idempotente; não repete o evento se o último reagendamento já tem as mesmas
+ * mudanças. Devolve as mensagens já com as datas atualizadas.
  */
 async function aplicarReagendamento<
-  M extends Pick<MensagemCaso, "id" | "ordem" | "data_prevista" | "enviada_em">,
+  M extends Pick<MensagemCaso, "id" | "ordem" | "data_prevista" | "data_envio" | "enviada_em">,
 >(caso: CasoCompleto, mensagens: M[], hoje: string): Promise<M[]> {
   if (caso.status !== "mensagens") return mensagens;
-  const mudancas = reagendarMensagens(mensagens, hoje);
+  const mudancas = reagendarMensagens(mensagens, hoje, caso.data_inicio);
   if (mudancas.length === 0) return mensagens;
   const porOrdem = new Map(mudancas.map((m) => [m.ordem, m.para]));
   for (const m of mensagens) {
@@ -165,17 +168,20 @@ async function aplicarReagendamento<
       .eq("id", m.id);
     if (error) throw new Error(error.message);
   }
-  const evento: ReagendamentoMensagens = {
-    tipo: "reagendamento",
-    em: new Date().toISOString(),
-    mudancas,
-  };
-  const { error } = await supabaseAdmin
-    .from("cobranca_casos" as never)
-    .update({ data_inicio_historico: [...caso.data_inicio_historico, evento] } as never)
-    .eq("id", caso.id);
-  if (error) throw new Error(error.message);
-  caso.data_inicio_historico = [...caso.data_inicio_historico, evento];
+  const ultimoReag = [...caso.data_inicio_historico].reverse().find(isReagendamento);
+  if (!ultimoReag || !mesmasMudancas(ultimoReag.mudancas, mudancas)) {
+    const evento: ReagendamentoMensagens = {
+      tipo: "reagendamento",
+      em: new Date().toISOString(),
+      mudancas,
+    };
+    const { error } = await supabaseAdmin
+      .from("cobranca_casos" as never)
+      .update({ data_inicio_historico: [...caso.data_inicio_historico, evento] } as never)
+      .eq("id", caso.id);
+    if (error) throw new Error(error.message);
+    caso.data_inicio_historico = [...caso.data_inicio_historico, evento];
+  }
   return mensagens.map((m) => {
     const para = porOrdem.get(m.ordem);
     return para ? { ...m, data_prevista: para } : m;
@@ -389,12 +395,15 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
         .returns<CasoRow[]>();
     });
     const ids = rows.map((r) => r.id);
-    type MsgLeve = Pick<MensagemCaso, "id" | "caso_id" | "ordem" | "data_prevista" | "enviada_em">;
+    type MsgLeve = Pick<
+      MensagemCaso,
+      "id" | "caso_id" | "ordem" | "data_prevista" | "data_envio" | "enviada_em"
+    >;
     const msgs = ids.length
       ? await fetchAllRows<MsgLeve>((from, to) =>
           supabaseAdmin
             .from("cobranca_mensagens" as never)
-            .select("id, caso_id, ordem, data_prevista, enviada_em")
+            .select("id, caso_id, ordem, data_prevista, data_envio, enviada_em")
             .in("caso_id", ids)
             .order("ordem")
             .range(from, to)
@@ -779,6 +788,8 @@ export const registrarMensagemCobranca = createServerFn({ method: "POST" })
         .update({ status } as never)
         .eq("id", caso.id);
       if (e2) throw new Error(e2.message);
+    } else {
+      await aplicarReagendamento(caso, await carregarMensagens(caso.id), hojeYMD());
     }
     return { status };
   });

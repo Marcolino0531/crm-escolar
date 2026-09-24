@@ -344,26 +344,52 @@ export interface MudancaPrevista {
   para: string;
 }
 
+export type MensagemReagendavel = Pick<
+  MensagemCaso,
+  "ordem" | "data_prevista" | "data_envio" | "enviada_em"
+>;
+
 /**
- * Reagendamento das mensagens não registradas: se a primeira pendente tem
- * data prevista anterior a hoje, ela passa para hoje (ou o próximo dia útil) e
- * cada pendente seguinte para o dia útil seguinte ao da anterior. Mensagens já
- * registradas nunca mudam. Idempotente: sem pendente atrasada, retorna [].
+ * Rota ideal das mensagens não registradas, ancorada no último envio real.
+ * Primeira pendente: base = dia útil estritamente posterior à data_envio da
+ * última registrada (ou data_inicio, se nenhuma foi registrada); data = maior
+ * entre base e hoje, em dia útil. Cada pendente seguinte = dia útil seguinte.
+ * Devolve só o que difere da data prevista atual (para frente ou para trás).
+ * Mensagens registradas nunca mudam. Idempotente.
  */
 export function reagendarMensagens(
-  mensagens: readonly Pick<MensagemCaso, "ordem" | "data_prevista" | "enviada_em">[],
+  mensagens: readonly MensagemReagendavel[],
   hojeYMD: string,
+  dataInicioYMD: string,
 ): MudancaPrevista[] {
-  const pendentes = [...mensagens].filter((m) => !m.enviada_em).sort((a, b) => a.ordem - b.ordem);
-  if (pendentes.length === 0 || pendentes[0].data_prevista >= hojeYMD) return [];
+  const ordenadas = [...mensagens].sort((a, b) => a.ordem - b.ordem);
+  const registradas = ordenadas.filter((m) => m.enviada_em);
+  const pendentes = ordenadas.filter((m) => !m.enviada_em);
+  if (pendentes.length === 0) return [];
+  const ultima = registradas[registradas.length - 1];
+  const ultimoEnvio = ultima ? (ultima.data_envio ?? ultima.enviada_em!.slice(0, 10)) : null;
+  const base = ultimoEnvio
+    ? proximoDiaUtilAPartir(addDiasYMD(ultimoEnvio, 1))
+    : proximoDiaUtilAPartir(dataInicioYMD);
+  let data = proximoDiaUtilAPartir(base > hojeYMD ? base : hojeYMD);
   const mudancas: MudancaPrevista[] = [];
-  let data = proximoDiaUtilAPartir(hojeYMD);
   for (const m of pendentes) {
     if (m.data_prevista !== data)
       mudancas.push({ ordem: m.ordem, de: m.data_prevista, para: data });
     data = proximoDiaUtilAPartir(addDiasYMD(data, 1));
   }
   return mudancas;
+}
+
+/** Mesmas mudanças (ordem, de, para) — evita gravar evento repetido na linha do tempo. */
+export function mesmasMudancas(
+  a: readonly MudancaPrevista[],
+  b: readonly MudancaPrevista[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((x, i) => x.ordem === b[i].ordem && x.de === b[i].de && x.para === b[i].para)
+  );
 }
 
 /** Ordem da mensagem prevista para hoje e ainda sem registro (null se não houver). */
