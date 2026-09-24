@@ -248,8 +248,15 @@ function AbaCobrancas({ casoInicial }: { casoInicial?: string }) {
 
   const lista = useMemo(() => {
     const todos = casos.data ?? [];
-    if (filtro === "todas") return todos.filter((c) => c.status !== "encerrado");
-    return todos.filter((c) => etapaDoCaso(c, c.hojeYMD) === filtro);
+    const filtrados =
+      filtro === "todas"
+        ? todos.filter((c) => c.status !== "encerrado")
+        : todos.filter((c) => etapaDoCaso(c, c.hojeYMD) === filtro);
+    // Cards com print de hoje pendente primeiro, mantendo a ordem dentro de cada grupo.
+    return [
+      ...filtrados.filter((c) => c.printPendenteOrdem !== null),
+      ...filtrados.filter((c) => c.printPendenteOrdem === null),
+    ];
   }, [casos.data, filtro]);
 
   if (casoAberto) {
@@ -345,6 +352,17 @@ function EtapaBadge({ etapa }: { etapa: EtapaCaso }) {
   return <Badge className={`${cls[etapa]} hover:${cls[etapa]}`}>{labelEtapa(etapa)}</Badge>;
 }
 
+function PrintPendenteBadge({ ordem }: { ordem: number }) {
+  return (
+    <Badge
+      className="gap-1 bg-amber-100 text-amber-800 hover:bg-amber-100"
+      title={`Mensagem ${ordem} prevista para hoje sem print registrado`}
+    >
+      <AlertTriangle className="h-3 w-3" /> Print de hoje pendente
+    </Badge>
+  );
+}
+
 function CasoCard({
   caso,
   mostrarUnidade,
@@ -368,7 +386,12 @@ function CasoCard({
             {formatarCpf(caso.responsavel_cpf) || "CPF não informado"}
           </p>
         </div>
-        <EtapaBadge etapa={etapa} />
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <EtapaBadge etapa={etapa} />
+          {caso.printPendenteOrdem !== null && (
+            <PrintPendenteBadge ordem={caso.printPendenteOrdem} />
+          )}
+        </div>
       </div>
       {mostrarUnidade && (
         <Badge variant="outline" className="w-fit text-[11px]">
@@ -945,14 +968,22 @@ function SecaoMensagens({
       <ul className="divide-y divide-border">
         {mensagens.map((m) => {
           const bloqueio = validarRegistroMensagem(mensagens, m.ordem, true);
+          const doDia = detalhe.printPendenteOrdem === m.ordem;
           return (
             <li
               key={m.id}
-              className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+              className={`flex flex-wrap items-center justify-between gap-2 py-2 text-sm ${
+                doDia ? "-mx-2 rounded-md bg-amber-50 px-2 dark:bg-amber-950/30" : ""
+              }`}
             >
               <div>
                 <p className="font-medium">
                   Mensagem {m.ordem} · prevista para {formatarDataBR(m.data_prevista)}
+                  {doDia && (
+                    <span className="ml-2 inline-flex">
+                      <PrintPendenteBadge ordem={m.ordem} />
+                    </span>
+                  )}
                 </p>
                 {m.enviada_em ? (
                   <p className="text-xs text-muted-foreground">
