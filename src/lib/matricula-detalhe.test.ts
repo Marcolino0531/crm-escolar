@@ -136,8 +136,6 @@ describe("montarSecoesDetalhe", () => {
       "MG-12.345.678",
       "Belo Horizonte",
       "Brasileira",
-      "aluno@example.com",
-      "31990000000",
       "Chega sempre acompanhado da avó",
       "Rua das Acácias",
       "Apto 302",
@@ -165,6 +163,8 @@ describe("montarSecoesDetalhe", () => {
       "vacina.jpg · 500 B",
     ])
       expect(texto).toContain(esperado);
+    for (const contatoDoAluno of ["aluno@example.com", "3132000000", "31990000000"])
+      expect(texto).not.toContain(contatoDoAluno);
   });
 
   it("mantém o link assinado só nos documentos que têm arquivo disponível", () => {

@@ -20,6 +20,7 @@ import {
 import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { parcelasMaterialValida } from "@/lib/rematricula";
+import { parcelasMatriculaValida, validarPrimeiroVencimento } from "@/lib/rematricula-matricula";
 import { toTitleCase } from "@/lib/name-format";
 
 export const MAX_SUBMISSOES_POR_IP = 5;
@@ -358,8 +359,6 @@ export function montarPayloadMatricula(
     if (responsavelPreenchido(r)) responsaveis.push(responsavelPayload(qual, r, form));
   }
 
-  const financeiro = responsaveis.find((r) => r.responsavelFinanceiro) ?? responsaveis[0];
-
   return {
     submissionId,
     unidade: form.unidade,
@@ -369,10 +368,10 @@ export function montarPayloadMatricula(
       cpf: soDigitos(form.aluno.cpf),
       sexo: form.aluno.genero,
       naturalidade: form.aluno.naturalidade.trim(),
-      // Contato do aluno = do responsável financeiro (o formulário não coleta
-      // telefone/e-mail do aluno).
-      email: financeiro?.email ?? "",
-      celular: financeiro?.celular ?? "",
+      // O aluno vai ao Sponte só com dados pessoais e endereço; o contato é
+      // exclusivo do cadastro de cada responsável.
+      email: "",
+      celular: "",
       midia: MIDIA_MATRICULA_SITE,
     },
     endereco: enderecoPayload(form.endereco),
@@ -975,6 +974,37 @@ export function validarMaterialForm(material: MaterialForm, configurado: boolean
   if (!parcelasMaterialValida(material.parcelas))
     return { "material.parcelas": "Escolha em quantas parcelas quer pagar o material." };
   return {};
+}
+
+// ─── Matrícula (parcelas e 1º vencimento escolhidos pelo responsável) ──────
+//
+// Mesma regra da Rematrícula (parcelamentoMatriculaDisponivel): até 5x de
+// setembro a janeiro, só à vista em janeiro ou fora da janela; a 1ª parcela
+// vence entre o preenchimento e o fim do mês. Sem valor cadastrado para o
+// colégio × segmento a escolha não é exigida e a Matrícula vira pendência.
+
+export interface MatriculaCobrancaForm {
+  parcelas: number;
+  primeiroVencimento: string; // YYYY-MM-DD
+}
+
+export const MATRICULA_COBRANCA_FORM_VAZIO: MatriculaCobrancaForm = {
+  parcelas: 0,
+  primeiroVencimento: "",
+};
+
+export function validarMatriculaCobrancaForm(
+  cobranca: MatriculaCobrancaForm,
+  valorDisponivel: boolean,
+  hoje: string,
+): ErrosForm {
+  if (!valorDisponivel) return {};
+  const erros: ErrosForm = {};
+  if (!parcelasMatriculaValida(cobranca.parcelas, hoje))
+    erros["matriculaCobranca.parcelas"] = "Escolha em quantas parcelas quer pagar a Matrícula.";
+  const erroVencimento = validarPrimeiroVencimento(cobranca.primeiroVencimento, hoje);
+  if (erroVencimento) erros["matriculaCobranca.primeiroVencimento"] = erroVencimento;
+  return erros;
 }
 
 // ─── Padronização de capitalização ──────────────────────────────────────────

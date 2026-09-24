@@ -13,14 +13,21 @@
 
 import {
   ITEM_PLANO_VAZIO,
+  ROTULO_TIPO_LANCAMENTO,
   escolherPlanoDoAnoLetivo,
   montarPlanoFaturamento,
+  parcelasComAjuste,
+  statusGeralFaturamento,
   type ItemPlanoCurso,
   type LancamentoPlanejado,
   type PlanoCursoSponte,
   type TipoLancamentoMatricula,
 } from "@/lib/matricula-faturamento";
+import { cursoIdDaSerie } from "@/lib/matricula-turma";
+import { buscarCursos } from "@/lib/matricula-turma.sponte";
 import { chaveSerie } from "@/lib/rematricula";
+import { valorMatricula } from "@/lib/rematricula-matricula";
+import { valoresMatriculaDoAno } from "@/lib/rematricula.functions";
 import type { RefeicoesRotina } from "@/lib/matricula-form";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
@@ -168,7 +175,8 @@ export interface ResultadoLancamento {
   erro: string | null;
 }
 
-export type StatusFaturamento = "lancado" | "parcial" | "sem_plano" | "erro";
+// 'sem_plano' fica só no histórico de submissões antigas.
+export type StatusFaturamento = "lancado" | "parcial" | "sem_lancamento" | "sem_plano" | "erro";
 
 export interface ResultadoFaturamento {
   status: StatusFaturamento;
@@ -181,10 +189,11 @@ export interface EntradaFaturamento {
   submissionId: string;
   unidade: string;
   alunoId: number;
-  cursoId: number;
   serie: string;
   anoLetivo: number;
   dataMatricula: string;
+  matriculaParcelas: number | null;
+  matriculaPrimeiroVencimento: string | null;
   materialParcelas: number | null;
   refeicoes: RefeicoesRotina;
   semRefeicoes: boolean;
@@ -310,23 +319,32 @@ async function lancar(
     retornoOperacao: inserido.retornoOperacao,
   });
 
-  if (!l.ajustaPrimeira) {
+  const ajustes = parcelasComAjuste(l);
+  if (ajustes.length === 0) {
     return { ...base, status: "lancado", contaReceberId };
   }
 
-  const ajuste = await atualizarParcelaSponte({
-    unidade: entrada.unidade,
-    contaReceberId,
-    numeroParcela: 1,
-    valor: l.valorPrimeiraParcela,
-    vencimento: l.primeiroVencimento,
-    categoria: l.categoria,
-    observacao: l.observacao,
-    logTag: LOG_TAG,
-  });
+  const falhas: string[] = [];
+  for (const item of ajustes) {
+    const ajuste = await atualizarParcelaSponte({
+      unidade: entrada.unidade,
+      contaReceberId,
+      numeroParcela: item.numero,
+      valor: item.valor,
+      vencimento: item.vencimento,
+      categoria: l.categoria,
+      observacao: l.observacao,
+      logTag: LOG_TAG,
+    });
+    if (!ajuste.ok) {
+      falhas.push(
+        `parcela ${item.numero} → ${item.valor.toFixed(2)} em ${item.vencimento} (${ajuste.error ?? "o Sponte não confirmou"})`,
+      );
+    }
+  }
 
-  if (!ajuste.ok) {
-    const erro = `Cobrança criada (conta ${contaReceberId}), mas o ajuste da 1ª parcela falhou: ${ajuste.error ?? "o Sponte não confirmou"}. Corrija a 1ª parcela para ${l.valorPrimeiraParcela.toFixed(2)} no Sponte. NÃO lance novamente.`;
+  if (falhas.length > 0) {
+    const erro = `Cobrança criada (conta ${contaReceberId}), mas o ajuste de parcelas falhou: ${falhas.join("; ")}. Corrija no Sponte. NÃO lance novamente.`;
     await registrar(linhaId, { status: "ajuste_pendente", contaReceberId, erro });
     return { ...base, status: "ajuste_pendente", contaReceberId, erro };
   }
@@ -334,10 +352,46 @@ async function lancar(
   return { ...base, status: "lancado", contaReceberId };
 }
 
+/** Plano do curso da série no Sponte; `erro` quando a leitura falhou (pendência só da mensalidade). */
+async function planoDaSerie(
+  creds: Credenciais,
+  entrada: EntradaFaturamento,
+): Promise<{ plano: PlanoCursoSponte | null; erro: string | null }> {
+  try {
+    const cursos = await buscarCursos(creds);
+    const cursoId = cursoIdDaSerie(entrada.serie, cursos);
+    if (cursoId === null) {
+      return {
+        plano: null,
+        erro: `Nenhum curso do Sponte corresponde à série "${entrada.serie}".`,
+      };
+    }
+    const planos = await buscarPlanosCurso(creds, cursoId);
+    return { plano: escolherPlanoDoAnoLetivo(planos, entrada.anoLetivo), erro: null };
+  } catch (e) {
+    return {
+      plano: null,
+      erro: `Não foi possível ler o plano do curso no Sponte: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+async function valorMatriculaDaSerie(entrada: EntradaFaturamento): Promise<number | null> {
+  try {
+    const valores = await valoresMatriculaDoAno(entrada.unidade, entrada.anoLetivo);
+    return valorMatricula(valores, entrada.serie);
+  } catch (e) {
+    console.error(`${LOG_TAG} falha ao ler o valor da Matrícula:`, e);
+    return null;
+  }
+}
+
 /**
- * Faturamento completo da matrícula formalizada: lê o plano do Sponte, monta o
- * cronograma e lança cada título. Nada aqui desfaz cadastro ou matrícula — o
- * que falha volta como pendência auditável.
+ * Faturamento da matrícula nova assim que o aluno existe no Sponte (não depende
+ * da turma): resolve o curso pela série, lê valores (plano, Matrícula, material,
+ * opcionais), monta o cronograma por tipo e lança cada título de forma
+ * independente. Nada aqui desfaz cadastro ou matrícula — o que falha volta como
+ * pendência do próprio tipo.
  */
 export async function faturarMatricula(entrada: EntradaFaturamento): Promise<ResultadoFaturamento> {
   const creds = resolverCredenciais(entrada.unidade);
@@ -350,33 +404,9 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     };
   }
 
-  let planos: PlanoCursoSponte[];
-  try {
-    planos = await buscarPlanosCurso(creds, entrada.cursoId);
-  } catch (e) {
-    return {
-      status: "erro",
-      planoCursoId: null,
-      lancamentos: [],
-      pendencias: [
-        `Não foi possível ler os planos do curso no Sponte: ${e instanceof Error ? e.message : String(e)}`,
-      ],
-    };
-  }
-
-  const plano = escolherPlanoDoAnoLetivo(planos, entrada.anoLetivo);
-  if (!plano) {
-    return {
-      status: "sem_plano",
-      planoCursoId: null,
-      lancamentos: [],
-      pendencias: [
-        `Nenhum plano de ${entrada.anoLetivo} cadastrado no Sponte para o curso da série "${entrada.serie}". Lance as cobranças manualmente.`,
-      ],
-    };
-  }
-
-  const [material, opcionais] = await Promise.all([
+  const [{ plano, erro: erroPlano }, matriculaValor, material, opcionais] = await Promise.all([
+    planoDaSerie(creds, entrada),
+    valorMatriculaDaSerie(entrada),
     materialAnualDaSerie(entrada.unidade, entrada.serie, entrada.anoLetivo),
     valoresOpcionaisDaUnidade(entrada.unidade),
   ]);
@@ -386,6 +416,9 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     anoLetivo: entrada.anoLetivo,
     dataMatricula: entrada.dataMatricula,
     serie: entrada.serie,
+    matriculaValor,
+    matriculaParcelas: entrada.matriculaParcelas,
+    matriculaPrimeiroVencimento: entrada.matriculaPrimeiroVencimento,
     materialValorAnual: material?.valorAnual ?? null,
     materialParcelas: entrada.materialParcelas,
     refeicoes: entrada.refeicoes,
@@ -395,14 +428,11 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     valorHoraExtraMensal: opcionais.valorHoraExtra,
   });
 
-  if (planejado.lancamentos.length === 0) {
-    return {
-      status: "sem_plano",
-      planoCursoId: plano.planoCursoId,
-      lancamentos: [],
-      pendencias: planejado.pendencias,
-    };
-  }
+  const pendencias = planejado.pendencias.map((p) =>
+    p.tipo === "mensalidade" && erroPlano
+      ? `${ROTULO_TIPO_LANCAMENTO[p.tipo]}: ${erroPlano}`
+      : `${ROTULO_TIPO_LANCAMENTO[p.tipo]}: ${p.motivo}`,
+  );
 
   const existentes = await linhasExistentes(entrada.submissionId);
   const resultados: ResultadoLancamento[] = [];
@@ -438,17 +468,36 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
       });
       continue;
     }
-    resultados.push(await lancar(entrada, l, linha.id));
+    try {
+      resultados.push(await lancar(entrada, l, linha.id));
+    } catch (e) {
+      const erro = e instanceof Error ? e.message : String(e);
+      await registrar(linha.id, { status: "erro", erro });
+      resultados.push({
+        tipo: l.tipo,
+        status: "erro",
+        parcelas: l.parcelas,
+        valorParcela: l.valorParcela,
+        valorPrimeiraParcela: l.valorPrimeiraParcela,
+        primeiroVencimento: l.primeiroVencimento,
+        total: l.total,
+        contaReceberId: null,
+        erro,
+      });
+    }
   }
 
-  const falhou = resultados.some((r) => r.status !== "lancado");
+  const lancados = resultados.filter((r) => r.status === "lancado").length;
+  const comProblema = resultados.length - lancados + planejado.pendencias.length;
   return {
-    status: falhou ? "parcial" : "lancado",
-    planoCursoId: plano.planoCursoId,
+    status: statusGeralFaturamento(lancados, comProblema),
+    planoCursoId: plano?.planoCursoId ?? null,
     lancamentos: resultados,
     pendencias: [
-      ...planejado.pendencias,
-      ...resultados.flatMap((r) => (r.erro ? [`${r.tipo}: ${r.erro}`] : [])),
+      ...pendencias,
+      ...resultados.flatMap((r) =>
+        r.erro ? [`${ROTULO_TIPO_LANCAMENTO[r.tipo]}: ${r.erro}`] : [],
+      ),
     ],
   };
 }

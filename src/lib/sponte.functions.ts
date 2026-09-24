@@ -36,6 +36,13 @@ import {
 } from "@/lib/diario-sync";
 import { planejarSincronizacaoPedagogico, type MatriculaAnoRow } from "@/lib/pedagogico";
 import { selectAll } from "@/lib/supabase-paginate";
+import {
+  planejarRotinasNoDiario,
+  type AlunoDiarioRotina,
+  type AplicacaoRotina,
+  type RotinaMatriculaRow,
+} from "@/lib/diario-rotina-matricula";
+import type { RotinaPersistida } from "@/lib/matricula-form";
 import { agruparUnidadesPorCredencial } from "@/lib/portal-responsavel";
 
 export { escapeXml };
@@ -3171,8 +3178,148 @@ export interface DiarioSyncResult {
   inativados: number;
   // Vínculos do ano cuja turma difere do class_name que a tela mostrava antes.
   turmasCorrigidas: Record<string, number>;
+  // Alunos sem plano no ano que receberam a rotina do formulário de matrícula.
+  rotinasAplicadas?: number;
+  rotinasErro?: string;
   indisponivel?: boolean;
   error?: string;
+}
+
+export interface RotinaDiarioPrevista {
+  unidade: string;
+  alunoNome: string;
+  sponteAlunoId: string;
+  anoLetivo: number;
+  horarios: number;
+  refeicoes: number;
+}
+
+// Rotina de matrícula (student_routine, origem matrícula/site/Google Forms)
+// para os alunos do Diário SEM plano no ano. `dryRun` só lista o que seria
+// gravado. Plano existente nunca é tocado (ver planejarRotinasNoDiario).
+export async function aplicarRotinasMatriculaNoDiario(
+  anoLetivo: number,
+  opts: { dryRun: boolean },
+): Promise<{ previstas: RotinaDiarioPrevista[]; gravadas: number }> {
+  const { data: escolas } = await supabaseAdmin
+    .from("schools")
+    .select("id, name")
+    .returns<{ id: string; name: string }[]>();
+  const schoolIdByName: Record<string, string> = {};
+  const schoolNameById: Record<string, string> = {};
+  for (const e of escolas ?? []) {
+    schoolIdByName[e.name] = e.id;
+    schoolNameById[e.id] = e.name;
+  }
+
+  type RoutineRow = {
+    unidade: string;
+    sponte_aluno_id: number;
+    aluno_nome: string;
+    ano_letivo: number;
+    data_inicio: string;
+    dias_ativos: number[];
+    periodo_manha: boolean;
+    periodo_tarde: boolean;
+    horario_estendido: boolean;
+    horario_curricular: string | null;
+    horarios: RotinaPersistida["horarios"];
+    sem_refeicoes: boolean;
+    refeicoes: RotinaPersistida["refeicoes"];
+  };
+  const routines = await selectAll<RoutineRow>(() =>
+    supabaseAdmin
+      .from("student_routine" as never)
+      .select(
+        "unidade, sponte_aluno_id, aluno_nome, ano_letivo, data_inicio, dias_ativos, periodo_manha, periodo_tarde, horario_estendido, horario_curricular, horarios, sem_refeicoes, refeicoes",
+      )
+      .eq("origem", "matricula")
+      .eq("ano_letivo", anoLetivo)
+      .not("sponte_aluno_id", "is", null)
+      .order("id"),
+  );
+  const rotinas: RotinaMatriculaRow[] = routines.flatMap((r) => {
+    const schoolId = schoolIdByName[r.unidade];
+    if (!schoolId) return [];
+    return [
+      {
+        schoolId,
+        sponteAlunoId: String(r.sponte_aluno_id),
+        anoLetivo: Number(r.ano_letivo),
+        alunoNome: r.aluno_nome,
+        dados: {
+          dataInicio: r.data_inicio,
+          diasAtivos: r.dias_ativos as RotinaPersistida["diasAtivos"],
+          periodoManha: r.periodo_manha,
+          periodoTarde: r.periodo_tarde,
+          horarioEstendido: r.horario_estendido,
+          horarioCurricular: (r.horario_curricular ?? "") as RotinaPersistida["horarioCurricular"],
+          horarios: r.horarios ?? [],
+          semRefeicoes: r.sem_refeicoes,
+          refeicoes: r.refeicoes,
+        },
+      },
+    ];
+  });
+  if (rotinas.length === 0) return { previstas: [], gravadas: 0 };
+
+  type StudentRow = { id: string; school_id: string; sponte_aluno_id: string };
+  const students = await selectAll<StudentRow>(() =>
+    supabaseAdmin
+      .from("diario_students" as never)
+      .select("id, school_id, sponte_aluno_id")
+      .in("sponte_aluno_id", Array.from(new Set(rotinas.map((r) => r.sponteAlunoId))))
+      .order("id"),
+  );
+  const alunos: AlunoDiarioRotina[] = students.map((s) => ({
+    studentId: s.id,
+    schoolId: s.school_id,
+    sponteAlunoId: String(s.sponte_aluno_id),
+  }));
+  if (alunos.length === 0) return { previstas: [], gravadas: 0 };
+
+  const ids = alunos.map((a) => a.studentId);
+  const comPlano = new Set<string>();
+  for (const tabela of ["diario_meal_plans", "diario_schedules"] as const) {
+    const linhas = await selectAll<{ student_id: string }>(() =>
+      supabaseAdmin
+        .from(tabela as never)
+        .select("student_id")
+        .eq("ano_letivo", anoLetivo)
+        .in("student_id", ids)
+        .order("id"),
+    );
+    for (const l of linhas) comPlano.add(l.student_id);
+  }
+
+  const plano: AplicacaoRotina[] = planejarRotinasNoDiario(anoLetivo, alunos, comPlano, rotinas);
+  const previstas: RotinaDiarioPrevista[] = plano.map((p) => ({
+    unidade: schoolNameById[p.schoolId] ?? p.schoolId,
+    alunoNome: p.alunoNome,
+    sponteAlunoId: p.sponteAlunoId,
+    anoLetivo,
+    horarios: p.horarios.length,
+    refeicoes: p.refeicoes.length,
+  }));
+  if (opts.dryRun) return { previstas, gravadas: 0 };
+
+  let gravadas = 0;
+  for (const p of plano) {
+    if (p.refeicoes.length > 0) {
+      const { error } = await supabaseAdmin
+        .from("diario_meal_plans" as never)
+        .insert(p.refeicoes as never);
+      if (error) throw new Error(error.message);
+    }
+    if (p.horarios.length > 0) {
+      const { error } = await supabaseAdmin
+        .from("diario_schedules" as never)
+        .insert(p.horarios as never);
+      if (error) throw new Error(error.message);
+    }
+    gravadas += 1;
+  }
+  return { previstas, gravadas };
 }
 
 // Contratos do ano de UM par de credenciais (GetMatriculas por intervalo anual).
@@ -3404,6 +3551,17 @@ export async function runDiarioSponteSync(
     if (error) return { ...vazio(anoLetivo), turmas: turmaRows.length, error: error.message };
   }
 
+  // ── Rotina do formulário de matrícula para quem entrou no Diário sem plano. ──
+  let rotinasAplicadas = 0;
+  let rotinasErro: string | undefined;
+  try {
+    rotinasAplicadas = (await aplicarRotinasMatriculaNoDiario(anoLetivo, { dryRun: false }))
+      .gravadas;
+  } catch (e) {
+    rotinasErro = e instanceof Error ? e.message : String(e);
+    console.error("[diário] falha ao aplicar a rotina de matrícula:", rotinasErro);
+  }
+
   return {
     anoLetivo,
     turmas: turmaRows.length,
@@ -3411,6 +3569,8 @@ export async function runDiarioSponteSync(
     porUnidade,
     inativados: plano.inativar.length,
     turmasCorrigidas,
+    rotinasAplicadas,
+    rotinasErro,
   };
 }
 

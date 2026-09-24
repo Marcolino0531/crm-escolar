@@ -417,10 +417,13 @@ describe("montarPayloadMatricula", () => {
     expect(pai?.endereco).toMatchObject({ cep: "30140071", numero: "1500", bairro: "Centro" });
   });
 
-  it("usa o contato do responsável financeiro como contato do aluno", () => {
+  it("aluno vai sem e-mail/celular; o contato fica só nos responsáveis", () => {
     const payload = montarPayloadMatricula(formCompleto({ responsavelFinanceiro: "pai" }), "s");
-    expect(payload.aluno.email).toBe("kleber@example.com");
-    expect(payload.aluno.celular).toBe("31988887777");
+    expect(payload.aluno.email).toBe("");
+    expect(payload.aluno.celular).toBe("");
+    const pai = payload.responsaveis.find((r) => r.parentesco === "Pai");
+    expect(pai?.email).toBe("kleber@example.com");
+    expect(pai?.celular).toBe("31988887777");
   });
 });
 

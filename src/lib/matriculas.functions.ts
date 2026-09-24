@@ -15,6 +15,12 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import { BUCKET_DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
 import {
+  FILTRO_OR_PENDENCIA,
+  motivosPendencia,
+  type LancamentoFicha,
+  type SituacaoSubmissao,
+} from "@/lib/matricula-integracao";
+import {
   existeAlgoNoSponte,
   resumirIntegracao,
   type LancamentoResumo,
@@ -197,6 +203,7 @@ export interface DetalheMatriculaResult {
   rotina?: RotinaSubmissao | null;
   saude?: SaudeSubmissao | null;
   documentos?: DocumentoSubmissao[];
+  lancamentos?: LancamentoFicha[];
 }
 
 const DetalheInputSchema = z.object({ submissionId: z.string().min(1).max(200) });
@@ -207,7 +214,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<DetalheMatriculaResult> => {
     await assertCanViewAdmissoes(context.userId);
 
-    const [rotinaRes, saudeRes, docsRes] = await Promise.all([
+    const [rotinaRes, saudeRes, docsRes, lancRes] = await Promise.all([
       supabaseAdmin
         .from("student_routine" as never)
         .select(
@@ -225,6 +232,13 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         .select("documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes")
         .eq("submission_id", data.submissionId)
         .order("documento"),
+      supabaseAdmin
+        .from("matricula_faturamento_lancamentos" as never)
+        .select(
+          "tipo, parcelas, valor_parcela, valor_primeira_parcela, primeiro_vencimento, total, status, erro, sponte_conta_receber_id",
+        )
+        .eq("submission_id", data.submissionId)
+        .order("created_at"),
     ]);
 
     const linhaRotina = rotinaRes.data as unknown as {
@@ -299,7 +313,84 @@ export const detalheMatricula = createServerFn({ method: "POST" })
           }
         : null,
       documentos,
+      lancamentos: (lancRes.data ?? []) as unknown as LancamentoFicha[],
     };
+  });
+
+// ─── Pendências de integração (aviso do sino, só admin) ──────────────────────
+//
+// A pendência é derivada do que está gravado (erro na criação, turma pendente
+// ou com erro, cobrança pendente/parcial/erro) e some sozinha quando o
+// reprocessamento resolve; quando a secretaria trata direto no Sponte, o admin
+// dá baixa manual pela ficha (`pendencia_resolvida_em`).
+
+export interface PendenciaMatricula {
+  id: string;
+  submissionId: string | null;
+  alunoNome: string;
+  unidade: string;
+  criadoEm: string;
+  motivos: string[];
+}
+
+async function ehAdmin(userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from("user_roles" as never)
+    .select("role")
+    .eq("user_id", userId);
+  return ((data ?? []) as { role: string }[]).some((r) => r.role === "admin");
+}
+
+export const listarPendenciasMatricula = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<PendenciaMatricula[]> => {
+    if (!(await ehAdmin(context.userId))) return [];
+    const { data, error } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .select(
+        "id, submission_id, unidade, aluno_nome, created_at, status, erro, turma_status, turma_pendencia, turma_nome, faturamento_status, faturamento_pendencia, pendencia_resolvida_em",
+      )
+      .is("pendencia_resolvida_em", null)
+      .or(FILTRO_OR_PENDENCIA)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as unknown as (SituacaoSubmissao & {
+      id: string;
+      submission_id: string | null;
+      unidade: string | null;
+      aluno_nome: string | null;
+      created_at: string;
+    })[];
+    return rows
+      .map((r) => ({
+        id: r.id,
+        submissionId: r.submission_id,
+        alunoNome: r.aluno_nome ?? "Aluno sem nome",
+        unidade: r.unidade ?? "",
+        criadoEm: r.created_at,
+        motivos: motivosPendencia(r),
+      }))
+      .filter((p) => p.motivos.length > 0);
+  });
+
+const ResolverPendenciaSchema = z.object({ id: z.string().uuid() });
+
+export const resolverPendenciaMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ResolverPendenciaSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    if (!(await ehAdmin(context.userId)))
+      throw new Error("Apenas administradores podem dar baixa numa pendência.");
+    const { error } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .update({
+        pendencia_resolvida_em: new Date().toISOString(),
+        pendencia_resolvida_por: await nomeDoUsuario(context.userId),
+      } as never)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 // ─── Valores opcionais por unidade (refeição e hora extra) ──────────────────

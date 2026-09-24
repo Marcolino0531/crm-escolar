@@ -56,19 +56,37 @@ vi.mock("@/integrations/supabase/client.server", () => ({
       }
       return {
         upsert: (linha: OnboardingGravado) => {
-          estado.gravados.push(linha);
+          if (!estado.gravados.some((g) => g.submission_id === linha.submission_id)) {
+            estado.gravados.push(linha);
+          }
           return {
             select: () => ({
               maybeSingle: async () => ({ data: { id: "onboarding-1" }, error: null }),
             }),
           };
         },
+        select: () => ({
+          eq: (_c: string, submissionId: string) => ({
+            maybeSingle: async () => {
+              const g = estado.gravados.find((x) => x.submission_id === submissionId);
+              return { data: g ? { id: "onboarding-1", tarefas: g.tarefas } : null };
+            },
+          }),
+        }),
+        update: (campos: Partial<OnboardingGravado>) => ({
+          eq: async () => {
+            const g = estado.gravados[0];
+            if (g) Object.assign(g, campos);
+            return { error: null };
+          },
+        }),
       };
     },
   },
 }));
 
-const { formalizarMatriculaTurma } = await import("@/lib/matricula-turma.formalizar");
+const { criarOnboardingDaMatricula, formalizarMatriculaTurma } =
+  await import("@/lib/matricula-turma.formalizar");
 
 const ENTRADA = {
   submissionId: "site-1",
@@ -99,6 +117,39 @@ beforeEach(() => {
   estado.resendAceita = true;
   estado.emails = [];
   estado.gravados = [];
+});
+
+describe("onboarding antes da turma", () => {
+  it("abre o onboarding com 'Turma a definir' e não duplica ao repetir", async () => {
+    expect(await criarOnboardingDaMatricula(ENTRADA)).toBe("onboarding-1");
+    expect(await criarOnboardingDaMatricula(ENTRADA)).toBe("onboarding-1");
+    expect(estado.gravados).toHaveLength(1);
+    expect(estado.gravados[0].turma).toBe("Turma a definir");
+    expect(estado.gravados[0].tarefas["boas-vindas"]).toBe(false);
+  });
+
+  it("a formalização grava a turma no onboarding já aberto, preservando tarefas", async () => {
+    await criarOnboardingDaMatricula(ENTRADA);
+    estado.gravados[0].tarefas["grupo-whatsapp"] = true;
+
+    const r = await formalizarMatriculaTurma(ENTRADA);
+
+    expect(r.onboardingId).toBe("onboarding-1");
+    expect(estado.gravados).toHaveLength(1);
+    expect(estado.gravados[0].turma).toBe("07 - 1º Ano T / A");
+    expect(estado.gravados[0].tarefas["boas-vindas"]).toBe(true);
+    expect(estado.gravados[0].tarefas["grupo-whatsapp"]).toBe(true);
+  });
+
+  it("sem turma, o onboarding aberto fica intacto", async () => {
+    await criarOnboardingDaMatricula(ENTRADA);
+    estado.turma = { ...estado.turma, status: "sem_turma", turmaId: null, turmaNome: null };
+
+    const r = await formalizarMatriculaTurma(ENTRADA);
+
+    expect(r.onboardingId).toBeNull();
+    expect(estado.gravados[0].turma).toBe("Turma a definir");
+  });
 });
 
 describe("formalização da matrícula", () => {

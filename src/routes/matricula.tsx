@@ -32,18 +32,21 @@ import { formatPhoneBR } from "@/lib/phone";
 import { buscarEnderecoPorCep } from "@/lib/viacep";
 import { DocumentosMatricula } from "@/components/matricula/DocumentosMatricula";
 import { MaterialPedagogico } from "@/components/matricula/MaterialPedagogico";
+import { MatriculaCobranca } from "@/components/matricula/MatriculaCobranca";
 import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
 import {
   ENDERECO_VAZIO,
   GENEROS_MATRICULA,
   MATERIAL_FORM_VAZIO,
+  MATRICULA_COBRANCA_FORM_VAZIO,
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
   SAUDE_FORM_VAZIO,
   serieCalculada,
   validarDocumentosForm,
   validarMaterialForm,
+  validarMatriculaCobrancaForm,
   validarSaudeForm,
   cepCompletoValido,
   formatarCep,
@@ -56,6 +59,7 @@ import {
   type ErrosForm,
   type GeneroMatricula,
   type MaterialForm,
+  type MatriculaCobrancaForm,
   type MatriculaForm,
   type ParentescoForm,
   type DocumentosForm,
@@ -67,6 +71,7 @@ import {
   configMatriculaPublica,
   enviarMatriculaPublica,
   materialMatriculaPublica,
+  matriculaCobrancaPublica,
 } from "@/lib/matricula-publica.functions";
 
 // Título neutro: o mesmo link atende todas as unidades (a unidade é escolhida
@@ -389,6 +394,9 @@ function MatriculaPublicaPage() {
   const [saude, setSaude] = useState<SaudeForm>({ ...SAUDE_FORM_VAZIO });
   const [documentos, setDocumentos] = useState<DocumentosForm>({});
   const [material, setMaterial] = useState<MaterialForm>({ ...MATERIAL_FORM_VAZIO });
+  const [cobranca, setCobranca] = useState<MatriculaCobrancaForm>({
+    ...MATRICULA_COBRANCA_FORM_VAZIO,
+  });
   // 1 = aluno/responsáveis · 2 = rotina · 3 = saúde · 4 = documentos.
   const [etapa, setEtapa] = useState<1 | 2 | 3 | 4>(1);
   const [erros, setErros] = useState<ErrosForm>({});
@@ -441,9 +449,40 @@ function MatriculaPublicaPage() {
 
   const materialConfigurado = materialQuery.data?.configurado === true;
 
+  // Valor da Matrícula (colégio × segmento da série) e janela de parcelas.
+  const cobrancaFn = useServerFn(matriculaCobrancaPublica);
+  const cobrancaQuery = useQuery({
+    queryKey: [
+      "matricula_publica_cobranca",
+      form.unidade,
+      form.aluno.dataNascimento,
+      form.anoLetivo,
+    ],
+    queryFn: async () =>
+      cobrancaFn({
+        data: {
+          unidade: form.unidade,
+          dataNascimento: form.aluno.dataNascimento,
+          anoLetivo: form.anoLetivo,
+        },
+      }),
+    enabled: form.unidade !== "" && serie !== "" && form.anoLetivo > 0,
+  });
+  const matriculaDisponivel = cobrancaQuery.data?.disponivel === true;
+
   const enviar = useMutation({
     mutationFn: async () =>
-      enviarFn({ data: { captchaToken, form, rotina, saude, documentos, material } }),
+      enviarFn({
+        data: {
+          captchaToken,
+          form,
+          rotina,
+          saude,
+          documentos,
+          material,
+          matriculaCobranca: cobranca,
+        },
+      }),
     onSuccess: (res) => {
       if (res.ok) {
         setEnviado(true);
@@ -463,6 +502,7 @@ function MatriculaPublicaPage() {
     return {
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfigurado),
+      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje),
     };
   };
 
@@ -491,6 +531,7 @@ function MatriculaPublicaPage() {
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfigurado),
+      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje),
     };
     setErros(encontrados);
     if (!formValido(encontrados)) {
@@ -753,6 +794,14 @@ function MatriculaPublicaPage() {
                   documentos={documentos}
                   erros={erros}
                   onChange={setDocumentos}
+                />
+
+                <MatriculaCobranca
+                  cobranca={cobranca}
+                  dados={cobrancaQuery.data}
+                  carregando={cobrancaQuery.isLoading}
+                  erros={erros}
+                  onChange={setCobranca}
                 />
 
                 <MaterialPedagogico
