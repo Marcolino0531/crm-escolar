@@ -85,9 +85,8 @@ vi.mock("@/integrations/supabase/client.server", () => ({
   },
 }));
 
-const { criarOnboardingDaMatricula, formalizarMatriculaTurma } = await import(
-  "@/lib/matricula-turma.formalizar"
-);
+const { criarOnboardingDaMatricula, formalizarMatriculaTurma } =
+  await import("@/lib/matricula-turma.formalizar");
 
 const ENTRADA = {
   submissionId: "site-1",

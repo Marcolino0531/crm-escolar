@@ -490,11 +490,13 @@ export function camposAluno(
     sEndereco: endereco.logradouro,
     nNumeroEndereco: endereco.numero,
     sComplementoEndereco: endereco.complemento,
-    sEmail: aluno.email?.trim() ?? "",
-    sTelefone: aluno.telefone?.trim() ?? "",
+    // Contato do aluno nunca vai ao Sponte pelo formulário: só os responsáveis
+    // levam e-mail/telefone/celular (InsertResponsaveis2).
+    sEmail: "",
+    sTelefone: "",
     sCPF: aluno.cpf?.trim() ?? "",
     sRG: aluno.rg?.trim() ?? "",
-    sCelular: aluno.celular?.trim() ?? "",
+    sCelular: "",
     sObservacao: observacaoAluno(aluno),
     sSexo: aluno.sexo?.trim() ?? "",
     sProfissao: "",

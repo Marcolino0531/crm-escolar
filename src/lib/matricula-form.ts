@@ -357,8 +357,6 @@ export function montarPayloadMatricula(
     if (responsavelPreenchido(r)) responsaveis.push(responsavelPayload(qual, r, form));
   }
 
-  const financeiro = responsaveis.find((r) => r.responsavelFinanceiro) ?? responsaveis[0];
-
   return {
     submissionId,
     unidade: form.unidade,
@@ -368,10 +366,10 @@ export function montarPayloadMatricula(
       cpf: soDigitos(form.aluno.cpf),
       sexo: form.aluno.genero,
       naturalidade: form.aluno.naturalidade.trim(),
-      // Contato do aluno = do responsável financeiro (o formulário não coleta
-      // telefone/e-mail do aluno).
-      email: financeiro?.email ?? "",
-      celular: financeiro?.celular ?? "",
+      // O aluno vai ao Sponte só com dados pessoais e endereço; o contato é
+      // exclusivo do cadastro de cada responsável.
+      email: "",
+      celular: "",
       midia: MIDIA_MATRICULA_SITE,
     },
     endereco: enderecoPayload(form.endereco),
