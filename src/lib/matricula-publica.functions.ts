@@ -27,6 +27,7 @@ import {
   MAX_SUBMISSOES_POR_IP,
   ORIGEM_SITE,
   TIPOS_DOCUMENTO_ACEITOS,
+  diasAtivosRotina,
   excedeuLimitePorIp,
   inicioJanelaLimite,
   montarPayloadMatricula,
@@ -645,6 +646,7 @@ async function faturar(
       refeicoes: rotina.refeicoes,
       semRefeicoes: rotina.semRefeicoes,
       horarioEstendido: rotina.horarioEstendido,
+      diasAtivos: diasAtivosRotina(rotina),
     });
   } catch (e) {
     const erro = e instanceof Error ? e.message : String(e);

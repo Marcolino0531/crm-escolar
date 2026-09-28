@@ -15,6 +15,10 @@ export const ROTULO_TIPO_COBRANCA: Record<string, string> = {
   proporcional: "Proporcional",
   material: "Material pedagógico",
   alimentacao: "Alimentação",
+  lanche_manha: "Lanche da Manhã",
+  almoco: "Almoço",
+  lanche_tarde: "Lanche da Tarde",
+  jantar: "Jantar",
   hora_extra: "Hora extra",
 };
 

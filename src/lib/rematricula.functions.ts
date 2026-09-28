@@ -149,6 +149,12 @@ import {
   resolverCredenciais,
 } from "@/lib/sponte.functions";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
+import {
+  ITENS_PACOTE_EXTRAS,
+  pacotesVazios,
+  type ItemPacoteExtras,
+  type PacotesExtras,
+} from "@/lib/pacotes-extras";
 import { getResendConfig, sendEmail } from "@/lib/agenda.email";
 import { emailValido } from "@/lib/imposto-renda-lote";
 import {
@@ -2173,6 +2179,112 @@ export const excluirValorMatricula = createServerFn({ method: "POST" })
       .eq("unidade", data.unidade)
       .eq("ano_letivo", data.anoLetivo)
       .eq("segmento", data.segmento);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ─── Cadastros Gerais: Valor Pacotes Extras (colégio × ano letivo) ──────────
+//
+// Pacote MENSAL (5 dias por semana) de cada refeição e da hora extra, usado
+// pelo faturamento da matrícula nova. Mesma permissão de Valor Matrícula.
+
+export interface PacotesExtrasRegistro {
+  unidade: string;
+  anoLetivo: number;
+  pacotes: PacotesExtras;
+  atualizadoEm: string | null;
+  atualizadoPor: string;
+}
+
+type PacotesExtrasRow = Record<ItemPacoteExtras, number | string | null> & {
+  unidade: string;
+  ano_letivo: number;
+  updated_at: string | null;
+  updated_by_nome: string | null;
+};
+
+function registroPacotes(r: PacotesExtrasRow): PacotesExtrasRegistro {
+  const pacotes = pacotesVazios();
+  for (const item of ITENS_PACOTE_EXTRAS) pacotes[item] = Number(r[item] ?? 0);
+  return {
+    unidade: r.unidade,
+    anoLetivo: Number(r.ano_letivo),
+    pacotes,
+    atualizadoEm: r.updated_at,
+    atualizadoPor: r.updated_by_nome ?? "",
+  };
+}
+
+// Tabela ainda inexistente (migration não aplicada) = lista vazia, sem erro.
+function tabelaInexistente(error: { code?: string; message: string }): boolean {
+  return error.code === "42P01" || /pacotes_extras_valores/.test(error.message);
+}
+
+// unidade null = "Todas as Unidades" do topo: consolidado das unidades permitidas.
+export const listarPacotesExtras = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => UnidadeOpcionalSchema.parse(input))
+  .handler(async ({ data, context }): Promise<PacotesExtrasRegistro[]> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    let query = supabaseAdmin
+      .from("pacotes_extras_valores" as never)
+      .select(
+        "unidade, ano_letivo, lanche_manha, almoco, lanche_tarde, jantar, hora_extra, updated_at, updated_by_nome",
+      )
+      .order("ano_letivo", { ascending: false })
+      .order("unidade", { ascending: true });
+    if (data.unidade) {
+      await exigirUnidadeValorMatricula(context.userId, data.unidade);
+      query = query.eq("unidade", data.unidade);
+    } else if (permitidas !== null) {
+      query = query.in("unidade", permitidas);
+    }
+    const { data: rows, error } = await query.returns<PacotesExtrasRow[]>();
+    if (error) {
+      if (tabelaInexistente(error)) return [];
+      throw new Error(error.message);
+    }
+    return (rows ?? []).map(registroPacotes);
+  });
+
+const PacotesExtrasSchema = z.object({
+  unidade: z.string().trim().min(1, "Selecione uma unidade."),
+  anoLetivo: z.number().int(),
+  pacotes: z.object({
+    lanche_manha: z.number().min(0),
+    almoco: z.number().min(0),
+    lanche_tarde: z.number().min(0),
+    jantar: z.number().min(0),
+    hora_extra: z.number().min(0),
+  }),
+});
+
+// Grava só no colégio do seletor global (validado aqui de novo).
+export const salvarPacotesExtras = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => PacotesExtrasSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeValorMatricula(context.userId, data.unidade);
+    if (!anoLetivoValido(data.anoLetivo)) {
+      throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
+    }
+    const linha: Record<string, unknown> = {
+      unidade: data.unidade,
+      ano_letivo: data.anoLetivo,
+      updated_at: new Date().toISOString(),
+      updated_by: context.userId,
+      updated_by_nome: await nomeDoUsuario(context.userId),
+    };
+    for (const item of ITENS_PACOTE_EXTRAS) {
+      const v = data.pacotes[item];
+      if (!Number.isFinite(v) || v < 0) throw new Error("Os valores não podem ser negativos.");
+      linha[item] = Math.round(v * 100) / 100;
+    }
+    const { error } = await supabaseAdmin
+      .from("pacotes_extras_valores" as never)
+      .upsert(linha as never, { onConflict: "unidade,ano_letivo" } as never);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

@@ -7,20 +7,35 @@
 //   (GetPlanosCursos); as datas vêm do calendário (dia 05, fev–dez);
 // - Material: valor anual do "Material Pedagógico por Série", parcelas do
 //   formulário limitadas às mensalidades restantes;
-// - Alimentação e hora extra: valores por unidade, nos meses do calendário.
+// - Refeições e hora extra: pacote mensal (5 dias) de "Valor Pacotes Extras"
+//   ÷ 5 × dias marcados na semana, um lançamento por item, nos meses do calendário.
 //
 // Tudo aqui é planejamento: cada lacuna vira pendência só do seu tipo.
 
 import { addDaysYMD, proximoDiaUtil } from "@/lib/billing-schedule";
 import { addMesesYMD } from "@/lib/confissao-divida";
-import { DIAS_UTEIS, REFEICOES_ROTINA, type RefeicoesRotina } from "@/lib/matricula-form";
+import { DIAS_UTEIS, type RefeicoesRotina } from "@/lib/matricula-form";
+import {
+  CATEGORIA_SPONTE_POR_ITEM,
+  ITEM_POR_REFEICAO,
+  REFEICOES_PACOTE,
+  mensagemPacoteSemValor,
+  pacoteSemValor,
+  valorMensalPacote,
+  type ItemPacoteExtras,
+  type PacotesExtras,
+} from "@/lib/pacotes-extras";
 import {
   CATEGORIA_MATERIAL_SPONTE,
   PARCELAS_MATERIAL_MAX,
   formatarBRL,
   parcelasMaterialValida,
 } from "@/lib/rematricula";
-import { parcelasMatriculaValida, validarPrimeiroVencimento } from "@/lib/rematricula-matricula";
+import {
+  parcelasMatriculaValida,
+  serveJantar,
+  validarPrimeiroVencimento,
+} from "@/lib/rematricula-matricula";
 import type { Weekday } from "@/lib/diario";
 
 // Categorias do plano de contas do Sponte usadas nos lançamentos. Os nomes são
@@ -28,8 +43,6 @@ import type { Weekday } from "@/lib/diario";
 // GetCategorias na unidade da submissão.
 export const CATEGORIA_MATRICULA_SPONTE = "Matrícula";
 export const CATEGORIA_MENSALIDADE_SPONTE = "Mensalidade";
-export const CATEGORIA_ALIMENTACAO_SPONTE = "Alimentação e Integral Extras";
-export const CATEGORIA_HORA_EXTRA_SPONTE = "Hora Extra";
 
 // ─── Plano do curso (GetPlanosCursos) ───────────────────────────────────────
 
@@ -166,52 +179,31 @@ export function opcoesParcelasMaterial(anoLetivo: number, dataPreenchimento: str
 
 // ─── Rotina ─────────────────────────────────────────────────────────────────
 
-/** Ocorrências de cada refeição marcada entre duas datas, inclusive. */
-export function contarRefeicoesNoPeriodo(
-  refeicoes: RefeicoesRotina,
-  inicioYMD: string,
-  fimYMD: string,
-): number {
-  if (inicioYMD > fimYMD) return 0;
-  const porDia = new Map<Weekday, number>();
-  for (const meal of REFEICOES_ROTINA) {
-    for (const dia of refeicoes[meal]) {
-      if (!DIAS_UTEIS.includes(dia)) continue;
-      porDia.set(dia, (porDia.get(dia) ?? 0) + 1);
-    }
-  }
-  if (porDia.size === 0) return 0;
-
-  const [ai, mi, di] = inicioYMD.split("-").map(Number);
-  const [af, mf, df] = fimYMD.split("-").map(Number);
-  const cursor = new Date(Date.UTC(ai, mi - 1, di));
-  const fim = Date.UTC(af, mf - 1, df);
-  let total = 0;
-  while (cursor.getTime() <= fim) {
-    // getUTCDay: 1=segunda … 5=sexta, mesma chave do Diário.
-    total += porDia.get(cursor.getUTCDay() as Weekday) ?? 0;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return total;
+/** Dias úteis (seg–sex) marcados, sem repetição. */
+export function diasUteisMarcados(dias: readonly Weekday[]): number {
+  return new Set(dias.filter((d) => DIAS_UTEIS.includes(d))).size;
 }
 
 // ─── Plano de faturamento ───────────────────────────────────────────────────
 
-// "proporcional" fica só por compatibilidade com lançamentos antigos: o
-// formulário não gera mais esse tipo.
+// "proporcional" e "alimentacao" ficam só por compatibilidade com lançamentos
+// antigos: o formulário não gera mais esses tipos.
 export type TipoLancamentoMatricula =
   | "matricula"
   | "mensalidade"
   | "proporcional"
   | "material"
   | "alimentacao"
-  | "hora_extra";
+  | ItemPacoteExtras;
 
 export const TIPOS_LANCAMENTO_FORMULARIO: readonly TipoLancamentoMatricula[] = [
   "matricula",
   "mensalidade",
   "material",
-  "alimentacao",
+  "lanche_manha",
+  "almoco",
+  "lanche_tarde",
+  "jantar",
   "hora_extra",
 ];
 
@@ -221,6 +213,10 @@ export const ROTULO_TIPO_LANCAMENTO: Record<TipoLancamentoMatricula, string> = {
   proporcional: "Mensalidade proporcional",
   material: "Material pedagógico",
   alimentacao: "Alimentação",
+  lanche_manha: "Lanche da Manhã",
+  almoco: "Almoço",
+  lanche_tarde: "Lanche da Tarde",
+  jantar: "Jantar",
   hora_extra: "Hora extra",
 };
 
@@ -261,9 +257,12 @@ export interface EntradaFaturamentoMatricula {
   materialParcelas: number | null;
   refeicoes: RefeicoesRotina;
   semRefeicoes: boolean;
-  valorRefeicao: number | null;
   horarioEstendido: boolean;
-  valorHoraExtraMensal: number | null;
+  // Dias úteis ativos da rotina (os que contam para a hora extra).
+  diasAtivos: readonly Weekday[];
+  // Pacotes mensais (5 dias) do colégio × ano letivo; null = sem linha
+  // cadastrada (ou tabela ainda inexistente): vira pendência de cada item marcado.
+  pacotes: PacotesExtras | null;
 }
 
 export interface PlanoFaturamentoMatricula {
@@ -343,7 +342,6 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
   const pendencias: PendenciaLancamento[] = [];
   const pendente = (tipo: TipoLancamentoMatricula, motivo: string) =>
     pendencias.push({ tipo, motivo });
-  const fimAnoLetivo = `${e.anoLetivo}-12-31`;
   const mensalidades = vencimentosMensalidade(e.anoLetivo, e.dataMatricula);
 
   // Matrícula: valor do School Hub, parcelas e 1º vencimento escolhidos pelo responsável.
@@ -428,59 +426,40 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
     );
   }
 
-  // Alimentação: total real das refeições marcadas até o fim do ano letivo,
-  // dividido nos meses do calendário.
-  if (!e.semRefeicoes) {
-    const quantidade = contarRefeicoesNoPeriodo(e.refeicoes, e.dataMatricula, fimAnoLetivo);
-    if (quantidade > 0) {
-      if (e.valorRefeicao === null || Math.round(e.valorRefeicao * 100) <= 0) {
-        pendente(
-          "alimentacao",
-          "Alimentação marcada na rotina, mas a unidade não tem valor por refeição configurado — lance na mão.",
-        );
-      } else if (mensalidades.length === 0) {
-        pendente(
-          "alimentacao",
-          "Alimentação marcada na rotina, mas não há mês a vencer para as parcelas — lance na mão.",
-        );
-      } else {
-        lancamentos.push(
-          parcelado(
-            "alimentacao",
-            CATEGORIA_ALIMENTACAO_SPONTE,
-            Math.round(quantidade * e.valorRefeicao * 100) / 100,
-            mensalidades,
-            `Alimentação ${e.anoLetivo} — ${quantidade} refeições (${formatarBRL(e.valorRefeicao)} cada)`,
-          ),
-        );
-      }
-    }
-  }
-
-  // Hora extra: mensalidade do horário estendido, uma parcela por mês do calendário.
-  if (e.horarioEstendido) {
-    if (e.valorHoraExtraMensal === null || Math.round(e.valorHoraExtraMensal * 100) <= 0) {
-      pendente(
-        "hora_extra",
-        "Horário estendido contratado, mas a unidade não tem valor de hora extra configurado — lance na mão.",
-      );
+  // Refeições e hora extra: pacote mensal (5 dias) ÷ 5 × dias marcados na
+  // semana, um lançamento mensal por item, valor cheio em todos os meses.
+  const itemExtra = (tipo: ItemPacoteExtras, dias: number) => {
+    if (dias <= 0) return;
+    const pacote = e.pacotes?.[tipo] ?? null;
+    if (pacote === null || pacoteSemValor(pacote)) {
+      pendente(tipo, mensagemPacoteSemValor(tipo, e.anoLetivo));
     } else if (mensalidades.length === 0) {
       pendente(
-        "hora_extra",
-        "Horário estendido contratado, mas não há mês a vencer para as parcelas — lance na mão.",
+        tipo,
+        `${CATEGORIA_SPONTE_POR_ITEM[tipo]} marcado na rotina, mas não há mês de ${e.anoLetivo} a vencer — lance na mão.`,
       );
     } else {
       lancamentos.push(
         mensal(
-          "hora_extra",
-          CATEGORIA_HORA_EXTRA_SPONTE,
-          e.valorHoraExtraMensal,
+          tipo,
+          CATEGORIA_SPONTE_POR_ITEM[tipo],
+          valorMensalPacote(pacote, dias),
           mensalidades,
-          `Horário estendido ${e.anoLetivo} — ${e.serie}`,
+          `${CATEGORIA_SPONTE_POR_ITEM[tipo]} ${e.anoLetivo} — ${dias}x por semana — pacote ${formatarBRL(pacote)}`,
         ),
       );
     }
+  };
+
+  if (!e.semRefeicoes) {
+    for (const refeicao of REFEICOES_PACOTE) {
+      const item = ITEM_POR_REFEICAO[refeicao];
+      if (item === "jantar" && !serveJantar(e.serie)) continue;
+      itemExtra(item, diasUteisMarcados(e.refeicoes[refeicao]));
+    }
   }
+
+  if (e.horarioEstendido) itemExtra("hora_extra", diasUteisMarcados(e.diasAtivos));
 
   return { lancamentos, pendencias };
 }

@@ -42,7 +42,12 @@ import {
 import { AccessDenied } from "@/components/AccessDenied";
 import { DadosColegios } from "@/components/documentos/DadosColegios";
 import { TestemunhasContrato } from "@/components/documentos/TestemunhasContrato";
-import { CadastrosGerais, abasCadastrosGerais } from "@/components/configuracoes/CadastrosGerais";
+import {
+  CadastrosGerais,
+  abasCadastrosGerais,
+  tipoCadastroValido,
+  type TipoCadastro,
+} from "@/components/configuracoes/CadastrosGerais";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listManagedUsers,
@@ -57,6 +62,9 @@ export const Route = createFileRoute("/configuracoes")({
       { title: "Configurações — School Hub" },
       { name: "description", content: "Gerencie centros de custo e regras de categorização." },
     ],
+  }),
+  validateSearch: (s: Record<string, unknown>): { cadastro?: TipoCadastro } => ({
+    cadastro: tipoCadastroValido(s.cadastro) ? s.cadastro : undefined,
   }),
   component: SettingsPage,
 });
