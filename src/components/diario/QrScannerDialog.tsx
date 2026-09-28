@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Html5Qrcode } from "html5-qrcode";
 import { CameraOff, CheckCircle2, Loader2, QrCode, XCircle } from "lucide-react";
@@ -20,8 +20,13 @@ import {
   inferirDirecao,
   minutosDoDia,
 } from "@/lib/diario-hora-extra";
+import {
+  MAX_FRAMES_AGUARDANDO_REGIAO,
+  criarLeitorSeguro,
+  encerrarLeitorSeguro,
+  mensagemDeErroLeitor,
+} from "@/lib/html5-qrcode-safe";
 
-const REGION_ID = "diario-qr-reader-region";
 // Ignora leituras repetidas do mesmo código dentro deste intervalo (o leitor
 // dispara continuamente enquanto o QR fica na frente da câmera).
 const REPEAT_COOLDOWN_MS = 4000;
@@ -39,7 +44,9 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
   const userId = session?.user?.id;
   const qc = useQueryClient();
 
+  const regionId = `diario-qr-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const startedRef = useRef(false);
   const processingRef = useRef(false);
   const lastScanRef = useRef<{ code: string; at: number }>({ code: "", at: 0 });
 
@@ -149,40 +156,72 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
     setCount(0);
     processingRef.current = false;
     lastScanRef.current = { code: "", at: 0 };
+    startedRef.current = false;
+    let frame = 0;
+    let tentativas = 0;
 
-    const scanner = new Html5Qrcode(REGION_ID, { verbose: false });
-    scannerRef.current = scanner;
-    scanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-          void handleDecoded(decodedText);
-        },
-        () => {
-          // Erros de decodificação por frame são normais — ignorados.
-        },
-      )
-      .then(() => {
-        if (!cancelled) setStarting(false);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setStarting(false);
-        setCameraError(e instanceof Error ? e.message : "Não foi possível acessar a câmera.");
-      });
+    const falhar = (e: unknown) => {
+      if (cancelled) return;
+      setStarting(false);
+      setCameraError(mensagemDeErroLeitor(e));
+    };
+
+    const iniciar = () => {
+      if (cancelled) return;
+      // O conteúdo do Dialog é montado num portal: no primeiro efeito a região
+      // ainda pode não estar no DOM — espera alguns frames antes de desistir.
+      if (!document.getElementById(regionId)) {
+        if (++tentativas < MAX_FRAMES_AGUARDANDO_REGIAO) {
+          frame = requestAnimationFrame(iniciar);
+          return;
+        }
+        falhar("A área da câmera não foi carregada. Feche e abra o leitor novamente.");
+        return;
+      }
+      const criado = criarLeitorSeguro(regionId, { verbose: false });
+      if (!criado.ok) {
+        falhar(criado.erro);
+        return;
+      }
+      const scanner = criado.leitor;
+      scannerRef.current = scanner;
+      try {
+        scanner
+          .start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            (decodedText) => {
+              void handleDecoded(decodedText);
+            },
+            () => {
+              // Erros de decodificação por frame são normais — ignorados.
+            },
+          )
+          .then(() => {
+            startedRef.current = true;
+            if (cancelled) {
+              encerrarLeitorSeguro(scanner, true);
+              return;
+            }
+            setStarting(false);
+          })
+          .catch(falhar);
+      } catch (e) {
+        falhar(e);
+      }
+    };
+
+    frame = requestAnimationFrame(iniciar);
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(frame);
       const s = scannerRef.current;
       scannerRef.current = null;
-      if (s) {
-        s.stop()
-          .then(() => s.clear())
-          .catch(() => {});
-      }
+      if (s) encerrarLeitorSeguro(s, startedRef.current);
+      startedRef.current = false;
     };
-  }, [open, handleDecoded]);
+  }, [open, handleDecoded, regionId]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -198,7 +237,7 @@ export function QrScannerDialog({ open, onOpenChange, students }: Props) {
         </DialogHeader>
 
         <div className="relative overflow-hidden rounded-2xl border border-border bg-black">
-          <div id={REGION_ID} className="min-h-[260px] w-full [&_video]:w-full" />
+          <div id={regionId} className="min-h-[260px] w-full [&_video]:w-full" />
           {starting && !cameraError && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-sm text-white">
               <Loader2 className="h-5 w-5 animate-spin" />

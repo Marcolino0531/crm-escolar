@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { CameraOff, Loader2, ScanBarcode } from "lucide-react";
 import {
@@ -9,8 +9,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { normalizarCodigoExemplar } from "@/lib/biblioteca";
+import {
+  MAX_FRAMES_AGUARDANDO_REGIAO,
+  criarLeitorSeguro,
+  encerrarLeitorSeguro,
+  mensagemDeErroLeitor,
+} from "@/lib/html5-qrcode-safe";
 
-const REGION_ID = "biblioteca-barcode-reader-region";
 const REPEAT_COOLDOWN_MS = 3000;
 
 type Props = {
@@ -27,7 +32,9 @@ type Props = {
 // "Ler QR Code" do Diário (QrScannerDialog): câmera traseira, cooldown de leitura
 // repetida e guarda contra processamento concorrente.
 export function BarcodeScannerDialog({ open, onOpenChange, titulo, descricao, onCodigo }: Props) {
+  const regionId = `biblioteca-barcode-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const startedRef = useRef(false);
   const processingRef = useRef(false);
   const lastScanRef = useRef<{ code: string; at: number }>({ code: "", at: 0 });
   const onCodigoRef = useRef(onCodigo);
@@ -47,66 +54,98 @@ export function BarcodeScannerDialog({ open, onOpenChange, titulo, descricao, on
     setLast(null);
     processingRef.current = false;
     lastScanRef.current = { code: "", at: 0 };
+    startedRef.current = false;
+    let frame = 0;
+    let tentativas = 0;
 
-    const scanner = new Html5Qrcode(REGION_ID, {
-      verbose: false,
-      formatsToSupport: [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.QR_CODE],
-    });
-    scannerRef.current = scanner;
-    scanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 280, height: 160 } },
-        (decodedText) => {
-          if (processingRef.current) return;
-          const now = Date.now();
-          const code = normalizarCodigoExemplar(decodedText);
-          if (!code) {
-            setLast({ ok: false, mensagem: "Código não reconhecido como exemplar da Biblioteca." });
-            return;
-          }
-          if (
-            lastScanRef.current.code === code &&
-            now - lastScanRef.current.at < REPEAT_COOLDOWN_MS
-          ) {
-            return;
-          }
-          lastScanRef.current = { code, at: now };
-          processingRef.current = true;
-          onCodigoRef
-            .current(code)
-            .then((r) => setLast(r))
-            .catch((e: unknown) =>
-              setLast({ ok: false, mensagem: e instanceof Error ? e.message : "Falha." }),
-            )
-            .finally(() => {
-              setTimeout(() => {
-                processingRef.current = false;
-              }, 800);
-            });
-        },
-        () => {},
-      )
-      .then(() => {
-        if (!cancelled) setStarting(false);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setStarting(false);
-        setCameraError(e instanceof Error ? e.message : "Não foi possível acessar a câmera.");
+    const onDecoded = (decodedText: string) => {
+      if (processingRef.current) return;
+      const now = Date.now();
+      const code = normalizarCodigoExemplar(decodedText);
+      if (!code) {
+        setLast({ ok: false, mensagem: "Código não reconhecido como exemplar da Biblioteca." });
+        return;
+      }
+      if (lastScanRef.current.code === code && now - lastScanRef.current.at < REPEAT_COOLDOWN_MS) {
+        return;
+      }
+      lastScanRef.current = { code, at: now };
+      processingRef.current = true;
+      onCodigoRef
+        .current(code)
+        .then((r) => setLast(r))
+        .catch((e: unknown) => setLast({ ok: false, mensagem: mensagemDeErroLeitor(e, "Falha.") }))
+        .finally(() => {
+          setTimeout(() => {
+            processingRef.current = false;
+          }, 800);
+        });
+    };
+
+    const falhar = (e: unknown) => {
+      if (cancelled) return;
+      setStarting(false);
+      setCameraError(mensagemDeErroLeitor(e));
+    };
+
+    const iniciar = () => {
+      if (cancelled) return;
+      // O conteúdo do Dialog é montado num portal: no primeiro efeito a região
+      // ainda pode não estar no DOM — espera alguns frames antes de desistir.
+      if (!document.getElementById(regionId)) {
+        if (++tentativas < MAX_FRAMES_AGUARDANDO_REGIAO) {
+          frame = requestAnimationFrame(iniciar);
+          return;
+        }
+        falhar("A área da câmera não foi carregada. Feche e abra o leitor novamente.");
+        return;
+      }
+      const criado = criarLeitorSeguro(regionId, {
+        verbose: false,
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
       });
+      if (!criado.ok) {
+        falhar(criado.erro);
+        return;
+      }
+      const scanner = criado.leitor;
+      scannerRef.current = scanner;
+      try {
+        scanner
+          .start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 280, height: 160 } },
+            onDecoded,
+            () => {},
+          )
+          .then(() => {
+            startedRef.current = true;
+            if (cancelled) {
+              encerrarLeitorSeguro(scanner, true);
+              return;
+            }
+            setStarting(false);
+          })
+          .catch(falhar);
+      } catch (e) {
+        falhar(e);
+      }
+    };
+
+    frame = requestAnimationFrame(iniciar);
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(frame);
       const s = scannerRef.current;
       scannerRef.current = null;
-      if (s) {
-        s.stop()
-          .then(() => s.clear())
-          .catch(() => {});
-      }
+      if (s) encerrarLeitorSeguro(s, startedRef.current);
+      startedRef.current = false;
     };
-  }, [open]);
+  }, [open, regionId]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -119,7 +158,7 @@ export function BarcodeScannerDialog({ open, onOpenChange, titulo, descricao, on
         </DialogHeader>
 
         <div className="relative overflow-hidden rounded-2xl border border-border bg-black">
-          <div id={REGION_ID} className="min-h-[260px] w-full [&_video]:w-full" />
+          <div id={regionId} className="min-h-[260px] w-full [&_video]:w-full" />
           {starting && !cameraError && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-sm text-white">
               <Loader2 className="h-5 w-5 animate-spin" />

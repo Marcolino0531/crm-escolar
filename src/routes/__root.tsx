@@ -90,6 +90,25 @@ function NotFoundComponent() {
   );
 }
 
+// Erros podem chegar como string ou objeto sem `message` (ex.: html5-qrcode
+// lança strings); nunca exibir a tela sem descrição.
+function descricaoDoErro(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  if (error && typeof error === "object") {
+    const m = (error as { message?: unknown }).message;
+    if (typeof m === "string" && m) return m;
+    try {
+      const s = JSON.stringify(error);
+      if (s && s !== "{}") return s;
+    } catch {
+      // ignora
+    }
+  }
+  const s = String(error);
+  return s && s !== "[object Object]" ? s : "Erro desconhecido.";
+}
+
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
@@ -97,7 +116,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold">Algo deu errado</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{descricaoDoErro(error)}</p>
         <button
           onClick={() => {
             router.invalidate();
