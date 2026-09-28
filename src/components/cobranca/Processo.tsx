@@ -77,11 +77,13 @@ export function useProcessoCaso(casoId: string) {
 export function SecaoProcesso({
   caso,
   prontoParaProcesso,
+  execucao = false,
   edita,
   onDone,
 }: {
   caso: CasoCompleto;
   prontoParaProcesso: boolean;
+  execucao?: boolean;
   edita: boolean;
   onDone: () => void;
 }) {
@@ -110,10 +112,13 @@ export function SecaoProcesso({
           <Scale className="h-4 w-4" /> Processo judicial
         </h3>
         <p className="text-sm text-muted-foreground">
-          O prazo da notificação encerrou sem regularização. Registre o ajuizamento para acompanhar
-          o processo aqui.
+          {execucao
+            ? "Execução em preparação. Preencha os dados do processo de execução quando ajuizado."
+            : "O prazo da notificação encerrou sem regularização. Registre o ajuizamento para acompanhar o processo aqui."}
         </p>
-        {edita && <ProcessoDialog caso={caso} detalhe={d} onDone={recarregar} />}
+        {edita && (
+          <ProcessoDialog caso={caso} detalhe={d} execucao={execucao} onDone={recarregar} />
+        )}
       </section>
     );
   }
@@ -249,17 +254,21 @@ function Painel({ label, valor, destaque }: { label: string; valor: string; dest
 function ProcessoDialog({
   caso,
   detalhe,
+  execucao = false,
   onDone,
 }: {
   caso: CasoCompleto;
   detalhe: ProcessoDetalhe;
+  execucao?: boolean;
   onDone: () => void;
 }) {
   const existente = detalhe.processo;
   const iniciar = useServerFn(iniciarProcessoCobranca);
   const atualizar = useServerFn(atualizarProcessoCobranca);
   const [aberto, setAberto] = useState(false);
-  const [tipoAcao, setTipoAcao] = useState(existente?.tipo_acao ?? "");
+  const [tipoAcao, setTipoAcao] = useState(
+    existente?.tipo_acao ?? (execucao ? "execucao_titulo" : ""),
+  );
   const [numero, setNumero] = useState(existente?.numero_processo ?? "");
   const [comarca, setComarca] = useState(existente?.comarca ?? "Belo Horizonte");
   const [vara, setVara] = useState(existente?.vara ?? "");
@@ -303,7 +312,11 @@ function ProcessoDialog({
     <>
       <Button size="sm" variant={existente ? "outline" : "default"} onClick={() => setAberto(true)}>
         {existente ? <Pencil className="mr-2 h-4 w-4" /> : <Scale className="mr-2 h-4 w-4" />}
-        {existente ? "Editar dados do processo" : "Iniciar processo judicial"}
+        {existente
+          ? "Editar dados do processo"
+          : execucao
+            ? "Registrar processo"
+            : "Iniciar processo judicial"}
       </Button>
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="max-w-lg">

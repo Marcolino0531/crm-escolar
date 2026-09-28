@@ -18,6 +18,8 @@ export type MarcoAvisoAcordo = (typeof MARCOS_AVISO_ACORDO)[number];
 
 /** Parcela "Acordo" lida do Sponte (GetParcelas), aberta ou quitada. */
 export interface ParcelaAcordoSponte {
+  /** Chave única da parcela (ver `chaveParcelaSponte`); a Conta a Receber é compartilhada pelo acordo. */
+  chave: string;
   contaReceberID: string;
   alunoId: string;
   vencimento: string; // YYYY-MM-DD
@@ -45,7 +47,7 @@ export interface ParcelaAcordoAcompanhada {
   valorPago: number;
   saldo: number;
   dataPagamento: string | null;
-  contaReceberID: string | null;
+  chaveSponte: string | null;
 }
 
 export interface AcompanhamentoAcordo {
@@ -57,6 +59,25 @@ export interface AcompanhamentoAcordo {
   quitado: boolean;
   temNaoEncontrada: boolean;
   maiorAtrasoDias: number;
+}
+
+/**
+ * No Sponte todas as parcelas de um acordo têm o mesmo ContaReceberID; a parcela
+ * é identificada por ContaReceberID + NumeroParcela (fallback: NumeroBoleto;
+ * depois ContaReceberID + vencimento + valor).
+ */
+export function chaveParcelaSponte(p: {
+  contaReceberID: string;
+  numeroParcela?: string | null;
+  numeroBoleto?: string | null;
+  vencimento: string;
+  valor: number;
+}): string {
+  const np = (p.numeroParcela ?? "").trim();
+  if (np) return `${p.contaReceberID}#${np}`;
+  const nb = (p.numeroBoleto ?? "").trim();
+  if (nb && nb !== "0") return `bol_${nb}`;
+  return `${p.contaReceberID}|${p.vencimento}|${Math.round(p.valor * 100)}`;
 }
 
 function centavos(v: number): number {
@@ -82,7 +103,7 @@ export function parearParcelasAcordo(
     let melhor: ParcelaAcordoSponte | null = null;
     let melhorDist = Infinity;
     for (const s of sponte) {
-      if (usadas.has(s.contaReceberID)) continue;
+      if (usadas.has(s.chave)) continue;
       if (centavos(s.valor) !== centavos(p.valor)) continue;
       const dist = Math.abs(diasEntreYMD(p.vencimento, s.vencimento));
       if (dist > TOLERANCIA_VENCIMENTO_DIAS || dist >= melhorDist) continue;
@@ -90,7 +111,7 @@ export function parearParcelasAcordo(
       melhorDist = dist;
     }
     if (melhor) {
-      usadas.add(melhor.contaReceberID);
+      usadas.add(melhor.chave);
       pares.set(p.numero, melhor);
     }
   }
@@ -119,7 +140,7 @@ export function acompanharAcordo(
           valorPago: 0,
           saldo: p.valor,
           dataPagamento: null,
-          contaReceberID: null,
+          chaveSponte: null,
         };
       }
       const atraso = diasEntreYMD(s.vencimento, hojeYMD);
@@ -139,7 +160,7 @@ export function acompanharAcordo(
         valorPago: situacao === "paga" ? s.valorPago || s.valor : s.valorPago,
         saldo: situacao === "paga" ? 0 : Math.max(0, s.saldo),
         dataPagamento: s.dataPagamento || null,
-        contaReceberID: s.contaReceberID,
+        chaveSponte: s.chave,
       };
     });
 

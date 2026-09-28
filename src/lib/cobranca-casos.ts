@@ -27,14 +27,19 @@ export const STATUS_CASO = [
 ] as const;
 export type StatusCaso = (typeof STATUS_CASO)[number];
 
-/** Etapa exibida na tela: o status mais o derivado "pronto_processo". */
-export type EtapaCaso = StatusCaso | "pronto_processo";
+/**
+ * Etapa exibida na tela: o status mais os derivados "pronto_processo"
+ * (prazo da notificação encerrado) e "execucao_preparacao" (acordo com
+ * execução iniciada, status ainda 'acordo').
+ */
+export type EtapaCaso = StatusCaso | "pronto_processo" | "execucao_preparacao";
 
 export const ETAPAS_FILTRO: readonly { id: EtapaCaso; label: string }[] = [
   { id: "mensagens", label: "Mensagens" },
   { id: "notificacao", label: "Notificação" },
   { id: "aguardando_prazo", label: "Aguardando prazo" },
   { id: "pronto_processo", label: "Pronto para processo" },
+  { id: "execucao_preparacao", label: "Execução em preparação" },
   { id: "processo", label: "Em processo" },
   { id: "acordo", label: "Acordo" },
   { id: "encerrado", label: "Encerradas" },
@@ -71,6 +76,7 @@ export const CATEGORIAS_ANEXO = [
   "transferencia",
   "docs_responsavel",
   "outro",
+  "termo_confissao_assinado",
 ] as const;
 export type CategoriaAnexo = (typeof CATEGORIAS_ANEXO)[number];
 
@@ -127,7 +133,21 @@ export const LABEL_CATEGORIA: Record<CategoriaAnexo, string> = {
   transferencia: "Pedido de transferência",
   docs_responsavel: "Documentos do responsável",
   outro: "Outro",
+  termo_confissao_assinado: "Termo de Confissão de Dívida assinado",
 };
+
+export const CATEGORIA_TERMO_ASSINADO: CategoriaAnexo = "termo_confissao_assinado";
+
+/** Termo assinado mais recente do caso (o último substitui os anteriores). */
+export function termoAssinadoDoCaso<A extends Pick<AnexoCaso, "categoria" | "created_at">>(
+  anexos: readonly A[],
+): A | null {
+  return (
+    [...anexos]
+      .filter((a) => a.categoria === CATEGORIA_TERMO_ASSINADO)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+  );
+}
 
 export const BUCKET_COBRANCA = "cobranca-casos";
 export const TOTAL_MENSAGENS = 5;
@@ -530,13 +550,14 @@ export type CasoEtapaInput = Pick<CasoResumo, "status" | "prazo_final"> & {
 export function etapaDoCaso(caso: CasoEtapaInput, hojeYMD: string): EtapaCaso {
   if (caso.status === "aguardando_prazo" && caso.prazo_final && hojeYMD > caso.prazo_final)
     return "pronto_processo";
-  if (caso.status === "acordo" && caso.acordo_quebrado_em) return "pronto_processo";
+  if (caso.status === "acordo" && caso.acordo_quebrado_em) return "execucao_preparacao";
   return caso.status;
 }
 
-/** Processo pode ser iniciado: prazo da notificação encerrado OU acordo quebrado. */
+/** Processo pode ser iniciado: prazo da notificação encerrado OU execução do acordo iniciada. */
 export function podeIniciarProcesso(caso: CasoEtapaInput, hojeYMD: string): boolean {
-  return etapaDoCaso(caso, hojeYMD) === "pronto_processo";
+  const etapa = etapaDoCaso(caso, hojeYMD);
+  return etapa === "pronto_processo" || etapa === "execucao_preparacao";
 }
 
 export function labelEtapa(etapa: EtapaCaso): string {
@@ -570,9 +591,9 @@ export function proximaAcao(
       return dias === 0 ? "Prazo termina hoje" : `Aguardar prazo (${dias} dia(s))`;
     }
     case "pronto_processo":
-      return caso.status === "acordo"
-        ? "Acordo quebrado — iniciar processo judicial"
-        : "Iniciar processo judicial";
+      return "Iniciar processo judicial";
+    case "execucao_preparacao":
+      return "Preencher os dados do processo de execução quando ajuizado";
     case "processo":
       return "Acompanhar processo";
     case "encerrado":
@@ -688,6 +709,8 @@ export interface ParcelaAcordoPaga {
 
 export interface AcordoTimeline extends AcordoResumo {
   parcelasPagas: ParcelaAcordoPaga[];
+  /** Valor da causa sugerido no dia (sem correção monetária), quando a execução foi iniciada. */
+  valorCausaSugerido?: number | null;
 }
 
 export function chaveOrdem(quando: string): string {
@@ -721,7 +744,11 @@ export function montarTimeline(
             titulo: `Data de início alterada de ${formatarDataBR(alt.de)} para ${formatarDataBR(alt.para)}`,
           },
     );
+  // Depois do acordo registrado, as mensagens ainda não enviadas deixam de existir
+  // como previsão; só o histórico do que foi enviado permanece.
+  const comAcordo = !!caso.acordo_documento_id;
   for (const m of [...mensagens].sort((a, b) => a.ordem - b.ordem)) {
+    if (comAcordo && !m.enviada_em) continue;
     eventos.push({
       tipo: "mensagem",
       quando: m.data_envio ?? m.data_prevista,
@@ -770,15 +797,20 @@ export function montarTimeline(
     eventos.push({
       tipo: "documento",
       quando: a.created_at,
-      titulo: a.nome_personalizado || LABEL_CATEGORIA[a.categoria],
+      titulo:
+        a.categoria === CATEGORIA_TERMO_ASSINADO
+          ? "Termo assinado anexado"
+          : a.nome_personalizado || LABEL_CATEGORIA[a.categoria],
       detalhe:
-        a.origem === "gerado"
-          ? "Gerado pelo sistema"
-          : a.origem === "sistema"
-            ? a.categoria === "contrato"
-              ? "Contrato assinado buscado no sistema (ZapSign)"
-              : "Copiado do cadastro de matrícula"
-            : a.nome_arquivo,
+        a.categoria === CATEGORIA_TERMO_ASSINADO
+          ? `${a.nome_arquivo} · ${a.origem === "sistema" ? "ZapSign" : "PDF anexado"}`
+          : a.origem === "gerado"
+            ? "Gerado pelo sistema"
+            : a.origem === "sistema"
+              ? a.categoria === "contrato"
+                ? "Contrato assinado buscado no sistema (ZapSign)"
+                : "Copiado do cadastro de matrícula"
+              : a.nome_arquivo,
       anexo: a,
     });
   }
@@ -799,8 +831,14 @@ export function montarTimeline(
     eventos.push({
       tipo: "acordo_quebra",
       quando: caso.acordo_quebrado_em,
-      titulo: "Acordo quebrado",
-      detalhe: "Pronto para processo",
+      titulo: acordo
+        ? `Execução iniciada · Termo nº ${acordo.numeroTermo}${
+            acordo.valorCausaSugerido != null
+              ? ` · valor da causa sugerido ${formatarBRL(acordo.valorCausaSugerido)}`
+              : ""
+          }`
+        : "Execução iniciada",
+      detalhe: "Execução em preparação",
     });
   if (caso.encerrado_em)
     eventos.push({

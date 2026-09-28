@@ -337,6 +337,7 @@ function EtapaBadge({ etapa }: { etapa: EtapaCaso }) {
     aguardando_prazo: "bg-orange-100 text-orange-700",
     acordo: "bg-emerald-100 text-emerald-700",
     pronto_processo: "bg-red-100 text-red-700",
+    execucao_preparacao: "bg-red-100 text-red-800",
     processo: "bg-purple-100 text-purple-700",
     encerrado: "bg-slate-100 text-slate-600",
   };
@@ -812,7 +813,13 @@ function CasoView({
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           {d.acordo && (
-            <SecaoAcordo caso={caso} acordo={d.acordo} edita={edita} onDone={recarregar} />
+            <SecaoAcordo
+              caso={caso}
+              acordo={d.acordo}
+              anexos={anexos}
+              edita={edita}
+              onDone={recarregar}
+            />
           )}
           {caso.status === "mensagens" && (
             <SecaoMensagens detalhe={d} edita={edita} onDone={recarregar} />
@@ -820,15 +827,19 @@ function CasoView({
           {(caso.status === "notificacao" || caso.status === "aguardando_prazo") && (
             <SecaoNotificacao detalhe={d} etapa={etapa} edita={edita} onDone={recarregar} />
           )}
-          {(etapa === "pronto_processo" || caso.status === "processo" || encerrado) && (
+          {(etapa === "pronto_processo" ||
+            etapa === "execucao_preparacao" ||
+            caso.status === "processo" ||
+            encerrado) && (
             <SecaoProcesso
               caso={caso}
-              prontoParaProcesso={etapa === "pronto_processo"}
+              prontoParaProcesso={etapa === "pronto_processo" || etapa === "execucao_preparacao"}
+              execucao={etapa === "execucao_preparacao"}
               edita={edita}
               onDone={recarregar}
             />
           )}
-          {caso.status !== "mensagens" && (
+          {caso.status !== "mensagens" && !caso.acordo_documento_id && (
             <SecaoDocumentacao detalhe={d} edita={edita} onDone={recarregar} />
           )}
           {encerrado && (
@@ -925,7 +936,9 @@ function SecaoMensagens({
 }) {
   const [registrando, setRegistrando] = useState<MensagemComLink | null>(null);
   const [substituindo, setSubstituindo] = useState<MensagemComLink | null>(null);
-  const mensagens = [...detalhe.mensagens].sort((a, b) => a.ordem - b.ordem);
+  const mensagens = [...detalhe.mensagens]
+    .filter((m) => !detalhe.caso.acordo_documento_id || !!m.enviada_em)
+    .sort((a, b) => a.ordem - b.ordem);
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
