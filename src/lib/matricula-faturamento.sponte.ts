@@ -29,6 +29,13 @@ import { chaveSerie } from "@/lib/rematricula";
 import { valorMatricula } from "@/lib/rematricula-matricula";
 import { valoresMatriculaDoAno } from "@/lib/rematricula.functions";
 import type { RefeicoesRotina } from "@/lib/matricula-form";
+import {
+  ITENS_PACOTE_EXTRAS,
+  pacotesVazios,
+  type ItemPacoteExtras,
+  type PacotesExtras,
+} from "@/lib/pacotes-extras";
+import type { Weekday } from "@/lib/diario";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   atualizarParcelaSponte,
@@ -114,24 +121,27 @@ export async function buscarPlanosCurso(
 
 // ─── Configurações locais ───────────────────────────────────────────────────
 
-export interface ValoresOpcionaisUnidade {
-  valorRefeicao: number | null;
-  valorHoraExtra: number | null;
-}
-
-export async function valoresOpcionaisDaUnidade(unidade: string): Promise<ValoresOpcionaisUnidade> {
-  const { data } = await supabaseAdmin
-    .from("unidade_valores_opcionais" as never)
-    .select("valor_refeicao, valor_hora_extra")
+// Pacotes mensais do colégio × ano letivo. Tabela ausente (migration ainda não
+// aplicada) ou linha inexistente = null: cada item marcado vira pendência, sem
+// derrubar o formulário.
+export async function pacotesExtrasDaUnidade(
+  unidade: string,
+  anoLetivo: number,
+): Promise<PacotesExtras | null> {
+  const { data, error } = await supabaseAdmin
+    .from("pacotes_extras_valores" as never)
+    .select("lanche_manha, almoco, lanche_tarde, jantar, hora_extra")
     .eq("unidade", unidade)
-    .maybeSingle<{ valor_refeicao: number; valor_hora_extra: number }>();
-  if (!data) return { valorRefeicao: null, valorHoraExtra: null };
-  const refeicao = Number(data.valor_refeicao);
-  const horaExtra = Number(data.valor_hora_extra);
-  return {
-    valorRefeicao: Math.round(refeicao * 100) > 0 ? refeicao : null,
-    valorHoraExtra: Math.round(horaExtra * 100) > 0 ? horaExtra : null,
-  };
+    .eq("ano_letivo", anoLetivo)
+    .maybeSingle<Record<ItemPacoteExtras, number | string | null>>();
+  if (error) {
+    console.warn(`${LOG_TAG} pacotes_extras_valores indisponível: ${error.message}`);
+    return null;
+  }
+  if (!data) return null;
+  const pacotes = pacotesVazios();
+  for (const item of ITENS_PACOTE_EXTRAS) pacotes[item] = Number(data[item] ?? 0);
+  return pacotes;
 }
 
 // Valor do material só do ano letivo da matrícula — nunca de outro ano.
@@ -198,6 +208,7 @@ export interface EntradaFaturamento {
   refeicoes: RefeicoesRotina;
   semRefeicoes: boolean;
   horarioEstendido: boolean;
+  diasAtivos: readonly Weekday[];
 }
 
 async function linhasExistentes(submissionId: string): Promise<LinhaLancamento[]> {
@@ -389,7 +400,7 @@ async function valorMatriculaDaSerie(entrada: EntradaFaturamento): Promise<numbe
 /**
  * Faturamento da matrícula nova assim que o aluno existe no Sponte (não depende
  * da turma): resolve o curso pela série, lê valores (plano, Matrícula, material,
- * opcionais), monta o cronograma por tipo e lança cada título de forma
+ * pacotes extras), monta o cronograma por tipo e lança cada título de forma
  * independente. Nada aqui desfaz cadastro ou matrícula — o que falha volta como
  * pendência do próprio tipo.
  */
@@ -404,11 +415,11 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     };
   }
 
-  const [{ plano, erro: erroPlano }, matriculaValor, material, opcionais] = await Promise.all([
+  const [{ plano, erro: erroPlano }, matriculaValor, material, pacotes] = await Promise.all([
     planoDaSerie(creds, entrada),
     valorMatriculaDaSerie(entrada),
     materialAnualDaSerie(entrada.unidade, entrada.serie, entrada.anoLetivo),
-    valoresOpcionaisDaUnidade(entrada.unidade),
+    pacotesExtrasDaUnidade(entrada.unidade, entrada.anoLetivo),
   ]);
 
   const planejado = montarPlanoFaturamento({
@@ -423,9 +434,9 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     materialParcelas: entrada.materialParcelas,
     refeicoes: entrada.refeicoes,
     semRefeicoes: entrada.semRefeicoes,
-    valorRefeicao: opcionais.valorRefeicao,
     horarioEstendido: entrada.horarioEstendido,
-    valorHoraExtraMensal: opcionais.valorHoraExtra,
+    diasAtivos: entrada.diasAtivos,
+    pacotes,
   });
 
   const pendencias = planejado.pendencias.map((p) =>
