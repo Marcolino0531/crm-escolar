@@ -6,7 +6,25 @@ import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import type { AnexoCaso, CasoCompleto, CasoResumo } from "@/lib/cobranca-casos";
+import {
+  podeIniciarProcesso,
+  type AnexoCaso,
+  type CasoCompleto,
+  type CasoResumo,
+} from "@/lib/cobranca-casos";
+import {
+  acompanharAcordo,
+  avisosAcordoPendentes,
+  valorCausaAcordo,
+  type AvisoAcordo,
+  type ValorCausaAcordo,
+} from "@/lib/cobranca-acordo";
+import {
+  carregarTermo,
+  leituraRecente,
+  parcelasAcordoDosAlunos,
+  sincronizarAcordo,
+} from "@/lib/cobranca-acordo.server";
 import {
   arquivoExiste,
   carregarCasoRow,
@@ -125,7 +143,21 @@ export interface ProcessoDetalhe {
   recebimentos: RecebimentoComLink[];
   /** Sugestão do valor da causa (demonstrativo mais recente ou valor_inicial). */
   sugestaoValorCausa: number;
+  /** Acordo quebrado: memória de cálculo do valor da causa (5.5). */
+  valorCausaAcordo: ValorCausaAcordo | null;
   hojeYMD: string;
+}
+
+async function valorCausaAcordoQuebrado(
+  caso: CasoCompleto,
+  hoje: string,
+): Promise<ValorCausaAcordo | null> {
+  if (caso.status !== "acordo" || !caso.acordo_quebrado_em || !caso.acordo_documento_id)
+    return null;
+  const termo = await carregarTermo(caso.acordo_documento_id);
+  if (!termo) return null;
+  const { parcelas } = await parcelasAcordoDosAlunos(caso);
+  return valorCausaAcordo(acompanharAcordo(termo.parcelas, parcelas, hoje), hoje);
 }
 
 export const carregarProcessoCaso = createServerFn({ method: "POST" })
@@ -143,7 +175,11 @@ export const carregarProcessoCaso = createServerFn({ method: "POST" })
       .eq("caso_id", caso.id)
       .returns<Pick<AnexoCaso, "categoria" | "origem" | "created_at" | "nome_personalizado">[]>();
     if (error) throw new Error(error.message);
-    const sugestao = sugestaoValorCausa(caso, demonstrativosDoCaso(anexos ?? []));
+    const hoje = hojeYMD();
+    const causaAcordo = processo ? null : await valorCausaAcordoQuebrado(caso, hoje);
+    const sugestao = causaAcordo
+      ? causaAcordo.total
+      : sugestaoValorCausa(caso, demonstrativosDoCaso(anexos ?? []));
 
     if (!processo)
       return {
@@ -151,7 +187,8 @@ export const carregarProcessoCaso = createServerFn({ method: "POST" })
         andamentos: [],
         recebimentos: [],
         sugestaoValorCausa: sugestao,
-        hojeYMD: hojeYMD(),
+        valorCausaAcordo: causaAcordo,
+        hojeYMD: hoje,
       };
 
     const [andamentos, recebimentos] = await Promise.all([
@@ -176,7 +213,8 @@ export const carregarProcessoCaso = createServerFn({ method: "POST" })
       andamentos: andamentosComLink,
       recebimentos: recebimentosComLink,
       sugestaoValorCausa: sugestao,
-      hojeYMD: hojeYMD(),
+      valorCausaAcordo: null,
+      hojeYMD: hoje,
     };
   });
 
@@ -209,8 +247,10 @@ export const iniciarProcessoCobranca = createServerFn({ method: "POST" })
   .inputValidator((i: unknown) => IniciarProcessoSchema.parse(i))
   .handler(async ({ data, context }): Promise<{ processoId: string }> => {
     const caso = await exigirCasoEditavel(context.userId, data.casoId);
-    if (caso.status !== "aguardando_prazo" || !caso.prazo_final || hojeYMD() <= caso.prazo_final)
-      throw new Error("O processo só pode ser iniciado quando o prazo da notificação já encerrou.");
+    if (!podeIniciarProcesso(caso, hojeYMD()))
+      throw new Error(
+        "O processo só pode ser iniciado quando o prazo da notificação já encerrou ou após a quebra do acordo.",
+      );
     if (await carregarProcessoRow(caso.id)) throw new Error("Este caso já tem processo.");
     const invalido = validarProcesso({
       tipo_acao: data.tipoAcao,
@@ -461,4 +501,69 @@ export const dispensarAvisoPrazo = createServerFn({ method: "POST" })
       );
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ─── Avisos de atraso do acordo (sino) ───────────────────────────────────────
+
+interface CasoAcordoRow {
+  id: string;
+  unidade: string;
+  responsavel_nome: string;
+  acordo_documento_id: string | null;
+}
+
+/**
+ * Avisos de parcela do acordo em atraso (marco 1 e 15) para os casos em acordo
+ * das unidades permitidas. O Sponte é lido ao vivo (com leitura recente da
+ * instância reaproveitada por 15 min); nada é persistido. A dispensa por marco
+ * fica no navegador de quem dispensou (não há tabela para isso nesta migration).
+ */
+export const avisosAcordoCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<AvisoAcordo[]> => {
+    const { data: podeEditar } = await supabaseAdmin.rpc(
+      "can_edit_module" as never,
+      { _user_id: context.userId, _module: "financeiro_cobranca" } as never,
+    );
+    if (!podeEditar) return [];
+    const casos = await fetchAllRows<CasoAcordoRow>((from, to) =>
+      supabaseAdmin
+        .from("cobranca_casos" as never)
+        .select("id, unidade, responsavel_nome, acordo_documento_id")
+        .eq("status", "acordo")
+        .is("acordo_quebrado_em", null)
+        .not("acordo_documento_id", "is", null)
+        .order("id")
+        .range(from, to)
+        .returns<CasoAcordoRow[]>(),
+    );
+    if (casos.length === 0) return [];
+    const allowed = await allowedSponteUnidades(context.userId);
+    const visiveis = casos.filter((c) => allowed === null || allowed.includes(c.unidade));
+    const hoje = hojeYMD();
+    const entradas: Parameters<typeof avisosAcordoPendentes>[0][number][] = [];
+    for (const c of visiveis) {
+      let leitura = leituraRecente(c.id);
+      if (!leitura) {
+        try {
+          leitura = await sincronizarAcordo(await carregarCasoRow(c.id), hoje);
+        } catch (e) {
+          console.error(
+            "[cobrança acordo] sino: falha ao ler caso",
+            c.id,
+            e instanceof Error ? e.message : e,
+          );
+          continue;
+        }
+      }
+      if (!leitura || leitura.encerradoAgora) continue;
+      entradas.push({
+        casoId: c.id,
+        unidade: c.unidade,
+        responsavelNome: c.responsavel_nome,
+        numeroTermo: leitura.termo.numero,
+        acompanhamento: leitura.acompanhamento,
+      });
+    }
+    return avisosAcordoPendentes(entradas, []);
   });

@@ -9,6 +9,8 @@
 // mesma condição, então aparece mesmo antes do cron rodar.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { sincronizarAcordosDiario } from "@/lib/cobranca-acordo.server";
+import { carregarCasoRow, hojeYMD } from "@/lib/cobranca-casos.functions";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -51,7 +53,16 @@ export async function handleReceivablesApi(request: Request): Promise<Response |
       if (error) throw new Error(error.message);
       const liberados = (data ?? []).length;
       console.log(`[receivables] cron: ${liberados} recebível(is) liberado(s) em ${today}`);
-      return json({ ok: true, liberados });
+      // Acordos da Cobrança: releitura diária das parcelas "Acordo" no Sponte.
+      // Falha aqui não derruba o flip dos recebíveis.
+      let acordos: { sincronizados: number; encerrados: number; falhas: number } | null = null;
+      try {
+        acordos = await sincronizarAcordosDiario(hojeYMD(), carregarCasoRow);
+        console.log(`[receivables] cron acordos:`, acordos);
+      } catch (e) {
+        console.error("[receivables] cron acordos falhou:", e instanceof Error ? e.message : e);
+      }
+      return json({ ok: true, liberados, acordos });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[receivables] cron falhou:", msg);

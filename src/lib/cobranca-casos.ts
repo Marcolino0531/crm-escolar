@@ -21,6 +21,7 @@ export const STATUS_CASO = [
   "mensagens",
   "notificacao",
   "aguardando_prazo",
+  "acordo",
   "processo",
   "encerrado",
 ] as const;
@@ -35,8 +36,21 @@ export const ETAPAS_FILTRO: readonly { id: EtapaCaso; label: string }[] = [
   { id: "aguardando_prazo", label: "Aguardando prazo" },
   { id: "pronto_processo", label: "Pronto para processo" },
   { id: "processo", label: "Em processo" },
+  { id: "acordo", label: "Acordo" },
   { id: "encerrado", label: "Encerradas" },
 ];
+
+/** Etapas em que o botão "Registrar acordo" fica disponível. */
+export const ETAPAS_REGISTRAR_ACORDO: readonly EtapaCaso[] = [
+  "mensagens",
+  "notificacao",
+  "aguardando_prazo",
+  "pronto_processo",
+];
+
+export function podeRegistrarAcordo(etapa: EtapaCaso): boolean {
+  return ETAPAS_REGISTRAR_ACORDO.includes(etapa);
+}
 
 export const MOTIVOS_ENCERRAMENTO = [
   { id: "pago", label: "Pago" },
@@ -185,6 +199,16 @@ export interface CasoResumo {
   prazo_final: string | null;
   notificacao_gerada_em: string | null;
   notificacao_recebida_em: string | null;
+  acordo_quebrado_em: string | null;
+}
+
+/** Dados do acordo exibidos na lista/detalhe (termo + acompanhamento resumido). */
+export interface AcordoResumo {
+  documentoId: string;
+  numeroTermo: number;
+  valorTotal: number;
+  totalParcelas: number;
+  proximaParcela: { numero: number; vencimento: string } | null;
 }
 
 export interface MensagemCaso {
@@ -498,13 +522,21 @@ export function diasRestantesPrazo(prazoFinalYMD: string, hojeYMD: string): numb
 // ─── Etapas ──────────────────────────────────────────────────────────────────
 
 /** "Pronto para processo" = aguardando_prazo e hoje > prazo_final. */
-export function etapaDoCaso(
-  caso: Pick<CasoResumo, "status" | "prazo_final">,
-  hojeYMD: string,
-): EtapaCaso {
+/** Campos mínimos para calcular a etapa (acordo_quebrado_em opcional para casos antigos). */
+export type CasoEtapaInput = Pick<CasoResumo, "status" | "prazo_final"> & {
+  acordo_quebrado_em?: string | null;
+};
+
+export function etapaDoCaso(caso: CasoEtapaInput, hojeYMD: string): EtapaCaso {
   if (caso.status === "aguardando_prazo" && caso.prazo_final && hojeYMD > caso.prazo_final)
     return "pronto_processo";
+  if (caso.status === "acordo" && caso.acordo_quebrado_em) return "pronto_processo";
   return caso.status;
+}
+
+/** Processo pode ser iniciado: prazo da notificação encerrado OU acordo quebrado. */
+export function podeIniciarProcesso(caso: CasoEtapaInput, hojeYMD: string): boolean {
+  return etapaDoCaso(caso, hojeYMD) === "pronto_processo";
 }
 
 export function labelEtapa(etapa: EtapaCaso): string {
@@ -512,12 +544,17 @@ export function labelEtapa(etapa: EtapaCaso): string {
 }
 
 export function proximaAcao(
-  caso: Pick<CasoResumo, "status" | "prazo_final" | "notificacao_gerada_em">,
+  caso: CasoEtapaInput & Pick<CasoResumo, "notificacao_gerada_em">,
   mensagens: readonly Pick<MensagemCaso, "ordem" | "enviada_em">[],
   hojeYMD: string,
+  acordo?: Pick<AcordoResumo, "proximaParcela" | "totalParcelas"> | null,
 ): string {
   const etapa = etapaDoCaso(caso, hojeYMD);
   switch (etapa) {
+    case "acordo":
+      return acordo?.proximaParcela
+        ? `Acompanhar parcela ${acordo.proximaParcela.numero}/${acordo.totalParcelas} (vence ${formatarDataBR(acordo.proximaParcela.vencimento)})`
+        : "Acompanhar acordo";
     case "mensagens": {
       const pendente = [...mensagens].sort((a, b) => a.ordem - b.ordem).find((m) => !m.enviada_em);
       return pendente
@@ -533,7 +570,9 @@ export function proximaAcao(
       return dias === 0 ? "Prazo termina hoje" : `Aguardar prazo (${dias} dia(s))`;
     }
     case "pronto_processo":
-      return "Iniciar processo judicial";
+      return caso.status === "acordo"
+        ? "Acordo quebrado — iniciar processo judicial"
+        : "Iniciar processo judicial";
     case "processo":
       return "Acompanhar processo";
     case "encerrado":
@@ -584,6 +623,9 @@ export type TipoEvento =
   | "andamento"
   | "prazo"
   | "recebimento"
+  | "acordo"
+  | "acordo_parcela"
+  | "acordo_quebra"
   | "encerramento";
 
 export interface EventoTimeline {
@@ -629,6 +671,23 @@ export interface CasoCompleto extends CasoResumo {
   encerrado_por: string | null;
   motivo_encerramento: MotivoEncerramento | null;
   observacao_encerramento: string | null;
+  acordo_documento_id: string | null;
+  acordo_registrado_em: string | null;
+  acordo_registrado_por: string | null;
+  acordo_etapa_anterior: string | null;
+  acordo_quebrado_por: string | null;
+}
+
+/** Parcela quitada do acordo, para a linha do tempo. */
+export interface ParcelaAcordoPaga {
+  numero: number;
+  total: number;
+  dataPagamento: string; // YYYY-MM-DD
+  valorPago: number;
+}
+
+export interface AcordoTimeline extends AcordoResumo {
+  parcelasPagas: ParcelaAcordoPaga[];
 }
 
 export function chaveOrdem(quando: string): string {
@@ -643,6 +702,7 @@ export function montarTimeline(
   mensagens: readonly MensagemCaso[],
   anexos: readonly AnexoCaso[],
   hojeYMD: string,
+  acordo?: AcordoTimeline | null,
 ): EventoTimeline[] {
   const eventos: EventoTimeline[] = [];
   eventos.push({
@@ -722,6 +782,26 @@ export function montarTimeline(
       anexo: a,
     });
   }
+  if (caso.acordo_registrado_em && acordo) {
+    eventos.push({
+      tipo: "acordo",
+      quando: caso.acordo_registrado_em,
+      titulo: `Acordo registrado · Termo nº ${acordo.numeroTermo} · ${formatarBRL(acordo.valorTotal)} em ${acordo.totalParcelas} parcela${acordo.totalParcelas === 1 ? "" : "s"}`,
+    });
+    for (const p of acordo.parcelasPagas)
+      eventos.push({
+        tipo: "acordo_parcela",
+        quando: p.dataPagamento,
+        titulo: `Parcela ${p.numero}/${p.total} paga · ${formatarDataBR(p.dataPagamento)} · ${formatarBRL(p.valorPago)}`,
+      });
+  }
+  if (caso.acordo_quebrado_em)
+    eventos.push({
+      tipo: "acordo_quebra",
+      quando: caso.acordo_quebrado_em,
+      titulo: "Acordo quebrado",
+      detalhe: "Pronto para processo",
+    });
   if (caso.encerrado_em)
     eventos.push({
       tipo: "encerramento",
@@ -741,6 +821,19 @@ export function montarTimeline(
 
 export function formatarBRL(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+export function formatarDataHora(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function formatarDataBR(ymd: string): string {
