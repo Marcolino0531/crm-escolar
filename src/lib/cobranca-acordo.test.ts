@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acompanharAcordo,
   avisosAcordoPendentes,
+  chaveParcelaSponte,
   parearParcelasAcordo,
   valorCausaAcordo,
   type ParcelaAcordoSponte,
@@ -20,6 +21,7 @@ function sp(
   o: Partial<ParcelaAcordoSponte> = {},
 ): ParcelaAcordoSponte {
   return {
+    chave: id,
     contaReceberID: id,
     alunoId: "707",
     vencimento,
@@ -58,6 +60,72 @@ describe("pareamento termo × Sponte", () => {
     const pares = parearParcelasAcordo(t, sponte);
     expect(pares.get(1)?.contaReceberID).toBe("y");
     expect(pares.get(2)?.contaReceberID).toBe("x");
+  });
+});
+
+describe("chave da parcela do Sponte", () => {
+  it("ContaReceberID + NumeroParcela; fallback NumeroBoleto; depois conta + vencimento + valor", () => {
+    const b = { contaReceberID: "555", vencimento: "2026-10-05", valor: 1498.88 };
+    expect(chaveParcelaSponte({ ...b, numeroParcela: "3", numeroBoleto: "9" })).toBe("555#3");
+    expect(chaveParcelaSponte({ ...b, numeroParcela: "", numeroBoleto: "9" })).toBe("bol_9");
+    expect(chaveParcelaSponte({ ...b, numeroParcela: "", numeroBoleto: "0" })).toBe(
+      "555|2026-10-05|149888",
+    );
+  });
+});
+
+describe("caso real: Termo nº 18, 5 parcelas na mesma Conta a Receber (1.3)", () => {
+  const termo18: ParcelaTermo[] = [
+    { numero: 1, valor: 1498.88, vencimento: "2026-10-05" },
+    { numero: 2, valor: 1498.88, vencimento: "2026-11-05" },
+    { numero: 3, valor: 1498.88, vencimento: "2026-12-07" },
+    { numero: 4, valor: 1498.88, vencimento: "2027-01-05" },
+    { numero: 5, valor: 1498.88, vencimento: "2027-02-05" },
+  ];
+  const sponte18 = (quitadas: number) =>
+    termo18.map((p) => {
+      const q = p.numero <= quitadas;
+      return {
+        chave: chaveParcelaSponte({
+          contaReceberID: "81234",
+          numeroParcela: String(p.numero),
+          vencimento: p.vencimento,
+          valor: p.valor,
+        }),
+        contaReceberID: "81234",
+        alunoId: "1001",
+        vencimento: p.vencimento,
+        valor: 1498.88,
+        valorPago: q ? 1498.88 : 0,
+        saldo: q ? 0 : 1498.88,
+        quitada: q,
+        dataPagamento: q ? p.vencimento : "",
+      } satisfies ParcelaAcordoSponte;
+    });
+
+  it("nenhuma paga: as 5 pareadas, total 7.494,40, pago 0, saldo 7.494,40", () => {
+    const a = acompanharAcordo(termo18, sponte18(0), "2026-09-28");
+    expect(a.parcelas.map((p) => p.situacao)).toEqual(Array(5).fill("a_vencer"));
+    expect(a.temNaoEncontrada).toBe(false);
+    expect(a.totalAcordo).toBe(7494.4);
+    expect(a.totalPago).toBe(0);
+    expect(a.saldoRestante).toBe(7494.4);
+    expect(a.quitado).toBe(false);
+  });
+
+  it("parcelas 1 e 2 quitadas: pago 2.997,76, saldo 4.496,64, não encerra", () => {
+    const a = acompanharAcordo(termo18, sponte18(2), "2026-11-10");
+    expect(a.temNaoEncontrada).toBe(false);
+    expect(a.totalPago).toBe(2997.76);
+    expect(a.saldoRestante).toBe(4496.64);
+    expect(a.quitado).toBe(false);
+    expect(a.proximaParcela?.numero).toBe(3);
+  });
+
+  it("as 5 quitadas: encerra (quitado) com motivo 'pago'", () => {
+    const a = acompanharAcordo(termo18, sponte18(5), "2027-02-10");
+    expect(a.quitado).toBe(true);
+    expect(a.saldoRestante).toBe(0);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   ANO_LETIVO_MINIMO_CONTRATO,
   BUCKET_COBRANCA,
   CATEGORIAS_ANEXO,
+  CATEGORIA_TERMO_ASSINADO,
   MOTIVOS_ENCERRAMENTO,
   TOTAL_MENSAGENS,
   contratoElegivelCobranca,
@@ -61,9 +62,11 @@ import {
   type AcordoSincronizado,
 } from "@/lib/cobranca-acordo.server";
 import {
-  temParcelaEmAtraso,
+  passouVencimentoAntecipado,
+  valorCausaAcordo,
   type AcompanhamentoAcordo,
   type TermoCandidato,
+  type ValorCausaAcordo,
 } from "@/lib/cobranca-acordo";
 import { buscarResponsavelPorCpf } from "@/lib/matriculas.sponte";
 import {
@@ -684,6 +687,8 @@ export interface AcordoDetalhe {
   acompanhamento: AcompanhamentoAcordo;
   indisponivel: boolean;
   timeline: AcordoTimeline;
+  /** Valor da causa sugerido hoje (sem correção monetária); null se o caso não está em acordo. */
+  valorCausa: ValorCausaAcordo | null;
 }
 
 export interface CasoDetalhe {
@@ -697,13 +702,23 @@ export interface CasoDetalhe {
   acordo: AcordoDetalhe | null;
 }
 
-function paraAcordoDetalhe(s: AcordoSincronizado | null): AcordoDetalhe | null {
+function paraAcordoDetalhe(
+  s: AcordoSincronizado | null,
+  caso: CasoCompleto,
+  hoje: string,
+): AcordoDetalhe | null {
   if (!s) return null;
+  const emAcordo = caso.status === "acordo" && !s.encerradoAgora;
+  const valorCausa = emAcordo ? valorCausaAcordo(s.acompanhamento, hoje) : null;
   return {
     termo: s.termo,
     acompanhamento: s.acompanhamento,
     indisponivel: s.indisponivel,
-    timeline: acordoTimeline(s),
+    timeline: {
+      ...acordoTimeline(s),
+      valorCausaSugerido: caso.acordo_quebrado_em && valorCausa ? valorCausa.total : null,
+    },
+    valorCausa,
   };
 }
 
@@ -715,7 +730,7 @@ async function montarDetalhe(casoId: string): Promise<CasoDetalhe> {
   const casoAntes = await carregarCasoRow(casoId);
   if (casoAntes.acordo_documento_id) {
     try {
-      acordo = paraAcordoDetalhe(await sincronizarAcordo(casoAntes, hoje));
+      acordo = paraAcordoDetalhe(await sincronizarAcordo(casoAntes, hoje), casoAntes, hoje);
     } catch (e) {
       console.error(`${LOG} acordo do caso ${casoId}:`, e instanceof Error ? e.message : e);
     }
@@ -1089,6 +1104,8 @@ export const registrarAnexoCobranca = createServerFn({ method: "POST" })
     exigirAberto(caso);
     if (data.categoria === "outro" && !data.nomePersonalizado?.trim())
       throw new Error("Informe o nome do documento.");
+    if (data.categoria === CATEGORIA_TERMO_ASSINADO)
+      throw new Error('Use o bloco "Termo assinado" do acordo para anexar o termo.');
     const anexoId = await inserirAnexo(
       caso,
       data.categoria,
@@ -1124,6 +1141,8 @@ export const removerAnexoCobranca = createServerFn({ method: "POST" })
     exigirAberto(caso);
     if (anexo.categoria === "notificacao_enviada" || anexo.categoria === "print_notificacao")
       throw new Error("Os arquivos da notificação enviada não podem ser removidos.");
+    if (anexo.categoria === CATEGORIA_TERMO_ASSINADO)
+      throw new Error("O termo assinado só pode ser substituído, não removido.");
     const { error: e2 } = await supabaseAdmin
       .from("cobranca_anexos" as never)
       .delete()
@@ -1533,22 +1552,30 @@ export const registrarAcordoCobranca = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** Quebra manual do acordo: só com parcela em atraso na última leitura do Sponte. */
-export const registrarQuebraAcordo = createServerFn({ method: "POST" })
+/**
+ * Execução do acordo não cumprido: só com parcela há mais de 15 dias corridos em
+ * atraso (vencimento antecipado, cláusula 5). Status continua 'acordo'; a etapa
+ * derivada passa a "Execução em preparação".
+ */
+export const iniciarExecucaoAcordo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => CasoIdSchema.parse(i))
-  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+  .handler(async ({ data, context }): Promise<{ ok: true; valorCausa: number }> => {
     await exigirPermissao(context.userId, true);
     const caso = await carregarCasoRow(data.casoId);
     await exigirUnidade(context.userId, caso.unidade);
     exigirAberto(caso);
     if (caso.status !== "acordo") throw new Error("O caso não está em acordo.");
-    if (caso.acordo_quebrado_em) throw new Error("A quebra do acordo já foi registrada.");
-    const sync = await sincronizarAcordo(caso, hojeYMD());
+    if (caso.acordo_quebrado_em) throw new Error("A execução já foi iniciada.");
+    const hoje = hojeYMD();
+    const sync = await sincronizarAcordo(caso, hoje);
     if (!sync) throw new Error("Termo do acordo não encontrado.");
     if (sync.encerradoAgora) throw new Error("Todas as parcelas do acordo já estão pagas.");
-    if (!temParcelaEmAtraso(sync.acompanhamento))
-      throw new Error("A quebra só pode ser registrada com parcela em atraso.");
+    if (!passouVencimentoAntecipado(sync.acompanhamento))
+      throw new Error(
+        "A execução só pode ser iniciada com parcela há mais de 15 dias corridos em atraso.",
+      );
+    const valorCausa = valorCausaAcordo(sync.acompanhamento, hoje).total;
     const { error } = await supabaseAdmin
       .from("cobranca_casos" as never)
       .update({
@@ -1559,6 +1586,160 @@ export const registrarQuebraAcordo = createServerFn({ method: "POST" })
       .eq("status", "acordo")
       .is("acordo_quebrado_em", null);
     if (error) throw new Error(error.message);
-    console.log(`${LOG} acordo quebrado caso=${caso.id} por=${context.userId}`);
-    return { ok: true };
+    console.log(
+      `${LOG} execução iniciada caso=${caso.id} termo=${sync.termo.numero} valorCausa=${valorCausa} por=${context.userId}`,
+    );
+    return { ok: true, valorCausa };
+  });
+
+// ─── Termo de confissão assinado ───────────────────────────────────────────────────
+// Documentos ZapSign assinados (produção, mesma unidade do caso) e upload de PDF
+// escaneado, sempre como anexo 'termo_confissao_assinado'. O PDF fica nos
+// buckets privados; o cliente só recebe URL assinada (montarDetalhe).
+
+export interface TermoAssinadoZapSign {
+  documentoId: string;
+  nome: string;
+  assinadoEm: string | null;
+  signatarios: string[];
+}
+
+interface ZapDocTermoRow extends ZapDocRow {
+  nome: string;
+  signatarios: { nome?: string }[] | null;
+}
+
+function exigirAcordo(caso: CasoCompleto): void {
+  if (!caso.acordo_documento_id) throw new Error("A cobrança não tem acordo registrado.");
+}
+
+export const listarTermosAssinadosZapSign = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => CasoIdSchema.parse(i))
+  .handler(async ({ data, context }): Promise<TermoAssinadoZapSign[]> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAcordo(caso);
+    const { data: docs, error } = await supabaseAdmin
+      .from("zapsign_documentos" as never)
+      .select(
+        "id, ambiente, status, zapsign_token, assinado_em, arquivo_assinado_path, nome, signatarios",
+      )
+      .eq("unidade", caso.unidade)
+      .eq("ambiente", AMBIENTE_CONTRATO)
+      .eq("status", "signed")
+      .order("assinado_em", { ascending: false, nullsFirst: false })
+      .limit(200)
+      .returns<ZapDocTermoRow[]>();
+    if (error) throw new Error(error.message);
+    return (docs ?? []).map((d) => ({
+      documentoId: d.id,
+      nome: d.nome,
+      assinadoEm: d.assinado_em,
+      signatarios: (d.signatarios ?? []).map((s) => s.nome?.trim() ?? "").filter(Boolean),
+    }));
+  });
+
+/** Apaga o termo assinado anterior (linha + arquivo) ao substituir. */
+async function removerTermoAssinadoAnterior(casoId: string): Promise<void> {
+  const { data, error } = await supabaseAdmin
+    .from("cobranca_anexos" as never)
+    .select("id, storage_path")
+    .eq("caso_id", casoId)
+    .eq("categoria", CATEGORIA_TERMO_ASSINADO)
+    .returns<{ id: string; storage_path: string }[]>();
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) return;
+  const { error: e2 } = await supabaseAdmin
+    .from("cobranca_anexos" as never)
+    .delete()
+    .in(
+      "id",
+      data.map((a) => a.id),
+    );
+  if (e2) throw new Error(e2.message);
+  await supabaseAdmin.storage.from(BUCKET_COBRANCA).remove(data.map((a) => a.storage_path));
+}
+
+const AnexarTermoZapSchema = CasoIdSchema.extend({ documentoId: z.string().uuid() });
+
+/** Copia o PDF assinado da ZapSign para o caso como 'termo_confissao_assinado' (origem 'sistema'). */
+export const anexarTermoAssinadoZapSign = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => AnexarTermoZapSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ anexoId: string }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    exigirAcordo(caso);
+    const { data: doc, error } = await supabaseAdmin
+      .from("zapsign_documentos" as never)
+      .select(
+        "id, ambiente, status, zapsign_token, assinado_em, arquivo_assinado_path, nome, signatarios",
+      )
+      .eq("id", data.documentoId)
+      .eq("unidade", caso.unidade)
+      .eq("ambiente", AMBIENTE_CONTRATO)
+      .eq("status", "signed")
+      .maybeSingle<ZapDocTermoRow>();
+    if (error) throw new Error(error.message);
+    if (!doc) throw new Error("Documento assinado não encontrado nesta unidade.");
+    let path = doc.arquivo_assinado_path;
+    if (!path && doc.zapsign_token) {
+      const r = await guardarArquivoAssinado(doc.id, doc.zapsign_token, AMBIENTE_CONTRATO);
+      if (!r.ok) throw new Error(`Não foi possível obter o PDF assinado na ZapSign: ${r.erro}`);
+      path = r.path;
+    }
+    if (!path) throw new Error("O documento assinado não tem PDF guardado.");
+    const destino = `${caso.id}/${randomUUID()}.pdf`;
+    const { error: eCopy } = await supabaseAdmin.storage
+      .from(BUCKET_ZAPSIGN_ASSINADOS)
+      .copy(path, destino, { destinationBucket: BUCKET_COBRANCA });
+    if (eCopy) throw new Error(`Falha ao copiar o termo assinado: ${eCopy.message}`);
+    await removerTermoAssinadoAnterior(caso.id);
+    const nomeBase = doc.nome.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Termo assinado";
+    const anexoId = await inserirAnexo(
+      caso,
+      CATEGORIA_TERMO_ASSINADO,
+      {
+        path: destino,
+        nomeArquivo: /\.pdf$/i.test(nomeBase) ? nomeBase : `${nomeBase}.pdf`,
+        tipoArquivo: "application/pdf",
+        tamanhoBytes: await tamanhoArquivo(destino),
+      },
+      "sistema",
+      context.userId,
+      null,
+    );
+    console.log(`${LOG} termo assinado (ZapSign) anexado caso=${caso.id} doc=${doc.id}`);
+    return { anexoId };
+  });
+
+const AnexarTermoUploadSchema = CasoIdSchema.extend({ arquivo: ArquivoEnviadoSchema });
+
+/** Registra o PDF escaneado já enviado (assinarUploadCobranca) como termo assinado (origem 'upload'). */
+export const anexarTermoAssinadoUpload = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => AnexarTermoUploadSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ anexoId: string }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    exigirAcordo(caso);
+    if (data.arquivo.tipoArquivo !== "application/pdf")
+      throw new Error("O termo assinado deve ser um PDF.");
+    await removerTermoAssinadoAnterior(caso.id);
+    const anexoId = await inserirAnexo(
+      caso,
+      CATEGORIA_TERMO_ASSINADO,
+      data.arquivo,
+      "upload",
+      context.userId,
+      null,
+    );
+    console.log(`${LOG} termo assinado (upload) anexado caso=${caso.id}`);
+    return { anexoId };
   });

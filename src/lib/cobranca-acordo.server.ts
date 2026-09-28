@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   CATEGORIA_ACORDO_SPONTE,
   acompanharAcordo,
+  chaveParcelaSponte,
   observacaoAcordoQuitado,
   termoCasaComCaso,
   type AcompanhamentoAcordo,
@@ -102,6 +103,13 @@ export async function parcelasAcordoDosAlunos(
     for (const t of r.titulos) {
       if (t.categoria.trim() !== CATEGORIA_ACORDO_SPONTE) continue;
       parcelas.push({
+        chave: chaveParcelaSponte({
+          contaReceberID: t.contaReceberID,
+          numeroParcela: t.numeroParcela,
+          numeroBoleto: t.numeroBoleto,
+          vencimento: t.vencimento,
+          valor: t.valor,
+        }),
         contaReceberID: t.contaReceberID,
         alunoId: a.aluno_id,
         vencimento: t.vencimento,

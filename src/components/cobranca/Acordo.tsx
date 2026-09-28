@@ -1,6 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, FileSignature, Handshake, Loader2 } from "lucide-react";
-import { useState } from "react";
+import {
+  Download,
+  FileSignature,
+  Gavel,
+  Handshake,
+  Loader2,
+  RefreshCw,
+  Search,
+  Upload,
+} from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,21 +32,28 @@ import {
   DIAS_ATRASO_VENCIMENTO_ANTECIPADO,
   labelSituacaoParcela,
   passouVencimentoAntecipado,
-  temParcelaEmAtraso,
   type ParcelaAcordoAcompanhada,
+  type ValorCausaAcordo,
 } from "@/lib/cobranca-acordo";
 import {
   formatarBRL,
   formatarDataBR,
   formatarDataHora,
+  termoAssinadoDoCaso,
   type CasoCompleto,
 } from "@/lib/cobranca-casos";
 import {
+  anexarTermoAssinadoUpload,
+  anexarTermoAssinadoZapSign,
+  assinarUploadCobranca,
+  iniciarExecucaoAcordo,
   listarTermosAcordo,
+  listarTermosAssinadosZapSign,
   registrarAcordoCobranca,
-  registrarQuebraAcordo,
   type AcordoDetalhe,
+  type AnexoComLink,
 } from "@/lib/cobranca-casos.functions";
+import { enviarArquivoCobranca } from "@/lib/cobranca-upload";
 
 function mensagemErro(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -137,14 +153,24 @@ export function RegistrarAcordoDialog({ casoId, onDone }: { casoId: string; onDo
   );
 }
 
-// ─── Quebra ──────────────────────────────────────────────────────────────────
+// ─── Execução ────────────────────────────────────────────────────────────────
 
-function QuebraAcordoDialog({ casoId, onDone }: { casoId: string; onDone: () => void }) {
+function ExecucaoDialog({
+  casoId,
+  numeroTermo,
+  valorCausa,
+  onDone,
+}: {
+  casoId: string;
+  numeroTermo: number | string;
+  valorCausa: ValorCausaAcordo | null;
+  onDone: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const quebrar = useMutation({
-    mutationFn: () => registrarQuebraAcordo({ data: { casoId } }),
+  const executar = useMutation({
+    mutationFn: () => iniciarExecucaoAcordo({ data: { casoId } }),
     onSuccess: () => {
-      toast.success("Quebra do acordo registrada.");
+      toast.success("Cobrança em Execução em preparação.");
       setOpen(false);
       onDone();
     },
@@ -153,34 +179,249 @@ function QuebraAcordoDialog({ casoId, onDone }: { casoId: string; onDone: () => 
   return (
     <>
       <Button variant="destructive" size="sm" onClick={() => setOpen(true)}>
-        <AlertTriangle className="mr-2 h-4 w-4" /> Registrar quebra do acordo
+        <Gavel className="mr-2 h-4 w-4" /> Execução
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Registrar quebra do acordo</DialogTitle>
+            <DialogTitle>Execução</DialogTitle>
             <DialogDescription>
-              O caso passa para &quot;Pronto para processo&quot; e o processo judicial pode ser
-              iniciado com o valor da causa calculado pelas parcelas do termo. Nada é alterado no
-              Sponte.
+              O acordo não foi cumprido. A cobrança vai para Execução em preparação, para início da
+              execução do Termo de Confissão de Dívida nº {numeroTermo}.
             </DialogDescription>
           </DialogHeader>
+          {valorCausa && (
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <p className="text-xs text-muted-foreground">Valor da causa sugerido</p>
+              <p className="text-lg font-semibold">{formatarBRL(valorCausa.total)}</p>
+              <p className="text-xs text-muted-foreground">
+                Vencidas atualizadas {formatarBRL(valorCausa.vencidasAtualizadas)} · vincendas{" "}
+                {formatarBRL(valorCausa.vincendas)} · cláusula penal{" "}
+                {formatarBRL(valorCausa.clausulaPenal)} · {valorCausa.nota}
+              </p>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              disabled={quebrar.isPending}
-              onClick={() => quebrar.mutate()}
+              disabled={executar.isPending}
+              onClick={() => executar.mutate()}
             >
-              {quebrar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirmar quebra
+              {executar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar execução
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+// ─── Termo assinado ──────────────────────────────────────────────────────────
+
+function BuscarZapSignDialog({
+  casoId,
+  substituir,
+  onDone,
+}: {
+  casoId: string;
+  substituir: boolean;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [escolhido, setEscolhido] = useState<string | null>(null);
+  const docs = useQuery({
+    queryKey: ["cobranca-termos-zapsign", casoId],
+    queryFn: () => listarTermosAssinadosZapSign({ data: { casoId } }),
+    enabled: open,
+  });
+  const anexar = useMutation({
+    mutationFn: (documentoId: string) =>
+      anexarTermoAssinadoZapSign({ data: { casoId, documentoId } }),
+    onSuccess: () => {
+      toast.success("Termo assinado anexado.");
+      setOpen(false);
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        {substituir ? <RefreshCw className="mr-2 h-4 w-4" /> : <Search className="mr-2 h-4 w-4" />}
+        {substituir ? "Substituir (ZapSign)" : "Buscar no ZapSign"}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Termo assinado na ZapSign</DialogTitle>
+            <DialogDescription>
+              Documentos assinados (produção) desta unidade. O PDF é copiado pelo servidor para os
+              anexos da cobrança.
+            </DialogDescription>
+          </DialogHeader>
+          {docs.isLoading && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Buscando documentos…
+            </p>
+          )}
+          {docs.error && <p className="text-sm text-red-700">{mensagemErro(docs.error)}</p>}
+          {docs.data && docs.data.length === 0 && (
+            <p className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+              Nenhum documento assinado nesta unidade.
+            </p>
+          )}
+          {docs.data && docs.data.length > 0 && (
+            <ul className="max-h-80 space-y-2 overflow-y-auto">
+              {docs.data.map((d) => (
+                <li key={d.documentoId}>
+                  <button
+                    type="button"
+                    onClick={() => setEscolhido(d.documentoId)}
+                    className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+                      escolhido === d.documentoId
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2 font-medium">
+                        <FileSignature className="h-4 w-4 shrink-0" /> {d.nome}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {d.assinadoEm ? formatarDataHora(d.assinadoEm) : "—"}
+                      </span>
+                    </div>
+                    {d.signatarios.length > 0 && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {d.signatarios.join(" · ")}
+                      </div>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!escolhido || anexar.isPending}
+              onClick={() => escolhido && anexar.mutate(escolhido)}
+            >
+              {anexar.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Anexar termo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function AnexarPdfButton({
+  casoId,
+  substituir,
+  onDone,
+}: {
+  casoId: string;
+  substituir: boolean;
+  onDone: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const enviar = useMutation({
+    mutationFn: async (file: File) => {
+      if (file.type !== "application/pdf") throw new Error("Escolha um arquivo PDF.");
+      const arquivo = await enviarArquivoCobranca(assinarUploadCobranca, casoId, file, file.name);
+      return anexarTermoAssinadoUpload({ data: { casoId, arquivo } });
+    },
+    onSuccess: () => {
+      toast.success("Termo assinado anexado.");
+      onDone();
+    },
+    onError: (e) => toast.error(mensagemErro(e)),
+  });
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) enviar.mutate(f);
+        }}
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={enviar.isPending}
+        onClick={() => inputRef.current?.click()}
+      >
+        {enviar.isPending ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Upload className="mr-2 h-4 w-4" />
+        )}
+        {substituir ? "Substituir (PDF)" : "Anexar PDF"}
+      </Button>
+    </>
+  );
+}
+
+function TermoAssinadoBloco({
+  caso,
+  anexos,
+  edita,
+  onDone,
+}: {
+  caso: CasoCompleto;
+  anexos: AnexoComLink[];
+  edita: boolean;
+  onDone: () => void;
+}) {
+  const termo = termoAssinadoDoCaso(anexos);
+  return (
+    <div className="mb-3 rounded-md border px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-2 font-medium">
+            <FileSignature className="h-4 w-4" /> Termo assinado
+          </p>
+          {termo ? (
+            <p className="text-xs text-muted-foreground">
+              {termo.nome_arquivo} · {termo.origem === "sistema" ? "ZapSign" : "anexado"} ·{" "}
+              {formatarDataHora(termo.created_at)}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Nenhum termo assinado anexado a esta cobrança.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {termo?.url && (
+            <Button asChild variant="outline" size="sm">
+              <a href={termo.url} target="_blank" rel="noreferrer">
+                <Download className="mr-2 h-4 w-4" /> Baixar
+              </a>
+            </Button>
+          )}
+          {edita && (
+            <>
+              <BuscarZapSignDialog casoId={caso.id} substituir={!!termo} onDone={onDone} />
+              <AnexarPdfButton casoId={caso.id} substituir={!!termo} onDone={onDone} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -204,17 +445,19 @@ function classeSituacao(p: ParcelaAcordoAcompanhada): string {
 export function SecaoAcordo({
   caso,
   acordo,
+  anexos,
   edita,
   onDone,
 }: {
   caso: CasoCompleto;
   acordo: AcordoDetalhe;
+  anexos: AnexoComLink[];
   edita: boolean;
   onDone: () => void;
 }) {
   const a = acordo.acompanhamento;
   const atrasadas = a.parcelas.filter((p) => p.situacao === "em_atraso");
-  const quebrado = caso.status === "acordo" && !!caso.acordo_quebrado_em;
+  const emExecucao = caso.status === "acordo" && !!caso.acordo_quebrado_em;
   const emAcordo = caso.status === "acordo";
   return (
     <section className="rounded-xl border border-border bg-card p-4">
@@ -230,19 +473,30 @@ export function SecaoAcordo({
               : ""}
           </p>
         </div>
-        {edita && emAcordo && !quebrado && temParcelaEmAtraso(a) && (
-          <QuebraAcordoDialog casoId={caso.id} onDone={onDone} />
+        {edita && emAcordo && !emExecucao && passouVencimentoAntecipado(a) && (
+          <ExecucaoDialog
+            casoId={caso.id}
+            numeroTermo={acordo.termo.numero}
+            valorCausa={acordo.valorCausa}
+            onDone={onDone}
+          />
         )}
       </div>
+
+      <TermoAssinadoBloco caso={caso} anexos={anexos} edita={edita} onDone={onDone} />
 
       {acordo.indisponivel && (
         <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Não foi possível ler o Sponte agora para algum aluno: a situação pode estar incompleta.
         </p>
       )}
-      {quebrado && (
+      {emExecucao && (
         <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          Acordo quebrado em {formatarDataHora(caso.acordo_quebrado_em!)}. Pronto para processo.
+          Execução iniciada em {formatarDataHora(caso.acordo_quebrado_em!)}. Execução em preparação
+          {acordo.valorCausa
+            ? ` · valor da causa sugerido ${formatarBRL(acordo.valorCausa.total)} (${acordo.valorCausa.nota})`
+            : ""}
+          .
         </p>
       )}
       {atrasadas.length > 0 && (
