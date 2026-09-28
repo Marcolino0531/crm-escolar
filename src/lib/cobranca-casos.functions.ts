@@ -47,7 +47,24 @@ import {
   type EnderecoResponsavel,
   type MensagemCaso,
   type ParcelaAbertaAluno,
+  type AcordoResumo,
+  type AcordoTimeline,
+  etapaDoCaso,
+  podeRegistrarAcordo,
 } from "@/lib/cobranca-casos";
+import {
+  acordoTimeline,
+  carregarTermo,
+  leituraRecente,
+  sincronizarAcordo,
+  termosDisponiveis,
+  type AcordoSincronizado,
+} from "@/lib/cobranca-acordo.server";
+import {
+  temParcelaEmAtraso,
+  type AcompanhamentoAcordo,
+  type TermoCandidato,
+} from "@/lib/cobranca-acordo";
 import { buscarResponsavelPorCpf } from "@/lib/matriculas.sponte";
 import {
   allowedSponteUnidades,
@@ -93,10 +110,12 @@ export function hojeYMD(): string {
 
 // ─── Linhas do banco ─────────────────────────────────────────────────────────
 
-type CasoRow = Omit<CasoCompleto, "valor_inicial"> & { valor_inicial: number | string };
+type CasoRow = Omit<CasoCompleto, "valor_inicial"> & {
+  valor_inicial: number | string;
+};
 
 const SELECT_CASO =
-  "id, unidade, responsavel_key, responsavel_nome, responsavel_cpf, responsavel_telefone, responsavel_email, responsavel_endereco, alunos, debito_inicial, valor_inicial, status, data_inicio, data_inicio_historico, iniciado_em, iniciado_por, notificacao_gerada_em, notificacao_recebida_em, prazo_final, documentacao_concluida, encerrado_em, encerrado_por, motivo_encerramento, observacao_encerramento";
+  "id, unidade, responsavel_key, responsavel_nome, responsavel_cpf, responsavel_telefone, responsavel_email, responsavel_endereco, alunos, debito_inicial, valor_inicial, status, data_inicio, data_inicio_historico, iniciado_em, iniciado_por, notificacao_gerada_em, notificacao_recebida_em, prazo_final, documentacao_concluida, encerrado_em, encerrado_por, motivo_encerramento, observacao_encerramento, acordo_documento_id, acordo_registrado_em, acordo_registrado_por, acordo_etapa_anterior, acordo_quebrado_em, acordo_quebrado_por";
 
 function paraCaso(r: CasoRow): CasoCompleto {
   return {
@@ -373,6 +392,41 @@ export interface CasoLista extends CasoResumo {
   hojeYMD: string;
   /** Ordem da mensagem prevista para hoje sem print (null se não houver). */
   printPendenteOrdem: number | null;
+  /** Etapa Acordo: termo + próxima parcela (da última leitura do Sponte). */
+  acordo: AcordoResumo | null;
+}
+
+async function numerosDosTermos(ids: string[]): Promise<Map<string, TermoCandidato>> {
+  const mapa = new Map<string, TermoCandidato>();
+  for (const id of new Set(ids)) {
+    const t = await carregarTermo(id);
+    if (t) mapa.set(id, t);
+  }
+  return mapa;
+}
+
+/**
+ * Resumo para a lista. A próxima parcela vem da leitura recente do Sponte
+ * (detalhe/cron/sino) quando houver; senão, da primeira parcela do termo que
+ * ainda não venceu (o detalhe relê o Sponte e mostra a situação exata).
+ */
+function resumoAcordo(
+  casoId: string,
+  termo: TermoCandidato | undefined,
+  hoje: string,
+): AcordoResumo | null {
+  if (!termo) return null;
+  const leitura = leituraRecente(casoId);
+  const prox = leitura
+    ? leitura.acompanhamento.proximaParcela
+    : (termo.parcelas.find((p) => p.vencimento >= hoje) ?? termo.parcelas.at(-1) ?? null);
+  return {
+    documentoId: termo.id,
+    numeroTermo: termo.numero,
+    valorTotal: termo.valorTotal,
+    totalParcelas: termo.parcelas.length,
+    proximaParcela: prox ? { numero: prox.numero, vencimento: prox.vencimento } : null,
+  };
 }
 
 export const listarCasosCobranca = createServerFn({ method: "POST" })
@@ -417,6 +471,9 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
       porCaso.set(m.caso_id, lista);
     }
     const hoje = hojeYMD();
+    const termos = await numerosDosTermos(
+      rows.map((r) => r.acordo_documento_id).filter((id): id is string => !!id),
+    );
     const resultado: CasoLista[] = [];
     for (const r of rows) {
       const caso = paraCaso(r);
@@ -426,6 +483,11 @@ export const listarCasosCobranca = createServerFn({ method: "POST" })
         mensagens: mensagens.map((m) => ({ ordem: m.ordem, enviada_em: m.enviada_em })),
         hojeYMD: hoje,
         printPendenteOrdem: mensagemDoDiaPendente(caso, mensagens, hoje),
+        acordo: resumoAcordo(
+          caso.id,
+          caso.acordo_documento_id ? termos.get(caso.acordo_documento_id) : undefined,
+          hoje,
+        ),
       });
     }
     return resultado;
@@ -617,6 +679,13 @@ export interface MensagemComLink extends MensagemCaso {
   print_url: string | null;
 }
 
+export interface AcordoDetalhe {
+  termo: TermoCandidato;
+  acompanhamento: AcompanhamentoAcordo;
+  indisponivel: boolean;
+  timeline: AcordoTimeline;
+}
+
 export interface CasoDetalhe {
   caso: CasoCompleto;
   mensagens: MensagemComLink[];
@@ -624,11 +693,34 @@ export interface CasoDetalhe {
   hojeYMD: string;
   /** Ordem da mensagem prevista para hoje sem print (null se não houver). */
   printPendenteOrdem: number | null;
+  /** Presente quando o caso tem termo ligado (em acordo ou encerrado por acordo). */
+  acordo: AcordoDetalhe | null;
+}
+
+function paraAcordoDetalhe(s: AcordoSincronizado | null): AcordoDetalhe | null {
+  if (!s) return null;
+  return {
+    termo: s.termo,
+    acompanhamento: s.acompanhamento,
+    indisponivel: s.indisponivel,
+    timeline: acordoTimeline(s),
+  };
 }
 
 async function montarDetalhe(casoId: string): Promise<CasoDetalhe> {
-  const caso = await carregarCasoRow(casoId);
   const hoje = hojeYMD();
+  // Abrir o detalhe relê o Sponte e pode encerrar o caso (acordo quitado):
+  // por isso o caso é recarregado depois da sincronização.
+  let acordo: AcordoDetalhe | null = null;
+  const casoAntes = await carregarCasoRow(casoId);
+  if (casoAntes.acordo_documento_id) {
+    try {
+      acordo = paraAcordoDetalhe(await sincronizarAcordo(casoAntes, hoje));
+    } catch (e) {
+      console.error(`${LOG} acordo do caso ${casoId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  const caso = acordo ? await carregarCasoRow(casoId) : casoAntes;
   const [mensagensBrutas, anexos] = await Promise.all([
     carregarMensagens(casoId),
     carregarAnexos(casoId),
@@ -648,6 +740,7 @@ async function montarDetalhe(casoId: string): Promise<CasoDetalhe> {
     anexos: anexosComLink,
     hojeYMD: hoje,
     printPendenteOrdem: mensagemDoDiaPendente(caso, mensagens, hoje),
+    acordo,
   };
 }
 
@@ -1364,5 +1457,108 @@ export const encerrarCobranca = createServerFn({ method: "POST" })
       } as never)
       .eq("id", caso.id);
     if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ─── Acordo (Termo de Confissão de Dívida) ───────────────────────────────────
+
+export interface TermoDisponivel {
+  id: string;
+  numero: number;
+  dataTermo: string;
+  valorTotal: number;
+  totalParcelas: number;
+}
+
+/** Termos da mesma unidade compatíveis com o caso (aluno ou CPF) e ainda não ligados a outro caso. */
+export const listarTermosAcordo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => CasoIdSchema.parse(i))
+  .handler(async ({ data, context }): Promise<TermoDisponivel[]> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    if (!podeRegistrarAcordo(etapaDoCaso(caso, hojeYMD())))
+      throw new Error("O acordo não pode ser registrado nesta etapa.");
+    const termos = await termosDisponiveis(caso);
+    return termos.map((t) => ({
+      id: t.id,
+      numero: t.numero,
+      dataTermo: t.dataTermo,
+      valorTotal: t.valorTotal,
+      totalParcelas: t.parcelas.length,
+    }));
+  });
+
+const RegistrarAcordoSchema = z.object({
+  casoId: z.string().uuid(),
+  documentoId: z.string().uuid(),
+});
+
+export const registrarAcordoCobranca = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => RegistrarAcordoSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    const hoje = hojeYMD();
+    const etapa = etapaDoCaso(caso, hoje);
+    if (!podeRegistrarAcordo(etapa))
+      throw new Error("O acordo não pode ser registrado nesta etapa.");
+    const termo = (await termosDisponiveis(caso)).find((t) => t.id === data.documentoId);
+    if (!termo) throw new Error("Termo não disponível para este caso.");
+    const { error } = await supabaseAdmin
+      .from("cobranca_casos" as never)
+      .update({
+        status: "acordo",
+        acordo_documento_id: termo.id,
+        acordo_registrado_em: new Date().toISOString(),
+        acordo_registrado_por: context.userId,
+        acordo_etapa_anterior: etapa,
+        acordo_quebrado_em: null,
+        acordo_quebrado_por: null,
+      } as never)
+      .eq("id", caso.id)
+      .eq("status", caso.status);
+    if (error) {
+      if (error.code === "23505") throw new Error("Este termo já está ligado a outra cobrança.");
+      throw new Error(error.message);
+    }
+    console.log(
+      `${LOG} acordo registrado caso=${caso.id} termo=${termo.numero} por=${context.userId}`,
+    );
+    return { ok: true };
+  });
+
+/** Quebra manual do acordo: só com parcela em atraso na última leitura do Sponte. */
+export const registrarQuebraAcordo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) => CasoIdSchema.parse(i))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await exigirPermissao(context.userId, true);
+    const caso = await carregarCasoRow(data.casoId);
+    await exigirUnidade(context.userId, caso.unidade);
+    exigirAberto(caso);
+    if (caso.status !== "acordo") throw new Error("O caso não está em acordo.");
+    if (caso.acordo_quebrado_em) throw new Error("A quebra do acordo já foi registrada.");
+    const sync = await sincronizarAcordo(caso, hojeYMD());
+    if (!sync) throw new Error("Termo do acordo não encontrado.");
+    if (sync.encerradoAgora) throw new Error("Todas as parcelas do acordo já estão pagas.");
+    if (!temParcelaEmAtraso(sync.acompanhamento))
+      throw new Error("A quebra só pode ser registrada com parcela em atraso.");
+    const { error } = await supabaseAdmin
+      .from("cobranca_casos" as never)
+      .update({
+        acordo_quebrado_em: new Date().toISOString(),
+        acordo_quebrado_por: context.userId,
+      } as never)
+      .eq("id", caso.id)
+      .eq("status", "acordo")
+      .is("acordo_quebrado_em", null);
+    if (error) throw new Error(error.message);
+    console.log(`${LOG} acordo quebrado caso=${caso.id} por=${context.userId}`);
     return { ok: true };
   });

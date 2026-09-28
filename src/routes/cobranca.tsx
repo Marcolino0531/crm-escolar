@@ -29,6 +29,7 @@ import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import { HistoricoEnvios } from "@/components/cobranca/HistoricoEnvios";
 import { RegistrarEnvioNotificacao } from "@/components/cobranca/NotificacaoExtrajudicial";
+import { RegistrarAcordoDialog, SecaoAcordo } from "@/components/cobranca/Acordo";
 import { SecaoProcesso, useProcessoCaso } from "@/components/cobranca/Processo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -78,6 +79,8 @@ import {
   formatarCpf,
   ANO_LETIVO_MINIMO_CONTRATO,
   formatarDataBR,
+  formatarDataHora,
+  podeRegistrarAcordo,
   labelEtapa,
   montarTimeline,
   podeAlterarDataInicio,
@@ -163,19 +166,6 @@ const ACCEPT_ANEXO = TIPOS_ANEXO_ACEITOS.join(",");
 
 function hojeYMD(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-}
-
-function formatarDataHora(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function mensagemErro(e: unknown): string {
@@ -345,6 +335,7 @@ function EtapaBadge({ etapa }: { etapa: EtapaCaso }) {
     mensagens: "bg-sky-100 text-sky-700",
     notificacao: "bg-amber-100 text-amber-700",
     aguardando_prazo: "bg-orange-100 text-orange-700",
+    acordo: "bg-emerald-100 text-emerald-700",
     pronto_processo: "bg-red-100 text-red-700",
     processo: "bg-purple-100 text-purple-700",
     encerrado: "bg-slate-100 text-slate-600",
@@ -408,7 +399,7 @@ function CasoCard({
       <p className="text-xs text-muted-foreground">Início {formatarDataBR(caso.data_inicio)}</p>
       <p className="rounded-md bg-muted px-2 py-1 text-xs">
         <span className="font-medium">Próxima ação:</span>{" "}
-        {proximaAcao(caso, caso.mensagens, caso.hojeYMD)}
+        {proximaAcao(caso, caso.mensagens, caso.hojeYMD, caso.acordo)}
       </p>
     </button>
   );
@@ -753,7 +744,7 @@ function CasoView({
   const edita = podeEditar && !encerrado;
   const proc = processoQ.data;
   const timeline = mesclarTimeline(
-    montarTimeline(caso, mensagens, anexos, d.hojeYMD),
+    montarTimeline(caso, mensagens, anexos, d.hojeYMD, d.acordo?.timeline ?? null),
     proc ? eventosProcesso(proc.processo, proc.andamentos, proc.recebimentos, d.hojeYMD) : [],
   );
 
@@ -765,6 +756,9 @@ function CasoView({
         </Button>
         <div className="flex flex-wrap gap-2">
           <BotaoDossie detalhe={d} etapa={etapa} processo={proc ?? null} />
+          {edita && podeRegistrarAcordo(etapa) && (
+            <RegistrarAcordoDialog casoId={casoId} onDone={recarregar} />
+          )}
           {edita && <EncerrarDialog casoId={casoId} onDone={recarregar} />}
         </div>
       </div>
@@ -803,7 +797,7 @@ function CasoView({
         {!encerrado && (
           <p className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
             <span className="font-medium">Próxima ação:</span>{" "}
-            {proximaAcao(caso, mensagens, d.hojeYMD)}
+            {proximaAcao(caso, mensagens, d.hojeYMD, d.acordo?.timeline ?? null)}
           </p>
         )}
         {encerrado && (
@@ -817,6 +811,9 @@ function CasoView({
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
+          {d.acordo && (
+            <SecaoAcordo caso={caso} acordo={d.acordo} edita={edita} onDone={recarregar} />
+          )}
           {caso.status === "mensagens" && (
             <SecaoMensagens detalhe={d} edita={edita} onDone={recarregar} />
           )}

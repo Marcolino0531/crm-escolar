@@ -312,7 +312,9 @@ function ProcessoDialog({
             <DialogDescription>
               {existente
                 ? "Atualize o número, comarca, vara ou valor da causa."
-                : `Sugestão do valor da causa: ${formatarBRL(detalhe.sugestaoValorCausa)} (demonstrativo mais recente ou valor inicial).`}
+                : detalhe.valorCausaAcordo
+                  ? `Sugestão do valor da causa (acordo quebrado): ${formatarBRL(detalhe.valorCausaAcordo.total)} — vencidas com multa e juros ${formatarBRL(detalhe.valorCausaAcordo.vencidasAtualizadas)} + vincendas ${formatarBRL(detalhe.valorCausaAcordo.vincendas)} + cláusula penal 20% ${formatarBRL(detalhe.valorCausaAcordo.clausulaPenal)}; ${detalhe.valorCausaAcordo.nota}.`
+                  : `Sugestão do valor da causa: ${formatarBRL(detalhe.sugestaoValorCausa)} (demonstrativo mais recente ou valor inicial).`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">

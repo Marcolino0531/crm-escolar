@@ -68,7 +68,12 @@ import { useServerFn } from "@tanstack/react-start";
 import { unidadesComExtrasPendentes } from "@/lib/diario-faturamento.functions";
 import { avisoExtrasPendentes } from "@/lib/diario-aviso-faturamento";
 import { mesesPendentesFechamento } from "@/lib/inadimplencia-fechamento.functions";
-import { avisosPrazoCobranca, dispensarAvisoPrazo } from "@/lib/cobranca-processos.functions";
+import {
+  avisosAcordoCobranca,
+  avisosPrazoCobranca,
+  dispensarAvisoPrazo,
+} from "@/lib/cobranca-processos.functions";
+import { textoAvisoAcordo, type AvisoAcordo } from "@/lib/cobranca-acordo";
 import { textoAvisoPrazo, type AvisoPrazo } from "@/lib/cobranca-processos";
 import {
   concluirAvisoBoletoMatricula,
@@ -463,6 +468,44 @@ export function NotificationsBell() {
       dispensarPrazoFn({ data: { andamentoId: a.andamentoId, marco: a.marco } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cobranca_avisos_prazo"] }),
   });
+
+  // --- Cobrança: parcelas do acordo em atraso (marcos 1 e 15 dias), lidas do
+  // Sponte no servidor. A dispensa por marco fica só neste navegador. ---
+  const avisosAcordoFn = useServerFn(avisosAcordoCobranca);
+  const { data: avisosAcordoTodos = [] } = useQuery({
+    queryKey: ["cobranca_avisos_acordo", today],
+    enabled: !!userId && canCobranca,
+    refetchInterval: 15 * 60000,
+    staleTime: 15 * 60000,
+    queryFn: async () => {
+      try {
+        return await avisosAcordoFn({ data: undefined });
+      } catch {
+        return [] as AvisoAcordo[];
+      }
+    },
+  });
+  const chaveAcordo = (a: AvisoAcordo) => `${a.casoId}:${a.parcelaNumero}:${a.marco}`;
+  const storageAcordo = `cobranca_avisos_acordo_dispensados:${userId ?? ""}`;
+  const [acordoDispensados, setAcordoDispensados] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(storageAcordo);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const dispensarAcordo = (a: AvisoAcordo) => {
+    const prox = [...acordoDispensados, chaveAcordo(a)];
+    setAcordoDispensados(prox);
+    try {
+      window.localStorage.setItem(storageAcordo, JSON.stringify(prox));
+    } catch {
+      /* sem storage: só some até recarregar */
+    }
+  };
+  const avisosAcordo = avisosAcordoTodos.filter((a) => !acordoDispensados.includes(chaveAcordo(a)));
 
   // --- Matrícula: "Enviar boleto de matrícula" quando o contrato fica assinado.
   // O servidor devolve lista vazia para quem não é destinatário cadastrado. ---
@@ -884,6 +927,7 @@ export function NotificationsBell() {
     pendenciasFaturamento.length +
     avisosExperiencia.length +
     avisosPrazo.length +
+    avisosAcordo.length +
     avisosBoleto.length +
     pendenciasMatricula.length +
     (alertaCron ? 1 : 0);
@@ -1293,6 +1337,46 @@ export function NotificationsBell() {
             </div>
           )}
 
+          {/* Cobrança: parcelas do acordo em atraso (1 dia e mais de 15 dias), dispensáveis. */}
+          {canCobranca && avisosAcordo.length > 0 && (
+            <div>
+              <div className="bg-muted/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Cobrança — Acordos
+              </div>
+              {avisosAcordo.map((a) => (
+                <div
+                  key={`acordo-${chaveAcordo(a)}`}
+                  className="flex items-start gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <Scale className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                  <Link
+                    to="/cobranca"
+                    search={{ caso: a.casoId }}
+                    onClick={() => {
+                      const u = schools.find((s) => s.name === a.unidade);
+                      if (u) setSelected(u.id);
+                    }}
+                    className="min-w-0 flex-1 font-medium"
+                  >
+                    <div>{textoAvisoAcordo(a)}</div>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {a.unidade}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    title="Dispensar aviso"
+                    aria-label="Dispensar aviso"
+                    onClick={() => dispensarAcordo(a)}
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-emerald-100 hover:text-emerald-600"
+                  >
+                    <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* RH: véspera dos 45 e 90 dias de experiência; some só ao marcar como lido. */}
           {canRh && avisosExperiencia.length > 0 && (
             <div>
@@ -1554,6 +1638,7 @@ export function NotificationsBell() {
             pendenciasFaturamento.length === 0 &&
             avisosExperiencia.length === 0 &&
             avisosPrazo.length === 0 &&
+            avisosAcordo.length === 0 &&
             !alertaCron && (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 Nenhuma notificação.
