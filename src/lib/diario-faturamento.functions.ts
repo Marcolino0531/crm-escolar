@@ -37,23 +37,20 @@ import { coletarTitulosAluno, inserirPlanoSponte } from "@/lib/sponte.functions"
 import { selectAll } from "@/lib/supabase-paginate";
 import { turmasDoAno, type VinculoAno } from "@/lib/diario-sync";
 import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const LOG_TAG = "[Diário][Faturamento]";
 
 // Nível FINANCEIRO do Diário ('diario_financeiro'), separado do operacional.
 async function exigirPermissaoDiario(userId: string, edicao: boolean): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "diario_financeiro" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    edicao ? ["diario.faturamento"] : ["diario.faturamento"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? "Você não tem permissão para faturar os Extras do Diário."
+      : "Você não tem permissão para ver o faturamento do Diário.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) {
-    throw new Error(
-      edicao
-        ? "Você não tem permissão para faturar os Extras do Diário."
-        : "Você não tem permissão para ver o faturamento do Diário.",
-    );
-  }
 }
 
 async function schoolIdDaUnidade(unidade: string): Promise<string> {

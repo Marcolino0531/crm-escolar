@@ -58,7 +58,7 @@ export function GerarNotificacaoExtrajudicial({ casoIdInicial }: { casoIdInicial
   const { canEdit } = usePermissions();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const podeEditar = canEdit("documentos") && canEdit("financeiro_cobranca");
+  const podeEditar = canEdit("documentos.gerar") && canEdit("regua.cobrancas");
   const unidade = useUnidadeAtiva() ?? "";
   const { schools, setSelected } = useSchool();
   const { data: colegios = [] } = useColegios();

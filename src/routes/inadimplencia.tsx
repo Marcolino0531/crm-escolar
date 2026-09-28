@@ -51,7 +51,7 @@ export const Route = createFileRoute("/inadimplencia")({
 function InadimplenciaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_inadimplencia"))
+  if (!canView("inadimplencia"))
     return <AccessDenied message="Você não tem permissão para visualizar a Inadimplência." />;
   return <InadimplenciaPage />;
 }

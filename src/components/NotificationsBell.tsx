@@ -193,21 +193,21 @@ export function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const userId = session?.user?.id;
   const canTasks = canView("tasks");
-  const canFluxo = canView("financeiro_fluxo");
+  const canFluxo = canView("fluxo");
   const canUniformes = canView("uniformes");
   const canCantina = canView("cantina");
-  const canCartao = canView("financeiro_cartao");
-  const canDiarioFin = canView("diario_financeiro");
+  const canCartao = canView("cartao");
+  const canDiarioFin = canView("diario.faturamento");
   const canAgenda = canView("agenda");
   const canColonia = canView("colonia");
-  const canColoniaFin = canView("colonia_financeiro");
-  const canExtrato = canView("financeiro_dashboard");
-  const canConciliacao = canView("financeiro_conciliacao");
+  const canColoniaFin = canView("colonia.fechamento");
+  const canExtrato = canView("extrato");
+  const canConciliacao = canView("faturamento");
   const canRh = canView("rh");
   const canRhEdit = canEdit("rh");
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
-  const canCobranca = canEdit("financeiro_cobranca");
+  const canCobranca = canEdit("regua.cobrancas");
 
   // --- Task notifications ("Task Concluída" — únicas descartáveis: cada uma
   // tem um check para marcar como lida e sair da lista; não há descarte em

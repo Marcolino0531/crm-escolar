@@ -335,7 +335,7 @@ async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
 
 function ConciliacaoPage() {
   const { canView, canEdit, loading: roleLoading } = usePermissions();
-  const isAdmin = canEdit("financeiro");
+  const isAdmin = canEdit("faturamento");
   const qc = useQueryClient();
   const { schools, selected } = useSchool();
   const fetchConciliacao = useServerFn(fetchSponteConciliacao);
@@ -1025,7 +1025,7 @@ function ConciliacaoPage() {
   }
 
   if (roleLoading) return null;
-  if (!canView("financeiro_conciliacao"))
+  if (!canView("faturamento"))
     return (
       <AccessDenied message="Você não tem permissão para acessar a Conciliação de Faturamento." />
     );

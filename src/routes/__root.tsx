@@ -45,6 +45,7 @@ import {
   Presentation,
   ChevronDown,
   ChevronRight,
+  type LucideIcon,
 } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -63,6 +64,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ehRotaPublica } from "@/lib/rotas-publicas";
 import { useProfessor } from "@/lib/use-professor";
+import { ARVORE_PERMISSOES, type ChavePermissao, type NoArvore } from "@/lib/permissoes-arvore";
 import {
   isExpanded,
   toggleExclusive,
@@ -72,6 +74,41 @@ import {
 } from "@/lib/sidebar-nav";
 
 import appCss from "../styles.css?url";
+
+/** Ícone de cada módulo do menu (chave da árvore → ícone). */
+const ICONES_MENU: Record<string, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  agenda: CalendarDays,
+  admissoes: KanbanSquare,
+  eformulario: ClipboardList,
+  matricula: GraduationCap,
+  onboarding: ClipboardCheck,
+  secretaria: School,
+  professor: Presentation,
+  diario: BookOpen,
+  colonia: PartyPopper,
+  uniformes: Shirt,
+  estoque_material: Package,
+  esportes: Dumbbell,
+  biblioteca: Library,
+  rh: Users,
+  tasks: ListTodo,
+  atendimento: MessageSquare,
+  assistente_ia: Sparkles,
+  documentos: FileText,
+  cantina: UtensilsCrossed,
+  mensagens: Bot,
+  analises_ia: BrainCircuit,
+  extrato: Landmark,
+  importar: Upload,
+  faturamento: FileCheck2,
+  fluxo: TrendingUp,
+  investimentos: PiggyBank,
+  cartao: CreditCard,
+  inadimplencia: AlertCircle,
+  regua: HandCoins,
+  configuracoes: Settings,
+};
 
 function NotFoundComponent() {
   return (
@@ -388,7 +425,7 @@ function AuthGate() {
 }
 
 function AppShell() {
-  const { canView, canEdit, loading: permsLoading } = usePermissions();
+  const { canView, loading: permsLoading } = usePermissions();
   // Professor com login vinculado: entrada própria "Minhas Turmas", sem
   // depender de nenhum app_module (a RLS limita o que ele enxerga).
   const { professor, loading: professorLoading } = useProfessor();
@@ -399,272 +436,29 @@ function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState<ExpandedState>({});
 
-  const showMainDashboard = canView("dashboard");
-  const showAgenda = canView("agenda");
-  const showAdmissoes = canView("admissoes");
-  const showOnboarding = canView("onboarding");
-  const showRh = canView("rh");
-  const showTasks = canView("tasks");
-  const showUniformes = canView("uniformes");
-  const showEstoqueMaterial = canView("estoque_material");
-  const showDiario = canView("diario") || canView("diario_financeiro");
-  const showColonia = canView("colonia") || canView("colonia_financeiro");
-  const showEsportes = canView("esportes");
-  const showBiblioteca = canView("biblioteca");
-  const showDocumentos = canView("documentos");
-  const showCantina = canView("cantina");
-  const showRematricula = canView("rematricula");
-  const showPedagogico = canView("pedagogico");
-  // Financeiro sub-tabs: each link is gated independently.
-  const showDashboard = canView("financeiro_dashboard");
-  const showUpload = canView("financeiro_upload") || canEdit("financeiro_upload");
-  const showConciliacao = canView("financeiro_conciliacao");
-  const showFluxo = canView("financeiro_fluxo");
-  const showInadimplencia = canView("financeiro_inadimplencia");
-  // Mensagens Automáticas vive em Operacional: como o Atendimento, não depende
-  // mais do guarda-chuva Financeiro. A permissão segue sendo financeiro_cobranca,
-  // que também libera a Régua de Cobrança dentro do Financeiro.
-  const showCobranca = canView("financeiro_cobranca");
-  // Atendimento vive em Operacional: não depende mais do guarda-chuva Financeiro.
-  const showAtendimento = canView("financeiro_atendimento");
-  // Assistente de IA: permissão própria (manda dados a serviço externo e tem custo).
-  const showAtendimentoIa = canView("financeiro_atendimento_ia");
-  const showCartao = canView("financeiro") && canView("financeiro_cartao");
-  const showFundos = canView("financeiro_fundos");
-  // The Financeiro section appears if the umbrella is granted AND at least one
-  // sub-tab is visible.
-  const showFinanceiro =
-    canView("financeiro") &&
-    (showDashboard ||
-      showUpload ||
-      showConciliacao ||
-      showFluxo ||
-      showInadimplencia ||
-      showCobranca ||
-      showCartao ||
-      showFundos);
-  const showConfig = canView("configuracoes");
-
-  // Modelo de navegação em árvore (mesma ordem do menu): categorias colapsáveis
-  // com itens dentro. Itens avulsos (Dashboard, Configurações) ficam no nível
-  // superior. Categorias sem itens visíveis são omitidas. Usado para renderizar
-  // a sidebar e para achar a primeira rota permitida.
+  // Menu lateral lido da árvore única (src/lib/permissoes-arvore.ts): nome,
+  // ordem e visibilidade vêm de lá. Um módulo aparece quando o usuário tem
+  // Visualizar em alguma página dele; grupos sem módulo visível são omitidos.
+  // Só o ícone de cada módulo fica aqui.
   const tree = useMemo<NavTreeNode[]>(() => {
-    const item = (show: boolean, node: NavItemNode): NavTreeNode[] => (show ? [node] : []);
-    const group = (id: string, label: string, children: NavTreeNode[]): NavTreeNode[] =>
-      children.length ? [{ kind: "group", id, label, children }] : [];
-    return [
-      ...item(showMainDashboard, {
-        kind: "item",
-        to: "/",
-        icon: LayoutDashboard,
-        label: "Dashboard",
-      }),
-      ...group("comercial", "Comercial", [
-        ...item(showAgenda, { kind: "item", to: "/agenda", icon: CalendarDays, label: "Agenda" }),
-        ...item(showAdmissoes, {
-          kind: "item",
-          to: "/admissoes",
-          icon: KanbanSquare,
-          label: "Admissões",
-        }),
-        ...item(showAdmissoes, {
-          kind: "item",
-          to: "/matriculas",
-          icon: ClipboardList,
-          label: "e-Formulário",
-        }),
-        ...item(showRematricula, {
-          kind: "item",
-          to: "/rematricula-acompanhamento",
-          icon: GraduationCap,
-          label: "Matrícula",
-        }),
-        ...item(showOnboarding, {
-          kind: "item",
-          to: "/onboarding",
-          icon: ClipboardCheck,
-          label: "Onboarding",
-        }),
-      ]),
-      ...group("pedagogico", "Pedagógico", [
-        ...item(showPedagogico, {
-          kind: "item",
-          to: "/pedagogico",
-          icon: School,
-          label: "Secretaria",
-        }),
-        ...item(showProfessor, {
-          kind: "item",
-          to: "/professor",
-          icon: Presentation,
-          label: "Minhas Turmas",
-        }),
-        ...item(showDiario, {
-          kind: "item",
-          to: "/diario",
-          icon: BookOpen,
-          label: "Diário do Aluno",
-        }),
-        ...item(showColonia, {
-          kind: "item",
-          to: "/colonia",
-          icon: PartyPopper,
-          label: "Colônia de Férias",
-        }),
-        ...item(showUniformes, {
-          kind: "item",
-          to: "/uniformes",
-          icon: Shirt,
-          label: "Uniformes",
-        }),
-        ...item(showEstoqueMaterial, {
-          kind: "item",
-          to: "/estoque-material",
-          icon: Package,
-          label: "Material Pedagógico",
-        }),
-        ...item(showEsportes, {
-          kind: "item",
-          to: "/esportes",
-          icon: Dumbbell,
-          label: "Esportes",
-        }),
-        ...item(showBiblioteca, {
-          kind: "item",
-          to: "/biblioteca",
-          icon: Library,
-          label: "Biblioteca",
-        }),
-      ]),
-      ...group("operacional", "Operacional", [
-        ...item(showRh, { kind: "item", to: "/rh", icon: Users, label: "Recursos Humanos" }),
-        ...item(showTasks, { kind: "item", to: "/tasks", icon: ListTodo, label: "Tasks" }),
-        ...item(showAtendimento, {
-          kind: "item",
-          to: "/atendimento",
-          icon: MessageSquare,
-          label: "Atendimento",
-        }),
-        ...item(showAtendimentoIa, {
-          kind: "item",
-          to: "/atendimento-ia",
-          icon: Sparkles,
-          label: "Assistente de IA",
-        }),
-        ...item(showDocumentos, {
-          kind: "item",
-          to: "/documentos",
-          icon: FileText,
-          label: "Documentos",
-        }),
-        ...item(showCantina, {
-          kind: "item",
-          to: "/cantina",
-          icon: UtensilsCrossed,
-          label: "Cantina",
-        }),
-        ...item(showCobranca, {
-          kind: "item",
-          to: "/cobranca-automatica",
-          icon: Bot,
-          label: "Mensagens Automáticas",
-        }),
-      ]),
-      ...group("financeiro", "Financeiro", [
-        ...item(showFinanceiro, {
-          kind: "item",
-          to: "/analises-ia",
-          icon: BrainCircuit,
-          label: "Análises com IA",
-        }),
-        ...item(showFinanceiro && showDashboard, {
-          kind: "item",
-          to: "/extrato-bancario",
-          icon: Landmark,
-          label: "Extrato Bancário",
-        }),
-        ...item(showFinanceiro && showUpload, {
-          kind: "item",
-          to: "/upload",
-          icon: Upload,
-          label: "Importar Extrato",
-        }),
-        ...item(showFinanceiro && showConciliacao, {
-          kind: "item",
-          to: "/conciliacao",
-          icon: FileCheck2,
-          label: "Faturamento",
-        }),
-        ...item(showFinanceiro && showFluxo, {
-          kind: "item",
-          to: "/fluxo-futuro",
-          icon: TrendingUp,
-          label: "Fluxo Futuro",
-        }),
-        ...item(showFinanceiro && showFundos, {
-          kind: "item",
-          to: "/fundos",
-          icon: PiggyBank,
-          label: "Investimentos",
-        }),
-        ...item(showFinanceiro && showCartao, {
-          kind: "item",
-          to: "/cartao-credito",
-          icon: CreditCard,
-          label: "Cartão de Crédito",
-        }),
-        ...item(showFinanceiro && showInadimplencia, {
-          kind: "item",
-          to: "/inadimplencia",
-          icon: AlertCircle,
-          label: "Inadimplência",
-        }),
-        ...item(showFinanceiro && showCobranca, {
-          kind: "item",
-          to: "/cobranca",
-          icon: HandCoins,
-          label: "Régua de Cobrança",
-        }),
-      ]),
-      ...item(showConfig, {
-        kind: "item",
-        to: "/configuracoes",
-        icon: Settings,
-        label: "Configurações",
-      }),
-    ];
-  }, [
-    showMainDashboard,
-    showPedagogico,
-    showProfessor,
-    showAgenda,
-    showAdmissoes,
-    showOnboarding,
-    showRh,
-    showTasks,
-    showUniformes,
-    showEstoqueMaterial,
-    showDiario,
-    showColonia,
-    showEsportes,
-    showBiblioteca,
-    showCantina,
-    showDocumentos,
-    showRematricula,
-    showFinanceiro,
-    showDashboard,
-    showUpload,
-    showConciliacao,
-    showFluxo,
-    showInadimplencia,
-    showCobranca,
-    showAtendimento,
-    showAtendimentoIa,
-    showCartao,
-    showFundos,
-    showConfig,
-  ]);
+    const visivel = (m: NoArvore) =>
+      m.acessoEspecial === "professor" ? showProfessor : canView(m.chave as ChavePermissao);
+    const item = (m: NoArvore): NavItemNode => ({
+      kind: "item",
+      to: m.rota ?? "/",
+      icon: ICONES_MENU[m.chave] ?? Settings,
+      label: m.nome,
+    });
+    const nodes: NavTreeNode[] = [];
+    for (const grupo of ARVORE_PERMISSOES as readonly NoArvore[]) {
+      const modulos = (grupo.filhos as readonly NoArvore[]).filter(visivel).map(item);
+      if (modulos.length === 0) continue;
+      if (grupo.soltoNoMenu) nodes.push(...modulos);
+      else nodes.push({ kind: "group", id: grupo.chave, label: grupo.nome, children: modulos });
+    }
+    return nodes;
+  }, [canView, showProfessor]);
+  const showMainDashboard = canView("dashboard");
 
   const firstAllowed = useMemo(() => flattenTos(tree)[0] ?? null, [tree]);
 

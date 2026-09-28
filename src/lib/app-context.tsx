@@ -1,5 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
+import {
+  avaliarPermissoes,
+  listarNos,
+  noPorChave,
+  type ChavePermissao,
+  type LinhaPermissao,
+} from "@/lib/permissoes-arvore";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -206,94 +213,15 @@ export function useRole() {
   return { role: (data ?? null) as AppRole | null, loading: isLoading, isAdmin: data === "admin" };
 }
 
-// ---------- Granular module permissions ----------
-export const APP_MODULES = [
-  "dashboard",
-  "agenda",
-  "admissoes",
-  "onboarding",
-  "rh",
-  "rh_salario",
-  "tasks",
-  "uniformes",
-  "estoque_material",
-  "diario",
-  "diario_financeiro",
-  "colonia",
-  "colonia_financeiro",
-  "esportes",
-  "biblioteca",
-  "pedagogico",
-  "documentos",
-  "cantina",
-  "rematricula",
-  "financeiro",
-  "configuracoes",
-] as const;
+// ---------- Permissões (árvore Grupo > Módulo > Página) ----------
+// A fonte da verdade é src/lib/permissoes-arvore.ts; aqui só se lê
+// user_permissions e se avalia a árvore para o usuário logado.
+export type AppModule = ChavePermissao;
 
-// Financeiro is sliced into independently authorizable sub-tabs.
-export const FINANCEIRO_SUBMODULES = [
-  "financeiro_dashboard",
-  "financeiro_upload",
-  "financeiro_conciliacao",
-  "financeiro_fluxo",
-  "financeiro_inadimplencia",
-  "financeiro_cobranca",
-  "financeiro_atendimento",
-  "financeiro_atendimento_ia",
-  "financeiro_cartao",
-  "financeiro_fundos",
-] as const;
-
-// Every module that can appear in the permission matrix / be persisted.
-export const ALL_MODULES = [...APP_MODULES, ...FINANCEIRO_SUBMODULES] as const;
-
-export type AppModule = (typeof ALL_MODULES)[number];
-export type FinanceiroSubmodule = (typeof FINANCEIRO_SUBMODULES)[number];
-
-export const MODULE_LABELS: Record<AppModule, string> = {
-  dashboard: "Dashboard",
-  agenda: "Agenda",
-  admissoes: "Admissões",
-  onboarding: "Onboarding",
-  rh: "Recursos Humanos",
-  rh_salario: "RH — Salário",
-  tasks: "Tasks",
-  uniformes: "Uniformes",
-  estoque_material: "Material Pedagógico",
-  diario: "Diário do Aluno — Registros",
-  diario_financeiro: "Diário do Aluno — Financeiro",
-  colonia: "Colônia de Férias — Registros",
-  colonia_financeiro: "Colônia de Férias — Fechamento Financeiro",
-  pedagogico: "Secretaria (Pedagógico)",
-  esportes: "Esportes",
-  biblioteca: "Biblioteca",
-  documentos: "Documentos",
-  cantina: "Cantina — Recargas",
-  rematricula: "Rematrícula — Acompanhamento",
-  financeiro: "Financeiro",
-  configuracoes: "Configurações",
-  financeiro_dashboard: "Extrato Bancário",
-  financeiro_upload: "Importar Extrato",
-  financeiro_conciliacao: "Faturamento",
-  financeiro_fluxo: "Fluxo Futuro",
-  financeiro_inadimplencia: "Inadimplência",
-  financeiro_cobranca: "Mensagens Automáticas",
-  financeiro_atendimento: "Atendimento",
-  financeiro_atendimento_ia: "Atendimento — Assistente de IA",
-  financeiro_cartao: "Cartão de Crédito",
-  financeiro_fundos: "Investimentos",
-};
-
-export type ModulePermission = { view: boolean; edit: boolean };
-export type PermissionMatrix = Record<AppModule, ModulePermission>;
-
-function emptyMatrix(value: boolean): PermissionMatrix {
-  return ALL_MODULES.reduce((acc, m) => {
-    acc[m] = { view: value, edit: value };
-    return acc;
-  }, {} as PermissionMatrix);
-}
+/** Nome exibido de cada chave da árvore (menu, abas e Gerenciar Acessos). */
+export const MODULE_LABELS: Record<string, string> = Object.fromEntries(
+  listarNos().map((n) => [n.chave, n.nome]),
+);
 
 export function usePermissions() {
   const { session } = useAuth();
@@ -308,31 +236,25 @@ export function usePermissions() {
         .select("module, can_view, can_edit")
         .eq("user_id", session!.user.id);
       // Don't crash the whole app if the table isn't there yet (pre-migration).
-      if (error) return [] as { module: string; can_view: boolean; can_edit: boolean }[];
-      return (data ?? []) as unknown as { module: string; can_view: boolean; can_edit: boolean }[];
+      if (error) return [] as LinhaPermissao[];
+      return (data ?? []) as unknown as LinhaPermissao[];
     },
   });
 
-  const permissions = useMemo<PermissionMatrix>(() => {
-    if (isAdmin) return emptyMatrix(true);
-    const matrix = emptyMatrix(false);
-    for (const row of data ?? []) {
-      if ((ALL_MODULES as readonly string[]).includes(row.module)) {
-        matrix[row.module as AppModule] = {
-          view: !!row.can_view || !!row.can_edit,
-          edit: !!row.can_edit,
-        };
-      }
-    }
-    return matrix;
-  }, [data, isAdmin]);
+  const permissoes = useMemo(() => avaliarPermissoes(data ?? [], isAdmin), [data, isAdmin]);
 
   const loading = roleLoading || isLoading;
-  return {
-    permissions,
-    loading,
-    isAdmin,
-    canView: (m: AppModule) => permissions[m].view,
-    canEdit: (m: AppModule) => permissions[m].edit,
+  const canView = (m: ChavePermissao) => {
+    const no = noPorChave(m);
+    if (no?.acessoEspecial === "admin") return isAdmin;
+    if (no?.acessoEspecial === "professor") return isAdmin;
+    return permissoes.ver(m);
   };
+  const canEdit = (m: ChavePermissao) => {
+    const no = noPorChave(m);
+    if (no?.acessoEspecial === "admin") return isAdmin;
+    if (no?.acessoEspecial === "professor") return isAdmin;
+    return permissoes.editar(m);
+  };
+  return { loading, isAdmin, canView, canEdit, linhas: data ?? [] };
 }

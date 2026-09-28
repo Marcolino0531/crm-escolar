@@ -52,7 +52,7 @@ export const Route = createFileRoute("/fundos")({
 function FundosGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_fundos"))
+  if (!canView("investimentos"))
     return (
       <AccessDenied message="Você não tem permissão para visualizar os Fundos de Investimento." />
     );
@@ -105,7 +105,7 @@ const COLORS = [
 function FundosPage() {
   const { selected: schoolId, schools, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
-  const editable = canEdit("financeiro_fundos");
+  const editable = canEdit("investimentos");
   const qc = useQueryClient();
   const today = new Date();
   const [month, setMonth] = useState(() => monthKey(today));

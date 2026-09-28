@@ -41,7 +41,7 @@ export const Route = createFileRoute("/cartao-credito")({
 function CartaoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_cartao"))
+  if (!canView("cartao"))
     return (
       <AccessDenied message="Você não tem permissão para visualizar o Controle de Recebíveis." />
     );
@@ -92,7 +92,7 @@ function CartaoPage() {
   const { session } = useAuth();
   const { canEdit } = usePermissions();
   const { selected, schoolFilterIds, schools } = useSchool();
-  const editable = canEdit("financeiro_cartao");
+  const editable = canEdit("cartao");
   const qc = useQueryClient();
   const today = todayISOLocal();
   const schoolNameById = useMemo(() => new Map(schools.map((s) => [s.id, s.name])), [schools]);

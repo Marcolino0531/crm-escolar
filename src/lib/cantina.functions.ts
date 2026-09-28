@@ -39,6 +39,7 @@ import {
   type StatusRecarga,
   type TentativasLogin,
 } from "@/lib/cantina";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 // ─── Portal público de recarga da cantina ───────────────────────────────────
 //
@@ -354,12 +355,12 @@ export const solicitarRecargaCantina = createServerFn({ method: "POST" })
 // ─── Tela interna (equipe) ──────────────────────────────────────────────────
 
 async function assertPodeEditarCantina(userId: string): Promise<string> {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "cantina" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["cantina"],
+    "editar",
+    "Você não tem permissão para editar a Cantina.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para editar a Cantina.");
 
   const { data: user } = await supabaseAdmin.auth.admin.getUserById(userId);
   const meta = (user?.user?.user_metadata ?? {}) as Record<string, unknown>;

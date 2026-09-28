@@ -18,7 +18,7 @@ export const Route = createFileRoute("/analises-ia")({
 function AnalisesIaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro"))
+  if (!canView("analises_ia"))
     return (
       <AccessDenied message="Você não tem permissão para acessar as Análises com IA do Financeiro." />
     );

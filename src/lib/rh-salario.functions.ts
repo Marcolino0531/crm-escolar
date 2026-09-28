@@ -7,6 +7,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { competenciaValida, type SalarioRegistro } from "@/lib/rh-salario";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 type SalarioRow = {
   id: string;
@@ -20,18 +21,14 @@ type SalarioRow = {
 };
 
 async function exigirPermissaoSalario(userId: string, edicao: boolean): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "rh_salario" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    edicao ? ["rh.pagamentos.salario"] : ["rh.pagamentos.salario"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? "Você não tem permissão para cadastrar ou editar salários."
+      : "Você não tem permissão para ver salários.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) {
-    throw new Error(
-      edicao
-        ? "Você não tem permissão para cadastrar ou editar salários."
-        : "Você não tem permissão para ver salários.",
-    );
-  }
 }
 
 const paraRegistro = (r: SalarioRow): SalarioRegistro => ({

@@ -8,6 +8,7 @@ import {
   sendBillingTemplate,
 } from "@/lib/whatsapp.server";
 import { grupoDaUnidade } from "@/lib/whatsapp-numeros";
+import { temPermissaoPagina } from "@/lib/permissoes-servidor";
 import { registrarTemplateNoChat } from "@/lib/whatsapp.chatlog";
 import {
   contaCaixaBate,
@@ -173,22 +174,11 @@ export async function allowedSponteUnidades(userId: string): Promise<string[] | 
   return ((schools ?? []) as any[]).map((s) => s.name as string);
 }
 
-// Defesa em profundidade: só quem tem o nível FINANCEIRO da Colônia
-// ('colonia_financeiro') — ou é admin — pode ler os benefícios do Sponte usados
+// Defesa em profundidade: só quem tem Visualizar em Colônia de Férias >
+// Fechamento Semanal — ou é admin — pode ler os benefícios do Sponte usados
 // na calculadora (crédito de hora extra + isenção de refeição).
 async function podeVerFinanceiroColonia(userId: string): Promise<boolean> {
-  const { data: roles } = await supabaseAdmin
-    .from("user_roles" as any)
-    .select("role")
-    .eq("user_id", userId);
-  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return true;
-
-  const { data: perms } = await supabaseAdmin
-    .from("user_permissions" as any)
-    .select("can_view, can_edit")
-    .eq("user_id", userId)
-    .eq("module", "colonia_financeiro");
-  return ((perms ?? []) as any[]).some((p) => p.can_view || p.can_edit);
+  return temPermissaoPagina(userId, ["colonia.fechamento"], "ver");
 }
 
 function buildSoapEnvelope(

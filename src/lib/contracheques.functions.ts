@@ -15,14 +15,15 @@ import {
   corpoEmailContracheque,
   nomeArquivoContracheque,
 } from "@/lib/contracheques";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 async function assertCanEditRh(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "rh" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["rh.contracheques"],
+    "editar",
+    "Você não tem permissão para enviar contracheques.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para enviar contracheques.");
 }
 
 async function nomeDoUsuario(userId: string): Promise<string> {

@@ -19,6 +19,7 @@ import {
   nomeAnexoDeclaracaoIR,
 } from "@/lib/imposto-renda-lote";
 import { emailResponsavelFinanceiroLoteIR } from "@/lib/sponte.functions";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const EnvioInputSchema = z.object({
   unidade: z.string().min(1),
@@ -39,13 +40,15 @@ export const enviarDeclaracaoIREmail = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => EnvioInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<EnvioDeclaracaoIRResult> => {
-    const { data: pode, error: permErro } = await supabaseAdmin.rpc(
-      "can_edit_module" as never,
-      { _user_id: context.userId, _module: "documentos" } as never,
-    );
-    if (permErro) return { ok: false, email: "", error: permErro.message };
-    if (!pode) {
-      return { ok: false, email: "", error: "Você não tem permissão para emitir documentos." };
+    try {
+      await exigirPermissaoPagina(
+        context.userId,
+        ["documentos.gerar.lote"],
+        "editar",
+        "Você não tem permissão para emitir documentos.",
+      );
+    } catch (e) {
+      return { ok: false, email: "", error: e instanceof Error ? e.message : String(e) };
     }
 
     const cfg = getResendConfig();

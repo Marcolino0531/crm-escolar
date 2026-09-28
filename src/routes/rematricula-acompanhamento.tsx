@@ -33,7 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { BotaoReconferirExtras } from "@/components/rematricula/BotaoReconferirExtras";
 import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
@@ -392,9 +393,14 @@ function RematriculaAcompanhamentoPage() {
   const { schools, selected } = useSchool();
   const carregar = useServerFn(acompanhamentoRematricula);
   const { aba: abaInicial, contrato: contratoDestacado } = Route.useSearch();
-  const [aba, setAba] = useState<string>(abaInicial ?? "alunos");
+  const { abas, inicial: primeiraAba } = useAbasArvore("matricula");
+  const ve = (id: string) => abas.some((a) => a.id === id);
+  const [aba, setAba] = useState<string>(
+    abaInicial && ve(abaInicial) ? abaInicial : (primeiraAba ?? "alunos"),
+  );
   useEffect(() => {
-    if (abaInicial) setAba(abaInicial);
+    if (abaInicial && ve(abaInicial)) setAba(abaInicial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaInicial, contratoDestacado]);
 
   const [busca, setBusca] = useState("");
@@ -474,9 +480,7 @@ function RematriculaAcompanhamentoPage() {
 
   const cards = useMemo(() => contadoresAcompanhamento(base), [base]);
   const visiveis = useMemo(() => filtrarPorStatus(base, filtroStatus), [base, filtroStatus]);
-  const podeEditar = canEdit("rematricula");
-
-  if (!canView("rematricula")) return <AccessDenied />;
+  if (!canView("matricula")) return <AccessDenied />;
 
   return (
     <div className="space-y-6">
@@ -494,169 +498,179 @@ function RematriculaAcompanhamentoPage() {
       </div>
 
       <Tabs value={aba} onValueChange={setAba}>
-        <TabsList>
-          <TabsTrigger value="alunos">Alunos</TabsTrigger>
-          <TabsTrigger value="contratos">Contratos</TabsTrigger>
-          <TabsTrigger value="campanhas">Campanhas e Ano Vigente</TabsTrigger>
-        </TabsList>
+        <AbasArvore chavePai="matricula" />
 
-        <TabsContent value="alunos" className="mt-4 space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-muted-foreground">Alunos ativos</p>
-              <p className="text-2xl font-semibold">{cards.total}</p>
+        {ve("alunos") && (
+          <TabsContent value="alunos" className="mt-4 space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Alunos ativos</p>
+                <p className="text-2xl font-semibold">{cards.total}</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Já responderam</p>
+                <p className="text-2xl font-semibold">{cards.responderam}</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Ainda não responderam</p>
+                <p className="text-2xl font-semibold">{cards.naoResponderam}</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Aguardando aprovação</p>
+                <p className="text-2xl font-semibold">{cards.aguardandoAprovacao}</p>
+              </div>
             </div>
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-muted-foreground">Já responderam</p>
-              <p className="text-2xl font-semibold">{cards.responderam}</p>
-            </div>
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-muted-foreground">Ainda não responderam</p>
-              <p className="text-2xl font-semibold">{cards.naoResponderam}</p>
-            </div>
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-muted-foreground">Aguardando aprovação</p>
-              <p className="text-2xl font-semibold">{cards.aguardandoAprovacao}</p>
-            </div>
-          </div>
 
-          {erros && (
-            <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              {erros}
-            </p>
-          )}
+            {erros && (
+              <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {erros}
+              </p>
+            )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Select
-              value={anoLetivo ? String(anoLetivo) : ""}
-              onValueChange={(v) => setAnoEscolhido(Number(v))}
-              disabled={campanhas.length === 0}
-            >
-              <SelectTrigger className="w-56" aria-label="Campanha">
-                <SelectValue placeholder="Campanha" />
-              </SelectTrigger>
-              <SelectContent>
-                {campanhas.map((c) => (
-                  <SelectItem key={c.anoLetivo} value={String(c.anoLetivo)}>
-                    {c.anoLetivo}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder="Buscar por aluno"
-              className="max-w-xs"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-            />
-            <Select value={turmaAtiva ?? "todas"} onValueChange={setFiltroTurma}>
-              <SelectTrigger className="w-64">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todas">Todas as turmas</SelectItem>
-                {turmas.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={filtroStatus}
-              onValueChange={(v) => setFiltroStatus(v as "todos" | StatusAcompanhamento)}
-            >
-              <SelectTrigger className="w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos os status</SelectItem>
-                {STATUS_ACOMPANHAMENTO_ORDEM.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {STATUS_ACOMPANHAMENTO_LABEL[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {carregando ? (
-            <Skeleton className="h-64 w-full" />
-          ) : (
-            <div className="rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Aluno</TableHead>
-                    <TableHead>Unidade</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Última atualização</TableHead>
-                    <TableHead>Parcelamento</TableHead>
-                    <TableHead>Dados cadastrais</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visiveis.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
-                        Nenhum aluno encontrado.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {visiveis.map((l) => (
-                    <TableRow key={`${l.unidade}-${l.alunoId}`}>
-                      <TableCell>
-                        <p className="font-medium">{l.nome}</p>
-                        {l.turma && <p className="text-xs text-muted-foreground">{l.turma}</p>}
-                      </TableCell>
-                      <TableCell>{l.unidade}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={CORES_STATUS[l.status]}>
-                          {STATUS_ACOMPANHAMENTO_LABEL[l.status]}
-                        </Badge>
-                        <AvisoDivergenciasExtras
-                          divergencias={divergenciasPorAluno.get(`${l.unidade}-${l.alunoId}`) ?? []}
-                        />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {formatarDataHora(l.atualizadoEm)}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{l.parcelamento || "—"}</TableCell>
-                      <TableCell>
-                        {l.cadastroAlterado ? (
-                          <span className="flex items-center gap-1 text-sm text-blue-800">
-                            <PencilLine className="h-4 w-4 shrink-0" />
-                            Alterados
-                          </span>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">Sem alteração</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {podeEditar && l.status === "aguardando_aprovacao" && (
-                          <Button size="sm" variant="outline" onClick={() => setRevisando(l)}>
-                            Revisar e Aprovar
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
+            <div className="flex flex-wrap items-center gap-3">
+              <Select
+                value={anoLetivo ? String(anoLetivo) : ""}
+                onValueChange={(v) => setAnoEscolhido(Number(v))}
+                disabled={campanhas.length === 0}
+              >
+                <SelectTrigger className="w-56" aria-label="Campanha">
+                  <SelectValue placeholder="Campanha" />
+                </SelectTrigger>
+                <SelectContent>
+                  {campanhas.map((c) => (
+                    <SelectItem key={c.anoLetivo} value={String(c.anoLetivo)}>
+                      {c.anoLetivo}
+                    </SelectItem>
                   ))}
-                </TableBody>
-              </Table>
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Buscar por aluno"
+                className="max-w-xs"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+              />
+              <Select value={turmaAtiva ?? "todas"} onValueChange={setFiltroTurma}>
+                <SelectTrigger className="w-64">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas as turmas</SelectItem>
+                  {turmas.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={filtroStatus}
+                onValueChange={(v) => setFiltroStatus(v as "todos" | StatusAcompanhamento)}
+              >
+                <SelectTrigger className="w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os status</SelectItem>
+                  {STATUS_ACOMPANHAMENTO_ORDEM.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_ACOMPANHAMENTO_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
-        </TabsContent>
 
-        <TabsContent value="contratos" className="mt-4">
-          <ContratosMatricula podeEditar={podeEditar} contratoDestacado={contratoDestacado} />
-        </TabsContent>
+            {carregando ? (
+              <Skeleton className="h-64 w-full" />
+            ) : (
+              <div className="rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Aluno</TableHead>
+                      <TableHead>Unidade</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Última atualização</TableHead>
+                      <TableHead>Parcelamento</TableHead>
+                      <TableHead>Dados cadastrais</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visiveis.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={7}
+                          className="text-center text-sm text-muted-foreground"
+                        >
+                          Nenhum aluno encontrado.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {visiveis.map((l) => (
+                      <TableRow key={`${l.unidade}-${l.alunoId}`}>
+                        <TableCell>
+                          <p className="font-medium">{l.nome}</p>
+                          {l.turma && <p className="text-xs text-muted-foreground">{l.turma}</p>}
+                        </TableCell>
+                        <TableCell>{l.unidade}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className={CORES_STATUS[l.status]}>
+                            {STATUS_ACOMPANHAMENTO_LABEL[l.status]}
+                          </Badge>
+                          <AvisoDivergenciasExtras
+                            divergencias={
+                              divergenciasPorAluno.get(`${l.unidade}-${l.alunoId}`) ?? []
+                            }
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {formatarDataHora(l.atualizadoEm)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{l.parcelamento || "—"}</TableCell>
+                        <TableCell>
+                          {l.cadastroAlterado ? (
+                            <span className="flex items-center gap-1 text-sm text-blue-800">
+                              <PencilLine className="h-4 w-4 shrink-0" />
+                              Alterados
+                            </span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">Sem alteração</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {canEdit("matricula.alunos") && l.status === "aguardando_aprovacao" && (
+                            <Button size="sm" variant="outline" onClick={() => setRevisando(l)}>
+                              Revisar e Aprovar
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+        )}
 
-        <TabsContent value="campanhas" className="mt-4 space-y-6">
-          <CampanhasRematricula podeEditar={podeEditar} />
-          <AnoVigenteDiario podeEditar={podeEditar} />
-        </TabsContent>
+        {ve("contratos") && (
+          <TabsContent value="contratos" className="mt-4">
+            <ContratosMatricula
+              podeEditar={canEdit("matricula.contratos")}
+              contratoDestacado={contratoDestacado}
+            />
+          </TabsContent>
+        )}
+
+        {ve("campanhas") && (
+          <TabsContent value="campanhas" className="mt-4 space-y-6">
+            <CampanhasRematricula podeEditar={canEdit("matricula.campanhas")} />
+            <AnoVigenteDiario podeEditar={canEdit("matricula.campanhas")} />
+          </TabsContent>
+        )}
       </Tabs>
 
       {revisando && anoLetivo !== null && (

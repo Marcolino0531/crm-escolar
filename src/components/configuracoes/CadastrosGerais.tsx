@@ -19,34 +19,46 @@ import {
 import { ValoresBiblioteca } from "@/components/configuracoes/ValoresBiblioteca";
 import { ValoresColonia } from "@/components/configuracoes/ValoresColonia";
 import { ValorPacotesExtras } from "@/components/configuracoes/ValorPacotesExtras";
-import { usePermissions, useSchool, type AppModule } from "@/lib/app-context";
+import { usePermissions, useSchool } from "@/lib/app-context";
+import { abasDe, noPorChave, type ChavePermissao } from "@/lib/permissoes-arvore";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { anosLetivosDiario } from "@/lib/rematricula.functions";
 
-export const TIPOS_CADASTRO = [
-  { id: "material", label: "Valor Material Pedagógico" },
-  { id: "matricula", label: "Valor Matrícula" },
-  { id: "pacotes_extras", label: "Valor Pacotes Extras" },
-  { id: "diario", label: "Valor Diário do Aluno" },
-  { id: "colonia", label: "Valor Colônia de Férias" },
-  { id: "biblioteca", label: "Valor Biblioteca" },
-] as const;
+// Os tipos de cadastro são as sub-páginas de Configurações > Cadastros Gerais na
+// árvore única de permissões: nome, ordem e visibilidade vêm de lá.
+const CHAVE_POR_TIPO = {
+  material: "configuracoes.cadastros.valor_material",
+  matricula: "configuracoes.cadastros.valor_matricula",
+  pacotes_extras: "configuracoes.cadastros.valor_pacotes",
+  diario: "configuracoes.cadastros.valor_diario",
+  colonia: "configuracoes.cadastros.valor_colonia",
+  biblioteca: "configuracoes.cadastros.valor_biblioteca",
+} as const satisfies Record<string, ChavePermissao>;
 
-export type TipoCadastro = (typeof TIPOS_CADASTRO)[number]["id"];
+export type TipoCadastro = keyof typeof CHAVE_POR_TIPO;
+
+export const TIPOS_CADASTRO = (Object.keys(CHAVE_POR_TIPO) as TipoCadastro[]).map((id) => ({
+  id,
+  label: noPorChave(CHAVE_POR_TIPO[id])!.nome,
+}));
 
 export function tipoCadastroValido(v: unknown): v is TipoCadastro {
-  return TIPOS_CADASTRO.some((t) => t.id === v);
+  return typeof v === "string" && v in CHAVE_POR_TIPO;
 }
 
-// Cadastros de valor por unidade × ano letivo. Cada opção segue a permissão do
-// módulo dono do dado (Matrícula, Diário financeiro, Colônia, Biblioteca).
-export function abasCadastrosGerais(canView: (m: AppModule) => boolean): TipoCadastro[] {
-  const abas: TipoCadastro[] = [];
-  if (canView("rematricula")) abas.push("material", "matricula", "pacotes_extras");
-  if (canView("diario_financeiro")) abas.push("diario");
-  if (canView("colonia") || canView("colonia_financeiro")) abas.push("colonia");
-  if (canView("biblioteca")) abas.push("biblioteca");
-  return abas;
+export function chaveCadastro(tipo: TipoCadastro): ChavePermissao {
+  return CHAVE_POR_TIPO[tipo];
+}
+
+// Cadastros de valor por unidade × ano letivo visíveis para o usuário, na ordem da árvore.
+export function abasCadastrosGerais(canView: (c: ChavePermissao) => boolean): TipoCadastro[] {
+  const porChave = new Map<string, TipoCadastro>(
+    (Object.keys(CHAVE_POR_TIPO) as TipoCadastro[]).map((id) => [CHAVE_POR_TIPO[id], id]),
+  );
+  return abasDe("configuracoes.cadastros")
+    .filter((a) => canView(a.chave))
+    .map((a) => porChave.get(a.chave))
+    .filter((t): t is TipoCadastro => t !== undefined);
 }
 
 export function CadastrosGerais() {
@@ -58,9 +70,7 @@ export function CadastrosGerais() {
   const abas = abasCadastrosGerais(canView);
   const veDiario = abas.includes("diario");
 
-  const opcoes = TIPOS_CADASTRO.filter((t) => abas.includes(t.id)).sort((a, b) =>
-    a.label.localeCompare(b.label, "pt-BR"),
-  );
+  const opcoes = abas.map((id) => TIPOS_CADASTRO.find((t) => t.id === id)!);
   const tipo: TipoCadastro | "" =
     search.cadastro && abas.includes(search.cadastro) ? search.cadastro : "";
 
@@ -112,18 +122,26 @@ export function CadastrosGerais() {
           </p>
         </div>
       )}
-      {tipo === "material" && <MaterialPedagogicoSeries podeEditar={canEdit("rematricula")} />}
-      {tipo === "matricula" && <ValoresMatricula podeEditar={canEdit("rematricula")} />}
-      {tipo === "pacotes_extras" && <ValorPacotesExtras podeEditar={canEdit("rematricula")} />}
+      {tipo === "material" && (
+        <MaterialPedagogicoSeries podeEditar={canEdit(chaveCadastro("material"))} />
+      )}
+      {tipo === "matricula" && (
+        <ValoresMatricula podeEditar={canEdit(chaveCadastro("matricula"))} />
+      )}
+      {tipo === "pacotes_extras" && (
+        <ValorPacotesExtras podeEditar={canEdit(chaveCadastro("pacotes_extras"))} />
+      )}
       {tipo === "diario" && (
         <TabelaPrecos
           unidade={unidadeDaSelecao(selected, schools)}
           anoVigente={anos.data?.anoVigente ?? null}
-          podeEditar={canEdit("diario_financeiro")}
+          podeEditar={canEdit(chaveCadastro("diario"))}
         />
       )}
-      {tipo === "colonia" && <ValoresColonia podeEditar={canEdit("colonia_financeiro")} />}
-      {tipo === "biblioteca" && <ValoresBiblioteca podeEditar={canEdit("biblioteca")} />}
+      {tipo === "colonia" && <ValoresColonia podeEditar={canEdit(chaveCadastro("colonia"))} />}
+      {tipo === "biblioteca" && (
+        <ValoresBiblioteca podeEditar={canEdit(chaveCadastro("biblioteca"))} />
+      )}
     </div>
   );
 }

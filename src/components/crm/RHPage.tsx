@@ -150,8 +150,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const isAdmin = canEdit("rh");
   // Sub-visão Salário: só pelo módulo dedicado rh_salario (canEdit("rh") não conta).
   const salario = acessoSalario({
-    canViewRhSalario: canView("rh_salario"),
-    canEditRhSalario: canEdit("rh_salario"),
+    canViewRhSalario: canView("rh.pagamentos.salario"),
+    canEditRhSalario: canEdit("rh.pagamentos.salario"),
   });
   const schoolId = selected !== "all" ? selected : null;
   const permissoesLotes = useMemo<PermissoesLotes>(

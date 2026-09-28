@@ -79,7 +79,7 @@ export const Route = createFileRoute("/atendimento")({
 function AtendimentoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_atendimento"))
+  if (!canView("atendimento"))
     return <AccessDenied message="Você não tem permissão para acessar o Atendimento." />;
   return <AtendimentoPage />;
 }
@@ -175,8 +175,8 @@ function horaCurta(iso: string | null): string {
 function AtendimentoPage() {
   const { canEdit } = usePermissions();
   const { selected, schools } = useSchool();
-  const podeResponder = canEdit("financeiro_atendimento");
-  const podeUsarIa = canEdit("financeiro_atendimento_ia");
+  const podeResponder = canEdit("atendimento");
+  const podeUsarIa = canEdit("assistente_ia");
   const queryClient = useQueryClient();
   const arquivarFn = useServerFn(arquivarConversas);
   const [selecionadaId, setSelecionadaId] = useState<string | null>(null);

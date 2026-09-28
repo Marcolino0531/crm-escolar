@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 export type AgendaUser = {
   id: string;
@@ -9,15 +10,12 @@ export type AgendaUser = {
 };
 
 async function assertCanEditAgenda(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    {
-      _user_id: userId,
-      _module: "agenda",
-    } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["agenda.mes", "agenda.semana"],
+    "editar",
+    "Você não tem permissão para editar a Agenda.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para editar a Agenda.");
 }
 
 // Lista os usuários do sistema para o seletor de "Equipe" da reunião. Requer

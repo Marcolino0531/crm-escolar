@@ -3,44 +3,13 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { selectAll } from "@/lib/supabase-paginate";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { CHAVES_PERMISSAO_GRAVAVEIS } from "@/lib/permissoes-arvore";
 
-const APP_MODULES = [
-  "dashboard",
-  "agenda",
-  "admissoes",
-  "onboarding",
-  "rh",
-  "rh_salario",
-  "tasks",
-  "uniformes",
-  "estoque_material",
-  "diario",
-  "diario_financeiro",
-  "colonia",
-  "colonia_financeiro",
-  "esportes",
-  "biblioteca",
-  "pedagogico",
-  "documentos",
-  "cantina",
-  "rematricula",
-  "financeiro",
-  "configuracoes",
-  // Financeiro sub-tabs (granular access)
-  "financeiro_dashboard",
-  "financeiro_upload",
-  "financeiro_conciliacao",
-  "financeiro_fluxo",
-  "financeiro_inadimplencia",
-  "financeiro_cobranca",
-  "financeiro_atendimento",
-  "financeiro_atendimento_ia",
-  "financeiro_cartao",
-  "financeiro_fundos",
-] as const;
+// Só as folhas da árvore (src/lib/permissoes-arvore.ts) são gravadas em user_permissions.
+const CHAVES_GRAVAVEIS = CHAVES_PERMISSAO_GRAVAVEIS as [string, ...string[]];
 
 const permissionSchema = z.object({
-  module: z.enum(APP_MODULES),
+  module: z.enum(CHAVES_GRAVAVEIS),
   can_view: z.boolean(),
   can_edit: z.boolean(),
 });

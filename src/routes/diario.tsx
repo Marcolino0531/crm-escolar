@@ -20,7 +20,8 @@ import { usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { AjudaTooltip } from "@/components/diario/AjudaTooltip";
 import {
   ROTULO_STATUS_CONSUMO,
@@ -31,9 +32,6 @@ import {
 import {
   ABAS_FINANCEIRAS_DIARIO,
   ABAS_OPERACIONAIS_DIARIO,
-  abaInicialDiario,
-  abasDiarioVisiveis,
-  podeAbrirDiario,
   type AbaDiario,
 } from "@/lib/diario-acesso";
 import { AuditoriaSponte } from "@/components/diario/AuditoriaSponte";
@@ -97,9 +95,7 @@ export const Route = createFileRoute("/diario")({
 function DiarioGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (
-    !podeAbrirDiario({ operacional: canView("diario"), financeiro: canView("diario_financeiro") })
-  )
+  if (!canView("diario"))
     return <AccessDenied message="Você não tem permissão para visualizar o Diário do Aluno." />;
   return <DiarioPage />;
 }
@@ -200,18 +196,16 @@ function useStudents(schoolFilterIds: string[] | null, anoLetivo: number | null)
 
 function DiarioPage() {
   const { canView, canEdit, isAdmin } = usePermissions();
-  const acesso = { operacional: canView("diario"), financeiro: canView("diario_financeiro") };
-  const veOperacional = acesso.operacional;
-  const podeEditar = canEdit("diario");
-  const veFinanceiro = acesso.financeiro;
-  const podeEditarFinanceiro = canEdit("diario_financeiro");
+  // Uma permissão por aba (árvore): Registro, Consumos Extras, Auditoria Sponte,
+  // Faturamento. O cabeçalho (turmas/alunos/plano) pertence ao Registro.
+  const { abas, inicial } = useAbasArvore("diario");
+  const ve = (id: AbaDiario) => abas.some((a) => a.id === id);
+  const veRegistro = ve("registro");
+  const podeEditar = canEdit("diario.registro");
   const { selected, schools, schoolFilterIds } = useSchool();
   const { aba: abaDaUrl } = Route.useSearch();
   // Aba pedida na URL (ex.: aviso do sino → Faturamento), se o usuário a enxerga.
-  const abaInicial =
-    abaDaUrl && abasDiarioVisiveis(acesso).includes(abaDaUrl)
-      ? abaDaUrl
-      : (abaInicialDiario(acesso) ?? "registro");
+  const abaInicial = abaDaUrl && ve(abaDaUrl) ? abaDaUrl : (inicial ?? "registro");
 
   // Ano letivo: sempre abre no ano vigente configurado (não no mais recente
   // cadastrado). Trocar o vigente na configuração muda o padrão daqui sozinho.
@@ -353,30 +347,17 @@ function DiarioPage() {
       </div>
 
       <Tabs key={abaInicial} defaultValue={abaInicial} className="w-full">
-        <TabsList>
-          {veOperacional && (
-            <TabsTrigger value="registro">
-              <Utensils className="mr-1.5 h-4 w-4" /> Registro
-            </TabsTrigger>
-          )}
-          {veOperacional && (
-            <TabsTrigger value="extras">
-              <AlertTriangle className="mr-1.5 h-4 w-4" /> Consumos Extras
-            </TabsTrigger>
-          )}
-          {veFinanceiro && (
-            <TabsTrigger value="auditoria">
-              <ShieldAlert className="mr-1.5 h-4 w-4" /> Auditoria Sponte
-            </TabsTrigger>
-          )}
-          {veFinanceiro && (
-            <TabsTrigger value="faturamento">
-              <Receipt className="mr-1.5 h-4 w-4" /> Faturamento
-            </TabsTrigger>
-          )}
-        </TabsList>
+        <AbasArvore
+          chavePai="diario"
+          antes={{
+            registro: <Utensils className="mr-1.5 h-4 w-4" />,
+            extras: <AlertTriangle className="mr-1.5 h-4 w-4" />,
+            auditoria: <ShieldAlert className="mr-1.5 h-4 w-4" />,
+            faturamento: <Receipt className="mr-1.5 h-4 w-4" />,
+          }}
+        />
 
-        {veOperacional && (
+        {veRegistro && (
           <TabsContent value="registro" className="space-y-4">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -461,24 +442,24 @@ function DiarioPage() {
           </TabsContent>
         )}
 
-        {veOperacional && (
+        {ve("extras") && (
           <TabsContent value="extras">
             <ExtraChargesTab schoolFilterIds={schoolFilterIds} studentIndex={students} />
           </TabsContent>
         )}
-        {veFinanceiro && (
+        {ve("auditoria") && (
           <TabsContent value="auditoria">
             <AuditoriaSponte
               unidade={unidadeDaSelecao(selected, schools)}
-              podeExecutar={podeEditarFinanceiro}
+              podeExecutar={canEdit("diario.auditoria")}
             />
           </TabsContent>
         )}
-        {veFinanceiro && (
+        {ve("faturamento") && (
           <TabsContent value="faturamento">
             <FaturamentoExtras
               unidade={unidadeDaSelecao(selected, schools)}
-              podeEditar={podeEditarFinanceiro}
+              podeEditar={canEdit("diario.faturamento")}
             />
           </TabsContent>
         )}
@@ -488,7 +469,7 @@ function DiarioPage() {
         student={active}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        canView={acesso.operacional}
+        canView={veRegistro}
         canEdit={podeEditar}
         anoLetivo={anoLetivo ?? new Date().getFullYear()}
         anoVigente={anoVigente}

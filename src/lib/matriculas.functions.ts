@@ -32,6 +32,7 @@ import {
   type MatriculaPayload,
   type MatriculaResultado,
 } from "@/lib/matriculas.sponte";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 export interface ReprocessarMatriculaResult {
   ok: boolean;
@@ -52,21 +53,21 @@ type SubmissaoRow = {
 const STATUS_REPROCESSAVEIS = ["erro_aluno", "erro_responsavel"];
 
 async function assertCanEditAdmissoes(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "admissoes" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["eformulario"],
+    "editar",
+    "Você não tem permissão para reprocessar matrículas.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para reprocessar matrículas.");
 }
 
 async function assertCanViewAdmissoes(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_view_module" as never,
-    { _user_id: userId, _module: "admissoes" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["eformulario"],
+    "ver",
+    "Você não tem permissão para ver as matrículas.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para ver as matrículas.");
 }
 
 const ReprocessarInputSchema = z.object({ id: z.string().uuid() });

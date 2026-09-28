@@ -32,7 +32,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs } from "@/components/ui/tabs";
+import { AbasArvore, useAbaAtiva } from "@/components/AbasArvore";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
@@ -160,7 +161,7 @@ function AgendaPage() {
   const { session } = useAuth();
   const userId = session?.user?.id ?? null;
   const podeEditar = canEdit("agenda");
-  const [mode, setMode] = useState<"mes" | "semana">("mes");
+  const [mode, setMode] = useAbaAtiva("agenda");
   const [cursor, setCursor] = useState(() => new Date());
   const [novaOpen, setNovaOpen] = useState(false);
   const [editando, setEditando] = useState<Reuniao | null>(null);
@@ -312,11 +313,8 @@ function AgendaPage() {
           </Button>
           <span className="ml-2 text-sm font-semibold">{title}</span>
         </div>
-        <Tabs value={mode} onValueChange={(v) => setMode(v as "mes" | "semana")}>
-          <TabsList>
-            <TabsTrigger value="mes">Mês</TabsTrigger>
-            <TabsTrigger value="semana">Semana</TabsTrigger>
-          </TabsList>
+        <Tabs value={mode} onValueChange={setMode}>
+          <AbasArvore chavePai="agenda" />
         </Tabs>
       </div>
 

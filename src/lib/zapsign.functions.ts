@@ -30,6 +30,8 @@ import {
   T_WEBHOOKS,
   type SignatarioPersistido,
 } from "@/lib/zapsign.persist";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import type { ChavePermissao } from "@/lib/permissoes-arvore";
 
 const LIMITE_PDF_BYTES = 10 * 1024 * 1024;
 
@@ -47,12 +49,12 @@ function exigirTokenDoAmbiente(ambiente: ZapSignAmbiente): void {
 }
 
 async function exigirEdicaoDocumentos(userId: string): Promise<string> {
-  const { data: pode, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "documentos" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["documentos.zapsign"],
+    "editar",
+    "Sem permissão para editar Documentos.",
   );
-  if (error) throw new Error(error.message);
-  if (!pode) throw new Error("Sem permissão para editar Documentos.");
   const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
   const meta = (data?.user?.user_metadata ?? {}) as Record<string, unknown>;
   const nome =
@@ -377,12 +379,12 @@ export const listarDocumentosTeste = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: pode, error } = await supabaseAdmin.rpc(
-      "can_view_module" as never,
-      { _user_id: context.userId, _module: "documentos" } as never,
+    await exigirPermissaoPagina(
+      context.userId,
+      ["documentos.zapsign"],
+      "ver",
+      "Sem permissão para ver Documentos.",
     );
-    if (error) throw new Error(error.message);
-    if (!pode) throw new Error("Sem permissão para ver Documentos.");
 
     let q = supabaseAdmin
       .from(T_DOCS)
@@ -435,7 +437,7 @@ export const listarEventosZapSign = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ ambiente: AmbienteSchema }).parse(input))
   .handler(async ({ data, context }) => {
-    await exigirVisualizacao(context.userId, ["documentos"]);
+    await exigirVisualizacao(context.userId, ["documentos.zapsign"]);
     const { data: eventos, error } = await supabaseAdmin
       .from(T_EVENTOS)
       .select("id, documento_id, zapsign_token, event_type, status_documento, recebido_em")
@@ -447,16 +449,8 @@ export const listarEventosZapSign = createServerFn({ method: "POST" })
     return eventos ?? [];
   });
 
-async function exigirVisualizacao(userId: string, modulos: string[]): Promise<void> {
-  const resultados = await Promise.all(
-    modulos.map((m) =>
-      supabaseAdmin.rpc("can_view_module" as never, { _user_id: userId, _module: m } as never),
-    ),
-  );
-  for (const r of resultados) if (r.error) throw new Error(r.error.message);
-  if (!resultados.some((r) => Boolean(r.data))) {
-    throw new Error("Sem permissão para ver este documento.");
-  }
+async function exigirVisualizacao(userId: string, paginas: ChavePermissao[]): Promise<void> {
+  await exigirPermissaoPagina(userId, paginas, "ver", "Sem permissão para ver este documento.");
 }
 
 /**
@@ -471,7 +465,7 @@ export const obterLinkArquivoAssinado = createServerFn({ method: "POST" })
     z.object({ ambiente: AmbienteSchema, id: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    await exigirVisualizacao(context.userId, ["documentos", "rematricula"]);
+    await exigirVisualizacao(context.userId, ["documentos.zapsign", "matricula.contratos"]);
     const r = await linkArquivoAssinado(data.id, data.ambiente);
     if (r.url === null) throw new Error(r.erro);
     return { url: r.url };

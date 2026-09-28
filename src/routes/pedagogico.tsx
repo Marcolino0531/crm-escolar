@@ -1,7 +1,7 @@
 // Secretaria (Pedagógico) — Fase 0: fundação estrutural por unidade × ano letivo.
 // Disciplinas, turmas do ano (espelho do Sponte via GetMatriculas), atribuições
 // professor × turma × disciplina, calendário letivo e acesso de professores.
-// Secretaria/administração entram por canView/canEdit("pedagogico"); o
+// Secretaria/administração entram por canView/canEdit("secretaria"); o
 // professor NÃO passa por aqui (vê só o que a RLS libera em /professor).
 
 import { createFileRoute } from "@tanstack/react-router";
@@ -74,7 +74,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 
 export const Route = createFileRoute("/pedagogico")({
   head: () => ({ meta: [{ title: "Secretaria (Pedagógico) — School Hub" }] }),
@@ -84,7 +85,7 @@ export const Route = createFileRoute("/pedagogico")({
 function PedagogicoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("pedagogico"))
+  if (!canView("secretaria"))
     return (
       <AccessDenied message="Você não tem permissão para acessar a Secretaria (Pedagógico)." />
     );
@@ -124,7 +125,8 @@ function PedagogicoPage() {
   const { canEdit } = usePermissions();
   const { isAdmin } = useRole();
   const { selected, schools } = useSchool();
-  const podeEditar = canEdit("pedagogico");
+  const { inicial } = useAbasArvore("secretaria");
+  const abaInicial = inicial ?? "turmas";
   const unidadeNome = unidadeAtiva(selected, schools);
   const schoolId = useMemo(
     () => schools.find((s) => s.name === unidadeNome)?.id ?? null,
@@ -161,33 +163,41 @@ function PedagogicoPage() {
       {!schoolId ? (
         <SelecioneUnidade acao="A Secretaria" />
       ) : (
-        <Tabs defaultValue="turmas">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="turmas">Turmas do ano</TabsTrigger>
-            <TabsTrigger value="disciplinas">Disciplinas</TabsTrigger>
-            <TabsTrigger value="atribuicoes">Atribuições</TabsTrigger>
-            <TabsTrigger value="horarios">Grade de horários</TabsTrigger>
-            <TabsTrigger value="calendario">Calendário letivo</TabsTrigger>
-            <TabsTrigger value="notas">Notas e pareceres</TabsTrigger>
-            {isAdmin && <TabsTrigger value="acessos">Acesso de professores</TabsTrigger>}
-          </TabsList>
+        <Tabs key={abaInicial} defaultValue={abaInicial}>
+          <AbasArvore chavePai="secretaria" className="flex-wrap" />
           <TabsContent value="turmas">
             <TurmasDoAno schoolId={schoolId} ano={ano} isAdmin={isAdmin} />
           </TabsContent>
           <TabsContent value="disciplinas">
-            <Disciplinas schoolId={schoolId} podeEditar={podeEditar} />
+            <Disciplinas schoolId={schoolId} podeEditar={canEdit("secretaria.disciplinas")} />
           </TabsContent>
           <TabsContent value="atribuicoes">
-            <Atribuicoes schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+            <Atribuicoes
+              schoolId={schoolId}
+              ano={ano}
+              podeEditar={canEdit("secretaria.atribuicoes")}
+            />
           </TabsContent>
           <TabsContent value="horarios">
-            <GradeHorarios schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+            <GradeHorarios
+              schoolId={schoolId}
+              ano={ano}
+              podeEditar={canEdit("secretaria.horarios")}
+            />
           </TabsContent>
           <TabsContent value="calendario">
-            <Calendario schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+            <Calendario
+              schoolId={schoolId}
+              ano={ano}
+              podeEditar={canEdit("secretaria.calendario")}
+            />
           </TabsContent>
           <TabsContent value="notas">
-            <NotasConsolidadas schoolId={schoolId} ano={ano} podeEditar={podeEditar} />
+            <NotasConsolidadas
+              schoolId={schoolId}
+              ano={ano}
+              podeEditar={canEdit("secretaria.notas")}
+            />
           </TabsContent>
           {isAdmin && (
             <TabsContent value="acessos">

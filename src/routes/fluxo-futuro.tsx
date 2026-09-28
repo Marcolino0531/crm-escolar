@@ -2,7 +2,18 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ChevronLeft, ChevronRight, Plus, Pencil, Copy, Trash2, Repeat, RefreshCw, Building2, Construction } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Pencil,
+  Copy,
+  Trash2,
+  Repeat,
+  RefreshCw,
+  Building2,
+  Construction,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
@@ -10,18 +21,42 @@ import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { formatDateBR } from "@/lib/date-utils";
 import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
-import { duplicarDespesa, temBaixaAutomatica, type DuplicacaoDespesa } from "@/lib/fluxo-futuro-duplicar";
+import {
+  duplicarDespesa,
+  temBaixaAutomatica,
+  type DuplicacaoDespesa,
+} from "@/lib/fluxo-futuro-duplicar";
 import { vencimentoRecorrente } from "@/lib/fluxo-futuro-dia-util";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type FluxoSearch = { focus?: string; month?: string };
@@ -37,7 +72,7 @@ export const Route = createFileRoute("/fluxo-futuro")({
 function FluxoFuturoGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_fluxo"))
+  if (!canView("fluxo"))
     return <AccessDenied message="Você não tem permissão para visualizar o Fluxo Futuro." />;
   return <FluxoFuturoPage />;
 }
@@ -72,8 +107,18 @@ type Series = {
 
 // Nomes curtos dos 12 meses para os checkboxes da Despesa Fixa Sazonal.
 const MESES_CURTOS = [
-  "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
-  "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+  "Jan",
+  "Fev",
+  "Mar",
+  "Abr",
+  "Mai",
+  "Jun",
+  "Jul",
+  "Ago",
+  "Set",
+  "Out",
+  "Nov",
+  "Dez",
 ];
 
 // Mês de calendário (1..12) de um mês ISO "YYYY-MM-01".
@@ -151,12 +196,14 @@ const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale d
 function FluxoFuturoPage() {
   const { selected: schoolId, schools } = useSchool();
   const { canEdit } = usePermissions();
-  const isAdmin = canEdit("financeiro");
+  const isAdmin = canEdit("fluxo");
   const qc = useQueryClient();
   const { focus, month: monthParam } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const today = new Date();
-  const [month, setMonth] = useState(() => monthKey(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [month, setMonth] = useState(() =>
+    monthKey(new Date(today.getFullYear(), today.getMonth(), 1)),
+  );
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
   // Ao chegar de uma notificação (query param `focus`), posiciona no mês da
@@ -167,12 +214,18 @@ function FluxoFuturoPage() {
   const [editing, setEditing] = useState<Forecast | null>(null);
   const [creating, setCreating] = useState(false);
   const [duplicating, setDuplicating] = useState<DuplicacaoDespesa | null>(null);
-  const [scopeDialog, setScopeDialog] = useState<{ kind: "edit" | "delete"; forecast: Forecast } | null>(null);
+  const [scopeDialog, setScopeDialog] = useState<{
+    kind: "edit" | "delete";
+    forecast: Forecast;
+  } | null>(null);
 
   const { data: costCenters = [] } = useQuery({
     queryKey: ["cost_centers_all"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("cost_centers").select("id, name, color").order("name");
+      const { data, error } = await supabase
+        .from("cost_centers")
+        .select("id, name, color")
+        .order("name");
       if (error) throw error;
       return data;
     },
@@ -180,14 +233,20 @@ function FluxoFuturoPage() {
   const { data: subCostCenters = [] } = useQuery({
     queryKey: ["sub_cost_centers_all"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("sub_cost_centers").select("id, name, cost_center_id").order("name");
+      const { data, error } = await supabase
+        .from("sub_cost_centers")
+        .select("id, name, cost_center_id")
+        .order("name");
       if (error) throw error;
       return data;
     },
   });
 
   const ccMap = useMemo(() => Object.fromEntries(costCenters.map((c) => [c.id, c])), [costCenters]);
-  const subCcMap = useMemo(() => Object.fromEntries(subCostCenters.map((c) => [c.id, c])), [subCostCenters]);
+  const subCcMap = useMemo(
+    () => Object.fromEntries(subCostCenters.map((c) => [c.id, c])),
+    [subCostCenters],
+  );
 
   // Materialize fixed series for this month (admins only).
   useEffect(() => {
@@ -237,7 +296,9 @@ function FluxoFuturoPage() {
         if (!error) qc.invalidateQueries({ queryKey: ["recurring_forecasts"] });
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [schoolId, month, isAdmin, qc]);
 
   const { data: forecasts = [], refetch } = useQuery({
@@ -255,7 +316,9 @@ function FluxoFuturoPage() {
         const da = a.due_date ?? "9999-12-31";
         const db = b.due_date ?? "9999-12-31";
         if (da !== db) return da.localeCompare(db);
-        return (a.description ?? "").localeCompare(b.description ?? "", "pt-BR", { sensitivity: "base" });
+        return (a.description ?? "").localeCompare(b.description ?? "", "pt-BR", {
+          sensitivity: "base",
+        });
       });
     },
   });
@@ -315,10 +378,7 @@ function FluxoFuturoPage() {
   const saldoProjetado = totalReceitasPrevistas - totalProjected;
 
   async function setStatus(f: Forecast, status: ForecastStatus) {
-    const { error } = await supabase
-      .from("recurring_forecasts")
-      .update({ status })
-      .eq("id", f.id);
+    const { error } = await supabase.from("recurring_forecasts").update({ status }).eq("id", f.id);
     if (error) toast.error(error.message);
     else qc.invalidateQueries({ queryKey: ["recurring_forecasts"] });
   }
@@ -338,9 +398,15 @@ function FluxoFuturoPage() {
         if (f.series_id) {
           // mark this month as skipped on the series so it won't regenerate
           const { data: s } = await supabase
-            .from("recurring_series").select("skipped_months").eq("id", f.series_id).single();
+            .from("recurring_series")
+            .select("skipped_months")
+            .eq("id", f.series_id)
+            .single();
           const skipped = Array.from(new Set([...(s?.skipped_months ?? []), f.month]));
-          await supabase.from("recurring_series").update({ skipped_months: skipped }).eq("id", f.series_id);
+          await supabase
+            .from("recurring_series")
+            .update({ skipped_months: skipped })
+            .eq("id", f.series_id);
         }
         const { error } = await supabase.from("recurring_forecasts").delete().eq("id", f.id);
         if (error) throw error;
@@ -348,10 +414,15 @@ function FluxoFuturoPage() {
         // future: end the series before this month and delete all forecasts >= this month
         if (f.series_id) {
           const prevMonth = addMonths(f.month, -1);
-          await supabase.from("recurring_series").update({ end_month: prevMonth }).eq("id", f.series_id);
+          await supabase
+            .from("recurring_series")
+            .update({ end_month: prevMonth })
+            .eq("id", f.series_id);
           const { error } = await supabase
-            .from("recurring_forecasts").delete()
-            .eq("series_id", f.series_id).gte("month", f.month);
+            .from("recurring_forecasts")
+            .delete()
+            .eq("series_id", f.series_id)
+            .gte("month", f.month);
           if (error) throw error;
         }
       }
@@ -367,7 +438,11 @@ function FluxoFuturoPage() {
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-bold">Fluxo Futuro</h1>
-        <Card><CardContent className="p-8 text-center text-muted-foreground">Selecione um colégio específico no topo da página para visualizar o fluxo futuro.</CardContent></Card>
+        <Card>
+          <CardContent className="p-8 text-center text-muted-foreground">
+            Selecione um colégio específico no topo da página para visualizar o fluxo futuro.
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -377,19 +452,58 @@ function FluxoFuturoPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Fluxo Futuro</h1>
-          <p className="text-sm text-muted-foreground">Checklist manual de contas a pagar de {schoolName}.</p>
+          <p className="text-sm text-muted-foreground">
+            Checklist manual de contas a pagar de {schoolName}.
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="h-4 w-4" /></Button>
-          <div className="min-w-[160px] text-center text-sm font-medium capitalize">{monthLabel(month)}</div>
-          <Button variant="outline" size="sm" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
+          <Button variant="outline" size="sm" onClick={() => setMonth(addMonths(month, -1))}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="min-w-[160px] text-center text-sm font-medium capitalize">
+            {monthLabel(month)}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setMonth(addMonths(month, 1))}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total de Receitas Previstas</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-green-600">{sponteAtiva ? fmtBRL(totalReceitasPrevistas) : "—"}</div></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Total de Despesas Previstas</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-orange-600">{fmtBRL(totalProjected)}</div></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground">Saldo Projetado</CardTitle></CardHeader><CardContent><div className={`text-2xl font-bold ${!sponteAtiva ? "" : saldoProjetado >= 0 ? "text-green-600" : "text-red-600"}`}>{sponteAtiva ? fmtBRL(saldoProjetado) : "—"}</div></CardContent></Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs text-muted-foreground">
+              Total de Receitas Previstas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {sponteAtiva ? fmtBRL(totalReceitasPrevistas) : "—"}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs text-muted-foreground">
+              Total de Despesas Previstas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-orange-600">{fmtBRL(totalProjected)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs text-muted-foreground">Saldo Projetado</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              className={`text-2xl font-bold ${!sponteAtiva ? "" : saldoProjetado >= 0 ? "text-green-600" : "text-red-600"}`}
+            >
+              {sponteAtiva ? fmtBRL(saldoProjetado) : "—"}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -397,14 +511,16 @@ function FluxoFuturoPage() {
           <CardTitle>Despesas Previstas</CardTitle>
           {isAdmin && (
             <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4 mr-1" />Adicionar Despesa Futura
+              <Plus className="h-4 w-4 mr-1" />
+              Adicionar Despesa Futura
             </Button>
           )}
         </CardHeader>
         <CardContent>
           {forecasts.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              Nenhuma despesa prevista para este mês. Clique em "Adicionar Despesa Futura" para começar.
+              Nenhuma despesa prevista para este mês. Clique em "Adicionar Despesa Futura" para
+              começar.
             </div>
           ) : (
             <Table>
@@ -435,11 +551,18 @@ function FluxoFuturoPage() {
                           : "transition-colors duration-1000"
                       }
                     >
-                      <TableCell className="text-xs">{f.due_date ? formatDateBR(f.due_date) : "—"}</TableCell>
+                      <TableCell className="text-xs">
+                        {f.due_date ? formatDateBR(f.due_date) : "—"}
+                      </TableCell>
                       <TableCell className="font-medium">
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           {f.description}
-                          {f.series_id && <Repeat className="h-3 w-3 text-muted-foreground" aria-label="Despesa fixa" />}
+                          {f.series_id && (
+                            <Repeat
+                              className="h-3 w-3 text-muted-foreground"
+                              aria-label="Despesa fixa"
+                            />
+                          )}
                           {temBaixaAutomatica(f.notes) && (
                             <Badge
                               variant="outline"
@@ -454,13 +577,22 @@ function FluxoFuturoPage() {
                       <TableCell>
                         {cc ? (
                           <span className="inline-flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full" style={{ background: cc.color }} />
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ background: cc.color }}
+                            />
                             {cc.name}
                           </span>
-                        ) : <span className="text-muted-foreground">—</span>}
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
-                      <TableCell>{sub?.name ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtBRL(Number(f.projected_amount))}</TableCell>
+                      <TableCell>
+                        {sub?.name ?? <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {fmtBRL(Number(f.projected_amount))}
+                      </TableCell>
                       <TableCell className="max-w-[220px]">
                         {f.notes ? (
                           <TooltipProvider delayDuration={150}>
@@ -507,7 +639,12 @@ function FluxoFuturoPage() {
                       {isAdmin && (
                         <TableCell>
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditClick(f)}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleEditClick(f)}
+                            >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
@@ -520,7 +657,12 @@ function FluxoFuturoPage() {
                             >
                               <Copy className="h-3.5 w-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteClick(f)}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive"
+                              onClick={() => handleDeleteClick(f)}
+                            >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
@@ -547,8 +689,14 @@ function FluxoFuturoPage() {
             )}
           </div>
           {sponteAtiva && (
-            <Button size="sm" variant="outline" onClick={() => refetchReceitas()} disabled={receitasLoading}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${receitasLoading ? "animate-spin" : ""}`} />Atualizar
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => refetchReceitas()}
+              disabled={receitasLoading}
+            >
+              <RefreshCw className={`h-4 w-4 mr-1 ${receitasLoading ? "animate-spin" : ""}`} />
+              Atualizar
             </Button>
           )}
         </CardHeader>
@@ -556,21 +704,34 @@ function FluxoFuturoPage() {
           {!sponteAtiva ? (
             <div className="flex flex-col items-center gap-2 py-8 text-center">
               <Construction className="h-8 w-8 text-amber-500" />
-              <p className="text-sm font-medium">Integração Sponte indisponível para {schoolName || "esta unidade"}.</p>
-              <p className="text-xs text-muted-foreground">Selecione <strong>CEC</strong>, <strong>CEC Baby</strong>, <strong>Núcleo Belvedere</strong> ou <strong>Núcleo Vale do Sereno</strong> no topo para ver as receitas previstas.</p>
+              <p className="text-sm font-medium">
+                Integração Sponte indisponível para {schoolName || "esta unidade"}.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Selecione <strong>CEC</strong>, <strong>CEC Baby</strong>,{" "}
+                <strong>Núcleo Belvedere</strong> ou <strong>Núcleo Vale do Sereno</strong> no topo
+                para ver as receitas previstas.
+              </p>
             </div>
           ) : receitasErroMsg ? (
-            <div className="py-8 text-center text-sm text-red-600">Erro ao consultar o Sponte: {receitasErroMsg}</div>
+            <div className="py-8 text-center text-sm text-red-600">
+              Erro ao consultar o Sponte: {receitasErroMsg}
+            </div>
           ) : receitasLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">Consultando receitas no Sponte…</div>
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Consultando receitas no Sponte…
+            </div>
           ) : receitas.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              Nenhuma receita prevista (parcela pendente) de {fmtVenc(recInicio)} a {fmtVenc(recFim)}.
+              Nenhuma receita prevista (parcela pendente) de {fmtVenc(recInicio)} a{" "}
+              {fmtVenc(recFim)}.
             </div>
           ) : (
             <>
               <p className="mb-3 text-xs text-muted-foreground">
-                Janela {fmtVenc(recInicio)} – {fmtVenc(recFim)} · {receitas.length} boleto(s){receitasData?.meta ? ` · ${receitasData.meta.tempoSegundos}s` : ""}. Desconto de pontualidade aplicado apenas sobre a Mensalidade.
+                Janela {fmtVenc(recInicio)} – {fmtVenc(recFim)} · {receitas.length} boleto(s)
+                {receitasData?.meta ? ` · ${receitasData.meta.tempoSegundos}s` : ""}. Desconto de
+                pontualidade aplicado apenas sobre a Mensalidade.
               </p>
               <Table>
                 <TableHeader>
@@ -588,19 +749,27 @@ function FluxoFuturoPage() {
                     <TableRow key={r.groupKey}>
                       <TableCell className="text-xs">{fmtVenc(r.vencimento)}</TableCell>
                       <TableCell className="font-medium">{r.nomeAluno}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{r.nomeResponsavel}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {r.nomeResponsavel}
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {r.categorias.map((c) => (
-                            <Badge key={c} variant="outline" className="text-xs">{c}</Badge>
+                            <Badge key={c} variant="outline" className="text-xs">
+                              {c}
+                            </Badge>
                           ))}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtBRL(r.valorTotalBoleto)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {fmtBRL(r.valorTotalBoleto)}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums font-semibold text-green-600">
                         {fmtBRL(r.valorComDesconto)}
                         {r.descontoBolsa > 0 && (
-                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">(-{r.descontoBolsa}%)</span>
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            (-{r.descontoBolsa}%)
+                          </span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -608,7 +777,8 @@ function FluxoFuturoPage() {
                 </TableBody>
               </Table>
               <div className="mt-3 flex justify-end border-t pt-3 text-sm font-semibold">
-                Total de Receitas Previstas:&nbsp;<span className="text-green-600">{fmtBRL(totalReceitasPrevistas)}</span>
+                Total de Receitas Previstas:&nbsp;
+                <span className="text-green-600">{fmtBRL(totalReceitasPrevistas)}</span>
               </div>
             </>
           )}
@@ -624,8 +794,17 @@ function FluxoFuturoPage() {
           editScope="single"
           costCenters={costCenters}
           subCostCenters={subCostCenters}
-          onClose={() => { setCreating(false); setEditing(null); setDuplicating(null); }}
-          onSaved={async () => { await refetch(); setCreating(false); setEditing(null); setDuplicating(null); }}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+            setDuplicating(null);
+          }}
+          onSaved={async () => {
+            await refetch();
+            setCreating(false);
+            setEditing(null);
+            setDuplicating(null);
+          }}
         />
       )}
 
@@ -637,12 +816,15 @@ function FluxoFuturoPage() {
               {scopeDialog?.kind === "edit" ? "Editar despesa fixa" : "Excluir despesa fixa"}
             </DialogTitle>
             <DialogDescription>
-              "{scopeDialog?.forecast.description}" é uma despesa fixa recorrente.
-              Deseja {scopeDialog?.kind === "edit" ? "alterar" : "excluir"} apenas este mês ou todos os meses futuros?
+              "{scopeDialog?.forecast.description}" é uma despesa fixa recorrente. Deseja{" "}
+              {scopeDialog?.kind === "edit" ? "alterar" : "excluir"} apenas este mês ou todos os
+              meses futuros?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setScopeDialog(null)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setScopeDialog(null)}>
+              Cancelar
+            </Button>
             <Button
               variant="secondary"
               onClick={() => {
@@ -654,20 +836,26 @@ function FluxoFuturoPage() {
                   void doDelete(scopeDialog.forecast, "single");
                 }
               }}
-            >Apenas este mês</Button>
+            >
+              Apenas este mês
+            </Button>
             <Button
               variant="destructive"
               onClick={() => {
                 if (!scopeDialog) return;
                 if (scopeDialog.kind === "edit") {
                   // Edit all future: open dialog in "future" mode
-                  setEditing({ ...scopeDialog.forecast, __scope: "future" } as Forecast & { __scope?: string });
+                  setEditing({ ...scopeDialog.forecast, __scope: "future" } as Forecast & {
+                    __scope?: string;
+                  });
                   setScopeDialog(null);
                 } else {
                   void doDelete(scopeDialog.forecast, "future");
                 }
               }}
-            >Todos os meses futuros</Button>
+            >
+              Todos os meses futuros
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -676,7 +864,15 @@ function FluxoFuturoPage() {
 }
 
 function ForecastDialog({
-  schoolId, month, forecast, duplicacao, editScope, costCenters, subCostCenters, onClose, onSaved,
+  schoolId,
+  month,
+  forecast,
+  duplicacao,
+  editScope,
+  costCenters,
+  subCostCenters,
+  onClose,
+  onSaved,
 }: {
   schoolId: string;
   month: string;
@@ -692,7 +888,9 @@ function ForecastDialog({
   const scope: "single" | "future" = (forecast as any)?.__scope === "future" ? "future" : "single";
   const defaultDue = forecast?.due_date ?? (duplicacao ? duplicacao.due_date : month);
   const [dueDate, setDueDate] = useState(defaultDue);
-  const [description, setDescription] = useState(forecast?.description ?? duplicacao?.description ?? "");
+  const [description, setDescription] = useState(
+    forecast?.description ?? duplicacao?.description ?? "",
+  );
   const [amount, setAmount] = useState<string>(() => {
     const base = forecast ?? duplicacao;
     return base ? formatBRLInput(Number(base.projected_amount)) : "";
@@ -751,10 +949,19 @@ function ForecastDialog({
   );
 
   async function handleSave() {
-    if (!description.trim()) { toast.error("Informe a descrição."); return; }
+    if (!description.trim()) {
+      toast.error("Informe a descrição.");
+      return;
+    }
     const amt = parseBRLNumber(amount);
-    if (!Number.isFinite(amt) || amt <= 0) { toast.error("Informe um valor válido."); return; }
-    if (!dueDate) { toast.error("Informe a data de vencimento."); return; }
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.error("Informe um valor válido.");
+      return;
+    }
+    if (!dueDate) {
+      toast.error("Informe a data de vencimento.");
+      return;
+    }
     if (!isEdit && tipo === "sazonal" && incidenceMonths.length === 0) {
       toast.error("Selecione ao menos um mês de incidência.");
       return;
@@ -769,29 +976,39 @@ function ForecastDialog({
       if (isEdit && forecast) {
         if (scope === "future" && forecast.series_id) {
           // Update the series template + all forecasts from this month onward
-          await supabase.from("recurring_series").update({
-            description: description.trim(),
-            projected_amount: amt,
-            cost_center_id: costCenterId || null,
-            sub_cost_center_id: subCostCenterId || null,
-            due_day: dueDay,
-            notes: notes.trim() || null,
-            updated_at: new Date().toISOString(),
-          }).eq("id", forecast.series_id);
-          // Fetch affected forecasts and update each due_date according to its own month
-          const { data: rows } = await supabase
-            .from("recurring_forecasts").select("id, month")
-            .eq("series_id", forecast.series_id).gte("month", forecast.month);
-          await Promise.all((rows ?? []).map((r: any) =>
-            supabase.from("recurring_forecasts").update({
+          await supabase
+            .from("recurring_series")
+            .update({
               description: description.trim(),
               projected_amount: amt,
               cost_center_id: costCenterId || null,
               sub_cost_center_id: subCostCenterId || null,
-              due_date: vencimentoRecorrente(r.month, dueDay, description.trim()),
+              due_day: dueDay,
               notes: notes.trim() || null,
-            }).eq("id", r.id),
-          ));
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", forecast.series_id);
+          // Fetch affected forecasts and update each due_date according to its own month
+          const { data: rows } = await supabase
+            .from("recurring_forecasts")
+            .select("id, month")
+            .eq("series_id", forecast.series_id)
+            .gte("month", forecast.month);
+          await Promise.all(
+            (rows ?? []).map((r: any) =>
+              supabase
+                .from("recurring_forecasts")
+                .update({
+                  description: description.trim(),
+                  projected_amount: amt,
+                  cost_center_id: costCenterId || null,
+                  sub_cost_center_id: subCostCenterId || null,
+                  due_date: vencimentoRecorrente(r.month, dueDay, description.trim()),
+                  notes: notes.trim() || null,
+                })
+                .eq("id", r.id),
+            ),
+          );
           toast.success("Série atualizada para este mês e seguintes.");
         } else {
           // Single edit: if changing from fixa→não fixa, detach from series for this row only
@@ -805,7 +1022,10 @@ function ForecastDialog({
             notes: notes.trim() || null,
           };
           if (forecast.series_id && tipo === "nao_fixa") patch.series_id = null;
-          const { error } = await supabase.from("recurring_forecasts").update(patch).eq("id", forecast.id);
+          const { error } = await supabase
+            .from("recurring_forecasts")
+            .update(patch)
+            .eq("id", forecast.id);
           if (error) throw error;
           toast.success("Despesa atualizada.");
         }
@@ -820,18 +1040,22 @@ function ForecastDialog({
           }
           const endMonth = tipo === "parcelada" ? addMonths(monthOfDue, nParc - 1) : null;
           // Create series template
-          const { data: series, error: sErr } = await supabase.from("recurring_series").insert({
-            school_id: schoolId,
-            description: description.trim(),
-            projected_amount: amt,
-            cost_center_id: costCenterId || null,
-            sub_cost_center_id: subCostCenterId || null,
-            due_day: dueDay,
-            start_month: monthOfDue,
-            end_month: endMonth,
-            incidence_months: tipo === "sazonal" ? incidenceMonths : null,
-            notes: notes.trim() || null,
-          }).select("id").single();
+          const { data: series, error: sErr } = await supabase
+            .from("recurring_series")
+            .insert({
+              school_id: schoolId,
+              description: description.trim(),
+              projected_amount: amt,
+              cost_center_id: costCenterId || null,
+              sub_cost_center_id: subCostCenterId || null,
+              due_day: dueDay,
+              start_month: monthOfDue,
+              end_month: endMonth,
+              incidence_months: tipo === "sazonal" ? incidenceMonths : null,
+              notes: notes.trim() || null,
+            })
+            .select("id")
+            .single();
           if (sErr) throw sErr;
 
           if (tipo === "parcelada") {
@@ -913,7 +1137,9 @@ function ForecastDialog({
         <DialogHeader>
           <DialogTitle>
             {isEdit
-              ? (scope === "future" ? "Editar este mês e seguintes" : "Editar despesa")
+              ? scope === "future"
+                ? "Editar este mês e seguintes"
+                : "Editar despesa"
               : duplicacao
                 ? "Duplicar despesa"
                 : "Adicionar despesa futura"}
@@ -927,7 +1153,9 @@ function ForecastDialog({
               onValueChange={(v) => setTipo(v as "fixa" | "nao_fixa" | "parcelada" | "sazonal")}
               disabled={isEdit}
             >
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="nao_fixa">Não Fixa (apenas neste mês)</SelectItem>
                 <SelectItem value="fixa">Fixa (repete todos os meses)</SelectItem>
@@ -937,7 +1165,8 @@ function ForecastDialog({
             </Select>
             {isEdit && forecast?.series_id && (
               <p className="text-xs text-muted-foreground mt-1">
-                Esta despesa faz parte de uma série fixa. Para mudar o tipo, exclua e cadastre novamente.
+                Esta despesa faz parte de uma série fixa. Para mudar o tipo, exclua e cadastre
+                novamente.
               </p>
             )}
           </div>
@@ -984,7 +1213,8 @@ function ForecastDialog({
                 placeholder="Ex: 6, 12, 24"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Serão gerados {Math.max(1, Math.floor(Number(parcelas) || 0))} lançamentos mensais a partir da data de vencimento.
+                Serão gerados {Math.max(1, Math.floor(Number(parcelas) || 0))} lançamentos mensais a
+                partir da data de vencimento.
               </p>
             </div>
           )}
@@ -1005,10 +1235,15 @@ function ForecastDialog({
           </div>
           <div>
             <Label>Descrição</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Aluguel, Conta de Luz, Ação Trabalhista..." />
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Ex: Aluguel, Conta de Luz, Ação Trabalhista..."
+            />
             {!isEdit && tipo === "parcelada" && description.trim() && (
               <p className="text-xs text-muted-foreground mt-1">
-                Será exibido como: "{description.trim()} (Parcela 1/{Math.max(1, Math.floor(Number(parcelas) || 0))})"
+                Será exibido como: "{description.trim()} (Parcela 1/
+                {Math.max(1, Math.floor(Number(parcelas) || 0))})"
               </p>
             )}
           </div>
@@ -1029,10 +1264,14 @@ function ForecastDialog({
             <div>
               <Label>Status</Label>
               <Select value={status} onValueChange={(v) => setStatus(v as ForecastStatus)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {STATUS_ORDER.map((s) => (
-                    <SelectItem key={s} value={s}>{STATUS_META[s].label}</SelectItem>
+                    <SelectItem key={s} value={s}>
+                      {STATUS_META[s].label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1040,17 +1279,27 @@ function ForecastDialog({
           )}
           <div>
             <Label>Categoria</Label>
-            <Select value={costCenterId} onValueChange={(v) => { setCostCenterId(v); setSubCostCenterId(""); }}>
-              <SelectTrigger><SelectValue placeholder="Selecione uma categoria" /></SelectTrigger>
+            <Select
+              value={costCenterId}
+              onValueChange={(v) => {
+                setCostCenterId(v);
+                setSubCostCenterId("");
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione uma categoria" />
+              </SelectTrigger>
               <SelectContent>
-                {[...costCenters].sort((a, b) => a.name.localeCompare(b.name)).map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
-                      {c.name}
-                    </span>
-                  </SelectItem>
-                ))}
+                {[...costCenters]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
+                        {c.name}
+                      </span>
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -1058,11 +1307,17 @@ function ForecastDialog({
             <div>
               <Label>Subcategoria</Label>
               <Select value={subCostCenterId} onValueChange={setSubCostCenterId}>
-                <SelectTrigger><SelectValue placeholder="Selecione uma subcategoria (opcional)" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione uma subcategoria (opcional)" />
+                </SelectTrigger>
                 <SelectContent>
-                  {[...subOptions].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                  ))}
+                  {[...subOptions]
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1079,8 +1334,12 @@ function ForecastDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving}>{saving ? "Salvando..." : "Salvar"}</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Salvando..." : "Salvar"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
