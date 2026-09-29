@@ -978,10 +978,10 @@ export function validarMaterialForm(material: MaterialForm, configurado: boolean
 
 // ─── Matrícula (parcelas e 1º vencimento escolhidos pelo responsável) ──────
 //
-// Mesma regra da Rematrícula (parcelamentoMatriculaDisponivel): até 5x de
-// setembro a janeiro, só à vista em janeiro ou fora da janela; a 1ª parcela
-// vence entre o preenchimento e o fim do mês. Sem valor cadastrado para o
-// colégio × segmento a escolha não é exigida e a Matrícula vira pendência.
+// Mesma regra da Rematrícula (parcelamentoMatriculaDisponivel): antecipada até
+// 5x com a última parcela até janeiro do ano letivo; no ano em curso, só à vista
+// até o fim do mês. Sem valor cadastrado para o colégio × segmento a escolha não
+// é exigida e a Matrícula vira pendência.
 
 export interface MatriculaCobrancaForm {
   parcelas: number;
@@ -997,14 +997,21 @@ export function validarMatriculaCobrancaForm(
   cobranca: MatriculaCobrancaForm,
   valorDisponivel: boolean,
   hoje: string,
+  anoLetivo: number,
 ): ErrosForm {
   if (!valorDisponivel) return {};
-  const erros: ErrosForm = {};
-  if (!parcelasMatriculaValida(cobranca.parcelas, hoje))
-    erros["matriculaCobranca.parcelas"] = "Escolha em quantas parcelas quer pagar a Matrícula.";
-  const erroVencimento = validarPrimeiroVencimento(cobranca.primeiroVencimento, hoje);
-  if (erroVencimento) erros["matriculaCobranca.primeiroVencimento"] = erroVencimento;
-  return erros;
+  if (!parcelasMatriculaValida(cobranca.parcelas, hoje, anoLetivo)) {
+    return {
+      "matriculaCobranca.parcelas": "Escolha em quantas parcelas quer pagar a Matrícula.",
+    };
+  }
+  const erroVencimento = validarPrimeiroVencimento(
+    cobranca.primeiroVencimento,
+    hoje,
+    anoLetivo,
+    cobranca.parcelas,
+  );
+  return erroVencimento ? { "matriculaCobranca.primeiroVencimento": erroVencimento } : {};
 }
 
 // ─── Padronização de capitalização ──────────────────────────────────────────

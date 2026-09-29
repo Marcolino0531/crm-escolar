@@ -24,6 +24,8 @@ import {
   TODOS_OS_TURNOS,
   formatarDataBR,
   limitesPrimeiroVencimento,
+  textoJanelaPrimeiroVencimento,
+  textoMatriculaAnoEmCurso,
   validarPrimeiroVencimento,
   valorMensalidadeComDesconto,
   type TurnosDisponiveis,
@@ -525,7 +527,12 @@ function RematriculaPage() {
         setParcelas(portal.material?.escolhaAtual?.parcelas ?? null);
         setSalvo(!!portal.material?.escolhaAtual);
         if (portal.matricula) {
-          setMatParcelas(portal.matricula.escolhaAtual?.parcelas ?? 1);
+          const salvas = portal.matricula.escolhaAtual?.parcelas ?? 1;
+          setMatParcelas(
+            portal.enviadaEm || portal.matricula.opcoes.some((o) => o.parcelas === salvas)
+              ? salvas
+              : 1,
+          );
           // A data só reaparece depois do envio final; antes disso o campo começa vazio.
           setMatVencimento(
             portal.enviadaEm ? (portal.matricula.escolhaAtual?.primeiroVencimento ?? "") : "",
@@ -667,7 +674,7 @@ function RematriculaPage() {
   const opcoes: ParcelamentoPrimeira[] = material?.opcoes ?? [];
   const matricula = dados?.matricula;
   const limitesVencimento = matricula
-    ? limitesPrimeiroVencimento(matricula.dataPreenchimento)
+    ? limitesPrimeiroVencimento(matricula.dataPreenchimento, matricula.anoLetivo, matParcelas)
     : null;
   const mensalidade = dados?.mensalidade;
   const extras = dados?.extras ?? null;
@@ -897,7 +904,7 @@ function RematriculaPage() {
               </div>
             )}
 
-            {matricula && limitesVencimento && (
+            {matricula && (
               <div className="rounded-lg border p-4">
                 <h2 className="mb-1 text-sm font-semibold">Matrícula</h2>
                 <p className="text-sm text-muted-foreground">
@@ -906,7 +913,9 @@ function RematriculaPage() {
                 </p>
                 {matricula.somenteAVista ? (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    A partir de janeiro a matrícula é paga à vista, em parcela única.
+                    {matricula.anoEmCurso
+                      ? textoMatriculaAnoEmCurso(matricula.proporcao)
+                      : "Nesta data a matrícula é paga à vista, em parcela única."}
                   </p>
                 ) : (
                   <>
@@ -970,21 +979,21 @@ function RematriculaPage() {
                       );
                     }}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Entre {formatarDataBR(limitesVencimento.minimo)} e{" "}
-                    {formatarDataBR(limitesVencimento.maximo)}.
-                  </p>
+                  {limitesVencimento && (
+                    <p className="text-xs text-muted-foreground">
+                      {textoJanelaPrimeiroVencimento(limitesVencimento)}
+                    </p>
+                  )}
                   {errosEnvio["matricula.primeiroVencimento"] && (
                     <p data-erro className="text-xs text-destructive">
                       {errosEnvio["matricula.primeiroVencimento"]}
                     </p>
                   )}
                 </div>
-                {!matricula.somenteAVista && (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    As demais parcelas (2ª em diante) vencem no mesmo dia da mensalidade do aluno.
-                  </p>
-                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Se a data escolhida cair em fim de semana ou feriado, o vencimento passa para o
+                  próximo dia útil.
+                </p>
               </div>
             )}
 
@@ -1250,7 +1259,12 @@ function RematriculaPage() {
                       const erroVencimento =
                         matVencimentoTexto.trim() !== "" && matVencimento === ""
                           ? "Data incompleta ou inválida: digite os 8 dígitos no formato DD/MM/AAAA."
-                          : validarPrimeiroVencimento(matVencimento, matricula.dataPreenchimento);
+                          : validarPrimeiroVencimento(
+                              matVencimento,
+                              matricula.dataPreenchimento,
+                              matricula.anoLetivo,
+                              matParcelas,
+                            );
                       if (erroVencimento) {
                         setErrosEnvio({ "matricula.primeiroVencimento": erroVencimento });
                         setErro("Confira a data de vencimento da matrícula.");

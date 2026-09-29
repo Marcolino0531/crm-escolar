@@ -45,9 +45,11 @@ import {
   parcelasMaterialValida,
 } from "@/lib/rematricula";
 import {
+  parcelamentoMatriculaDisponivel,
   parcelasMatriculaValida,
   serveJantar,
   validarPrimeiroVencimento,
+  vencimentoEfetivoPrimeiraParcela,
 } from "@/lib/rematricula-matricula";
 import type { Weekday } from "@/lib/diario";
 
@@ -490,7 +492,7 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
     );
   } else if (
     e.matriculaParcelas === null ||
-    !parcelasMatriculaValida(e.matriculaParcelas, e.dataMatricula)
+    !parcelasMatriculaValida(e.matriculaParcelas, e.dataMatricula, e.anoLetivo)
   ) {
     pendente(
       "matricula",
@@ -500,17 +502,34 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
     const erroVencimento =
       e.matriculaPrimeiroVencimento === null
         ? "Informe o 1º vencimento."
-        : validarPrimeiroVencimento(e.matriculaPrimeiroVencimento, e.dataMatricula);
+        : validarPrimeiroVencimento(
+            e.matriculaPrimeiroVencimento,
+            e.dataMatricula,
+            e.anoLetivo,
+            e.matriculaParcelas,
+          );
     if (erroVencimento || e.matriculaPrimeiroVencimento === null) {
       pendente("matricula", `1º vencimento da Matrícula inválido — ${erroVencimento}`);
     } else {
+      // Ano em curso: valor proporcional aos meses restantes a partir do início.
+      const { valor, proporcao } = parcelamentoMatriculaDisponivel(
+        e.matriculaValor,
+        e.dataMatricula,
+        e.anoLetivo,
+        e.dataInicio,
+      );
+      const [, ...demais] = vencimentosAPartirDe(
+        e.matriculaPrimeiroVencimento,
+        e.matriculaParcelas,
+      );
       lancamentos.push(
         parcelado(
           "matricula",
           CATEGORIA_MATRICULA_SPONTE,
-          e.matriculaValor,
-          vencimentosAPartirDe(e.matriculaPrimeiroVencimento, e.matriculaParcelas),
-          `Matrícula ${e.anoLetivo} — ${e.serie}`,
+          valor,
+          [vencimentoEfetivoPrimeiraParcela(e.matriculaPrimeiroVencimento), ...demais],
+          `Matrícula ${e.anoLetivo} — ${e.serie}` +
+            (proporcao ? ` — proporcional ${proporcao.meses}/${proporcao.de}` : ""),
         ),
       );
     }
