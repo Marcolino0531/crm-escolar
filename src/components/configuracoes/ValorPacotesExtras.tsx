@@ -89,8 +89,9 @@ export function ValorPacotesExtras({ podeEditar }: { podeEditar: boolean }) {
     <div className="rounded-lg border p-4">
       <h3 className="text-sm font-semibold">Valor Pacotes Extras por ano letivo</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        Valor do pacote mensal para 5 dias por semana. Na matrícula, cada item é cobrado
-        proporcionalmente aos dias marcados na rotina (pacote ÷ 5 × dias).
+        Refeições: valor do pacote mensal para 5 dias por semana; na matrícula, cada refeição é
+        cobrada proporcionalmente aos dias marcados na rotina (pacote ÷ 5 × dias). Hora Extra: valor
+        mensal de 1 hora extra por dia, 5 dias por semana.
       </p>
       {registros.isLoading ? (
         <Skeleton className="mt-3 h-20 w-full" />

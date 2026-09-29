@@ -4,8 +4,13 @@ import {
   CATEGORIA_MATRICULA_SPONTE,
   CATEGORIA_MENSALIDADE_SPONTE,
   ITEM_PLANO_VAZIO,
+  MSG_ESTENDIDO_SEM_HORA_EXTRA,
   anoDoPlanoCurso,
+  cronogramaMensal,
   diasUteisMarcados,
+  minutosExtrasPorDia,
+  minutosTurnoRegular,
+  valorMensalHoraExtra,
   escolherPlanoDoAnoLetivo,
   maxParcelasMaterial,
   montarPlanoFaturamento,
@@ -18,7 +23,8 @@ import {
   type EntradaFaturamentoMatricula,
   type PlanoCursoSponte,
 } from "@/lib/matricula-faturamento";
-import { refeicoesVazias } from "@/lib/matricula-form";
+import { refeicoesVazias, type HorariosRotina } from "@/lib/matricula-form";
+import type { Weekday } from "@/lib/diario";
 import {
   mensagemPacoteSemValor,
   valorMensalPacote,
@@ -106,6 +112,12 @@ function entrada(over: Partial<EntradaFaturamentoMatricula> = {}): EntradaFatura
   };
 }
 
+function horariosIguais(dias: readonly Weekday[], entrada: string, saida: string): HorariosRotina {
+  const h: HorariosRotina = {};
+  for (const d of dias) h[d] = { entrada, saida };
+  return h;
+}
+
 function tipos(plano: ReturnType<typeof montarPlanoFaturamento>): string[] {
   return plano.lancamentos.map((l) => l.tipo).sort();
 }
@@ -189,11 +201,12 @@ describe("calendário das mensalidades (dia 05, fev–dez, Brasília)", () => {
     expect(vencimentosMensalidade(2027, "2027-01-20")[0]).toBe("2027-02-05");
   });
 
-  it("preenchido em 03/03: 10 mensalidades a partir de 05/03", () => {
+  it("preenchido em 03/03 sem data de início: 10 meses, março proporcional vencendo no próprio dia", () => {
     const datas = vencimentosMensalidade(2027, "2027-03-03");
     expect(datas).toHaveLength(10);
-    expect(datas[0]).toBe("2027-03-05");
+    expect(datas[0]).toBe("2027-03-03");
     expect(datas[1]).toBe("2027-04-05");
+    expect(cronogramaMensal(2027, "2027-03-03")[0].proporcao).toEqual({ dias: 29, diasMes: 31 });
   });
 
   it("preenchido em 20/03: 10 mensalidades, a de março no próximo dia útil", () => {
@@ -204,9 +217,10 @@ describe("calendário das mensalidades (dia 05, fev–dez, Brasília)", () => {
     expect(datas[9]).toBe("2027-12-06");
   });
 
-  it("preenchido em 20/12: 1 mensalidade com vencimento imediato (dia útil seguinte)", () => {
+  it("preenchido em 20/12 sem data de início: 1 mensalidade proporcional (12/31) vencendo no próprio dia", () => {
     const datas = vencimentosMensalidade(2027, "2027-12-20"); // segunda
-    expect(datas).toEqual(["2027-12-21"]);
+    expect(datas).toEqual(["2027-12-20"]);
+    expect(cronogramaMensal(2027, "2027-12-20")[0].proporcao).toEqual({ dias: 12, diasMes: 31 });
   });
 
   it("depois do ano letivo não há mensalidade", () => {
@@ -272,7 +286,7 @@ describe("parcelas do material limitadas às mensalidades restantes", () => {
     const material = plano.lancamentos.find((l) => l.tipo === "material");
     const mensalidade = plano.lancamentos.find((l) => l.tipo === "mensalidade");
     expect(material?.primeiroVencimento).toBe(mensalidade?.primeiroVencimento);
-    expect(material?.primeiroVencimento).toBe("2026-03-23");
+    expect(material?.primeiroVencimento).toBe("2026-03-20"); // sexta: vence no próprio dia
   });
 });
 
@@ -286,6 +300,7 @@ describe("cobranças independentes", () => {
         refeicoes,
         semRefeicoes: false,
         horarioEstendido: true,
+        horarios: horariosIguais([1, 2, 3, 4, 5], "07:20", "18:20"),
       }),
     );
     expect(tipos(plano)).toEqual(["almoco", "hora_extra", "material", "matricula", "mensalidade"]);
@@ -386,6 +401,8 @@ describe("pacotes extras (refeições e hora extra) na matrícula", () => {
         semRefeicoes: false,
         horarioEstendido: true,
         diasAtivos: [1, 2, 3, 4, 5],
+        // 1º Ano (turno 5h20): 07:20–13:40 = 1 hora extra por dia → pacote cheio.
+        horarios: horariosIguais([1, 2, 3, 4, 5], "07:20", "13:40"),
       }),
     );
     const esperado = vencimentosMensalidade(2027, "2026-09-24");
@@ -408,7 +425,7 @@ describe("pacotes extras (refeições e hora extra) na matrícula", () => {
     );
   });
 
-  it("20/06/2027 para 2027: 1ª em 21/06/2027 e demais jul–dez, mesmo valor em todas", () => {
+  it("20/06/2027 para 2027 sem data de início: junho proporcional (11/30) vencendo em 21/06, demais jul–dez cheios", () => {
     const refeicoes = refeicoesVazias();
     refeicoes.breakfast = [2];
     const plano = montarPlanoFaturamento(
@@ -421,6 +438,7 @@ describe("pacotes extras (refeições e hora extra) na matrícula", () => {
         semRefeicoes: false,
         horarioEstendido: true,
         diasAtivos: [2, 4],
+        horarios: horariosIguais([2, 4], "07:20", "13:40"),
       }),
     );
     const esperado = vencimentosMensalidade(2027, "2027-06-20");
@@ -429,10 +447,12 @@ describe("pacotes extras (refeições e hora extra) na matrícula", () => {
     const lanche = plano.lancamentos.find((x) => x.tipo === "lanche_manha")!;
     expect(lanche.vencimentos).toEqual(esperado);
     expect(lanche.valorParcela).toBe(20);
-    expect(lanche.valorPrimeiraParcela).toBe(20);
+    expect(lanche.valorPrimeiraParcela).toBe(7.33);
+    expect(lanche.total).toBe(127.33);
     const he = plano.lancamentos.find((x) => x.tipo === "hora_extra")!;
     expect(he.vencimentos).toEqual(esperado);
     expect(he.valorParcela).toBe(356);
+    expect(he.valorPrimeiraParcela).toBe(130.53);
   });
 
   it("Jantar não é cobrado em série sem jantar, mesmo marcado", () => {
@@ -603,5 +623,182 @@ describe("payload enviado ao Sponte", () => {
     expect(contaReceberCriada("01 - Operação Realizada com Sucesso.", "0")).toBe(true);
     expect(contaReceberCriada("29 - CPF já cadastrado", "0")).toBe(false);
     expect(contaReceberCriada("", "")).toBe(false);
+  });
+});
+
+describe("ETAPA 3 — primeiro mês proporcional pela data de início + hora extra por minutos", () => {
+  const SEG_SEX: readonly Weekday[] = [1, 2, 3, 4, 5];
+  const PACOTE_HE = 227.6;
+
+  // Stella: Belvedere, Berçário (Infantil), 2026; preenchido 28/09, início 19/10,
+  // seg–sex 07:20–16:50.
+  function stella(over: Partial<EntradaFaturamentoMatricula> = {}): EntradaFaturamentoMatricula {
+    return entrada({
+      anoLetivo: 2026,
+      dataMatricula: "2026-09-28",
+      dataInicio: "2026-10-19",
+      serie: "Berçário",
+      plano: planoBase({
+        matricula: { ...ITEM_PLANO_VAZIO },
+        mensalidade: { ...planoBase().mensalidade, valorParcela: 1000 },
+      }),
+      matriculaValor: null,
+      matriculaParcelas: null,
+      matriculaPrimeiroVencimento: null,
+      materialParcelas: 3,
+      horarioEstendido: true,
+      diasAtivos: SEG_SEX,
+      horarios: horariosIguais(SEG_SEX, "07:20", "16:50"),
+      pacotes: pacotesBase({ hora_extra: PACOTE_HE }),
+      ...over,
+    });
+  }
+
+  it("T3.1 Stella: 5h extras/dia → R$ 1.138,00; parcelas 19/10 (13/31), 05/11 e 07/12; nada em setembro", () => {
+    expect(minutosTurnoRegular("Berçário")).toBe(270);
+    expect(minutosExtrasPorDia(horariosIguais(SEG_SEX, "07:20", "16:50"), "Berçário")).toEqual({
+      1: 300,
+      2: 300,
+      3: 300,
+      4: 300,
+      5: 300,
+    });
+    expect(valorMensalHoraExtra(PACOTE_HE, 1500)).toBe(1138);
+
+    const he = montarPlanoFaturamento(stella()).lancamentos.find((l) => l.tipo === "hora_extra")!;
+    expect(he.parcelas).toBe(3);
+    expect(he.vencimentos).toEqual(["2026-10-19", "2026-11-05", "2026-12-07"]);
+    expect(he.valorPrimeiraParcela).toBe(477.23);
+    expect(he.valorParcela).toBe(1138);
+    expect(he.total).toBe(2753.23);
+    expect(he.vencimentos.some((v) => v.startsWith("2026-09"))).toBe(false);
+    expect(he.observacao).toBe(
+      `Hora Extra 2026 — 5h por dia, 5x por semana — ${formatarBRL(PACOTE_HE)} por hora — 1ª parcela proporcional 13/31 dias`,
+    );
+    expect(parcelasComAjuste(he)).toEqual([
+      { numero: 1, valor: 477.23, vencimento: "2026-10-19" },
+      { numero: 2, valor: 1138, vencimento: "2026-11-05" },
+      { numero: 3, valor: 1138, vencimento: "2026-12-07" },
+    ]);
+  });
+
+  it("T3.2 Infantil seg–sex 07:20–16:30 (4h40/dia): R$ 1.062,13", () => {
+    const porDia = minutosExtrasPorDia(horariosIguais(SEG_SEX, "07:20", "16:30"), "Berçário");
+    const semana = Object.values(porDia).reduce((s, m) => s + m, 0);
+    expect(semana).toBe(280 * 5);
+    expect(valorMensalHoraExtra(PACOTE_HE, semana)).toBe(1062.13);
+  });
+
+  it("T3.3 Infantil 3 dias/semana 07:20–16:50: R$ 682,80", () => {
+    const porDia = minutosExtrasPorDia(horariosIguais([1, 3, 5], "07:20", "16:50"), "Maternal 1");
+    const semana = Object.values(porDia).reduce((s, m) => s + m, 0);
+    expect(valorMensalHoraExtra(PACOTE_HE, semana)).toBe(682.8);
+  });
+
+  it("T3.4 Fundamental seg–sex 07:20–18:20 (5h40/dia): R$ 1.289,73", () => {
+    expect(minutosTurnoRegular("1º Ano")).toBe(320);
+    const porDia = minutosExtrasPorDia(horariosIguais(SEG_SEX, "07:20", "18:20"), "1º Ano");
+    expect(porDia[1]).toBe(340);
+    const semana = Object.values(porDia).reduce((s, m) => s + m, 0);
+    expect(valorMensalHoraExtra(PACOTE_HE, semana)).toBe(1289.73);
+  });
+
+  it("T3.5 mensalidade R$ 1.000 da Stella: 19/10 R$ 419,35; 05/11 e 07/12 R$ 1.000", () => {
+    const m = montarPlanoFaturamento(stella()).lancamentos.find((l) => l.tipo === "mensalidade")!;
+    expect(m.vencimentos).toEqual(["2026-10-19", "2026-11-05", "2026-12-07"]);
+    expect(m.valorPrimeiraParcela).toBe(419.35);
+    expect(m.valorParcela).toBe(1000);
+    expect(m.total).toBe(2419.35);
+  });
+
+  it("T3.6 início em sábado 17/10: 1ª parcela R$ 483,87 (15/31) vencendo segunda 19/10", () => {
+    const m = montarPlanoFaturamento(stella({ dataInicio: "2026-10-17" })).lancamentos.find(
+      (l) => l.tipo === "mensalidade",
+    )!;
+    expect(m.vencimentos[0]).toBe("2026-10-19");
+    expect(m.valorPrimeiraParcela).toBe(483.87);
+    expect(cronogramaMensal(2026, "2026-09-28", "2026-10-17")[0].proporcao).toEqual({
+      dias: 15,
+      diasMes: 31,
+    });
+  });
+
+  it("T3.7 início 01/11, preenchido 28/09: novembro cheio em 05/11 e dezembro em 07/12; nada antes", () => {
+    const c = cronogramaMensal(2026, "2026-09-28", "2026-11-01");
+    expect(c).toEqual([
+      { vencimento: "2026-11-05", proporcao: null },
+      { vencimento: "2026-12-07", proporcao: null },
+    ]);
+    const m = montarPlanoFaturamento(stella({ dataInicio: "2026-11-01" })).lancamentos.find(
+      (l) => l.tipo === "mensalidade",
+    )!;
+    expect(m.valorPrimeiraParcela).toBe(1000);
+    expect(m.parcelas).toBe(2);
+  });
+
+  it("T3.8 antecipada: preenchido 28/09/2026, ano 2027, início 03/02/2027: 11 parcelas cheias fev–dez", () => {
+    const c = cronogramaMensal(2027, "2026-09-28", "2027-02-03");
+    expect(c).toHaveLength(11);
+    expect(c.every((m) => m.proporcao === null)).toBe(true);
+    expect(c[0].vencimento).toBe("2027-02-05");
+    expect(c[10].vencimento).toBe("2027-12-06");
+    // Início antes de fevereiro também não gera nada antes de fevereiro.
+    expect(cronogramaMensal(2027, "2026-09-28", "2027-01-10")).toEqual(c);
+  });
+
+  it("T3.9 ano 2027, início 15/03: março R$ 548,39 (17/31) em 15/03; abr–dez cheios (dez em 06/12); 10 parcelas", () => {
+    const m = montarPlanoFaturamento(
+      stella({
+        anoLetivo: 2027,
+        dataInicio: "2027-03-15",
+        plano: planoBase({
+          descricaoPlano: "2027",
+          matricula: { ...ITEM_PLANO_VAZIO },
+          mensalidade: { ...planoBase().mensalidade, valorParcela: 1000 },
+        }),
+      }),
+    ).lancamentos.find((l) => l.tipo === "mensalidade")!;
+    expect(m.parcelas).toBe(10);
+    expect(m.vencimentos[0]).toBe("2027-03-15");
+    expect(m.vencimentos[9]).toBe("2027-12-06");
+    expect(m.valorPrimeiraParcela).toBe(548.39);
+    expect(m.valorParcela).toBe(1000);
+    expect(m.observacao).toContain("proporcional 17/31 dias");
+  });
+
+  it("T3.10 preenchido depois do início (25/10, início 19/10): outubro R$ 419,35 em 26/10; nov e dez cheios", () => {
+    const m = montarPlanoFaturamento(stella({ dataMatricula: "2026-10-25" })).lancamentos.find(
+      (l) => l.tipo === "mensalidade",
+    )!;
+    expect(m.vencimentos).toEqual(["2026-10-26", "2026-11-05", "2026-12-07"]);
+    expect(m.valorPrimeiraParcela).toBe(419.35);
+    expect(m.valorParcela).toBe(1000);
+  });
+
+  it("T3.11 material da Stella: no máximo 3 parcelas, 1ª ancorada na 1ª mensalidade", () => {
+    expect(opcoesParcelasMaterial(2026, "2026-09-28", "2026-10-19")).toEqual([1, 2, 3]);
+    expect(opcoesParcelasMaterial(2026, "2026-09-28")).toEqual([1, 2, 3, 4]);
+    const plano = montarPlanoFaturamento(stella({ materialParcelas: 8 }));
+    const mat = plano.lancamentos.find((l) => l.tipo === "material")!;
+    expect(mat.parcelas).toBe(3);
+    expect(mat.primeiroVencimento).toBe("2026-10-19");
+    expect(mat.vencimentos).toEqual(["2026-10-19", "2026-11-05", "2026-12-07"]);
+    expect(soma(mat)).toBe(2209.5);
+  });
+
+  it("T3.12 estendido com saída igual ao fim do turno regular: sem hora extra e pendência própria", () => {
+    const plano = montarPlanoFaturamento(
+      stella({ horarios: horariosIguais(SEG_SEX, "07:20", "11:50") }),
+    );
+    expect(plano.lancamentos.some((l) => l.tipo === "hora_extra")).toBe(false);
+    expect(plano.pendencias.filter((p) => p.tipo === "hora_extra")).toEqual([
+      {
+        tipo: "hora_extra",
+        motivo: "Horário estendido sem horas além do turno regular. Confira a rotina.",
+      },
+    ]);
+    expect(MSG_ESTENDIDO_SEM_HORA_EXTRA).toBe(
+      "Horário estendido sem horas além do turno regular. Confira a rotina.",
+    );
   });
 });
