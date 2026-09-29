@@ -843,7 +843,10 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     const matriculaValor = valoresMatricula ? valorMatricula(valoresMatricula, serie) : null;
     const erros = {
       ...validarMatriculaForm(form, hoje, UNIDADES_SPONTE),
-      ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
+      ...validarRotinaForm(rotina, serie, {
+        exigirHorarioCurricular: true,
+        anoLetivo: form.anoLetivo,
+      }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfig !== null),

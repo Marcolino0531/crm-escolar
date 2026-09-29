@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MATRICULA_FORM_VAZIO,
   ROTINA_FORM_VAZIA,
+  erroDataInicioForaDoAnoLetivo,
   linhasDiarioDaRotina,
   montarPayloadMatricula,
   montarRotinaPersistida,
@@ -69,6 +70,25 @@ function formMatricula(): MatriculaForm {
     },
   };
 }
+
+describe("data de início dentro do ano letivo", () => {
+  it("início 2027-01-01 com ano letivo 2026 é erro; 2026-10-19 com 2026 passa", () => {
+    const msg =
+      "A data de início é de 2027, mas o ano letivo escolhido é 2026. Confira o ano letivo ou a data de início.";
+    expect(erroDataInicioForaDoAnoLetivo("2027-01-01", 2026)).toBe(msg);
+    expect(erroDataInicioForaDoAnoLetivo("2026-10-19", 2026)).toBe("");
+    expect(
+      validarRotinaForm(rotinaCompleta({ dataInicio: "2027-01-01" }), INFANTIL, {
+        anoLetivo: 2026,
+      })["rotina.dataInicio"],
+    ).toBe(msg);
+    expect(
+      validarRotinaForm(rotinaCompleta({ dataInicio: "2026-10-19" }), INFANTIL, {
+        anoLetivo: 2026,
+      }),
+    ).toEqual({});
+  });
+});
 
 describe("validarRotinaForm", () => {
   it("aceita a rotina completa de cinco dias com horários diferentes por dia", () => {
