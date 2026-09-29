@@ -8,8 +8,8 @@ import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 async function assertPodeEditarConciliacao(userId: string) {
   await exigirPermissaoPagina(
     userId,
-    // Regra de base: editar `financeiro_conciliacao` OU o guarda-chuva `financeiro` (analises_ia).
-    ["faturamento", "analises_ia"],
+    // Regra de base: editar `financeiro_conciliacao` OU o guarda-chuva `financeiro` (financeiro.dados).
+    ["faturamento", "financeiro.dados"],
     "editar",
     "Sem permissão para usar a extração de boletos por IA (requer edição em Faturamento).",
   );

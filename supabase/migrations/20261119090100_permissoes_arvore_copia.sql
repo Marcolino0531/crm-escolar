@@ -16,8 +16,10 @@
 --     exatamente igual ao módulo antigo (equivalência 1:1 no dia da cópia).
 --     'cobranca' (chave removida em 20260623120100, sem linhas) -> só admin.
 -- (d) Funções auxiliares (pedagógico, esportes) reescritas sobre can_*_pagina.
--- (e) can_view_module / can_edit_module são REMOVIDAS: se alguma policy ou
---     função ainda as referenciar, o DROP falha e a transação inteira volta.
+-- (e) can_view_module / can_edit_module são MANTIDAS nesta publicação (o código
+--     em produção continua funcionando entre a migration e o deploy; permite voltar
+--     atrás). A remoção fica para um PR futuro. O bloco (f) aborta a migração se
+--     alguma policy ou outra função do schema public ainda as referenciar.
 --
 -- Gerado por: npx tsx scripts/permissoes-arvore/gerar-migration.ts folhas|copia
 -- (blocos a/b) e ~/perm_gerar_policies.py sobre pg_policies de produção (bloco c).
@@ -83,6 +85,7 @@ AS $$
     'mensagens.lembretes',
     'mensagens.rematricula',
     'mensagens.falhas',
+    'financeiro.dados',
     'analises_ia',
     'extrato',
     'importar',
@@ -447,6 +450,11 @@ WITH legado AS (
          (COALESCE(((l.ver_financeiro_cobranca)), false)) AND (COALESCE(((l.edit_financeiro_cobranca)), false)) AS can_edit
   FROM legado l
   UNION ALL
+  SELECT l.user_id, 'financeiro.dados'::public.app_module AS module,
+         COALESCE(((l.ver_financeiro)), false) AS can_view,
+         (COALESCE(((l.ver_financeiro)), false)) AND (COALESCE(((l.edit_financeiro)), false)) AS can_edit
+  FROM legado l
+  UNION ALL
   SELECT l.user_id, 'analises_ia'::public.app_module AS module,
          COALESCE(((l.ver_financeiro)), false) AS can_view,
          (COALESCE(((l.ver_financeiro)), false)) AND (COALESCE(((l.edit_financeiro)), false)) AS can_edit
@@ -584,7 +592,7 @@ ALTER POLICY "atendimento ia view ai_atendimento_settings" ON public.ai_atendime
   USING ((public.can_view_pagina(auth.uid(), 'assistente_ia.instrucoes') OR public.can_view_pagina(auth.uid(), 'assistente_ia.exemplos')));
 
 ALTER POLICY "analises ia financeiro view" ON public.ai_financeiro_analises
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "atendimento ia view ai_suggestions" ON public.ai_suggestions
   USING ((public.can_view_pagina(auth.uid(), 'assistente_ia.instrucoes') OR public.can_view_pagina(auth.uid(), 'assistente_ia.exemplos')));
@@ -627,33 +635,33 @@ ALTER POLICY "cfg update boleto_category_mappings" ON public.boleto_category_map
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'configuracoes.regras'));
 
 ALTER POLICY "cfg view boleto_category_mappings" ON public.boleto_category_mappings
-  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') OR public.can_view_pagina(auth.uid(), 'configuracoes.regras')));
+  USING ((public.can_view_pagina(auth.uid(), 'financeiro.dados') OR public.can_view_pagina(auth.uid(), 'configuracoes.regras')));
 
 ALTER POLICY "fin delete boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin insert boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin update boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin view boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin delete boleto_reconciliations" ON public.boleto_reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin insert boleto_reconciliations" ON public.boleto_reconciliations
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin update boleto_reconciliations" ON public.boleto_reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin view boleto_reconciliations" ON public.boleto_reconciliations
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "cantina_portal_config_select" ON public.cantina_portal_config
   USING (public.can_view_pagina(auth.uid(), 'cantina'));
@@ -666,14 +674,14 @@ ALTER POLICY "cantina recargas update" ON public.cantina_recargas
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'cantina'));
 
 ALTER POLICY "ref delete categorization_rules" ON public.categorization_rules
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref insert categorization_rules" ON public.categorization_rules
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref update categorization_rules" ON public.categorization_rules
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "colonia view colonia_valores" ON public.colonia_valores
   USING (((public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.registro')) OR (public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento'))));
@@ -689,14 +697,14 @@ ALTER POLICY "contratos_matricula read" ON public.contratos_matricula
   USING (public.can_view_pagina(auth.uid(), 'matricula.contratos'));
 
 ALTER POLICY "ref delete cost_centers" ON public.cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref insert cost_centers" ON public.cost_centers
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref update cost_centers" ON public.cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "cartao delete" ON public.credit_card_receivables
   USING (public.can_edit_pagina(auth.uid(), 'cartao'));
@@ -934,17 +942,17 @@ CASE tipo
 END);
 
 ALTER POLICY "fin delete initial_balances" ON public.initial_balances
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin insert initial_balances" ON public.initial_balances
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin update initial_balances" ON public.initial_balances
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin view initial_balances" ON public.initial_balances
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "edit delete leads" ON public.leads
   USING ((public.can_edit_pagina(auth.uid(), 'admissoes') AND can_access_school(auth.uid(), school_id)));
@@ -988,43 +996,43 @@ ALTER POLICY "view onboarding" ON public.onboarding
   USING ((public.can_view_pagina(auth.uid(), 'onboarding') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin delete reconciliations" ON public.reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin insert reconciliations" ON public.reconciliations
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin update reconciliations" ON public.reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin view reconciliations" ON public.reconciliations
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin delete recurring_forecasts" ON public.recurring_forecasts
-  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin insert recurring_forecasts" ON public.recurring_forecasts
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin update recurring_forecasts" ON public.recurring_forecasts
-  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin view recurring_forecasts" ON public.recurring_forecasts
-  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_view_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin delete recurring_series" ON public.recurring_series
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin insert recurring_series" ON public.recurring_series
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin update recurring_series" ON public.recurring_series
-  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_edit_pagina(auth.uid(), 'financeiro.dados'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "fin view recurring_series" ON public.recurring_series
-  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
+  USING (public.can_view_pagina(auth.uid(), 'financeiro.dados'));
 
 ALTER POLICY "rematricula_acessos_select" ON public.rematricula_acessos
   USING ((public.can_view_pagina(auth.uid(), 'matricula.alunos') OR public.can_view_pagina(auth.uid(), 'matricula.contratos') OR public.can_view_pagina(auth.uid(), 'matricula.campanhas')));
@@ -1060,24 +1068,24 @@ ALTER POLICY "rematricula_responsavel_financeiro_select" ON public.rematricula_r
   USING ((public.can_view_pagina(auth.uid(), 'matricula.alunos') OR public.can_view_pagina(auth.uid(), 'matricula.contratos') OR public.can_view_pagina(auth.uid(), 'matricula.campanhas')));
 
 ALTER POLICY "ref delete revenue_categories" ON public.revenue_categories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref insert revenue_categories" ON public.revenue_categories
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref update revenue_categories" ON public.revenue_categories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref delete revenue_subcategories" ON public.revenue_subcategories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref insert revenue_subcategories" ON public.revenue_subcategories
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref update revenue_subcategories" ON public.revenue_subcategories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "rh experiencia lidas insert" ON public.rh_experiencia_notificacoes_lidas
   WITH CHECK ((public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos') AND (lido_por = auth.uid())));
@@ -1102,14 +1110,14 @@ ALTER POLICY "admissoes view student_routine" ON public.student_routine
   USING (public.can_view_pagina(auth.uid(), 'eformulario'));
 
 ALTER POLICY "ref delete sub_cost_centers" ON public.sub_cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref insert sub_cost_centers" ON public.sub_cost_centers
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "ref update sub_cost_centers" ON public.sub_cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'financeiro.dados')));
 
 ALTER POLICY "terceirizados delete" ON public.terceirizados
   USING (public.can_edit_pagina(auth.uid(), 'rh.pessoal.terceirizados'));
@@ -1125,17 +1133,17 @@ ALTER POLICY "terceirizados update" ON public.terceirizados
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'rh.pessoal.terceirizados'));
 
 ALTER POLICY "fin delete transactions" ON public.transactions
-  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin insert transactions" ON public.transactions
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin update transactions" ON public.transactions
-  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin view transactions" ON public.transactions
-  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_view_pagina(auth.uid(), 'financeiro.dados') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "unidade_valores_opcionais_select" ON public.unidade_valores_opcionais
   USING (public.can_view_pagina(auth.uid(), 'eformulario'));
@@ -1461,13 +1469,14 @@ AS $$
     AND NOT public.esportes_restrito_por_modalidade(_user_id);
 $$;
 
--- ---------- (e) remoção das funções antigas ----------
--- Falha (e desfaz tudo) se ainda houver policy/função dependente.
+-- ---------- (e) can_view_module / can_edit_module ----------
+-- Mantidas como estão nesta publicação (sem DROP): o deploy anterior continua
+-- funcionando entre a migration e o novo deploy, e é possível voltar atrás.
+-- Remoção em PR futuro, depois de validado em produção.
 
-DROP FUNCTION public.can_view_module(uuid, public.app_module);
-DROP FUNCTION public.can_edit_module(uuid, public.app_module);
-
--- ---------- (f) auditoria: zero referência a can_*_module / chaves antigas ----------
+-- ---------- (f) auditoria: zero referência EXTERNA a can_*_module ----------
+-- Falha (e desfaz tudo) se alguma policy ou alguma função do schema public,
+-- fora as próprias can_view_module/can_edit_module, ainda as referenciar.
 DO $$
 DECLARE
   n_pol int;
@@ -1479,10 +1488,10 @@ BEGIN
   SELECT count(*) INTO n_fn
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
-    AND (p.proname IN ('can_view_module', 'can_edit_module')
-         OR p.prosrc ~ 'can_(view|edit)_module');
+    AND p.proname NOT IN ('can_view_module', 'can_edit_module')
+    AND p.prosrc ~ 'can_(view|edit)_module';
   IF n_pol <> 0 OR n_fn <> 0 THEN
-    RAISE EXCEPTION 'permissoes_arvore: ainda há % policies e % funções com can_*_module', n_pol, n_fn;
+    RAISE EXCEPTION 'permissoes_arvore: ainda há % policies e % funções (fora can_*_module) com can_*_module', n_pol, n_fn;
   END IF;
 END $$;
 

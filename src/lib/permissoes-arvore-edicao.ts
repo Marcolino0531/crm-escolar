@@ -5,6 +5,7 @@
 import {
   ARVORE_PERMISSOES,
   CHAVES_PERMISSAO_GRAVAVEIS,
+  FINANCEIRO_DADOS,
   MODULOS,
   avaliarPermissoes,
   caminhoDoNo,
@@ -87,14 +88,59 @@ export function alterarNo(
   const no = noPorChave(chave);
   if (!no) return e;
   const prox: EstadoFolhas = { ...e };
-  for (const f of folhasGravaveis(no)) {
-    const atual = prox[f.chave] ?? { view: false, edit: false };
-    prox[f.chave] =
-      campo === "edit"
-        ? { view: valor || atual.view, edit: valor }
-        : { view: valor, edit: valor && atual.edit };
-  }
+  const aplicar = (folha: string, c: "view" | "edit", v: boolean) => {
+    const atual = prox[folha] ?? { view: false, edit: false };
+    prox[folha] =
+      c === "edit" ? { view: v || atual.view, edit: v } : { view: v, edit: v && atual.edit };
+  };
+  const folhas = folhasGravaveis(no).map((f) => f.chave);
+  for (const f of folhas) aplicar(f, campo, valor);
+  aplicarDependencias(prox, folhas, campo, valor, aplicar);
   return prox;
+}
+
+/** Mensagem exibida no grupo Financeiro da tela de permissões. */
+export const AVISO_FINANCEIRO_DADOS =
+  "As páginas do Financeiro precisam do acesso aos dados financeiros.";
+
+/** Páginas do Diario cujo RLS exige Registro (ou Extras), como em base. */
+const DIARIO_DEPENDE_DE_REGISTRO = ["diario.auditoria", "diario.faturamento"];
+
+/** Folhas do grupo Financeiro fora do próprio guarda-chuva. */
+export function paginasDoFinanceiro(): string[] {
+  const grupo = noPorChave("grupo_financeiro");
+  if (!grupo) return [];
+  return folhasGravaveis(grupo)
+    .map((f) => f.chave)
+    .filter((c) => c !== FINANCEIRO_DADOS);
+}
+
+/**
+ * Dependências entre folhas (mesma regra do servidor/RLS):
+ * - Financeiro: marcar Visualizar/Editar em qualquer página do grupo marca o mesmo
+ *   em "Financeiro: acesso aos dados"; desmarcar o acesso aos dados desmarca as páginas.
+ * - Diário do Aluno: Visualizar em Auditoria ou Faturamento marca Visualizar em Registro.
+ */
+function aplicarDependencias(
+  e: EstadoFolhas,
+  alteradas: readonly string[],
+  campo: "view" | "edit",
+  valor: boolean,
+  aplicar: (folha: string, c: "view" | "edit", v: boolean) => void,
+) {
+  const fin = paginasDoFinanceiro();
+  const alterouPaginaFin = alteradas.some((c) => fin.includes(c));
+  const alterouDados = alteradas.includes(FINANCEIRO_DADOS);
+  if (valor) {
+    if (alterouPaginaFin && fin.some((c) => e[c]?.[campo])) aplicar(FINANCEIRO_DADOS, campo, true);
+    if (
+      alteradas.some((c) => DIARIO_DEPENDE_DE_REGISTRO.includes(c)) &&
+      DIARIO_DEPENDE_DE_REGISTRO.some((c) => e[c]?.view)
+    )
+      aplicar("diario.registro", "view", true);
+  } else if (alterouDados && !e[FINANCEIRO_DADOS]?.[campo]) {
+    for (const c of fin) aplicar(c, campo, false);
+  }
 }
 
 export function marcarTodos(valor: boolean): EstadoFolhas {

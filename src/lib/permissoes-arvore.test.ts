@@ -9,12 +9,19 @@ import { join } from "node:path";
 import {
   ARVORE_PERMISSOES,
   CHAVES_LEGADAS,
+  FINANCEIRO_DADOS,
   FOLHAS_PERMISSAO,
   MODULOS,
   ehChavePermissao,
   listarNos,
   noPorChave,
 } from "./permissoes-arvore";
+import {
+  alterarNo,
+  estadoVazio,
+  marcarTodos,
+  paginasDoFinanceiro,
+} from "./permissoes-arvore-edicao";
 
 const RAIZ = join(__dirname, "..", "..");
 
@@ -84,7 +91,10 @@ describe("árvore de permissões — integridade", () => {
       "Financeiro",
       "Configurações",
     ]);
-    for (const m of MODULOS) expect(m.rota, `módulo sem rota: ${m.chave}`).toMatch(/^\//);
+    for (const m of MODULOS) {
+      if (m.semRota) expect(m.rota, `módulo semRota com rota: ${m.chave}`).toBeUndefined();
+      else expect(m.rota, `módulo sem rota: ${m.chave}`).toMatch(/^\//);
+    }
   });
 
   it("toda folha referencia só chaves legadas conhecidas", () => {
@@ -121,7 +131,7 @@ describe("árvore de permissões — rotas", () => {
         return m ? [m[1]] : [];
       }),
     );
-    for (const m of MODULOS)
+    for (const m of MODULOS.filter((x) => !x.semRota))
       expect(rotasDeclaradas.has(m.rota!), `rota inexistente: ${m.rota}`).toBe(true);
   });
 });
@@ -232,5 +242,38 @@ describe("árvore de permissões — chaves usadas no código e no banco", () =>
         noEnum.has(folha.chave) || (CHAVES_LEGADAS as readonly string[]).includes(folha.chave);
       expect(ok, `folha sem valor no enum: ${folha.chave}`).toBe(true);
     }
+  });
+});
+
+describe("tela de permissões — dependências entre folhas", () => {
+  const vazio = () => estadoVazio(false);
+
+  it("Visualizar/Editar em página do Financeiro marca 'Financeiro: acesso aos dados'", () => {
+    const v = alterarNo(vazio(), "extrato", "view", true);
+    expect(v[FINANCEIRO_DADOS]).toEqual({ view: true, edit: false });
+    const e = alterarNo(vazio(), "inadimplencia", "edit", true);
+    expect(e[FINANCEIRO_DADOS]).toEqual({ view: true, edit: true });
+    expect(paginasDoFinanceiro()).toContain("analises_ia");
+    expect(paginasDoFinanceiro()).not.toContain(FINANCEIRO_DADOS);
+  });
+
+  it("desmarcar 'Financeiro: acesso aos dados' desmarca todas as páginas do Financeiro", () => {
+    const tudo = marcarTodos(true);
+    const sem = alterarNo(tudo, FINANCEIRO_DADOS, "view", false);
+    for (const c of [FINANCEIRO_DADOS, ...paginasDoFinanceiro()])
+      expect(sem[c], c).toEqual({ view: false, edit: false });
+    expect(sem["documentos.zapsign"]).toEqual({ view: true, edit: true });
+    const soEdit = alterarNo(tudo, FINANCEIRO_DADOS, "edit", false);
+    for (const c of paginasDoFinanceiro())
+      expect(soEdit[c], c).toEqual({ view: true, edit: false });
+  });
+
+  it("Diário: Auditoria ou Faturamento (Visualizar) marca Registro (Visualizar)", () => {
+    const a = alterarNo(vazio(), "diario.auditoria", "view", true);
+    expect(a["diario.registro"]).toEqual({ view: true, edit: false });
+    const f = alterarNo(vazio(), "diario.faturamento", "edit", true);
+    expect(f["diario.registro"]).toEqual({ view: true, edit: false });
+    const x = alterarNo(vazio(), "diario.extras", "view", true);
+    expect(x["diario.registro"]).toEqual({ view: false, edit: false });
   });
 });

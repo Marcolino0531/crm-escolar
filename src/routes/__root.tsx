@@ -447,7 +447,8 @@ function AppShell() {
   // Só o ícone de cada módulo fica aqui.
   const tree = useMemo<NavTreeNode[]>(() => {
     const visivel = (m: NoArvore) =>
-      m.acessoEspecial === "professor" ? showProfessor : moduloVisivelNoMenu(m, canView);
+      !m.semRota &&
+      (m.acessoEspecial === "professor" ? showProfessor : moduloVisivelNoMenu(m, canView));
     const item = (m: NoArvore): NavItemNode => ({
       kind: "item",
       to: m.rota ?? "/",

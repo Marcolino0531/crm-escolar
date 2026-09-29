@@ -27,6 +27,12 @@ import {
   type LinhaPermissao,
   type NoArvore,
 } from "../../src/lib/permissoes-arvore";
+import {
+  alterarNo,
+  linhasDoEstado,
+  marcarTodos,
+  paginasDoFinanceiro,
+} from "../../src/lib/permissoes-arvore-edicao";
 
 type Linha = { user_id: string; module: string; can_view: boolean; can_edit: boolean };
 type Dados = {
@@ -267,5 +273,32 @@ console.log(
   `Simulação de revogação (Documentos): rota bloqueada=[${rotasPerdidas}] menu=[${menuPerdido}] abas bloqueadas=${abasPerdidas.length} nós Documentos sem acesso=${nosDocs.length} → ${revogacaoOk ? "OK" : "FALHOU"}`,
 );
 if (!revogacaoOk) process.exitCode = 1;
+
+// Simulação de revogação (Financeiro): na tela, desmarcar Visualizar em
+// "Financeiro: acesso aos dados" desmarca todas as páginas do grupo Financeiro.
+const semFin = avaliarPermissoes(
+  linhasDoEstado(alterarNo(marcarTodos(true), "financeiro.dados", "view", false)),
+  false,
+);
+const paginasFin = new Set(["financeiro.dados", ...paginasDoFinanceiro()]);
+const modulosFin = MODULOS_ROTA.filter((m) => [...paginasFin].some((c) => contem(m, c))).map(
+  (m) => m.rota!,
+);
+const rotasFinPerdidas = [...rotasDepois(completo)].filter((r) => !rotasDepois(semFin).has(r));
+const menuFinPerdido = [...menuDepois(completo)].filter((r) => !menuDepois(semFin).has(r));
+const abasFinPerdidas = [...abasDepois(completo)].filter((a) => !abasDepois(semFin).has(a));
+const mesmo = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+const revFinOk =
+  mesmo(rotasFinPerdidas, modulosFin) &&
+  mesmo(menuFinPerdido, modulosFin) &&
+  abasFinPerdidas.every((a) => paginasFin.has(a)) &&
+  abasFinPerdidas.length === PAGINAS.filter((p) => paginasFin.has(p.chave)).length &&
+  [...paginasFin].every(
+    (c) => !semFin.ver(c as ChavePermissao) && !semFin.editar(c as ChavePermissao),
+  );
+console.log(
+  `Simulação de revogação (Financeiro: acesso aos dados): rotas bloqueadas=[${rotasFinPerdidas}] menu=[${menuFinPerdido}] abas bloqueadas=${abasFinPerdidas.length} folhas Financeiro sem acesso=${paginasFin.size} → ${revFinOk ? "OK" : "FALHOU"}`,
+);
+if (!revFinOk) process.exitCode = 1;
 if (saidaMatrizes) writeFileSync(saidaMatrizes, JSON.stringify(matrizes, null, 1));
 if (!tudoIdentico) process.exitCode = 1;

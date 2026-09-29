@@ -28,7 +28,7 @@
 //     ninguém ganhe nem perca acesso na troca.
 //   • `menu` (opcional, em módulos) reproduz a condição antiga do menu quando
 //     ela não é "alguma folha visível" (ex.: RH ignora Salário; grupo
-//     Financeiro exige o guarda-chuva, hoje a folha analises_ia).
+//     Financeiro exige o guarda-chuva, a folha financeiro.dados).
 //
 // Alterar qualquer módulo/página/aba exige atualizar esta árvore no mesmo PR
 // (a verificação em permissoes-arvore.test.ts falha caso contrário).
@@ -86,6 +86,8 @@ interface NoBase {
   readonly tipo: TipoNo;
   readonly filhos?: readonly NoBase[];
   readonly rota?: string;
+  /** Módulo sem tela própria (só permissão): não aparece no menu nem tem rota. */
+  readonly semRota?: boolean;
   readonly legado?: Legado;
   /** Grupo cujo único módulo aparece solto no menu (sem cabeçalho de grupo). */
   readonly soltoNoMenu?: boolean;
@@ -132,8 +134,10 @@ const MENU_FIN_SUBPAGINAS = [
   "regua.cobrancas",
   "regua.historico",
 ] as const;
-/** Itens do grupo Financeiro: guarda-chuva (analises_ia ⇔ antigo `financeiro`) E a própria página. */
-const MENU_FIN = { exige: ["analises_ia"] } as const;
+/** Guarda-chuva do Financeiro (antigo `financeiro`): folha própria, sem tela. */
+export const FINANCEIRO_DADOS = "financeiro.dados" as const;
+/** Itens do grupo Financeiro: guarda-chuva (financeiro.dados ⇔ antigo `financeiro`) E a própria página. */
+const MENU_FIN = { exige: [FINANCEIRO_DADOS] } as const;
 
 export const ARVORE_PERMISSOES = [
   {
@@ -579,13 +583,20 @@ export const ARVORE_PERMISSOES = [
     tipo: "grupo",
     filhos: [
       {
+        chave: FINANCEIRO_DADOS,
+        nome: "Financeiro: acesso aos dados",
+        tipo: "modulo",
+        semRota: true,
+        legado: um("financeiro"),
+      },
+      {
         chave: "analises_ia",
         nome: "Análises com IA",
         tipo: "modulo",
         rota: "/analises-ia",
         legado: um("financeiro"),
         // Menu antigo: guarda-chuva `financeiro` E alguma subpágina do Financeiro.
-        menu: { exige: ["analises_ia"], qualquer: MENU_FIN_SUBPAGINAS },
+        menu: { exige: [FINANCEIRO_DADOS], qualquer: MENU_FIN_SUBPAGINAS },
       },
       {
         chave: "extrato",

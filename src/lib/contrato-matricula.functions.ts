@@ -262,7 +262,7 @@ const GerarSchema = z.object({
 async function exigirPermissaoContrato(userId: string, edicao: boolean): Promise<string> {
   await exigirPermissaoPagina(
     userId,
-    ["matricula.contratos", "documentos.gerar.individual"],
+    ["matricula.contratos"],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para gerar contratos de matrícula."
@@ -271,12 +271,12 @@ async function exigirPermissaoContrato(userId: string, edicao: boolean): Promise
   return nomeDoUsuario(userId);
 }
 
-// Lista e cancelamento: Matrícula > Contratos ou Documentos (regra de base:
-// rematricula OU documentos); as outras abas de Matrícula não bastam.
+// Lista, cancelamento e webhook: só Matrícula > Contratos (regra de base:
+// rematricula); as outras abas de Matrícula e Documentos não bastam.
 async function exigirPermissaoContratos(userId: string, edicao: boolean): Promise<string> {
   await exigirPermissaoPagina(
     userId,
-    ["matricula.contratos", "documentos.gerar.individual"],
+    ["matricula.contratos"],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para alterar contratos de matrícula."

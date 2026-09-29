@@ -1,13 +1,3 @@
--- Permissões em árvore (Grupo > Módulo > Página): passo 1/2 — valores novos do enum.
---
--- Caminho aditivo de menor risco: mantém user_permissions.module como enum
--- app_module e só ACRESCENTA os rótulos das páginas (chaves com ponto). Nada é
--- removido, nenhuma linha é alterada. Precisa ficar em arquivo separado da
--- cópia (20261119090100) porque o PostgreSQL não permite usar um valor de enum
--- na mesma transação em que ele foi criado.
---
--- Gerado por: npx tsx scripts/permissoes-arvore/gerar-migration.ts enum
-
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'agenda.mes';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'agenda.semana';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'eformulario';
@@ -54,6 +44,7 @@ ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'mensagens.cobrancas';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'mensagens.lembretes';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'mensagens.rematricula';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'mensagens.falhas';
+ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'financeiro.dados';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'analises_ia';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'extrato';
 ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS 'importar';

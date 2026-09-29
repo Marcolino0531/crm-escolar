@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ARVORE_PERMISSOES, caminhoDoNo, type NoArvore } from "@/lib/permissoes-arvore";
 import {
+  AVISO_FINANCEIRO_DADOS,
   alterarNo,
   chavesExpansiveis,
   chavesFiltradas,
@@ -138,6 +139,14 @@ function Linha({
           )
         )}
       </div>
+      {aberto && no.chave === "grupo_financeiro" && (
+        <p
+          className="border-b border-border/60 py-1 text-xs text-muted-foreground"
+          style={{ paddingLeft: `${(nivel + 1) * 20 + 8}px` }}
+        >
+          {AVISO_FINANCEIRO_DADOS}
+        </p>
+      )}
       {aberto &&
         filhos.map((f) => (
           <Linha
