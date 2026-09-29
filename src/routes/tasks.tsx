@@ -41,7 +41,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs } from "@/components/ui/tabs";
+import { AbasArvore, useAbaAtiva } from "@/components/AbasArvore";
 import { formatDateBR, todayISOLocal } from "@/lib/date-utils";
 import { PlannerView } from "@/components/tasks/PlannerView";
 import { completedKey, countDuePending, type RecurringTaskDef } from "@/lib/recurring-tasks";
@@ -108,14 +109,14 @@ const COLUMNS: { status: TaskStatus; label: string; icon: any; accent: string }[
 function TasksPage() {
   const { session } = useAuth();
   const { canEdit } = usePermissions();
-  const podeCriar = canEdit("tasks");
+  const podeCriar = canEdit("tasks.tickets");
   const me = session?.user?.id ?? "";
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [showArchive, setShowArchive] = useState(false);
-  const [view, setView] = useState<"recebidas" | "enviadas">("recebidas");
-  const [modo, setModo] = useState<"tickets" | "planner">("tickets");
+  const [modo, setModo] = useAbaAtiva("tasks");
+  const [view, setView] = useAbaAtiva("tasks.tickets");
   const listUsersFn = useServerFn(listDirectoryUsers);
 
   // Contador de rotinas vencidas e pendentes do mês corrente, exibido na aba
@@ -268,29 +269,27 @@ function TasksPage() {
         )}
       </div>
 
-      <Tabs value={modo} onValueChange={(v) => setModo(v as "tickets" | "planner")}>
-        <TabsList>
-          <TabsTrigger value="tickets">Tickets</TabsTrigger>
-          <TabsTrigger value="planner" className="gap-1.5">
-            Planner
-            {plannerPendentes > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
-                {plannerPendentes}
-              </span>
-            )}
-          </TabsTrigger>
-        </TabsList>
+      <Tabs value={modo} onValueChange={setModo}>
+        <AbasArvore
+          chavePai="tasks"
+          triggerClassName="gap-1.5"
+          depois={{
+            planner:
+              plannerPendentes > 0 ? (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                  {plannerPendentes}
+                </span>
+              ) : null,
+          }}
+        />
       </Tabs>
 
       {modo === "planner" ? (
         <PlannerView />
       ) : (
         <>
-          <Tabs value={view} onValueChange={(v) => setView(v as "recebidas" | "enviadas")}>
-            <TabsList>
-              <TabsTrigger value="recebidas">Recebidas</TabsTrigger>
-              <TabsTrigger value="enviadas">Enviadas</TabsTrigger>
-            </TabsList>
+          <Tabs value={view} onValueChange={setView}>
+            <AbasArvore chavePai="tasks.tickets" />
           </Tabs>
 
           {isLoading ? (

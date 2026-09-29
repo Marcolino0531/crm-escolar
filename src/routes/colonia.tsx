@@ -11,7 +11,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore } from "@/components/AbasArvore";
 import { supabase } from "@/integrations/supabase/client";
 import { selectAll } from "@/lib/supabase-paginate";
 import { ColoniaActionSheet } from "@/components/colonia/ColoniaActionSheet";
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/colonia")({
 function ColoniaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("colonia") && !canView("colonia_financeiro"))
+  if (!canView("colonia"))
     return <AccessDenied message="Você não tem permissão para visualizar a Colônia de Férias." />;
   return <ColoniaPage />;
 }
@@ -76,10 +77,11 @@ function useColoniaStudents(schoolFilterIds: string[] | null) {
 
 function ColoniaPage() {
   const { canView, canEdit } = usePermissions();
-  const podeEditar = canEdit("colonia");
-  // Dois níveis de acesso: Operacional (registros) e Financeiro (fechamento).
-  const podeOperacional = canView("colonia");
-  const podeFinanceiro = canView("colonia_financeiro");
+  // Dois níveis de acesso (árvore): Registrar Consumos e Fechamento Semanal.
+  const podeOperacional = canView("colonia.registro");
+  const podeFinanceiro = canView("colonia.fechamento");
+  const podeEditarRegistro = canEdit("colonia.registro");
+  const podeEditarFechamento = canEdit("colonia.fechamento");
   const { selected, schools, schoolFilterIds } = useSchool();
 
   const specificSchoolId = selected !== "all" ? selected : null;
@@ -111,16 +113,13 @@ function ColoniaPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList>
-          {podeOperacional && <TabsTrigger value="registro">Registrar Consumos</TabsTrigger>}
-          {podeFinanceiro && <TabsTrigger value="fechamento">Fechamento Semanal</TabsTrigger>}
-        </TabsList>
+        <AbasArvore chavePai="colonia" />
 
         {podeOperacional && (
           <TabsContent value="registro" className="space-y-4 pt-4">
             <RegistrarConsumos
               schoolFilterIds={schoolFilterIds}
-              canEdit={podeEditar}
+              canEdit={podeEditarRegistro}
               focusStudentId={focusStudentId}
               focusDia={focusDia}
             />
@@ -131,7 +130,7 @@ function ColoniaPage() {
           <TabsContent value="fechamento" className="pt-4">
             <FechamentoSemanal
               schoolFilterIds={schoolFilterIds}
-              canEdit={podeEditar}
+              canEdit={podeEditarFechamento}
               canFaturar={podeFinanceiro}
             />
           </TabsContent>

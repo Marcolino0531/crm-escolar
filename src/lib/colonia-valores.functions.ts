@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { valoresValidos, type ColoniaValoresRegistro } from "@/lib/colonia-valores";
 import { ANO_LETIVO_MAX, ANO_LETIVO_MIN, anoLetivoValido } from "@/lib/rematricula";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 type Row = {
   id: string;
@@ -30,16 +31,14 @@ const SELECT =
 
 // Ver: qualquer nível da Colônia; editar: só o nível financeiro.
 async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
-  const modulos = edicao ? ["colonia_financeiro"] : ["colonia", "colonia_financeiro"];
-  for (const m of modulos) {
-    const { data, error } = await supabaseAdmin.rpc(
-      (edicao ? "can_edit_module" : "can_view_module") as never,
-      { _user_id: userId, _module: m } as never,
-    );
-    if (error) throw new Error(error.message);
-    if (data) return;
-  }
-  throw new Error(
+  await exigirPermissaoPagina(
+    userId,
+    // Regra de base: ver = colonia OU colonia_financeiro; editar = colonia_financeiro
+    // (Editar de Valor Colônia é copiado só de colonia_financeiro).
+    edicao
+      ? ["configuracoes.cadastros.valor_colonia"]
+      : ["configuracoes.cadastros.valor_colonia", "colonia.registro", "colonia.fechamento"],
+    edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar os valores da Colônia de Férias."
       : "Você não tem permissão para ver os valores da Colônia de Férias.",

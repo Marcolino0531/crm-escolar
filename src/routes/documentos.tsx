@@ -46,7 +46,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbaAtiva, useAbasArvore } from "@/components/AbasArvore";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -168,6 +169,8 @@ function hojeYMD(): string {
 }
 
 function DocumentosPage() {
+  const { inicial } = useAbasArvore("documentos");
+  const abaInicial = inicial ?? "gerar";
   return (
     <div className="space-y-4 p-4 md:p-6">
       <div>
@@ -180,20 +183,18 @@ function DocumentosPage() {
         </h1>
       </div>
 
-      <Tabs defaultValue="documento">
-        <TabsList>
-          <TabsTrigger value="documento" className="gap-1">
-            <FileText className="h-4 w-4" /> Gerar Documento
-          </TabsTrigger>
-          <TabsTrigger value="historico" className="gap-1">
-            <History className="h-4 w-4" /> Histórico
-          </TabsTrigger>
-          <TabsTrigger value="zapsign" className="gap-1">
-            <PenLine className="h-4 w-4" /> ZapSign
-          </TabsTrigger>
-        </TabsList>
+      <Tabs key={abaInicial} defaultValue={abaInicial}>
+        <AbasArvore
+          chavePai="documentos"
+          triggerClassName="gap-1"
+          antes={{
+            gerar: <FileText className="h-4 w-4" />,
+            historico: <History className="h-4 w-4" />,
+            zapsign: <PenLine className="h-4 w-4" />,
+          }}
+        />
 
-        <TabsContent value="documento" className="mt-4">
+        <TabsContent value="gerar" className="mt-4">
           <GerarDocumento />
         </TabsContent>
         <TabsContent value="historico" className="mt-4">
@@ -261,7 +262,7 @@ function GerarRecibo() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const podeEditar = canEdit("documentos");
+  const podeEditar = canEdit("documentos.gerar.individual");
 
   const { data: colegios = [] } = useColegios();
   const buscar = useServerFn(buscarAlunosSponte);
@@ -682,7 +683,7 @@ function GerarDeclaracaoDebitos() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const podeEditar = canEdit("documentos");
+  const podeEditar = canEdit("documentos.gerar.individual");
 
   const { data: colegios = [] } = useColegios();
   const buscar = useServerFn(buscarAlunosSponte);
@@ -1057,14 +1058,11 @@ function GerarDeclaracaoDebitos() {
 // A Declaração de IR tem dois caminhos: um aluno por vez (download do PDF) ou o
 // envio em lote por unidade (PDF por email ao responsável financeiro).
 function DeclaracaoIRComLote() {
-  const [modo, setModo] = useState<"individual" | "lote">("individual");
+  const [modo, setModo] = useAbaAtiva("documentos.gerar");
   return (
     <div className="space-y-4">
-      <Tabs value={modo} onValueChange={(v) => setModo(v as "individual" | "lote")}>
-        <TabsList>
-          <TabsTrigger value="individual">Aluno individual</TabsTrigger>
-          <TabsTrigger value="lote">Envio em lote</TabsTrigger>
-        </TabsList>
+      <Tabs value={modo} onValueChange={setModo}>
+        <AbasArvore chavePai="documentos.gerar" />
       </Tabs>
       {modo === "individual" ? <GerarDeclaracaoIR /> : <EnvioLoteDeclaracaoIR />}
     </div>
@@ -1075,7 +1073,7 @@ function GerarDeclaracaoIR() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();
   const qc = useQueryClient();
-  const podeEditar = canEdit("documentos");
+  const podeEditar = canEdit("documentos.gerar.individual");
 
   const { data: colegios = [] } = useColegios();
   const buscar = useServerFn(buscarAlunosSponte);

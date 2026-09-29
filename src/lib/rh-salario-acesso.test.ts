@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ALL_MODULES, MODULE_LABELS } from "./app-context";
+import { MODULE_LABELS } from "./app-context";
+import { noPorChave } from "./permissoes-arvore";
 import { acessoSalario, subAbasPagamentos, subPagamentosPermitida } from "./rh-salario-acesso";
 
-describe("módulo rh_salario", () => {
-  it("existe em ALL_MODULES com rótulo próprio (aparece na Gestão de Acessos)", () => {
-    expect(ALL_MODULES).toContain("rh_salario");
-    expect(MODULE_LABELS.rh_salario).toBe("RH — Salário");
+describe("página RH > Pagamentos > Salário", () => {
+  it("existe na árvore com rótulo próprio e herda o legado rh_salario", () => {
+    expect(MODULE_LABELS["rh.pagamentos.salario"]).toBe("Salário");
+    expect(noPorChave("rh.pagamentos.salario")?.legado?.ver.flat()).toEqual(["rh_salario"]);
   });
 });
 

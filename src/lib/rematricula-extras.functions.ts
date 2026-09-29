@@ -24,6 +24,7 @@ import {
   type ExtraSponte,
   type TipoDivergenciaExtra,
 } from "@/lib/rematricula-extras";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const LOG_TAG = "[rematricula-extras]";
 
@@ -293,28 +294,22 @@ export async function divergenciasExtrasDaUnidade(
 
 /** As divergências aparecem na aba Auditoria Sponte do Diário (nível financeiro). */
 async function exigirPermissaoDiario(userId: string): Promise<void> {
-  for (const modulo of ["diario_financeiro", "diario"]) {
-    const { data, error } = await supabaseAdmin.rpc(
-      "can_view_module" as never,
-      { _user_id: userId, _module: modulo } as never,
-    );
-    if (error) throw new Error(error.message);
-    if (data) return;
-  }
-  throw new Error("Você não tem permissão para ver as divergências da rematrícula.");
+  await exigirPermissaoPagina(
+    userId,
+    ["diario.auditoria", "diario.registro"],
+    "ver",
+    "Você não tem permissão para ver as divergências da rematrícula.",
+  );
 }
 
 /** Quem pode agir no Diário financeiro ou aprovar rematrículas pode reconferir. */
 async function exigirPermissaoReconferir(userId: string): Promise<void> {
-  for (const modulo of ["rematricula", "diario_financeiro"]) {
-    const { data, error } = await supabaseAdmin.rpc(
-      "can_edit_module" as never,
-      { _user_id: userId, _module: modulo } as never,
-    );
-    if (error) throw new Error(error.message);
-    if (data) return;
-  }
-  throw new Error("Você não tem permissão para reconferir as divergências de Extras.");
+  await exigirPermissaoPagina(
+    userId,
+    ["matricula.alunos", "diario.auditoria"],
+    "editar",
+    "Você não tem permissão para reconferir as divergências de Extras.",
+  );
 }
 
 export interface ResultadoReconferencia {

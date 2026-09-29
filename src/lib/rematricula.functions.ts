@@ -170,6 +170,8 @@ import {
   divergenciasExtrasDaUnidade,
   type DivergenciaExtraAluno,
 } from "@/lib/rematricula-extras.functions";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import type { ChavePermissao } from "@/lib/permissoes-arvore";
 
 const T_CONTRATOS = "contratos_matricula" as never;
 const T_DOCS = "zapsign_documentos" as never;
@@ -2011,7 +2013,7 @@ export const salvarAnoVigenteDiario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoVigente: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoVigente)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }
@@ -2082,7 +2084,7 @@ export const listarValoresMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UnidadeOpcionalSchema.parse(input))
   .handler(async ({ data, context }): Promise<ValorMatriculaSegmento[]> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, false);
+    await exigirPermissaoValorMatricula(context.userId, false);
     const permitidas = await allowedSponteUnidades(context.userId);
     let query = supabaseAdmin
       .from("rematricula_matricula_valores" as never)
@@ -2133,7 +2135,7 @@ export const salvarValorMatricula = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoValorMatricula(context.userId, true);
     await exigirUnidadeValorMatricula(context.userId, data.unidade);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2171,7 +2173,7 @@ export const excluirValorMatricula = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoValorMatricula(context.userId, true);
     await exigirUnidadeValorMatricula(context.userId, data.unidade);
     const { error } = await supabaseAdmin
       .from("rematricula_matricula_valores" as never)
@@ -2225,7 +2227,7 @@ export const listarPacotesExtras = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UnidadeOpcionalSchema.parse(input))
   .handler(async ({ data, context }): Promise<PacotesExtrasRegistro[]> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, false);
+    await exigirPermissaoPacotesExtras(context.userId, false);
     const permitidas = await allowedSponteUnidades(context.userId);
     let query = supabaseAdmin
       .from("pacotes_extras_valores" as never)
@@ -2265,7 +2267,7 @@ export const salvarPacotesExtras = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => PacotesExtrasSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoPacotesExtras(context.userId, true);
     await exigirUnidadeValorMatricula(context.userId, data.unidade);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2315,7 +2317,7 @@ async function pendenciasDaCampanha(anoLetivo: number): Promise<PendenciasCampan
 export const listarCampanhasRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<CampanhaConfig[]> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, false);
+    await exigirPermissaoCampanhas(context.userId, false);
     const campanhas = await listarCampanhas();
     return Promise.all(
       campanhas.map(async (c) => ({ ...c, pendencias: await pendenciasDaCampanha(c.anoLetivo) })),
@@ -2327,7 +2329,7 @@ export const prepararCampanhaRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoLetivo: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }
@@ -2351,7 +2353,7 @@ export const alterarCampanhaRematricula = createServerFn({ method: "POST" })
     z.object({ anoLetivo: z.number().int(), aberta: z.boolean() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirPermissaoCampanhas(context.userId, true);
     const campanha = await campanhaDoAno(data.anoLetivo);
     if (!campanha) throw new Error(`A campanha de ${data.anoLetivo} não existe.`);
     if (data.aberta) {
@@ -2444,18 +2446,14 @@ function paraSolicitacao(r: EscolhaRow): SolicitacaoRematricula {
 }
 
 export async function exigirPermissaoRematricula(userId: string, edicao: boolean): Promise<string> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "rematricula" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["matricula.alunos"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? "Você não tem permissão para efetivar solicitações de rematrícula."
+      : "Você não tem permissão para ver as solicitações de rematrícula.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) {
-    throw new Error(
-      edicao
-        ? "Você não tem permissão para efetivar solicitações de rematrícula."
-        : "Você não tem permissão para ver as solicitações de rematrícula.",
-    );
-  }
   return nomeDoUsuario(userId);
 }
 
@@ -3342,20 +3340,48 @@ function itemMaterialDaLinha(l: LinhaItemMaterial): ItemMaterial {
   };
 }
 
-async function exigirPermissaoMaterialPedagogico(userId: string, edicao: boolean): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "rematricula" } as never,
+// Cadastros de valores (Configurações > Cadastros Gerais) e campanhas (Matrícula):
+// leitura pela página do cadastro OU por qualquer página de Matrícula (que exibe
+// esses valores); gravação só pela página responsável.
+async function exigirPermissaoCadastro(
+  userId: string,
+  pagina: ChavePermissao,
+  edicao: boolean,
+  nome: string,
+): Promise<void> {
+  await exigirPermissaoPagina(
+    userId,
+    // Regra de base: o antigo `rematricula` (qualquer página de Matrícula) basta, sem exigir Configurações.
+    [pagina, "matricula.alunos", "matricula.contratos", "matricula.campanhas"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? `Você não tem permissão para editar ${nome}.`
+      : `Você não tem permissão para ver ${nome}.`,
   );
-  if (error) throw new Error(error.message);
-  if (!data) {
-    throw new Error(
-      edicao
-        ? "Você não tem permissão para editar os valores do material pedagógico."
-        : "Você não tem permissão para ver os valores do material pedagógico.",
-    );
-  }
 }
+const exigirPermissaoMaterialPedagogico = (userId: string, edicao: boolean) =>
+  exigirPermissaoCadastro(
+    userId,
+    "configuracoes.cadastros.valor_material",
+    edicao,
+    "o material pedagógico",
+  );
+const exigirPermissaoValorMatricula = (userId: string, edicao: boolean) =>
+  exigirPermissaoCadastro(
+    userId,
+    "configuracoes.cadastros.valor_matricula",
+    edicao,
+    "os valores da matrícula",
+  );
+const exigirPermissaoPacotesExtras = (userId: string, edicao: boolean) =>
+  exigirPermissaoCadastro(
+    userId,
+    "configuracoes.cadastros.valor_pacotes",
+    edicao,
+    "os pacotes extras",
+  );
+const exigirPermissaoCampanhas = (userId: string, edicao: boolean) =>
+  exigirPermissaoCadastro(userId, "matricula.campanhas", edicao, "as campanhas e o ano vigente");
 
 export const listarMaterialSeries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

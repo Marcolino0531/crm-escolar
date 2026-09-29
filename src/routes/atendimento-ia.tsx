@@ -9,7 +9,8 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { supabase } from "@/integrations/supabase/client";
 import { salvarInstrucoesIA } from "@/lib/atendimento-ia.functions";
 import {
@@ -33,7 +34,7 @@ export const Route = createFileRoute("/atendimento-ia")({
 function InstrucoesIaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_atendimento_ia"))
+  if (!canView("assistente_ia"))
     return (
       <AccessDenied message="Você não tem permissão para acessar o assistente de IA do Atendimento." />
     );
@@ -66,7 +67,9 @@ function rotuloSituacao(valor: string): string {
 
 function InstrucoesIaPage() {
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_atendimento_ia");
+  const podeEditar = canEdit("assistente_ia.instrucoes");
+  const { inicial } = useAbasArvore("assistente_ia");
+  const abaInicial = inicial ?? "instrucoes";
   const queryClient = useQueryClient();
   const salvarFn = useServerFn(salvarInstrucoesIA);
   const [prompt, setPrompt] = useState("");
@@ -165,15 +168,15 @@ function InstrucoesIaPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="instrucoes" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="instrucoes" className="gap-1.5">
-            <Sparkles className="h-4 w-4" /> Instruções da IA
-          </TabsTrigger>
-          <TabsTrigger value="exemplos" className="gap-1.5">
-            <BookMarked className="h-4 w-4" /> Exemplos de Treinamento
-          </TabsTrigger>
-        </TabsList>
+      <Tabs key={abaInicial} defaultValue={abaInicial} className="space-y-4">
+        <AbasArvore
+          chavePai="assistente_ia"
+          triggerClassName="gap-1.5"
+          antes={{
+            instrucoes: <Sparkles className="h-4 w-4" />,
+            exemplos: <BookMarked className="h-4 w-4" />,
+          }}
+        />
 
         <TabsContent value="instrucoes" className="space-y-6">
           <div className="space-y-2 rounded-xl border border-border bg-card p-4">
@@ -305,7 +308,7 @@ function InstrucoesIaPage() {
         </TabsContent>
 
         <TabsContent value="exemplos">
-          <AbaExemplos podeEditar={podeEditar} />
+          <AbaExemplos podeEditar={canEdit("assistente_ia.exemplos")} />
         </TabsContent>
       </Tabs>
     </div>

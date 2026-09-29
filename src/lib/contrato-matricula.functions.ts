@@ -72,7 +72,6 @@ import {
   buscarAlunoPorId,
   buscarMensalidadeVigente,
   buscarResponsaveisComFinanceiro,
-  exigirPermissaoRematricula,
   hojeBRT,
   itensMaterialDaSerie,
   valoresMatriculaDoAno,
@@ -101,6 +100,7 @@ import {
   validarMotivoCancelamento,
 } from "@/lib/contrato-cancelamento";
 import { emailValido } from "@/lib/imposto-renda-lote";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const T_CONTRATOS = "contratos_matricula" as never;
 const AMBIENTE = "producao" as const;
@@ -257,24 +257,31 @@ const GerarSchema = z.object({
   matricula: MatriculaInformadaSchema.optional(),
 });
 
-// O contrato é gerado tanto pela Rematrícula quanto pela aba Documentos: basta
-// a permissão de um dos dois módulos (mesmo público, entrada por tela diferente).
+// O contrato é gerado tanto pela aba Matrícula > Contratos quanto por
+// Documentos > Gerar Documento: basta a permissão de uma das duas páginas.
 async function exigirPermissaoContrato(userId: string, edicao: boolean): Promise<string> {
-  const fn = (edicao ? "can_edit_module" : "can_view_module") as never;
-  const [rem, doc] = await Promise.all(
-    ["rematricula", "documentos"].map((modulo) =>
-      supabaseAdmin.rpc(fn, { _user_id: userId, _module: modulo } as never),
-    ),
+  await exigirPermissaoPagina(
+    userId,
+    ["matricula.contratos"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? "Você não tem permissão para gerar contratos de matrícula."
+      : "Você não tem permissão para ver contratos de matrícula.",
   );
-  if (rem.error) throw new Error(rem.error.message);
-  if (doc.error) throw new Error(doc.error.message);
-  if (!rem.data && !doc.data) {
-    throw new Error(
-      edicao
-        ? "Você não tem permissão para gerar contratos de matrícula."
-        : "Você não tem permissão para ver contratos de matrícula.",
-    );
-  }
+  return nomeDoUsuario(userId);
+}
+
+// Lista, cancelamento e webhook: só Matrícula > Contratos (regra de base:
+// rematricula); as outras abas de Matrícula e Documentos não bastam.
+async function exigirPermissaoContratos(userId: string, edicao: boolean): Promise<string> {
+  await exigirPermissaoPagina(
+    userId,
+    ["matricula.contratos"],
+    edicao ? "editar" : "ver",
+    edicao
+      ? "Você não tem permissão para alterar contratos de matrícula."
+      : "Você não tem permissão para listar contratos de matrícula.",
+  );
   return nomeDoUsuario(userId);
 }
 
@@ -297,7 +304,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<ContratosPendentesResult> => {
-    await exigirPermissaoRematricula(context.userId, false);
+    await exigirPermissaoContratos(context.userId, false);
     const { unidade } = data;
     const base = {
       unidade,
@@ -1166,7 +1173,7 @@ export const cancelarContratoMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => CancelarSchema.parse(input))
   .handler(async ({ data, context }): Promise<CancelarContratoResult> => {
-    const nomeUsuario = await exigirPermissaoRematricula(context.userId, true);
+    const nomeUsuario = await exigirPermissaoContratos(context.userId, true);
     const erroMotivo = validarMotivoCancelamento(data.motivo);
     if (erroMotivo) return { ok: false, erro: erroMotivo };
 
@@ -1288,7 +1295,7 @@ export interface RegistrarWebhookProducaoResult {
 export const registrarWebhookContratos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<RegistrarWebhookProducaoResult> => {
-    const nomeUsuario = await exigirPermissaoRematricula(context.userId, true);
+    const nomeUsuario = await exigirPermissaoContratos(context.userId, true);
     if (await webhookProducaoRegistrado()) return { ok: true, jaExistia: true };
     const url = `${BASE_URL_PORTAL}/api/zapsign/webhook`;
     const r = await criarWebhook(url, AMBIENTE);

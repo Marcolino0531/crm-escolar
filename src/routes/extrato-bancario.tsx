@@ -76,7 +76,7 @@ export const Route = createFileRoute("/extrato-bancario")({
 function DashboardGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_dashboard"))
+  if (!canView("extrato"))
     return <AccessDenied message="Você não tem permissão para visualizar o Extrato Bancário." />;
   return <Dashboard />;
 }
@@ -108,7 +108,7 @@ function lastDayOfMonth(d = new Date()) {
 function Dashboard() {
   const { selected, schools, schoolFilterIds } = useSchool();
   const { canEdit } = usePermissions();
-  const isAdmin = canEdit("financeiro");
+  const isAdmin = canEdit("extrato");
   const qc = useQueryClient();
   const [startDate, setStartDate] = useState<string>(firstDayOfMonth());
   const [endDate, setEndDate] = useState<string>(lastDayOfMonth());

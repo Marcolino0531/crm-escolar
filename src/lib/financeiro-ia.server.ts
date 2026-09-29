@@ -26,20 +26,18 @@ import {
   coletarInadimplenciaPorEscopo,
   UNIDADES_SPONTE,
 } from "@/lib/sponte.functions";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 // A aba fica atrás da permissão do módulo Financeiro em "Gerenciar Acessos":
 // quem não vê o Financeiro não consulta nada aqui, mesmo chamando a server
 // function diretamente.
 export async function assertPermissaoAnaliseFinanceira(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_view_module" as never,
-    {
-      _user_id: userId,
-      _module: "financeiro",
-    } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["analises_ia"],
+    "ver",
+    "Você não tem permissão para usar as Análises com IA do Financeiro.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para usar as Análises com IA do Financeiro.");
 }
 
 type Escola = { id: string; name: string };

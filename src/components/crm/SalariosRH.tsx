@@ -27,7 +27,7 @@ import { montarFolhaSalario } from "@/lib/rh-folhas";
 interface SalariosRHProps {
   schoolId: string | null;
   funcionarios: Funcionario[];
-  // canEdit("rh_salario") — independente de canEdit("rh").
+  // canEdit("rh.pagamentos.salario") — independente do restante do RH.
   podeEditar: boolean;
   // Chamado após salvar uma folha de Salário (recarrega Folhas Salvas).
   onFolhaSalva?: () => void;

@@ -1,27 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
-// Garante que o usuário pode editar a conciliação do Financeiro antes de chamar
-// o gateway de IA (custo por requisição). Admin sempre passa; caso contrário
-// exige can_edit em "financeiro_conciliacao" ou no módulo pai "financeiro".
+// Garante que o usuário pode editar o Faturamento antes de chamar o gateway de
+// IA (custo por requisição). Admin sempre passa (can_edit_pagina).
 async function assertPodeEditarConciliacao(userId: string) {
-  const { data: roles } = await supabaseAdmin
-    .from("user_roles" as any)
-    .select("role")
-    .eq("user_id", userId);
-  if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return;
-
-  const { data: perms } = await supabaseAdmin
-    .from("user_permissions" as any)
-    .select("module, can_edit")
-    .eq("user_id", userId)
-    .in("module", ["financeiro_conciliacao", "financeiro"]);
-  const podeEditar = ((perms ?? []) as any[]).some((p) => p.can_edit === true);
-  if (!podeEditar) {
-    throw new Error("Sem permissão para usar a extração de boletos por IA (requer edição no Financeiro/Conciliação).");
-  }
+  await exigirPermissaoPagina(
+    userId,
+    // Regra de base: editar `financeiro_conciliacao` OU o guarda-chuva `financeiro` (financeiro.dados).
+    ["faturamento", "financeiro.dados"],
+    "editar",
+    "Sem permissão para usar a extração de boletos por IA (requer edição em Faturamento).",
+  );
 }
 
 const InputSchema = z.object({
@@ -127,8 +118,10 @@ Regras estritas:
 
     if (!resp.ok) {
       const text = await resp.text();
-      if (resp.status === 429) throw new Error("Limite de requisições à IA excedido. Tente em instantes.");
-      if (resp.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos em Workspace > Usage.");
+      if (resp.status === 429)
+        throw new Error("Limite de requisições à IA excedido. Tente em instantes.");
+      if (resp.status === 402)
+        throw new Error("Créditos de IA esgotados. Adicione créditos em Workspace > Usage.");
       throw new Error(`Erro do gateway de IA (${resp.status}): ${text.slice(0, 200)}`);
     }
 

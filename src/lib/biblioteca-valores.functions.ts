@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { valoresBibliotecaValidos, type BibliotecaValoresRegistro } from "@/lib/biblioteca";
 import { ANO_LETIVO_MAX, ANO_LETIVO_MIN, anoLetivoValido } from "@/lib/rematricula";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 type Row = {
   id: string;
@@ -24,13 +25,16 @@ const SELECT =
   "id, school_id, ano_letivo, multa_por_dia_util, multa_teto, prazo_padrao_dias, updated_at, updated_by_nome, schools(name)";
 
 async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "biblioteca" } as never,
-  );
-  if (error) throw new Error(error.message);
-  if (data) return;
-  throw new Error(
+  await exigirPermissaoPagina(
+    userId,
+    // Regra de base: o antigo `biblioteca` (qualquer página da Biblioteca) basta, sem exigir Configurações.
+    [
+      "configuracoes.cadastros.valor_biblioteca",
+      "biblioteca.acervo",
+      "biblioteca.circulacao",
+      "biblioteca.pendencias",
+    ],
+    edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar os valores da Biblioteca."
       : "Você não tem permissão para ver os valores da Biblioteca.",

@@ -1,5 +1,5 @@
 // "Minhas Turmas" — visão do professor logado (funcionarios.auth_user_id).
-// Não passa por canView("pedagogico"): tudo que aparece aqui é o que a RLS
+// Não passa por canView("secretaria"): tudo que aparece aqui é o que a RLS
 // libera pelas atribuições do próprio professor. Fase 1: diário de classe do
 // dia — aulas do dia (grade), conteúdo ministrado e frequência por aula.
 
@@ -48,7 +48,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore } from "@/components/AbasArvore";
 import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/professor")({
@@ -181,11 +182,7 @@ function ProfessorPage({ professorId, nome }: { professorId: string; nome: strin
         </p>
       ) : (
         <Tabs defaultValue="diario">
-          <TabsList>
-            <TabsTrigger value="diario">Diário do dia</TabsTrigger>
-            <TabsTrigger value="avaliacoes">Avaliações e pareceres</TabsTrigger>
-            <TabsTrigger value="turmas">Turmas</TabsTrigger>
-          </TabsList>
+          <AbasArvore chavePai="professor" />
           <TabsContent value="avaliacoes">
             <AvaliacoesProfessor
               professorId={professorId}

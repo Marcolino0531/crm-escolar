@@ -24,7 +24,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import {
   Select,
   SelectContent,
@@ -254,6 +255,9 @@ function BibliotecaUnidade({
   unidadeNome: string;
   podeEditar: boolean;
 }) {
+  const { canEdit } = usePermissions();
+  const { inicial } = useAbasArvore("biblioteca");
+  const abaInicial = inicial ?? "circulacao";
   const titulos = useQuery({
     queryKey: ["biblioteca_titulos", schoolId],
     queryFn: () => carregarTitulos(schoolId),
@@ -296,29 +300,27 @@ function BibliotecaUnidade({
   const pendentes = resumirPendencias(ctx.emprestimos, hojeYMD()).length;
 
   return (
-    <Tabs defaultValue="circulacao">
-      <TabsList>
-        <TabsTrigger value="circulacao">
-          Empréstimos {abertos > 0 && <Badge className="ml-2">{abertos}</Badge>}
-        </TabsTrigger>
-        <TabsTrigger value="acervo">Acervo</TabsTrigger>
-        <TabsTrigger value="pendencias">
-          Pendências{" "}
-          {pendentes > 0 && (
-            <Badge variant="destructive" className="ml-2">
-              {pendentes}
-            </Badge>
-          )}
-        </TabsTrigger>
-      </TabsList>
+    <Tabs key={abaInicial} defaultValue={abaInicial}>
+      <AbasArvore
+        chavePai="biblioteca"
+        depois={{
+          circulacao: abertos > 0 ? <Badge className="ml-2">{abertos}</Badge> : null,
+          pendencias:
+            pendentes > 0 ? (
+              <Badge variant="destructive" className="ml-2">
+                {pendentes}
+              </Badge>
+            ) : null,
+        }}
+      />
       <TabsContent value="circulacao" className="mt-4">
-        <CirculacaoTab ctx={ctx} />
+        <CirculacaoTab ctx={{ ...ctx, podeEditar: canEdit("biblioteca.circulacao") }} />
       </TabsContent>
       <TabsContent value="acervo" className="mt-4">
-        <AcervoTab ctx={ctx} />
+        <AcervoTab ctx={{ ...ctx, podeEditar: canEdit("biblioteca.acervo") }} />
       </TabsContent>
       <TabsContent value="pendencias" className="mt-4">
-        <PendenciasTab ctx={ctx} />
+        <PendenciasTab ctx={{ ...ctx, podeEditar: canEdit("biblioteca.pendencias") }} />
       </TabsContent>
     </Tabs>
   );

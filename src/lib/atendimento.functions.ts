@@ -16,17 +16,18 @@ import {
   uploadMediaToMeta,
 } from "@/lib/whatsapp.server";
 import { montarPayloadMidia, previewMidia, validarArquivoEnvio } from "@/lib/whatsapp-send-media";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 // Bucket privado do storage, compartilhado com a mídia recebida no webhook.
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
 async function assertCanEditAtendimento(userId: string, acao: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "financeiro_atendimento" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["atendimento"],
+    "editar",
+    `Você não tem permissão para ${acao} no Atendimento.`,
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error(`Você não tem permissão para ${acao} no Atendimento.`);
 }
 
 // Dados da conversa necessários para escolher o número de envio.

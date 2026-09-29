@@ -54,6 +54,7 @@ import {
 } from "@/lib/cobranca-processos";
 import { allowedSponteUnidades } from "@/lib/sponte.functions";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { temPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const CasoIdSchema = z.object({ casoId: z.string().uuid() });
 const YMD = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -396,11 +397,7 @@ type CasoLeveRow = Pick<CasoResumo, "id" | "unidade" | "responsavel_nome" | "sta
 export const avisosPrazoCobranca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AvisoPrazo[]> => {
-    const { data: podeEditar } = await supabaseAdmin.rpc(
-      "can_edit_module" as never,
-      { _user_id: context.userId, _module: "financeiro_cobranca" } as never,
-    );
-    if (!podeEditar) return [];
+    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas", "mensagens.cobrancas"], "editar"))) return [];
     const hoje = hojeYMD();
     // Janela: prazos de hoje até daqui a 5 dias (marcos 5/3/1).
     const limite = new Date(`${hoje}T12:00:00Z`);
@@ -521,11 +518,7 @@ interface CasoAcordoRow {
 export const avisosAcordoCobranca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AvisoAcordo[]> => {
-    const { data: podeEditar } = await supabaseAdmin.rpc(
-      "can_edit_module" as never,
-      { _user_id: context.userId, _module: "financeiro_cobranca" } as never,
-    );
-    if (!podeEditar) return [];
+    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas", "mensagens.cobrancas"], "editar"))) return [];
     const casos = await fetchAllRows<CasoAcordoRow>((from, to) =>
       supabaseAdmin
         .from("cobranca_casos" as never)

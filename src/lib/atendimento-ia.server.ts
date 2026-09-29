@@ -3,6 +3,7 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { MensagemContexto } from "@/lib/atendimento-ia";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 // Formato das mensagens lidas de whatsapp_messages para virar contexto da IA.
 export type MensagemBanco = {
@@ -12,16 +13,16 @@ export type MensagemBanco = {
   origem: "chat" | "cobranca";
 };
 
-// A IA tem permissão própria (`financeiro_atendimento_ia`) porque manda histórico
+// A IA tem permissão própria (Assistente de IA) porque manda histórico
 // e dados financeiros a um serviço externo pago: nunca cair na permissão geral do
 // Atendimento.
 export async function assertPermissaoIA(userId: string, edicao: boolean, acao: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "financeiro_atendimento_ia" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["assistente_ia.instrucoes", "assistente_ia.exemplos"],
+    edicao ? "editar" : "ver",
+    `Você não tem permissão para ${acao}.`,
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error(`Você não tem permissão para ${acao}.`);
 }
 
 export async function nomeDoUsuario(userId: string): Promise<string> {

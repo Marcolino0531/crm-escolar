@@ -37,7 +37,7 @@ const ANOS_LETIVOS = [ANO_ATUAL, ANO_ATUAL + 1];
 // mesma função da Rematrícula.
 export function GerarContratoMatricula() {
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("documentos") || canEdit("rematricula");
+  const podeEditar = canEdit("documentos.gerar") || canEdit("matricula.contratos");
   const unidade = useUnidadeAtiva() ?? "";
   const buscar = useServerFn(buscarAlunosSponte);
   const carregarDados = useServerFn(dadosContratoDocumentos);

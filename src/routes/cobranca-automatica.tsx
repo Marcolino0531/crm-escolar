@@ -40,7 +40,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -72,13 +73,13 @@ export const Route = createFileRoute("/cobranca-automatica")({
   component: MensagensAutomaticasGate,
 });
 
-// O módulo passou a ser Operacional, mas a permissão continua a mesma
-// (`financeiro_cobranca`): quem já tinha acesso à Cobrança Automática não precisa
-// ser reconfigurado. A macro Financeiro deixou de ser exigida.
+// Permissão por aba (árvore única): Operacional > Mensagens Automáticas >
+// Cobranças Automáticas / Lembretes Automáticos / Lembretes de Rematrícula /
+// Falhas de Entrega. O módulo abre com Visualizar em qualquer uma delas.
 function MensagensAutomaticasGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro_cobranca"))
+  if (!canView("mensagens"))
     return <AccessDenied message="Você não tem permissão para acessar as Mensagens Automáticas." />;
   return <MensagensAutomaticasPage />;
 }
@@ -87,7 +88,9 @@ function MensagensAutomaticasGate() {
 //   • Cobranças Automáticas — após o vencimento (recorrente até a quitação);
 //   • Lembretes Automáticos — antes do vencimento (D-5, D-3 e D-0).
 function MensagensAutomaticasPage() {
-  const [tab, setTab] = useState("cobrancas");
+  const { abas, inicial } = useAbasArvore("mensagens");
+  const ve = (id: string) => abas.some((a) => a.id === id);
+  const [tab, setTab] = useState(inicial ?? "cobrancas");
   return (
     <div className="space-y-6">
       <div>
@@ -101,24 +104,27 @@ function MensagensAutomaticasPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList>
-          <TabsTrigger value="cobrancas">Cobranças Automáticas</TabsTrigger>
-          <TabsTrigger value="lembretes">Lembretes Automáticos</TabsTrigger>
-          <TabsTrigger value="rematricula">Lembretes de Rematrícula</TabsTrigger>
-          <TabsTrigger value="falhas">Falhas de Entrega</TabsTrigger>
-        </TabsList>
-        <TabsContent value="cobrancas" className="pt-4">
-          <CobrancasAutomaticasTab />
-        </TabsContent>
-        <TabsContent value="lembretes" className="pt-4">
-          <LembretesAutomaticosTab />
-        </TabsContent>
-        <TabsContent value="rematricula" className="pt-4">
-          <LembretesRematriculaTab />
-        </TabsContent>
-        <TabsContent value="falhas" className="pt-4">
-          <FalhasEntregaTab />
-        </TabsContent>
+        <AbasArvore chavePai="mensagens" />
+        {ve("cobrancas") && (
+          <TabsContent value="cobrancas" className="pt-4">
+            <CobrancasAutomaticasTab />
+          </TabsContent>
+        )}
+        {ve("lembretes") && (
+          <TabsContent value="lembretes" className="pt-4">
+            <LembretesAutomaticosTab />
+          </TabsContent>
+        )}
+        {ve("rematricula") && (
+          <TabsContent value="rematricula" className="pt-4">
+            <LembretesRematriculaTab />
+          </TabsContent>
+        )}
+        {ve("falhas") && (
+          <TabsContent value="falhas" className="pt-4">
+            <FalhasEntregaTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -183,7 +189,7 @@ function formatDataHora(iso: string): string {
 
 function CobrancasAutomaticasTab() {
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_cobranca");
+  const podeEditar = canEdit("mensagens.cobrancas");
   const [page, setPage] = useState(1);
   const [selecionado, setSelecionado] = useState<BillingLog | null>(null);
 
@@ -341,7 +347,7 @@ const PRAZO_STYLE: Record<string, { label: string; cls: string }> = {
 // mesmos da aba de Cobranças.
 function LembretesAutomaticosTab() {
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_cobranca");
+  const podeEditar = canEdit("mensagens.lembretes");
   const [page, setPage] = useState(1);
   const [selecionado, setSelecionado] = useState<BillingLog | null>(null);
 
@@ -744,7 +750,7 @@ function formatDiaISO(ymd: string | null): string {
 function FalhasEntregaTab() {
   const unidade = useUnidadeAtiva();
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_cobranca");
+  const podeEditar = canEdit("mensagens.falhas");
   const { session } = useAuth();
   const qc = useQueryClient();
   const [dias, setDias] = useState(60);

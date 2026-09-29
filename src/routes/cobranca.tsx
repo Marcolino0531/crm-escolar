@@ -61,7 +61,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { Textarea } from "@/components/ui/textarea";
 import {
   CHECKLIST_DOCUMENTACAO,
@@ -151,13 +152,13 @@ export const Route = createFileRoute("/cobranca")({
   component: CobrancaGate,
 });
 
-// VISIBILIDADE (DEFAULT DENY + cadeia): a rota é bloqueada por padrão. Só
-// renderiza quando o Administrador concede acesso à macro "financeiro" E ao
-// submódulo "financeiro_cobranca".
+// VISIBILIDADE (DEFAULT DENY): a rota é bloqueada por padrão. Só renderiza
+// quando o usuário tem Visualizar em alguma página de Financeiro > Régua de
+// Cobrança (árvore única de permissões).
 function CobrancaGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("financeiro") || !canView("financeiro_cobranca"))
+  if (!canView("regua"))
     return <AccessDenied message="Você não tem permissão para acessar a Cobrança." />;
   return <CobrancaPage />;
 }
@@ -174,10 +175,12 @@ function mensagemErro(e: unknown): string {
 
 function CobrancaPage() {
   const search = Route.useSearch();
-  const [aba, setAba] = useState<string>("cobrancas");
+  const { abas, inicial } = useAbasArvore("regua");
+  const veCobrancas = abas.some((a) => a.id === "cobrancas");
+  const [aba, setAba] = useState<string>(inicial ?? "cobrancas");
   useEffect(() => {
-    if (search.caso) setAba("cobrancas");
-  }, [search.caso]);
+    if (search.caso && veCobrancas) setAba("cobrancas");
+  }, [search.caso, veCobrancas]);
 
   return (
     <div className="space-y-6">
@@ -195,22 +198,26 @@ function CobrancaPage() {
       </div>
 
       <Tabs value={aba} onValueChange={setAba} className="space-y-6">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="cobrancas">
-            <HandCoins className="mr-2 h-4 w-4" /> Cobranças
-          </TabsTrigger>
-          <TabsTrigger value="historico">
-            <History className="mr-2 h-4 w-4" /> Histórico de Envios
-          </TabsTrigger>
-        </TabsList>
+        <AbasArvore
+          chavePai="regua"
+          className="flex-wrap"
+          antes={{
+            cobrancas: <HandCoins className="mr-2 h-4 w-4" />,
+            historico: <History className="mr-2 h-4 w-4" />,
+          }}
+        />
 
-        <TabsContent value="cobrancas">
-          <AbaCobrancas casoInicial={search.caso} />
-        </TabsContent>
+        {veCobrancas && (
+          <TabsContent value="cobrancas">
+            <AbaCobrancas casoInicial={search.caso} />
+          </TabsContent>
+        )}
 
-        <TabsContent value="historico">
-          <HistoricoEnvios />
-        </TabsContent>
+        {abas.some((a) => a.id === "historico") && (
+          <TabsContent value="historico">
+            <HistoricoEnvios />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -220,7 +227,7 @@ function CobrancaPage() {
 
 function AbaCobrancas({ casoInicial }: { casoInicial?: string }) {
   const { canEdit } = usePermissions();
-  const podeEditar = canEdit("financeiro_cobranca");
+  const podeEditar = canEdit("regua.cobrancas");
   // Unidade do seletor global; `null` = consolidado das unidades permitidas.
   const unidade = useUnidadeAtiva();
   const listar = useServerFn(listarCasosCobranca);

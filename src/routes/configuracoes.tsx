@@ -14,7 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -31,14 +32,16 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
+import { usePermissions, useSchool } from "@/lib/app-context";
+import { ArvorePermissoes } from "@/components/configuracoes/ArvorePermissoes";
 import {
-  usePermissions,
-  useSchool,
-  APP_MODULES,
-  ALL_MODULES,
-  MODULE_LABELS,
-  type AppModule,
-} from "@/lib/app-context";
+  estadoDeLinhas,
+  estadoVazio,
+  linhasDoEstado,
+  resumoAcesso,
+  type EstadoFolhas,
+} from "@/lib/permissoes-arvore-edicao";
+import type { LinhaPermissao } from "@/lib/permissoes-arvore";
 import { AccessDenied } from "@/components/AccessDenied";
 import { DadosColegios } from "@/components/documentos/DadosColegios";
 import { TestemunhasContrato } from "@/components/documentos/TestemunhasContrato";
@@ -70,12 +73,15 @@ export const Route = createFileRoute("/configuracoes")({
 });
 
 function SettingsPage() {
-  const { isAdmin, canView, canEdit, loading } = usePermissions();
+  const { canView, canEdit, loading } = usePermissions();
+  // Abas de Configurações vindas da árvore: Despesas, Receitas, Regras, Cadastros
+  // Gerais, Dados dos Colégios e Gerenciar Acessos (esta só para Administrador).
+  const { abas, inicial } = useAbasArvore("configuracoes");
+  const ve = (id: string) => abas.some((a) => a.id === id);
+  const veCadastros = ve("cadastros") && abasCadastrosGerais(canView).length > 0;
   if (loading) return null;
   if (!canView("configuracoes"))
     return <AccessDenied message="Você não tem permissão para acessar as Configurações." />;
-  const podeEditar = canEdit("configuracoes");
-  const veCadastros = abasCadastrosGerais(canView).length > 0;
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
@@ -85,54 +91,46 @@ function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="cc">
-        <TabsList>
-          <TabsTrigger value="cc">Despesas</TabsTrigger>
-          <TabsTrigger value="rev">Receitas</TabsTrigger>
-          <TabsTrigger value="rules">Regras</TabsTrigger>
-          {veCadastros && (
-            <TabsTrigger value="cadastros">
-              <ClipboardList className="h-3.5 w-3.5 mr-1" />
-              Cadastros Gerais
-            </TabsTrigger>
-          )}
-          {canView("documentos") && (
-            <TabsTrigger value="colegios">
-              <Building2 className="h-3.5 w-3.5 mr-1" />
-              Dados dos Colégios
-            </TabsTrigger>
-          )}
-          {isAdmin && (
-            <TabsTrigger value="users">
-              <Users className="h-3.5 w-3.5 mr-1" />
-              Gerenciar Acessos
-            </TabsTrigger>
-          )}
-        </TabsList>
-        <TabsContent value="cc" className="mt-4">
-          <CostCenters podeEditar={podeEditar} />
-        </TabsContent>
-        <TabsContent value="rev" className="mt-4">
-          <RevenueCategories podeEditar={podeEditar} />
-        </TabsContent>
-        <TabsContent value="rules" className="mt-4">
-          <Rules podeEditar={podeEditar} />
-        </TabsContent>
+      <Tabs defaultValue={inicial ?? "despesas"}>
+        <AbasArvore
+          chavePai="configuracoes"
+          ocultar={ve("cadastros") && !veCadastros ? ["cadastros"] : []}
+          antes={{
+            cadastros: <ClipboardList className="h-3.5 w-3.5 mr-1" />,
+            colegios: <Building2 className="h-3.5 w-3.5 mr-1" />,
+            acessos: <Users className="h-3.5 w-3.5 mr-1" />,
+          }}
+        />
+        {ve("despesas") && (
+          <TabsContent value="despesas" className="mt-4">
+            <CostCenters podeEditar={canEdit("configuracoes.despesas")} />
+          </TabsContent>
+        )}
+        {ve("receitas") && (
+          <TabsContent value="receitas" className="mt-4">
+            <RevenueCategories podeEditar={canEdit("configuracoes.receitas")} />
+          </TabsContent>
+        )}
+        {ve("regras") && (
+          <TabsContent value="regras" className="mt-4">
+            <Rules podeEditar={canEdit("configuracoes.regras")} />
+          </TabsContent>
+        )}
         {veCadastros && (
           <TabsContent value="cadastros" className="mt-4">
             <CadastrosGerais />
           </TabsContent>
         )}
-        {canView("documentos") && (
+        {ve("colegios") && (
           <TabsContent value="colegios" className="mt-4">
-            <DadosColegios podeEditar={canEdit("documentos")} />
+            <DadosColegios podeEditar={canEdit("configuracoes.colegios")} />
             <div className="mt-8 border-t pt-6">
-              <TestemunhasContrato podeEditar={canEdit("documentos")} />
+              <TestemunhasContrato podeEditar={canEdit("configuracoes.colegios")} />
             </div>
           </TabsContent>
         )}
-        {isAdmin && (
-          <TabsContent value="users" className="mt-4">
+        {ve("acessos") && (
+          <TabsContent value="acessos" className="mt-4">
             <UserManagement />
           </TabsContent>
         )}
@@ -141,228 +139,8 @@ function SettingsPage() {
   );
 }
 
-type PermState = Record<AppModule, { view: boolean; edit: boolean }>;
-
-function blankPerms(value = false): PermState {
-  return ALL_MODULES.reduce((acc, m) => {
-    acc[m] = { view: value, edit: value };
-    return acc;
-  }, {} as PermState);
-}
-
-function permsToArray(p: PermState) {
-  return ALL_MODULES.map((m) => ({ module: m, can_view: p[m].view, can_edit: p[m].edit }));
-}
-
-function permsFromUser(u: any): PermState {
-  const base = blankPerms(false);
-  for (const row of (u?.permissions ?? []) as any[]) {
-    if ((ALL_MODULES as readonly string[]).includes(row.module)) {
-      base[row.module as AppModule] = {
-        view: !!row.can_view || !!row.can_edit,
-        edit: !!row.can_edit,
-      };
-    }
-  }
-  return base;
-}
-
-// A single module row with Visualizar / Editar switches.
-function PermRow({
-  module,
-  value,
-  onChange,
-  disabled,
-  indent,
-}: {
-  module: AppModule;
-  value: PermState;
-  onChange: (m: AppModule, key: "view" | "edit", v: boolean) => void;
-  disabled?: boolean;
-  indent?: boolean;
-}) {
-  return (
-    <div
-      className={`flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 ${
-        indent ? "bg-muted/20" : ""
-      }`}
-    >
-      <span className="text-sm font-medium">{MODULE_LABELS[module]}</span>
-      <div className="flex items-center gap-5">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Switch
-            checked={value[module].view}
-            disabled={disabled}
-            onCheckedChange={(v) => onChange(module, "view", v)}
-          />
-          Visualizar
-        </label>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Switch
-            checked={value[module].edit}
-            disabled={disabled}
-            onCheckedChange={(v) => onChange(module, "edit", v)}
-          />
-          Editar
-        </label>
-      </div>
-    </div>
-  );
-}
-
-// Agrupamento das permissões espelhando as categorias do menu lateral, para que
-// o administrador encontre cada módulo na mesma ordem que já vê na navegação.
-const PERM_CATEGORIES: { label: string; modules: AppModule[] }[] = [
-  { label: "Comercial", modules: ["agenda", "admissoes", "onboarding"] },
-  {
-    label: "Pedagógico",
-    modules: [
-      "diario",
-      "diario_financeiro",
-      "colonia",
-      "colonia_financeiro",
-      "uniformes",
-      "estoque_material",
-      "esportes",
-      "biblioteca",
-      "pedagogico",
-    ],
-  },
-  {
-    label: "Operacional",
-    modules: [
-      "rh",
-      "rh_salario",
-      "tasks",
-      "financeiro_atendimento",
-      "financeiro_atendimento_ia",
-      "documentos",
-      "cantina",
-      "rematricula",
-      // Mensagens Automáticas: a permissão continua sendo `financeiro_cobranca`
-      // (nada a reconfigurar), mas o módulo agora é Operacional.
-      "financeiro_cobranca",
-    ],
-  },
-];
-
-// Sub-abas do Financeiro, na mesma ordem do menu lateral (lista única).
-const FIN_SUBMODULES: AppModule[] = [
-  "financeiro_dashboard",
-  "financeiro_upload",
-  "financeiro_conciliacao",
-  "financeiro_fluxo",
-  "financeiro_fundos",
-  "financeiro_cartao",
-  "financeiro_inadimplencia",
-];
-
-function CategoryLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-
-function PermissionMatrix({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: PermState;
-  onChange: (m: AppModule, key: "view" | "edit", v: boolean) => void;
-  disabled?: boolean;
-}) {
-  const [finOpen, setFinOpen] = useState(false);
-  return (
-    <div className="space-y-2">
-      {/* Item avulso do topo, como no menu. */}
-      <PermRow module="dashboard" value={value} onChange={onChange} disabled={disabled} />
-
-      {PERM_CATEGORIES.map((cat) => (
-        <div key={cat.label} className="space-y-2">
-          <CategoryLabel>{cat.label}</CategoryLabel>
-          {cat.modules.map((m) => (
-            <PermRow key={m} module={m} value={value} onChange={onChange} disabled={disabled} />
-          ))}
-        </div>
-      ))}
-
-      <CategoryLabel>{MODULE_LABELS.financeiro}</CategoryLabel>
-      <Collapsible
-        open={finOpen}
-        onOpenChange={setFinOpen}
-        className="rounded-md border border-border"
-      >
-        <div className="flex items-center justify-between gap-3 px-3 py-2">
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium">
-            {finOpen ? (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            )}
-            {MODULE_LABELS.financeiro}
-          </CollapsibleTrigger>
-          <div className="flex items-center gap-5">
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch
-                checked={value.financeiro.view}
-                disabled={disabled}
-                onCheckedChange={(v) => onChange("financeiro", "view", v)}
-              />
-              Visualizar
-            </label>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch
-                checked={value.financeiro.edit}
-                disabled={disabled}
-                onCheckedChange={(v) => onChange("financeiro", "edit", v)}
-              />
-              Editar
-            </label>
-          </div>
-        </div>
-        <CollapsibleContent className="space-y-2 px-3 pb-3">
-          <p className="text-xs text-muted-foreground">
-            Controle o acesso a cada sub-aba do Financeiro. As abas só aparecem no menu se o módulo
-            Financeiro estiver com <strong>Visualizar</strong> ligado.
-          </p>
-          {FIN_SUBMODULES.map((sm) => (
-            <PermRow
-              key={sm}
-              module={sm}
-              value={value}
-              onChange={onChange}
-              disabled={disabled}
-              indent
-            />
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
-
-      <CategoryLabel>{MODULE_LABELS.configuracoes}</CategoryLabel>
-      <PermRow module="configuracoes" value={value} onChange={onChange} disabled={disabled} />
-    </div>
-  );
-}
-
-// Enabling Edit implies View; disabling View disables Edit.
-function applyPermChange(
-  prev: PermState,
-  m: AppModule,
-  key: "view" | "edit",
-  v: boolean,
-): PermState {
-  const next = { ...prev, [m]: { ...prev[m] } };
-  if (key === "edit") {
-    next[m].edit = v;
-    if (v) next[m].view = true;
-  } else {
-    next[m].view = v;
-    if (!v) next[m].edit = false;
-  }
-  return next;
+function permsFromUser(u: { permissions?: LinhaPermissao[] } | null | undefined): EstadoFolhas {
+  return estadoDeLinhas(u?.permissions ?? []);
 }
 
 // Collapsible panel used to keep the long create/edit forms tidy.
@@ -478,7 +256,7 @@ function UserManagement() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [perms, setPerms] = useState<PermState>(() => blankPerms(false));
+  const [perms, setPerms] = useState<EstadoFolhas>(() => estadoVazio(false));
   const [schoolIds, setSchoolIds] = useState<string[]>([]);
   const [modalidadeIds, setModalidadeIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -488,7 +266,7 @@ function UserManagement() {
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [editIsAdmin, setEditIsAdmin] = useState(false);
-  const [editPerms, setEditPerms] = useState<PermState>(() => blankPerms(false));
+  const [editPerms, setEditPerms] = useState<EstadoFolhas>(() => estadoVazio(false));
   const [editSchoolIds, setEditSchoolIds] = useState<string[]>([]);
   const [editModalidadeIds, setEditModalidadeIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -528,7 +306,7 @@ function UserManagement() {
           email: email.trim(),
           password,
           isAdmin,
-          permissions: permsToArray(perms),
+          permissions: linhasDoEstado(perms),
           schoolIds,
           esporteModalidadeIds: modalidadeIds,
         },
@@ -538,7 +316,7 @@ function UserManagement() {
       setEmail("");
       setPassword("");
       setIsAdmin(false);
-      setPerms(blankPerms(false));
+      setPerms(estadoVazio(false));
       setSchoolIds([]);
       setModalidadeIds([]);
       qc.invalidateQueries({ queryKey: ["managed_users"] });
@@ -576,7 +354,7 @@ function UserManagement() {
         data: {
           userId,
           isAdmin: editIsAdmin,
-          permissions: permsToArray(editPerms),
+          permissions: linhasDoEstado(editPerms),
           schoolIds: editSchoolIds,
           esporteModalidadeIds: editModalidadeIds,
           name: editName.trim(),
@@ -655,11 +433,11 @@ function UserManagement() {
             <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
           </div>
 
-          <CollapsibleSection title="Permissões por módulo">
-            <PermissionMatrix
-              value={isAdmin ? blankPerms(true) : perms}
+          <CollapsibleSection title="Permissões">
+            <ArvorePermissoes
+              value={isAdmin ? estadoVazio(true) : perms}
               disabled={isAdmin}
-              onChange={(m, key, v) => setPerms((prev) => applyPermChange(prev, m, key, v))}
+              onChange={setPerms}
             />
           </CollapsibleSection>
 
@@ -699,13 +477,7 @@ function UserManagement() {
               {users.map((u: any) => {
                 const isAdminUser = u.roles.includes("admin");
                 const editing = editingId === u.id;
-                const viewModules = (u.permissions ?? [])
-                  .filter(
-                    (p: any) =>
-                      (p.can_view || p.can_edit) &&
-                      (APP_MODULES as readonly string[]).includes(p.module),
-                  )
-                  .map((p: any) => MODULE_LABELS[p.module as AppModule] ?? p.module);
+                const viewModules = resumoAcesso(u.permissions ?? []);
                 return (
                   <div key={u.id} className="p-3">
                     <div className="flex items-center justify-between gap-3">
@@ -785,13 +557,11 @@ function UserManagement() {
                           <span className="text-sm font-medium">Administrador (acesso total)</span>
                           <Switch checked={editIsAdmin} onCheckedChange={setEditIsAdmin} />
                         </div>
-                        <CollapsibleSection title="Permissões por módulo">
-                          <PermissionMatrix
-                            value={editIsAdmin ? blankPerms(true) : editPerms}
+                        <CollapsibleSection title="Permissões" defaultOpen>
+                          <ArvorePermissoes
+                            value={editIsAdmin ? estadoVazio(true) : editPerms}
                             disabled={editIsAdmin}
-                            onChange={(m, key, v) =>
-                              setEditPerms((prev) => applyPermChange(prev, m, key, v))
-                            }
+                            onChange={setEditPerms}
                           />
                         </CollapsibleSection>
                         <CollapsibleSection title="Unidades permitidas">

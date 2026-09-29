@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
 import { usePermissions, useSchool } from "@/lib/app-context";
+import { PAGINAS_RH_SEM_SALARIO } from "@/lib/permissoes-arvore";
 import { toast } from "sonner";
 import FuncionarioModal from "./FuncionarioModal";
 import RankingFaltas from "./RankingFaltas";
@@ -147,11 +148,11 @@ const downloadCSV = (csv: string, filename: string) => {
 const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const { canEdit, canView } = usePermissions();
   const { selected } = useSchool();
-  const isAdmin = canEdit("rh");
+  const isAdmin = PAGINAS_RH_SEM_SALARIO.some((c) => canEdit(c));
   // Sub-visão Salário: só pelo módulo dedicado rh_salario (canEdit("rh") não conta).
   const salario = acessoSalario({
-    canViewRhSalario: canView("rh_salario"),
-    canEditRhSalario: canEdit("rh_salario"),
+    canViewRhSalario: canView("rh.pagamentos.salario"),
+    canEditRhSalario: canEdit("rh.pagamentos.salario"),
   });
   const schoolId = selected !== "all" ? selected : null;
   const permissoesLotes = useMemo<PermissoesLotes>(

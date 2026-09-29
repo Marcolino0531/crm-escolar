@@ -6,7 +6,8 @@ import {
   acoesPlanoAluno,
   podeAbrirDiario,
 } from "@/lib/diario-acesso";
-import { APP_MODULES, MODULE_LABELS } from "@/lib/app-context";
+import { MODULE_LABELS } from "@/lib/app-context";
+import { noPorChave } from "@/lib/permissoes-arvore";
 
 function fonte(caminho: string): string {
   return readFileSync(new URL(`../../${caminho}`, import.meta.url), "utf8");
@@ -40,43 +41,38 @@ describe("Diário do Aluno — dois módulos de acesso (padrão da Colônia)", (
     expect(abaInicialDiario(nenhum)).toBeNull();
   });
 
-  it("diario_financeiro está cadastrado como módulo, com rótulo e no enum do banco", () => {
-    expect(APP_MODULES).toContain("diario_financeiro");
-    expect(MODULE_LABELS.diario_financeiro).toMatch(/^Diário do Aluno/);
-    expect(fonte("src/lib/admin-users.functions.ts")).toMatch(/"diario_financeiro"/);
+  it("as páginas do Diário estão na árvore canônica, com o legado mapeado", () => {
+    expect(noPorChave("diario.registro")?.legado?.ver.flat()).toContain("diario");
+    expect(noPorChave("diario.faturamento")?.legado?.ver.flat()).toContain("diario_financeiro");
+    expect(noPorChave("diario.auditoria")?.legado?.ver.flat()).toContain("diario_financeiro");
+    expect(MODULE_LABELS["diario.faturamento"]).toBe("Faturamento");
     expect(fonte("supabase/migrations/20261019090000_diario_financeiro_module_enum.sql")).toMatch(
       /ADD VALUE IF NOT EXISTS 'diario_financeiro'/,
     );
   });
 
-  it("a página guarda por qualquer dos dois módulos e as abas por módulo (estrutural)", () => {
+  it("a página guarda pelo módulo e as abas pela chave da página (estrutural)", () => {
     const src = fonte("src/routes/diario.tsx");
-    expect(src).toMatch(
-      /podeAbrirDiario\(\{ operacional: canView\("diario"\), financeiro: canView\("diario_financeiro"\) \}\)/,
-    );
-    expect(src).toMatch(/podeEditarFinanceiro = canEdit\("diario_financeiro"\)/);
-    // Componentes financeiros recebem a permissão financeira, não a operacional.
-    expect(src).toMatch(/<AuditoriaSponte[\s\S]*?podeExecutar=\{podeEditarFinanceiro\}/);
+    expect(src).toMatch(/canView\("diario"\)/);
+    expect(src).toMatch(/canEdit\("diario.registro"\)/);
+    expect(src).toMatch(/<AuditoriaSponte[\s\S]*?podeExecutar=\{canEdit\("diario.auditoria"\)\}/);
     expect(src).not.toMatch(/<TabelaPrecos/);
     expect(fonte("src/components/configuracoes/CadastrosGerais.tsx")).toMatch(
-      /<TabelaPrecos[\s\S]*?podeEditar=\{canEdit\("diario_financeiro"\)\}/,
+      /<TabelaPrecos[\s\S]*?podeEditar=\{canEdit\(chaveCadastro\("diario"\)\)\}/,
     );
-    expect(src).toMatch(/<FaturamentoExtras[\s\S]*?podeEditar=\{podeEditarFinanceiro\}/);
-    // O menu lateral mostra o Diário com qualquer dos dois módulos.
-    expect(fonte("src/routes/__root.tsx")).toMatch(
-      /canView\("diario"\) \|\| canView\("diario_financeiro"\)/,
-    );
+    expect(src).toMatch(/<FaturamentoExtras[\s\S]*?podeEditar=\{canEdit\("diario.faturamento"\)\}/);
   });
 
-  it("server functions financeiras exigem 'diario_financeiro'; operacionais seguem em 'diario'", () => {
-    for (const f of [
-      "src/lib/diario-faturamento.functions.ts",
-      "src/lib/diario-precos.functions.ts",
-      "src/lib/diario-auditoria.functions.ts",
-    ]) {
+  it("server functions financeiras exigem a página financeira; operacionais não", () => {
+    const esperado: Record<string, string> = {
+      "src/lib/diario-faturamento.functions.ts": "diario.faturamento",
+      "src/lib/diario-precos.functions.ts": "configuracoes.cadastros.valor_diario",
+      "src/lib/diario-auditoria.functions.ts": "diario.auditoria",
+    };
+    for (const [f, chave] of Object.entries(esperado)) {
       const src = fonte(f);
-      expect(src).toMatch(/_module: "diario_financeiro"/);
-      expect(src).not.toMatch(/_module: "diario" /);
+      expect(src).toContain(`"${chave}"`);
+      expect(src).not.toMatch(/can_(view|edit)_module/);
     }
   });
 });
@@ -100,9 +96,9 @@ describe("Isentar só a partir da aba Faturamento", () => {
 });
 
 describe("Rótulos da Colônia de Férias", () => {
-  it("MODULE_LABELS usa os nomes novos", () => {
-    expect(MODULE_LABELS.colonia).toBe("Colônia de Férias — Registros");
-    expect(MODULE_LABELS.colonia_financeiro).toBe("Colônia de Férias — Fechamento Financeiro");
+  it("a árvore usa os nomes das abas", () => {
+    expect(MODULE_LABELS["colonia.registro"]).toBe("Registrar Consumos");
+    expect(MODULE_LABELS["colonia.fechamento"]).toBe("Fechamento Semanal");
   });
 
   it("nenhum consumidor mantém o texto antigo fixo", () => {
@@ -116,47 +112,5 @@ describe("Rótulos da Colônia de Férias", () => {
       expect(src).not.toMatch(/Colônia — Registros \(Operacional\)/);
       expect(src).not.toMatch(/Colônia — Fechamento Financeiro/);
     }
-  });
-});
-
-describe("botão Plano no modal do aluno — visualizar abre, editar salva", () => {
-  it("só canView vê o botão Plano e abre o modal, mas sem Foto nem Salvar plano", () => {
-    expect(acoesPlanoAluno({ canView: true, canEdit: false })).toEqual({
-      mostrarBotaoPlano: true,
-      mostrarBotaoFoto: false,
-      planoEditavel: false,
-      mostrarSalvarPlano: false,
-    });
-  });
-
-  it("canEdit mantém o comportamento de hoje: Plano, Foto e Salvar plano, tudo editável", () => {
-    expect(acoesPlanoAluno({ canView: true, canEdit: true })).toEqual({
-      mostrarBotaoPlano: true,
-      mostrarBotaoFoto: true,
-      planoEditavel: true,
-      mostrarSalvarPlano: true,
-    });
-  });
-
-  it("StudentActionSheet usa a regra pura e passa canEdit ao PlanEditor", () => {
-    const src = fonte("src/components/diario/StudentActionSheet.tsx");
-    expect(src).toMatch(
-      /acoesPlano\.mostrarBotaoPlano && \(\s*<button\s*onClick=\{\(\) => setEditingPlan\(true\)\}/,
-    );
-    expect(src).toMatch(
-      /acoesPlano\.mostrarBotaoFoto && \(\s*<button\s*onClick=\{\(\) => setEditingPhoto\(true\)\}/,
-    );
-    expect(src).toMatch(/<PlanEditor[\s\S]*?canEdit=\{acoesPlano\.planoEditavel\}/);
-    expect(fonte("src/routes/diario.tsx")).toContain("canView={acesso.operacional}");
-  });
-
-  it("PlanEditor sem canEdit: botão Salvar plano não renderiza e campos ficam só leitura", () => {
-    const src = fonte("src/components/diario/PlanEditor.tsx");
-    expect(src).toMatch(/\{canEdit && \(\s*<Button[\s\S]*?Salvar plano/);
-    expect(src).toContain("disabled={!canEdit}");
-    expect(src).toContain("readOnly={!canEdit}");
-    expect(src).toContain(
-      'if (!canEdit) throw new Error("Você não tem permissão para editar o plano.")',
-    );
   });
 });

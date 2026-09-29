@@ -9,14 +9,15 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 async function assertCanEditRh(userId: string) {
-  const { data, error } = await supabaseAdmin.rpc(
-    "can_edit_module" as never,
-    { _user_id: userId, _module: "rh" } as never,
+  await exigirPermissaoPagina(
+    userId,
+    ["rh.ponto"],
+    "editar",
+    "Você não tem permissão para processar a folha de ponto.",
   );
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Você não tem permissão para processar a folha de ponto.");
 }
 
 async function nomeDoUsuario(userId: string): Promise<string> {

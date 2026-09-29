@@ -3,44 +3,13 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { selectAll } from "@/lib/supabase-paginate";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { CHAVES_PERMISSAO_GRAVAVEIS } from "@/lib/permissoes-arvore";
 
-const APP_MODULES = [
-  "dashboard",
-  "agenda",
-  "admissoes",
-  "onboarding",
-  "rh",
-  "rh_salario",
-  "tasks",
-  "uniformes",
-  "estoque_material",
-  "diario",
-  "diario_financeiro",
-  "colonia",
-  "colonia_financeiro",
-  "esportes",
-  "biblioteca",
-  "pedagogico",
-  "documentos",
-  "cantina",
-  "rematricula",
-  "financeiro",
-  "configuracoes",
-  // Financeiro sub-tabs (granular access)
-  "financeiro_dashboard",
-  "financeiro_upload",
-  "financeiro_conciliacao",
-  "financeiro_fluxo",
-  "financeiro_inadimplencia",
-  "financeiro_cobranca",
-  "financeiro_atendimento",
-  "financeiro_atendimento_ia",
-  "financeiro_cartao",
-  "financeiro_fundos",
-] as const;
+// Só as folhas da árvore (src/lib/permissoes-arvore.ts) são gravadas em user_permissions.
+const CHAVES_GRAVAVEIS = CHAVES_PERMISSAO_GRAVAVEIS as [string, ...string[]];
 
 const permissionSchema = z.object({
-  module: z.enum(APP_MODULES),
+  module: z.enum(CHAVES_GRAVAVEIS),
   can_view: z.boolean(),
   can_edit: z.boolean(),
 });
@@ -101,6 +70,15 @@ async function persistAccess(
     .from("user_roles" as any)
     .insert({ user_id: userId, role: isAdmin ? "admin" : "viewer" });
   if (roleErr) throw new Error(roleErr.message);
+
+  // Linhas do usuário com chave que não é folha (chaves antigas, módulos,
+  // grupos) são apagadas: só as folhas da árvore ficam gravadas.
+  const { error: limpezaErr } = await supabaseAdmin
+    .from("user_permissions" as never)
+    .delete()
+    .eq("user_id", userId)
+    .not("module", "in", `(${CHAVES_GRAVAVEIS.join(",")})`);
+  if (limpezaErr) throw new Error(limpezaErr.message);
 
   // Permissions matrix. Admins get everything implicitly via has_role, but we
   // still store the explicit grid so the UI round-trips correctly.

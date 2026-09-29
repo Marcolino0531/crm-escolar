@@ -81,6 +81,7 @@ import {
 } from "@/lib/sponte.functions";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { BUCKET_ZAPSIGN_ASSINADOS, guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
+import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 const VALIDADE_LINK = 60 * 60; // 1h
 const LOG = "[cobrança manual]";
@@ -88,13 +89,13 @@ const LOG = "[cobrança manual]";
 // ─── Permissões ──────────────────────────────────────────────────────────────
 
 export async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
-  const { data, error } = await supabaseAdmin.rpc(
-    (edicao ? "can_edit_module" : "can_view_module") as never,
-    { _user_id: userId, _module: "financeiro_cobranca" } as never,
-  );
-  if (error) throw new Error(error.message);
-  if (data) return;
-  throw new Error(
+  await exigirPermissaoPagina(
+    userId,
+    // Regra de base: o antigo `financeiro_cobranca` (Mensagens Automáticas) também libera, sem guarda-chuva Financeiro.
+    edicao
+      ? ["regua.cobrancas", "mensagens.cobrancas"]
+      : ["regua.cobrancas", "regua.historico", "mensagens.cobrancas"],
+    edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar a Cobrança."
       : "Você não tem permissão para ver a Cobrança.",
