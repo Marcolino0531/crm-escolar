@@ -248,11 +248,16 @@ describe("árvore de permissões — chaves usadas no código e no banco", () =>
 describe("tela de permissões — dependências entre folhas", () => {
   const vazio = () => estadoVazio(false);
 
-  it("Visualizar/Editar em página do Financeiro marca 'Financeiro: acesso aos dados'", () => {
+  it("Visualizar/Editar em página do Financeiro marca só Visualizar em 'Financeiro: acesso aos dados'", () => {
     const v = alterarNo(vazio(), "extrato", "view", true);
     expect(v[FINANCEIRO_DADOS]).toEqual({ view: true, edit: false });
     const e = alterarNo(vazio(), "inadimplencia", "edit", true);
-    expect(e[FINANCEIRO_DADOS]).toEqual({ view: true, edit: true });
+    expect(e[FINANCEIRO_DADOS]).toEqual({ view: true, edit: false });
+    expect(e.inadimplencia).toEqual({ view: true, edit: true });
+    const grupo = alterarNo(vazio(), "grupo_financeiro", "edit", true);
+    expect(grupo[FINANCEIRO_DADOS]).toEqual({ view: true, edit: true });
+    const explicito = alterarNo(e, FINANCEIRO_DADOS, "edit", true);
+    expect(explicito[FINANCEIRO_DADOS]).toEqual({ view: true, edit: true });
     expect(paginasDoFinanceiro()).toContain("analises_ia");
     expect(paginasDoFinanceiro()).not.toContain(FINANCEIRO_DADOS);
   });
@@ -264,8 +269,8 @@ describe("tela de permissões — dependências entre folhas", () => {
       expect(sem[c], c).toEqual({ view: false, edit: false });
     expect(sem["documentos.zapsign"]).toEqual({ view: true, edit: true });
     const soEdit = alterarNo(tudo, FINANCEIRO_DADOS, "edit", false);
-    for (const c of paginasDoFinanceiro())
-      expect(soEdit[c], c).toEqual({ view: true, edit: false });
+    expect(soEdit[FINANCEIRO_DADOS]).toEqual({ view: true, edit: false });
+    for (const c of paginasDoFinanceiro()) expect(soEdit[c], c).toEqual({ view: true, edit: true });
   });
 
   it("Diário: Auditoria ou Faturamento (Visualizar) marca Registro (Visualizar)", () => {
@@ -275,5 +280,30 @@ describe("tela de permissões — dependências entre folhas", () => {
     expect(f["diario.registro"]).toEqual({ view: true, edit: false });
     const x = alterarNo(vazio(), "diario.extras", "view", true);
     expect(x["diario.registro"]).toEqual({ view: false, edit: false });
+  });
+});
+
+describe("regras de servidor preservadas (ETAPA 2)", () => {
+  const fonte = (f: string) => readFileSync(join(process.cwd(), "src/lib", f), "utf8");
+
+  it("boleto-ai: gravar exige Editar Faturamento OU Editar Financeiro: acesso aos dados", () => {
+    const src = fonte("boleto-ai.functions.ts");
+    const m = src.match(/exigirPermissaoPagina\(\s*[\s\S]*?\[([^\]]+)\],\s*"editar"/);
+    expect(m, "chamada de exigirPermissaoPagina com 'editar'").toBeTruthy();
+    const chaves = [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort();
+    expect(chaves).toEqual(["faturamento", FINANCEIRO_DADOS].sort());
+  });
+
+  it("colonia-valores: salvar e excluir exigem Editar Valor Colônia (colonia_financeiro), sem Configurações a mais", () => {
+    const src = fonte("colonia-valores.functions.ts");
+    expect(src).toMatch(/edicao\s*\?\s*\["configuracoes\.cadastros\.valor_colonia"\]/);
+    expect(src).not.toMatch(/"configuracoes\.cadastros"|"configuracoes"\]/);
+    expect(src).not.toMatch(/"colonia\.fechamento"[^\n]*"editar"/);
+    expect(src.match(/exigirPermissao\(context\.userId, true\)/g)?.length).toBe(2);
+    const copia = readFileSync(
+      join(process.cwd(), "supabase/migrations/20261119090100_permissoes_arvore_copia.sql"),
+      "utf8",
+    );
+    expect(copia).toMatch(/valor_colonia[\s\S]{0,400}colonia_financeiro/);
   });
 });
