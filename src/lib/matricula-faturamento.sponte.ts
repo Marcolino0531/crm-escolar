@@ -28,7 +28,7 @@ import { buscarCursos } from "@/lib/matricula-turma.sponte";
 import { chaveSerie } from "@/lib/rematricula";
 import { valorMatricula } from "@/lib/rematricula-matricula";
 import { valoresMatriculaDoAno } from "@/lib/rematricula.functions";
-import type { RefeicoesRotina } from "@/lib/matricula-form";
+import type { HorariosRotina, RefeicoesRotina } from "@/lib/matricula-form";
 import {
   ITENS_PACOTE_EXTRAS,
   pacotesVazios,
@@ -202,6 +202,7 @@ export interface EntradaFaturamento {
   serie: string;
   anoLetivo: number;
   dataMatricula: string;
+  dataInicio?: string | null;
   matriculaParcelas: number | null;
   matriculaPrimeiroVencimento: string | null;
   materialParcelas: number | null;
@@ -209,6 +210,7 @@ export interface EntradaFaturamento {
   semRefeicoes: boolean;
   horarioEstendido: boolean;
   diasAtivos: readonly Weekday[];
+  horarios?: HorariosRotina;
 }
 
 async function linhasExistentes(submissionId: string): Promise<LinhaLancamento[]> {
@@ -426,6 +428,7 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     plano,
     anoLetivo: entrada.anoLetivo,
     dataMatricula: entrada.dataMatricula,
+    dataInicio: entrada.dataInicio,
     serie: entrada.serie,
     matriculaValor,
     matriculaParcelas: entrada.matriculaParcelas,
@@ -436,6 +439,7 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
     semRefeicoes: entrada.semRefeicoes,
     horarioEstendido: entrada.horarioEstendido,
     diasAtivos: entrada.diasAtivos,
+    horarios: entrada.horarios,
     pacotes,
   });
 

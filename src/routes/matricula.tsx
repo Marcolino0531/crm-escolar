@@ -435,6 +435,7 @@ function MatriculaPublicaPage() {
       form.unidade,
       form.aluno.dataNascimento,
       form.anoLetivo,
+      rotina.dataInicio,
     ],
     queryFn: async () =>
       materialFn({
@@ -442,6 +443,7 @@ function MatriculaPublicaPage() {
           unidade: form.unidade,
           dataNascimento: form.aluno.dataNascimento,
           anoLetivo: form.anoLetivo,
+          dataInicio: rotina.dataInicio || undefined,
         },
       }),
     enabled: form.unidade !== "" && serie !== "" && form.anoLetivo > 0,

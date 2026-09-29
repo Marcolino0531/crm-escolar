@@ -29,6 +29,7 @@ import {
   TIPOS_DOCUMENTO_ACEITOS,
   diasAtivosRotina,
   excedeuLimitePorIp,
+  horariosEfetivos,
   inicioJanelaLimite,
   montarPayloadMatricula,
   montarRotinaPersistida,
@@ -134,6 +135,9 @@ const MaterialInput = z.object({
   unidade: z.string(),
   dataNascimento: z.string(),
   anoLetivo: z.number(),
+  // Data de início da rotina (YYYY-MM-DD) quando já preenchida: as parcelas do
+  // material seguem os meses a vencer a partir dela.
+  dataInicio: z.string().optional(),
 });
 
 export const materialMatriculaPublica = createServerFn({ method: "POST" })
@@ -160,7 +164,7 @@ export const materialMatriculaPublica = createServerFn({ method: "POST" })
       serie: material.serieCadastrada || serie,
       valorAnual: material.valorAnual,
       itens: await itensMaterialDaSerie(data.unidade, serie, data.anoLetivo),
-      opcoes: opcoesParcelasMaterial(data.anoLetivo, hojeSaoPaulo()).map((n) => {
+      opcoes: opcoesParcelasMaterial(data.anoLetivo, hojeSaoPaulo(), data.dataInicio).map((n) => {
         const op = parcelamentoMaterialPrimeira(material.valorAnual, n);
         return { parcelas: op.parcelas, rotulo: rotuloParcelamentoPrimeira(op) };
       }),
@@ -638,6 +642,7 @@ async function faturar(
       serie,
       anoLetivo: form.anoLetivo,
       dataMatricula: hojeSaoPaulo(),
+      dataInicio: rotina.dataInicio,
       matriculaParcelas:
         matriculaValor !== null && cobranca.parcelas > 0 ? cobranca.parcelas : null,
       matriculaPrimeiroVencimento:
@@ -647,6 +652,7 @@ async function faturar(
       semRefeicoes: rotina.semRefeicoes,
       horarioEstendido: rotina.horarioEstendido,
       diasAtivos: diasAtivosRotina(rotina),
+      horarios: horariosEfetivos(rotina, serie),
     });
   } catch (e) {
     const erro = e instanceof Error ? e.message : String(e);

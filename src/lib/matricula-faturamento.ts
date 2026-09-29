@@ -7,18 +7,31 @@
 //   (GetPlanosCursos); as datas vêm do calendário (dia 05, fev–dez);
 // - Material: valor anual do "Material Pedagógico por Série", parcelas do
 //   formulário limitadas às mensalidades restantes;
-// - Refeições e hora extra: pacote mensal (5 dias) de "Valor Pacotes Extras"
-//   ÷ 5 × dias marcados na semana, um lançamento por item, nos meses do calendário.
+// - Refeições: pacote mensal (5 dias) de "Valor Pacotes Extras" ÷ 5 × dias
+//   marcados na semana, um lançamento por item;
+// - Hora extra: pacote = valor mensal de 1 hora extra por dia, 5 dias por semana;
+//   valor mensal = pacote × (minutos extras da semana ÷ 60) ÷ 5.
+//
+// As cobranças mensais começam no mês de início da rotina (nunca antes), com o
+// primeiro mês proporcional por dias corridos quando o início não é dia 01
+// (fevereiro do ano letivo, ou início antes dele, é cobrado cheio).
 //
 // Tudo aqui é planejamento: cada lacuna vira pendência só do seu tipo.
 
 import { addDaysYMD, proximoDiaUtil } from "@/lib/billing-schedule";
 import { addMesesYMD } from "@/lib/confissao-divida";
-import { DIAS_UTEIS, type RefeicoesRotina } from "@/lib/matricula-form";
+import {
+  DIAS_UTEIS,
+  HORARIOS_PADRAO,
+  segmentoDaSerie,
+  type HorariosRotina,
+  type RefeicoesRotina,
+} from "@/lib/matricula-form";
 import {
   CATEGORIA_SPONTE_POR_ITEM,
   ITEM_POR_REFEICAO,
   REFEICOES_PACOTE,
+  arredondarCentavo,
   mensagemPacoteSemValor,
   pacoteSemValor,
   valorMensalPacote,
@@ -117,32 +130,81 @@ export function dia5Util(ano: number, mes: number): string {
   return proximoDiaUtil(ymd(ano, mes, DIA_VENCIMENTO_MENSALIDADE));
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function diasNoMes(ano: number, mes: number): number {
+  return new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+}
+
+/** Mês do cronograma: vencimento e, no primeiro mês proporcional, a fração de dias corridos. */
+export interface MesCronograma {
+  vencimento: string;
+  // null = mês cheio; senão dias cobrados / dias do mês (ex.: 13/31).
+  proporcao: { dias: number; diasMes: number } | null;
+}
+
 /**
- * Vencimentos das mensalidades do ano letivo a partir da data de preenchimento:
- * - antes de fevereiro (inclusive o ano anterior): 11, de 05/02 a 05/12;
- * - mês M (fev–dez) até o dia 05: começa em 05/M;
- * - mês M depois do dia 05: a de M vence no próximo dia útil após o
- *   preenchimento, as seguintes no dia 05 até dezembro;
- * - depois do ano letivo: nenhuma.
+ * Cronograma das cobranças mensais (mensalidade, refeições e hora extra):
+ * - começa no MÊS DE INÍCIO da rotina (`dataInicio`), nunca antes; sem data
+ *   de início válida, a data de preenchimento é o início;
+ * - início antes de fevereiro do ano letivo: 11 meses cheios, de fev a dez;
+ * - início no dia 01 (ou fevereiro): mês cheio, vence no dia 05 útil; se o
+ *   preenchimento for depois disso, no próximo dia útil após o preenchimento;
+ * - início em outro dia: mês proporcional por dias corridos (início → fim do
+ *   mês), vencendo na data de início (dia útil) ou, se ela já passou no
+ *   preenchimento, no próximo dia útil após o preenchimento;
+ * - meses seguintes: dia 05 útil até dezembro;
+ * - início depois do ano letivo: nenhum mês.
  */
-export function vencimentosMensalidade(anoLetivo: number, dataPreenchimento: string): string[] {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataPreenchimento)) {
+export function cronogramaMensal(
+  anoLetivo: number,
+  dataPreenchimento: string,
+  dataInicio?: string | null,
+): MesCronograma[] {
+  if (!YMD.test(dataPreenchimento)) {
     throw new Error("Data de preenchimento inválida (esperado YYYY-MM-DD).");
   }
-  const [ano, mes, dia] = dataPreenchimento.split("-").map(Number);
+  const inicio = dataInicio && YMD.test(dataInicio) ? dataInicio : dataPreenchimento;
+  const [ano, mes, dia] = inicio.split("-").map(Number);
   if (ano > anoLetivo) return [];
-  const datas: string[] = [];
+  const aposPreenchimento = proximoDiaUtil(addDaysYMD(dataPreenchimento, 1));
+  const naoAntesDoPreenchimento = (v: string) => (v >= dataPreenchimento ? v : aposPreenchimento);
+
+  const meses: MesCronograma[] = [];
   let mesInicio = PRIMEIRO_MES_MENSALIDADE;
-  if (ano === anoLetivo && mes >= PRIMEIRO_MES_MENSALIDADE) {
-    if (dia > DIA_VENCIMENTO_MENSALIDADE) {
-      datas.push(proximoDiaUtil(addDaysYMD(dataPreenchimento, 1)));
+  if (ano === anoLetivo && mes > PRIMEIRO_MES_MENSALIDADE) {
+    mesInicio = mes;
+    if (dia !== 1) {
+      const diasMes = diasNoMes(ano, mes);
+      meses.push({
+        vencimento: naoAntesDoPreenchimento(proximoDiaUtil(inicio)),
+        proporcao: { dias: diasMes - dia + 1, diasMes },
+      });
       mesInicio = mes + 1;
-    } else {
-      mesInicio = mes;
     }
   }
-  for (let m = mesInicio; m <= ULTIMO_MES_MENSALIDADE; m++) datas.push(dia5Util(anoLetivo, m));
-  return datas;
+  for (let m = mesInicio; m <= ULTIMO_MES_MENSALIDADE; m++) {
+    meses.push({
+      vencimento: naoAntesDoPreenchimento(dia5Util(anoLetivo, m)),
+      proporcao: null,
+    });
+  }
+  return meses;
+}
+
+/** Vencimentos das cobranças mensais (ver `cronogramaMensal`). */
+export function vencimentosMensalidade(
+  anoLetivo: number,
+  dataPreenchimento: string,
+  dataInicio?: string | null,
+): string[] {
+  return cronogramaMensal(anoLetivo, dataPreenchimento, dataInicio).map((m) => m.vencimento);
+}
+
+/** Valor de um mês do cronograma: cheio ou proporcional por dias corridos (centavo, meio para cima). */
+export function valorDoMes(valorMensal: number, mes: MesCronograma): number {
+  if (!mes.proporcao) return arredondarCentavo(valorMensal);
+  return arredondarCentavo((valorMensal * mes.proporcao.dias) / mes.proporcao.diasMes);
 }
 
 /**
@@ -169,9 +231,13 @@ export function maxParcelasMaterial(mensalidadesRestantes: number): number {
   return Math.max(1, Math.min(PARCELAS_MATERIAL_MAX, Math.trunc(mensalidadesRestantes)));
 }
 
-/** Opções de parcelas do material exibidas no formulário para a data. */
-export function opcoesParcelasMaterial(anoLetivo: number, dataPreenchimento: string): number[] {
-  const restantes = vencimentosMensalidade(anoLetivo, dataPreenchimento).length;
+/** Opções de parcelas do material exibidas no formulário para a data (início da rotina, se já informado). */
+export function opcoesParcelasMaterial(
+  anoLetivo: number,
+  dataPreenchimento: string,
+  dataInicio?: string | null,
+): number[] {
+  const restantes = vencimentosMensalidade(anoLetivo, dataPreenchimento, dataInicio).length;
   if (restantes === 0) return [1];
   const max = maxParcelasMaterial(restantes);
   return Array.from({ length: max }, (_, i) => i + 1);
@@ -182,6 +248,57 @@ export function opcoesParcelasMaterial(anoLetivo: number, dataPreenchimento: str
 /** Dias úteis (seg–sex) marcados, sem repetição. */
 export function diasUteisMarcados(dias: readonly Weekday[]): number {
   return new Set(dias.filter((d) => DIAS_UTEIS.includes(d))).size;
+}
+
+/** Duração do turno regular do segmento da série, em minutos (Infantil 270, Fundamental 320). */
+export function minutosTurnoRegular(serie: string): number {
+  const manha = HORARIOS_PADRAO[segmentoDaSerie(serie)].manha;
+  return (hhmmMinutos(manha.saida) ?? 0) - (hhmmMinutos(manha.entrada) ?? 0);
+}
+
+function hhmmMinutos(hhmm: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/**
+ * Minutos extras de cada dia útil com horário: (saída − entrada) − turno
+ * regular do segmento, nunca negativo. Dias sem horário válido não entram.
+ */
+export function minutosExtrasPorDia(
+  horarios: HorariosRotina,
+  serie: string,
+): Partial<Record<Weekday, number>> {
+  const turno = minutosTurnoRegular(serie);
+  const resultado: Partial<Record<Weekday, number>> = {};
+  for (const dia of DIAS_UTEIS) {
+    const h = horarios[dia];
+    if (!h) continue;
+    const entrada = hhmmMinutos(h.entrada);
+    const saida = hhmmMinutos(h.saida);
+    if (entrada === null || saida === null) continue;
+    resultado[dia] = Math.max(0, saida - entrada - turno);
+  }
+  return resultado;
+}
+
+/**
+ * Valor mensal da hora extra: pacote (1 hora extra por dia, 5 dias por semana)
+ * × (minutos extras da semana ÷ 60) ÷ 5, arredondado ao centavo só no final.
+ */
+export function valorMensalHoraExtra(pacote: number, minutosExtrasSemana: number): number {
+  if (minutosExtrasSemana <= 0) return 0;
+  return arredondarCentavo((pacote * (minutosExtrasSemana / 60)) / 5);
+}
+
+function horasEmTexto(minutos: number): string {
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`;
 }
 
 // ─── Plano de faturamento ───────────────────────────────────────────────────
@@ -246,8 +363,11 @@ export interface EntradaFaturamentoMatricula {
   // Plano do curso no Sponte (só o VALOR da mensalidade é usado); null = sem plano.
   plano: PlanoCursoSponte | null;
   anoLetivo: number;
-  // Data do preenchimento (YYYY-MM-DD), que também é o "hoje" do cronograma.
+  // Data do preenchimento (YYYY-MM-DD): o "hoje" do cronograma.
   dataMatricula: string;
+  // Data de início da rotina (YYYY-MM-DD): mês em que as cobranças mensais
+  // começam. Vazia/inválida = usa a data de preenchimento.
+  dataInicio?: string | null;
   serie: string;
   // Matrícula: valor do School Hub (por colégio e segmento) e escolha do responsável.
   matriculaValor: number | null;
@@ -258,8 +378,10 @@ export interface EntradaFaturamentoMatricula {
   refeicoes: RefeicoesRotina;
   semRefeicoes: boolean;
   horarioEstendido: boolean;
-  // Dias úteis ativos da rotina (os que contam para a hora extra).
+  // Dias úteis ativos da rotina.
   diasAtivos: readonly Weekday[];
+  // Horários efetivos (entrada/saída) por dia ativo; base das horas extras.
+  horarios?: HorariosRotina;
   // Pacotes mensais (5 dias) do colégio × ano letivo; null = sem linha
   // cadastrada (ou tabela ainda inexistente): vira pendência de cada item marcado.
   pacotes: PacotesExtras | null;
@@ -272,6 +394,9 @@ export interface PlanoFaturamentoMatricula {
 
 export const MSG_MATRICULA_SEM_VALOR =
   "O valor da Matrícula ainda não está disponível. A secretaria vai combinar o pagamento com você.";
+
+export const MSG_ESTENDIDO_SEM_HORA_EXTRA =
+  "Horário estendido sem horas além do turno regular. Confira a rotina.";
 
 function parcelado(
   tipo: TipoLancamentoMatricula,
@@ -297,23 +422,35 @@ function parcelado(
   };
 }
 
+/**
+ * Cobrança mensal pelo cronograma: valor cheio em cada mês, salvo o primeiro
+ * quando proporcional (vai em `valorPrimeiraParcela`; a observação indica a
+ * proporção). Com um único mês proporcional, ele é a própria parcela.
+ */
 function mensal(
   tipo: TipoLancamentoMatricula,
   categoria: string,
-  valorParcela: number,
-  vencimentos: string[],
+  valorMensal: number,
+  cronograma: readonly MesCronograma[],
   observacao: string,
 ): LancamentoPlanejado {
+  const valores = cronograma.map((m) => Math.round(valorDoMes(valorMensal, m) * 100));
+  const primeira = valores[0];
+  const cheia = cronograma.length > 1 ? valores[1] : primeira;
+  const total = valores.reduce((s, v) => s + v, 0);
+  const p = cronograma[0].proporcao;
   return {
     tipo,
     categoria,
-    parcelas: vencimentos.length,
-    valorParcela,
-    valorPrimeiraParcela: valorParcela,
-    primeiroVencimento: vencimentos[0],
-    vencimentos,
-    total: Math.round(valorParcela * vencimentos.length * 100) / 100,
-    observacao,
+    parcelas: cronograma.length,
+    valorParcela: cheia / 100,
+    valorPrimeiraParcela: primeira / 100,
+    primeiroVencimento: cronograma[0].vencimento,
+    vencimentos: cronograma.map((m) => m.vencimento),
+    total: total / 100,
+    observacao: p
+      ? `${observacao} — 1ª parcela proporcional ${p.dias}/${p.diasMes} dias`
+      : observacao,
   };
 }
 
@@ -342,7 +479,8 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
   const pendencias: PendenciaLancamento[] = [];
   const pendente = (tipo: TipoLancamentoMatricula, motivo: string) =>
     pendencias.push({ tipo, motivo });
-  const mensalidades = vencimentosMensalidade(e.anoLetivo, e.dataMatricula);
+  const cronograma = cronogramaMensal(e.anoLetivo, e.dataMatricula, e.dataInicio);
+  const mensalidades = cronograma.map((m) => m.vencimento);
 
   // Matrícula: valor do School Hub, parcelas e 1º vencimento escolhidos pelo responsável.
   if (e.matriculaValor === null || Math.round(e.matriculaValor * 100) <= 0) {
@@ -393,7 +531,7 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
         "mensalidade",
         CATEGORIA_MENSALIDADE_SPONTE,
         e.plano.mensalidade.valorParcela,
-        mensalidades,
+        cronograma,
         `Mensalidade ${e.anoLetivo} — ${e.serie}`,
       ),
     );
@@ -426,14 +564,17 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
     );
   }
 
-  // Refeições e hora extra: pacote mensal (5 dias) ÷ 5 × dias marcados na
-  // semana, um lançamento mensal por item, valor cheio em todos os meses.
-  const itemExtra = (tipo: ItemPacoteExtras, dias: number) => {
-    if (dias <= 0) return;
+  // Refeições e hora extra: um lançamento mensal por item pelo mesmo
+  // cronograma da mensalidade (1º mês proporcional quando for o caso).
+  const itemExtra = (
+    tipo: ItemPacoteExtras,
+    valorMensal: (pacote: number) => number,
+    observacao: (pacote: number) => string,
+  ) => {
     const pacote = e.pacotes?.[tipo] ?? null;
     if (pacote === null || pacoteSemValor(pacote)) {
       pendente(tipo, mensagemPacoteSemValor(tipo, e.anoLetivo));
-    } else if (mensalidades.length === 0) {
+    } else if (cronograma.length === 0) {
       pendente(
         tipo,
         `${CATEGORIA_SPONTE_POR_ITEM[tipo]} marcado na rotina, mas não há mês de ${e.anoLetivo} a vencer — lance na mão.`,
@@ -443,23 +584,54 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
         mensal(
           tipo,
           CATEGORIA_SPONTE_POR_ITEM[tipo],
-          valorMensalPacote(pacote, dias),
-          mensalidades,
-          `${CATEGORIA_SPONTE_POR_ITEM[tipo]} ${e.anoLetivo} — ${dias}x por semana — pacote ${formatarBRL(pacote)}`,
+          valorMensal(pacote),
+          cronograma,
+          observacao(pacote),
         ),
       );
     }
   };
 
+  // Refeições: pacote mensal (5 dias) ÷ 5 × dias marcados na semana.
   if (!e.semRefeicoes) {
     for (const refeicao of REFEICOES_PACOTE) {
       const item = ITEM_POR_REFEICAO[refeicao];
       if (item === "jantar" && !serveJantar(e.serie)) continue;
-      itemExtra(item, diasUteisMarcados(e.refeicoes[refeicao]));
+      const dias = diasUteisMarcados(e.refeicoes[refeicao]);
+      if (dias <= 0) continue;
+      itemExtra(
+        item,
+        (pacote) => valorMensalPacote(pacote, dias),
+        (pacote) =>
+          `${CATEGORIA_SPONTE_POR_ITEM[item]} ${e.anoLetivo} — ${dias}x por semana — pacote ${formatarBRL(pacote)}`,
+      );
     }
   }
 
-  if (e.horarioEstendido) itemExtra("hora_extra", diasUteisMarcados(e.diasAtivos));
+  // Hora extra: pacote = 1 hora extra por dia, 5 dias por semana; cobra os
+  // minutos além do turno regular em cada dia ativo com horário estendido.
+  if (e.horarioEstendido) {
+    const ativos = new Set(e.diasAtivos);
+    const porDia = minutosExtrasPorDia(e.horarios ?? {}, e.serie);
+    const minutosDias = DIAS_UTEIS.filter((d) => ativos.has(d))
+      .map((d) => porDia[d] ?? 0)
+      .filter((m) => m > 0);
+    const minutosSemana = minutosDias.reduce((s, m) => s + m, 0);
+    if (minutosSemana <= 0) {
+      pendente("hora_extra", MSG_ESTENDIDO_SEM_HORA_EXTRA);
+    } else {
+      const diasSemana = minutosDias.length;
+      const porDiaTexto = minutosDias.every((m) => m === minutosDias[0])
+        ? `${horasEmTexto(minutosDias[0])} por dia`
+        : `${horasEmTexto(minutosSemana)} por semana`;
+      itemExtra(
+        "hora_extra",
+        (pacote) => valorMensalHoraExtra(pacote, minutosSemana),
+        (pacote) =>
+          `${CATEGORIA_SPONTE_POR_ITEM.hora_extra} ${e.anoLetivo} — ${porDiaTexto}, ${diasSemana}x por semana — ${formatarBRL(pacote)} por hora`,
+      );
+    }
+  }
 
   return { lancamentos, pendencias };
 }
