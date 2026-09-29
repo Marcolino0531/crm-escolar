@@ -271,12 +271,12 @@ async function exigirPermissaoContrato(userId: string, edicao: boolean): Promise
   return nomeDoUsuario(userId);
 }
 
-// Lista e cancelamento vivem só em Matrícula > Contratos: sem essa página o
-// servidor recusa, mesmo com as outras abas de Matrícula liberadas.
+// Lista e cancelamento: Matrícula > Contratos ou Documentos (regra de base:
+// rematricula OU documentos); as outras abas de Matrícula não bastam.
 async function exigirPermissaoContratos(userId: string, edicao: boolean): Promise<string> {
   await exigirPermissaoPagina(
     userId,
-    ["matricula.contratos"],
+    ["matricula.contratos", "documentos.gerar.individual"],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para alterar contratos de matrícula."

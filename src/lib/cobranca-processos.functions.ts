@@ -397,7 +397,7 @@ type CasoLeveRow = Pick<CasoResumo, "id" | "unidade" | "responsavel_nome" | "sta
 export const avisosPrazoCobranca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AvisoPrazo[]> => {
-    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas"], "editar"))) return [];
+    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas", "mensagens.cobrancas"], "editar"))) return [];
     const hoje = hojeYMD();
     // Janela: prazos de hoje até daqui a 5 dias (marcos 5/3/1).
     const limite = new Date(`${hoje}T12:00:00Z`);
@@ -518,7 +518,7 @@ interface CasoAcordoRow {
 export const avisosAcordoCobranca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AvisoAcordo[]> => {
-    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas"], "editar"))) return [];
+    if (!(await temPermissaoPagina(context.userId, ["regua.cobrancas", "mensagens.cobrancas"], "editar"))) return [];
     const casos = await fetchAllRows<CasoAcordoRow>((from, to) =>
       supabaseAdmin
         .from("cobranca_casos" as never)

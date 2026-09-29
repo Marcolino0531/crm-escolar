@@ -28,9 +28,8 @@ type PrecoRow = {
 async function exigirPermissaoDiario(userId: string, edicao: boolean): Promise<void> {
   await exigirPermissaoPagina(
     userId,
-    edicao
-      ? ["configuracoes.cadastros.valor_diario"]
-      : ["configuracoes.cadastros.valor_diario", "diario.extras", "diario.faturamento"],
+    // Regra de base: o antigo `diario_financeiro` (Auditoria/Faturamento), nunca o operacional.
+    ["configuracoes.cadastros.valor_diario", "diario.auditoria", "diario.faturamento"],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar a Tabela de Preços do Diário."

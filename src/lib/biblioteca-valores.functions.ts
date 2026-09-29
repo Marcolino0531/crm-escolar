@@ -27,13 +27,13 @@ const SELECT =
 async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
   await exigirPermissaoPagina(
     userId,
-    edicao
-      ? ["configuracoes.cadastros.valor_biblioteca"]
-      : [
-          "configuracoes.cadastros.valor_biblioteca",
-          "biblioteca.circulacao",
-          "biblioteca.pendencias",
-        ],
+    // Regra de base: o antigo `biblioteca` (qualquer página da Biblioteca) basta, sem exigir Configurações.
+    [
+      "configuracoes.cadastros.valor_biblioteca",
+      "biblioteca.acervo",
+      "biblioteca.circulacao",
+      "biblioteca.pendencias",
+    ],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar os valores da Biblioteca."

@@ -3351,7 +3351,8 @@ async function exigirPermissaoCadastro(
 ): Promise<void> {
   await exigirPermissaoPagina(
     userId,
-    edicao ? [pagina] : [pagina, "matricula.alunos", "matricula.contratos", "matricula.campanhas"],
+    // Regra de base: o antigo `rematricula` (qualquer página de Matrícula) basta, sem exigir Configurações.
+    [pagina, "matricula.alunos", "matricula.contratos", "matricula.campanhas"],
     edicao ? "editar" : "ver",
     edicao
       ? `Você não tem permissão para editar ${nome}.`

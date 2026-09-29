@@ -5,7 +5,7 @@
 //   • abas e sub-abas de cada página (abasVisiveis);
 //   • tela Configurações > Gerenciar Acessos (árvore de Visualizar/Editar);
 //   • checagens de acesso no cliente (usePermissions) e no servidor
-//     (can_view_module / can_edit_module e políticas RLS).
+//     (can_view_pagina / can_edit_pagina e políticas RLS).
 //
 // Regras:
 //   • A chave de cada nó é estável: NÃO muda quando o nome exibido muda. Os
@@ -14,12 +14,21 @@
 //     Como user_permissions.module é o enum public.app_module, toda chave nova
 //     precisa constar de uma migration (ALTER TYPE ... ADD VALUE) — ver a skill
 //     .agents/skills/permissoes-arvore-crm-escolar/SKILL.md.
-//   • A permissão é gravada nas FOLHAS (página sem filhos ou módulo sem página).
-//     Um nó pai é visível quando alguma folha abaixo dele é visível; é editável
-//     quando alguma folha abaixo dele é editável. Editar implica Visualizar.
+//   • A permissão é gravada SOMENTE nas FOLHAS (página sem filhos ou módulo sem
+//     página) — CHAVES_PERMISSAO_GRAVAVEIS. Linhas de user_permissions com
+//     qualquer outra chave (chave antiga da lista plana ou nó não-folha) são
+//     ignoradas por todas as checagens (TS e SQL). Um nó pai é visível quando
+//     alguma folha abaixo dele é visível; é editável quando alguma folha abaixo
+//     dele é editável. Editar implica Visualizar.
 //   • `legado` descreve de quais chaves antigas (app_module da lista plana) o
 //     acesso de cada folha é copiado na migration de correspondência. É uma
-//     forma normal disjuntiva: OR entre os grupos, AND dentro do grupo.
+//     forma normal disjuntiva: OR entre os grupos, AND dentro do grupo. O
+//     caminho inverso (folhasEquivalentes) diz quais folhas reproduzem uma
+//     checagem antiga — é o que as policies/server functions usam para que
+//     ninguém ganhe nem perca acesso na troca.
+//   • `menu` (opcional, em módulos) reproduz a condição antiga do menu quando
+//     ela não é "alguma folha visível" (ex.: RH ignora Salário; grupo
+//     Financeiro exige o guarda-chuva, hoje a folha analises_ia).
 //
 // Alterar qualquer módulo/página/aba exige atualizar esta árvore no mesmo PR
 // (a verificação em permissoes-arvore.test.ts falha caso contrário).
@@ -85,6 +94,12 @@ interface NoBase {
    * ("admin" = interruptor Administrador; "professor" = vínculo em funcionarios.auth_user_id).
    */
   readonly acessoEspecial?: "admin" | "professor";
+  /**
+   * Condição de exibição do módulo no menu, quando diferente de "alguma folha
+   * do módulo visível": todas as chaves de `exige` visíveis E alguma de
+   * `qualquer` (padrão: as folhas do próprio módulo) visível.
+   */
+  readonly menu?: { readonly exige?: readonly string[]; readonly qualquer?: readonly string[] };
 }
 
 const l = (ver: ExpressaoLegada, editar: ExpressaoLegada = ver): Legado => ({ ver, editar });
@@ -93,6 +108,32 @@ const um = (c: ChaveLegada): Legado => l([[c]]);
 const fin = (ver: ChaveLegada, editar: ChaveLegada = ver): Legado => l([[ver]], [[editar]]);
 /** Páginas que hoje exigem o guarda-chuva `financeiro` E a sub-chave para abrir (guard da rota). */
 const finComGuarda = (sub: ChaveLegada): Legado => l([["financeiro", sub]], [[sub]]);
+
+// Condições antigas do menu reproduzidas pela árvore (ver `menu` em NoBase).
+/** Páginas do RH fora do Salário: o antigo `rh` (rh_salario sozinho não abre nem edita o módulo). */
+export const PAGINAS_RH_SEM_SALARIO = [
+  "rh.pessoal.efetivos",
+  "rh.pessoal.terceirizados",
+  "rh.pagamentos.vt",
+  "rh.pagamentos.folhas",
+  "rh.contracheques",
+  "rh.ponto",
+  "rh.estatistica",
+  "rh.aniversarios",
+] as const;
+const MENU_FIN_SUBPAGINAS = [
+  "extrato",
+  "importar",
+  "faturamento",
+  "fluxo",
+  "investimentos",
+  "cartao",
+  "inadimplencia",
+  "regua.cobrancas",
+  "regua.historico",
+] as const;
+/** Itens do grupo Financeiro: guarda-chuva (analises_ia ⇔ antigo `financeiro`) E a própria página. */
+const MENU_FIN = { exige: ["analises_ia"] } as const;
 
 export const ARVORE_PERMISSOES = [
   {
@@ -349,6 +390,8 @@ export const ARVORE_PERMISSOES = [
         nome: "Recursos Humanos",
         tipo: "modulo",
         rota: "/rh",
+        // Menu antigo: canView("rh") — quem só tem Salário (rh_salario) não vê o módulo.
+        menu: { qualquer: PAGINAS_RH_SEM_SALARIO },
         filhos: [
           {
             chave: "rh.pessoal",
@@ -541,12 +584,15 @@ export const ARVORE_PERMISSOES = [
         tipo: "modulo",
         rota: "/analises-ia",
         legado: um("financeiro"),
+        // Menu antigo: guarda-chuva `financeiro` E alguma subpágina do Financeiro.
+        menu: { exige: ["analises_ia"], qualquer: MENU_FIN_SUBPAGINAS },
       },
       {
         chave: "extrato",
         nome: "Extrato Bancário",
         tipo: "modulo",
         rota: "/extrato-bancario",
+        menu: MENU_FIN,
         legado: fin("financeiro_dashboard", "financeiro"),
       },
       {
@@ -554,6 +600,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Importar Extrato",
         tipo: "modulo",
         rota: "/upload",
+        menu: MENU_FIN,
         legado: fin("financeiro_upload"),
       },
       {
@@ -561,6 +608,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Faturamento",
         tipo: "modulo",
         rota: "/conciliacao",
+        menu: MENU_FIN,
         legado: fin("financeiro_conciliacao", "financeiro"),
       },
       {
@@ -568,6 +616,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Fluxo Futuro",
         tipo: "modulo",
         rota: "/fluxo-futuro",
+        menu: MENU_FIN,
         legado: fin("financeiro_fluxo", "financeiro"),
       },
       {
@@ -575,6 +624,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Investimentos",
         tipo: "modulo",
         rota: "/fundos",
+        menu: MENU_FIN,
         legado: fin("financeiro_fundos"),
       },
       {
@@ -582,6 +632,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Cartão de Crédito",
         tipo: "modulo",
         rota: "/cartao-credito",
+        menu: MENU_FIN,
         legado: fin("financeiro_cartao"),
       },
       {
@@ -589,6 +640,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Inadimplência",
         tipo: "modulo",
         rota: "/inadimplencia",
+        menu: MENU_FIN,
         legado: fin("financeiro_inadimplencia"),
       },
       {
@@ -596,6 +648,7 @@ export const ARVORE_PERMISSOES = [
         nome: "Régua de Cobrança",
         tipo: "modulo",
         rota: "/cobranca",
+        menu: MENU_FIN,
         filhos: [
           {
             chave: "regua.cobrancas",
@@ -764,6 +817,11 @@ export function ehChavePermissao(chave: string): chave is ChavePermissao {
   return !!no && no.tipo !== "grupo";
 }
 
+/** Chave de folha persistível (a única aceita pelas checagens do servidor e do SQL). */
+export function ehChaveGravavel(chave: string): chave is ChavePermissao {
+  return FOLHAS_GRAVAVEIS.has(chave);
+}
+
 /** Caminho "Grupo > Módulo > Página" com os nomes exibidos. */
 export function caminhoDoNo(chave: string): string {
   return (CAMINHOS.get(chave) ?? []).map((n) => n.nome).join(" > ");
@@ -782,6 +840,7 @@ export const FOLHAS_PERMISSAO: readonly NoArvore[] = ARVORE_PERMISSOES.flatMap((
 
 /** Chaves gravadas em user_permissions (valores novos do enum app_module). */
 export const CHAVES_PERMISSAO_GRAVAVEIS: readonly string[] = FOLHAS_PERMISSAO.map((n) => n.chave);
+const FOLHAS_GRAVAVEIS = new Set<string>(CHAVES_PERMISSAO_GRAVAVEIS);
 
 /** Módulos (com rota) na ordem do menu. */
 export const MODULOS: readonly NoArvore[] = TODOS_OS_NOS.filter((n) => n.tipo === "modulo");
@@ -820,6 +879,21 @@ export function abasDe(chavePai: ChavePermissao): Aba[] {
   return abasVisiveis(chavePai, () => true);
 }
 
+/**
+ * Módulo aparece no menu quando todas as chaves de `menu.exige` são visíveis e
+ * alguma de `menu.qualquer` (padrão: as folhas do próprio módulo) é visível.
+ * Reproduz as condições do menu antigo (guarda-chuva Financeiro, RH sem Salário).
+ */
+export function moduloVisivelNoMenu(
+  modulo: NoBase,
+  podeVer: (c: ChavePermissao) => boolean,
+): boolean {
+  const exige = modulo.menu?.exige ?? [];
+  if (!exige.every((c) => podeVer(c as ChavePermissao))) return false;
+  const qualquer = modulo.menu?.qualquer ?? folhasDe(modulo).map((f) => f.chave);
+  return qualquer.some((c) => podeVer(c as ChavePermissao));
+}
+
 // ---------- Avaliação de permissão a partir das linhas gravadas ----------
 
 export interface LinhaPermissao {
@@ -834,15 +908,17 @@ export interface Permissoes {
 }
 
 /**
- * Um nó é visível/editável quando ele próprio ou alguma chave abaixo dele
- * (prefixo "chave.") tem a permissão. Mesma regra das funções SQL
- * can_view_module / can_edit_module.
+ * Só linhas de folhas persistíveis (CHAVES_PERMISSAO_GRAVAVEIS) contam; linhas
+ * com chave antiga ou de nó não-folha são ignoradas. Módulo/grupo é
+ * visível/editável quando alguma folha descendente (prefixo "chave.") é.
+ * Editar implica Visualizar. Mesma regra de can_view_pagina/can_edit_pagina.
  */
 export function avaliarPermissoes(linhas: readonly LinhaPermissao[], admin: boolean): Permissoes {
   if (admin) return { ver: () => true, editar: () => true };
   const ver = new Set<string>();
   const editar = new Set<string>();
   for (const r of linhas) {
+    if (!FOLHAS_GRAVAVEIS.has(r.module)) continue;
     if (r.can_edit) editar.add(r.module);
     if (r.can_view || r.can_edit) ver.add(r.module);
   }
@@ -887,8 +963,6 @@ export function migrarLinhasLegadas(linhas: readonly LinhaPermissao[]): LinhaPer
   }
   const novas: LinhaPermissao[] = [];
   for (const no of FOLHAS_PERMISSAO) {
-    // Chave igual à legada (ex.: dashboard, admissoes): a linha já existe e é mantida.
-    if ((CHAVES_LEGADAS as readonly string[]).includes(no.chave)) continue;
     const p = permissaoDerivadaDoLegado(no, legada);
     if (p.view || p.edit)
       novas.push({ module: no.chave, can_view: p.view || p.edit, can_edit: p.edit });

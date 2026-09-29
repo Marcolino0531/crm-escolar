@@ -71,6 +71,15 @@ async function persistAccess(
     .insert({ user_id: userId, role: isAdmin ? "admin" : "viewer" });
   if (roleErr) throw new Error(roleErr.message);
 
+  // Linhas do usuário com chave que não é folha (chaves antigas, módulos,
+  // grupos) são apagadas: só as folhas da árvore ficam gravadas.
+  const { error: limpezaErr } = await supabaseAdmin
+    .from("user_permissions" as never)
+    .delete()
+    .eq("user_id", userId)
+    .not("module", "in", `(${CHAVES_GRAVAVEIS.join(",")})`);
+  if (limpezaErr) throw new Error(limpezaErr.message);
+
   // Permissions matrix. Admins get everything implicitly via has_role, but we
   // still store the explicit grid so the UI round-trips correctly.
   const rows = permissions.map((p) => ({

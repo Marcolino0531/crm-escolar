@@ -33,8 +33,9 @@ const SELECT =
 async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
   await exigirPermissaoPagina(
     userId,
+    // Regra de base: ver = colonia OU colonia_financeiro; editar = colonia_financeiro (Fechamento).
     edicao
-      ? ["configuracoes.cadastros.valor_colonia"]
+      ? ["configuracoes.cadastros.valor_colonia", "colonia.fechamento"]
       : ["configuracoes.cadastros.valor_colonia", "colonia.registro", "colonia.fechamento"],
     edicao ? "editar" : "ver",
     edicao

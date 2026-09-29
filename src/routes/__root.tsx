@@ -64,7 +64,12 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ehRotaPublica } from "@/lib/rotas-publicas";
 import { useProfessor } from "@/lib/use-professor";
-import { ARVORE_PERMISSOES, type ChavePermissao, type NoArvore } from "@/lib/permissoes-arvore";
+import {
+  ARVORE_PERMISSOES,
+  moduloVisivelNoMenu,
+  type ChavePermissao,
+  type NoArvore,
+} from "@/lib/permissoes-arvore";
 import {
   isExpanded,
   toggleExclusive,
@@ -437,12 +442,12 @@ function AppShell() {
   const [expanded, setExpanded] = useState<ExpandedState>({});
 
   // Menu lateral lido da árvore única (src/lib/permissoes-arvore.ts): nome,
-  // ordem e visibilidade vêm de lá. Um módulo aparece quando o usuário tem
-  // Visualizar em alguma página dele; grupos sem módulo visível são omitidos.
+  // ordem e visibilidade vêm de lá (moduloVisivelNoMenu: alguma folha visível,
+  // ou a condição `menu` do módulo); grupos sem módulo visível são omitidos.
   // Só o ícone de cada módulo fica aqui.
   const tree = useMemo<NavTreeNode[]>(() => {
     const visivel = (m: NoArvore) =>
-      m.acessoEspecial === "professor" ? showProfessor : canView(m.chave as ChavePermissao);
+      m.acessoEspecial === "professor" ? showProfessor : moduloVisivelNoMenu(m, canView);
     const item = (m: NoArvore): NavItemNode => ({
       kind: "item",
       to: m.rota ?? "/",

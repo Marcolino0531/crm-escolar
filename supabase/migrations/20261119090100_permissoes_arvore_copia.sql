@@ -1,20 +1,110 @@
 -- Permissões em árvore (Grupo > Módulo > Página): passo 2/2.
+-- Toda a migration roda numa única transação (BEGIN/COMMIT): ou aplica
+-- inteira, ou nada. Ordem de publicação: 20261119090000 (enum) → esta → merge/deploy.
 --
--- (a) can_view_pagina / can_edit_pagina: mesma regra de can_view_module /
---     can_edit_module (admin OU linha em user_permissions), mas recebendo a
---     chave da página como texto e aceitando também qualquer descendente
---     (prefixo "chave."), para módulos e grupos.
--- (b) Cópia aditiva: para cada usuário, cria as linhas das páginas novas a
---     partir das chaves antigas correspondentes (Visualizar/Editar copiados;
---     Editar implica Visualizar). As linhas antigas NÃO são apagadas.
--- (c) Reescrita das policies RLS que checavam módulo: passam a checar a(s)
---     página(s) a que o dado pertence (leitura: qualquer página que exibe o
---     dado; gravação: a página responsável). Mapa por tabela na descrição do PR.
+-- (a) permissoes_folhas(): lista das FOLHAS da árvore (CHAVES_PERMISSAO_GRAVAVEIS,
+--     gerada de src/lib/permissoes-arvore.ts). can_view_pagina / can_edit_pagina
+--     só consideram linhas de user_permissions cuja chave é folha; a chave pedida
+--     casa por igualdade OU por prefixo literal "chave." (left(), sem LIKE — "_" e
+--     "%" não são curingas). Linhas com chave antiga (agenda, rh, diario, ...) ou
+--     de nó não-folha NÃO contam: módulo/grupo = derivado só das folhas descendentes.
+-- (b) Cópia aditiva: para cada usuário, cria as linhas das folhas a partir das
+--     chaves antigas (Visualizar/Editar copiados; Editar implica Visualizar).
+--     As linhas antigas continuam no banco, mas não são mais lidas por nada.
+-- (c) Reescrita de TODAS as policies RLS de produção que chamavam
+--     can_view_module/can_edit_module: passam a checar página(s) com legado
+--     exatamente igual ao módulo antigo (equivalência 1:1 no dia da cópia).
+--     'cobranca' (chave removida em 20260623120100, sem linhas) -> só admin.
+-- (d) Funções auxiliares (pedagógico, esportes) reescritas sobre can_*_pagina.
+-- (e) can_view_module / can_edit_module são REMOVIDAS: se alguma policy ou
+--     função ainda as referenciar, o DROP falha e a transação inteira volta.
 --
--- Gerado por: npx tsx scripts/permissoes-arvore/gerar-migration.ts copia
--- (bloco b) e ~/perm_gerar_policies.py sobre pg_policies de produção (bloco c).
+-- Gerado por: npx tsx scripts/permissoes-arvore/gerar-migration.ts folhas|copia
+-- (blocos a/b) e ~/perm_gerar_policies.py sobre pg_policies de produção (bloco c).
+
+BEGIN;
 
 -- ---------- (a) funções ----------
+
+CREATE OR REPLACE FUNCTION public.permissoes_folhas()
+RETURNS text[]
+LANGUAGE sql IMMUTABLE
+AS $$
+  SELECT ARRAY[
+    'dashboard',
+    'agenda.mes',
+    'agenda.semana',
+    'admissoes',
+    'eformulario',
+    'matricula.alunos',
+    'matricula.contratos',
+    'matricula.campanhas',
+    'onboarding',
+    'secretaria.turmas',
+    'secretaria.disciplinas',
+    'secretaria.atribuicoes',
+    'secretaria.horarios',
+    'secretaria.calendario',
+    'secretaria.notas',
+    'diario.registro',
+    'diario.extras',
+    'diario.auditoria',
+    'diario.faturamento',
+    'colonia.registro',
+    'colonia.fechamento',
+    'uniformes.estoque',
+    'uniformes.vendas',
+    'estoque_material',
+    'esportes',
+    'biblioteca.circulacao',
+    'biblioteca.acervo',
+    'biblioteca.pendencias',
+    'rh.pessoal.efetivos',
+    'rh.pessoal.terceirizados',
+    'rh.pagamentos.salario',
+    'rh.pagamentos.vt',
+    'rh.pagamentos.folhas',
+    'rh.contracheques',
+    'rh.ponto',
+    'rh.estatistica',
+    'rh.aniversarios',
+    'tasks.tickets.recebidas',
+    'tasks.tickets.enviadas',
+    'tasks.planner',
+    'atendimento',
+    'assistente_ia.instrucoes',
+    'assistente_ia.exemplos',
+    'documentos.gerar.individual',
+    'documentos.gerar.lote',
+    'documentos.historico',
+    'documentos.zapsign',
+    'cantina',
+    'mensagens.cobrancas',
+    'mensagens.lembretes',
+    'mensagens.rematricula',
+    'mensagens.falhas',
+    'analises_ia',
+    'extrato',
+    'importar',
+    'faturamento',
+    'fluxo',
+    'investimentos',
+    'cartao',
+    'inadimplencia',
+    'regua.cobrancas',
+    'regua.historico',
+    'configuracoes.despesas',
+    'configuracoes.receitas',
+    'configuracoes.regras',
+    'configuracoes.cadastros.valor_material',
+    'configuracoes.cadastros.valor_matricula',
+    'configuracoes.cadastros.valor_pacotes',
+    'configuracoes.cadastros.valor_diario',
+    'configuracoes.cadastros.valor_colonia',
+    'configuracoes.cadastros.valor_biblioteca',
+    'configuracoes.colegios'
+  ]::text[];
+$$;
 
 CREATE OR REPLACE FUNCTION public.can_view_pagina(_user_id uuid, _chave text)
 RETURNS boolean
@@ -25,7 +115,9 @@ AS $$
     OR EXISTS (
       SELECT 1 FROM public.user_permissions
       WHERE user_id = _user_id
-        AND (module::text = _chave OR module::text LIKE _chave || '.%')
+        AND module::text = ANY (public.permissoes_folhas())
+        AND (module::text = _chave
+             OR left(module::text, length(_chave) + 1) = _chave || '.')
         AND (can_view OR can_edit)
     );
 $$;
@@ -39,17 +131,24 @@ AS $$
     OR EXISTS (
       SELECT 1 FROM public.user_permissions
       WHERE user_id = _user_id
-        AND (module::text = _chave OR module::text LIKE _chave || '.%')
+        AND module::text = ANY (public.permissoes_folhas())
+        AND (module::text = _chave
+             OR left(module::text, length(_chave) + 1) = _chave || '.')
         AND can_edit
     );
 $$;
 
+REVOKE ALL ON FUNCTION public.permissoes_folhas() FROM public;
+REVOKE EXECUTE ON FUNCTION public.permissoes_folhas() FROM anon;
+GRANT EXECUTE ON FUNCTION public.permissoes_folhas() TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.can_view_pagina(uuid, text) FROM public;
 REVOKE ALL ON FUNCTION public.can_edit_pagina(uuid, text) FROM public;
+REVOKE EXECUTE ON FUNCTION public.can_view_pagina(uuid, text) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.can_edit_pagina(uuid, text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.can_view_pagina(uuid, text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.can_edit_pagina(uuid, text) TO authenticated, service_role;
 
--- ---------- (b) cópia aditiva legado -> páginas ----------
+-- ---------- (b) cópia aditiva legado -> folhas ----------
 
 WITH legado AS (
   SELECT user_id,
@@ -488,7 +587,7 @@ ALTER POLICY "analises ia financeiro view" ON public.ai_financeiro_analises
   USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "atendimento ia view ai_suggestions" ON public.ai_suggestions
-  USING ((public.can_view_pagina(auth.uid(), 'atendimento') OR public.can_view_pagina(auth.uid(), 'assistente_ia.instrucoes') OR public.can_view_pagina(auth.uid(), 'assistente_ia.exemplos')));
+  USING ((public.can_view_pagina(auth.uid(), 'assistente_ia.instrucoes') OR public.can_view_pagina(auth.uid(), 'assistente_ia.exemplos')));
 
 ALTER POLICY "atendimento ia view ai_training_examples" ON public.ai_training_examples
   USING ((public.can_view_pagina(auth.uid(), 'assistente_ia.instrucoes') OR public.can_view_pagina(auth.uid(), 'assistente_ia.exemplos')));
@@ -528,33 +627,33 @@ ALTER POLICY "cfg update boleto_category_mappings" ON public.boleto_category_map
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'configuracoes.regras'));
 
 ALTER POLICY "cfg view boleto_category_mappings" ON public.boleto_category_mappings
-  USING (((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')) OR public.can_view_pagina(auth.uid(), 'configuracoes.regras')));
+  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') OR public.can_view_pagina(auth.uid(), 'configuracoes.regras')));
 
 ALTER POLICY "fin delete boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin insert boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin update boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin view boleto_reconciliation_items" ON public.boleto_reconciliation_items
-  USING ((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')));
+  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin delete boleto_reconciliations" ON public.boleto_reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin insert boleto_reconciliations" ON public.boleto_reconciliations
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin update boleto_reconciliations" ON public.boleto_reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin view boleto_reconciliations" ON public.boleto_reconciliations
-  USING ((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')));
+  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "cantina_portal_config_select" ON public.cantina_portal_config
   USING (public.can_view_pagina(auth.uid(), 'cantina'));
@@ -567,37 +666,37 @@ ALTER POLICY "cantina recargas update" ON public.cantina_recargas
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'cantina'));
 
 ALTER POLICY "ref delete categorization_rules" ON public.categorization_rules
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref insert categorization_rules" ON public.categorization_rules
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref update categorization_rules" ON public.categorization_rules
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'extrato')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.regras') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "colonia view colonia_valores" ON public.colonia_valores
-  USING (((public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')) OR (public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento'))));
+  USING (((public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.registro')) OR (public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_colonia') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento'))));
 
 ALTER POLICY "contrato testemunhas select" ON public.contrato_testemunhas
-  USING ((public.can_view_pagina(auth.uid(), 'configuracoes.colegios') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign')));
+  USING ((public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign')));
 
 ALTER POLICY "contrato testemunhas update" ON public.contrato_testemunhas
-  USING (public.can_edit_pagina(auth.uid(), 'configuracoes.colegios'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'configuracoes.colegios'));
+  USING ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign')));
 
 ALTER POLICY "contratos_matricula read" ON public.contratos_matricula
   USING (public.can_view_pagina(auth.uid(), 'matricula.contratos'));
 
 ALTER POLICY "ref delete cost_centers" ON public.cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref insert cost_centers" ON public.cost_centers
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref update cost_centers" ON public.cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "cartao delete" ON public.credit_card_receivables
   USING (public.can_edit_pagina(auth.uid(), 'cartao'));
@@ -613,10 +712,10 @@ ALTER POLICY "cartao view" ON public.credit_card_receivables
   USING (public.can_view_pagina(auth.uid(), 'cartao'));
 
 ALTER POLICY "diario view diario_auditoria_execucoes" ON public.diario_auditoria_execucoes
-  USING (public.can_view_pagina(auth.uid(), 'diario.auditoria'));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario view diario_auditoria_inconsistencias" ON public.diario_auditoria_inconsistencias
-  USING (public.can_view_pagina(auth.uid(), 'diario.auditoria'));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario delete diario_classes" ON public.diario_classes
   USING (public.can_edit_pagina(auth.uid(), 'diario.registro'));
@@ -629,7 +728,7 @@ ALTER POLICY "diario update diario_classes" ON public.diario_classes
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'diario.registro'));
 
 ALTER POLICY "diario/colonia view diario_classes" ON public.diario_classes
-  USING (((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')) OR (public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')) OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
+  USING (((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')) OR public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
 
 ALTER POLICY "diario delete diario_events" ON public.diario_events
   USING (public.can_edit_pagina(auth.uid(), 'diario.registro'));
@@ -642,13 +741,13 @@ ALTER POLICY "diario update diario_events" ON public.diario_events
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'diario.registro'));
 
 ALTER POLICY "diario view diario_events" ON public.diario_events
-  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras') OR public.can_view_pagina(auth.uid(), 'diario.faturamento')));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario view diario_faturamentos" ON public.diario_faturamentos
-  USING (public.can_view_pagina(auth.uid(), 'diario.faturamento'));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario view diario_matriculas_ano" ON public.diario_matriculas_ano
-  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras') OR public.can_view_pagina(auth.uid(), 'diario.auditoria') OR public.can_view_pagina(auth.uid(), 'diario.faturamento')));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario delete diario_meal_plans" ON public.diario_meal_plans
   USING (public.can_edit_pagina(auth.uid(), 'diario.registro'));
@@ -664,7 +763,7 @@ ALTER POLICY "diario view diario_meal_plans" ON public.diario_meal_plans
   USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario view diario_precos_extras" ON public.diario_precos_extras
-  USING ((public.can_view_pagina(auth.uid(), 'configuracoes.cadastros.valor_diario') OR public.can_view_pagina(auth.uid(), 'diario.faturamento')));
+  USING ((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')));
 
 ALTER POLICY "diario delete diario_schedules" ON public.diario_schedules
   USING (public.can_edit_pagina(auth.uid(), 'diario.registro'));
@@ -690,17 +789,17 @@ ALTER POLICY "diario update diario_students" ON public.diario_students
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'diario.registro'));
 
 ALTER POLICY "diario/colonia view diario_students" ON public.diario_students
-  USING (((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')) OR (public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')) OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
+  USING (((public.can_view_pagina(auth.uid(), 'diario.registro') OR public.can_view_pagina(auth.uid(), 'diario.extras')) OR public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
 
 ALTER POLICY "documentos colegios insert" ON public.documentos_colegios
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'configuracoes.colegios'));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign')));
 
 ALTER POLICY "documentos colegios select" ON public.documentos_colegios
-  USING ((public.can_view_pagina(auth.uid(), 'configuracoes.colegios') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign')));
+  USING ((public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign')));
 
 ALTER POLICY "documentos colegios update" ON public.documentos_colegios
-  USING (public.can_edit_pagina(auth.uid(), 'configuracoes.colegios'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'configuracoes.colegios'));
+  USING ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign')));
 
 ALTER POLICY "documentos recibos insert" ON public.documentos_recibos
   WITH CHECK ((public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.historico')));
@@ -745,10 +844,10 @@ ALTER POLICY "colonia update holiday_camp_records" ON public.holiday_camp_record
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'colonia.registro'));
 
 ALTER POLICY "colonia view holiday_camp_records" ON public.holiday_camp_records
-  USING (((public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')) OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
+  USING ((public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
 
 ALTER POLICY "colonia view holiday_camp_week_status" ON public.holiday_camp_week_status
-  USING (((public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')) OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
+  USING ((public.can_view_pagina(auth.uid(), 'colonia.registro') OR public.can_view_pagina(auth.uid(), 'colonia.fechamento')));
 
 ALTER POLICY "hr docs delete" ON public.hr_employee_documents
   USING (public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos'));
@@ -785,7 +884,7 @@ END);
 ALTER POLICY "hr transport items select" ON public.hr_transport_batch_items
   USING (
 CASE hr_batch_tipo(batch_id)
-    WHEN 'salario'::text THEN (public.can_view_pagina(auth.uid(), 'rh.pagamentos.salario') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas'))
+    WHEN 'salario'::text THEN public.can_view_pagina(auth.uid(), 'rh.pagamentos.salario')
     ELSE (public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas'))
 END);
 
@@ -818,7 +917,7 @@ END);
 ALTER POLICY "hr transport batches select" ON public.hr_transport_batches
   USING (
 CASE tipo
-    WHEN 'salario'::text THEN (public.can_view_pagina(auth.uid(), 'rh.pagamentos.salario') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas'))
+    WHEN 'salario'::text THEN public.can_view_pagina(auth.uid(), 'rh.pagamentos.salario')
     ELSE (public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas'))
 END);
 
@@ -835,17 +934,17 @@ CASE tipo
 END);
 
 ALTER POLICY "fin delete initial_balances" ON public.initial_balances
-  USING (public.can_edit_pagina(auth.uid(), 'extrato'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin insert initial_balances" ON public.initial_balances
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'extrato'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin update initial_balances" ON public.initial_balances
-  USING (public.can_edit_pagina(auth.uid(), 'extrato'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'extrato'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin view initial_balances" ON public.initial_balances
-  USING ((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')));
+  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "edit delete leads" ON public.leads
   USING ((public.can_edit_pagina(auth.uid(), 'admissoes') AND can_access_school(auth.uid(), school_id)));
@@ -875,64 +974,6 @@ ALTER POLICY "matricula_faturamento_lancamentos_select" ON public.matricula_fatu
 ALTER POLICY "admissoes view matricula_saude" ON public.matricula_saude
   USING (public.can_view_pagina(auth.uid(), 'eformulario'));
 
-ALTER POLICY "diario fotos delete" ON storage.objects
-  USING (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
-
-ALTER POLICY "diario fotos insert" ON storage.objects
-  WITH CHECK (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
-
-ALTER POLICY "diario fotos update" ON storage.objects
-  USING (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')))
-  WITH CHECK (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
-
-ALTER POLICY "documentos storage delete" ON storage.objects
-  USING (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
-
-ALTER POLICY "documentos storage insert" ON storage.objects
-  WITH CHECK (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
-
-ALTER POLICY "documentos storage read" ON storage.objects
-  USING (((bucket_id = 'documentos'::text) AND (public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign'))));
-
-ALTER POLICY "documentos storage update" ON storage.objects
-  USING (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))))
-  WITH CHECK (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
-
-ALTER POLICY "hr documents delete" ON storage.objects
-  USING (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "hr documents insert" ON storage.objects
-  WITH CHECK (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "hr documents read" ON storage.objects
-  USING (((bucket_id = 'hr-documents'::text) AND (public.can_view_pagina(auth.uid(), 'rh.pessoal.efetivos') OR public.can_view_pagina(auth.uid(), 'rh.pessoal.terceirizados') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas') OR public.can_view_pagina(auth.uid(), 'rh.contracheques') OR public.can_view_pagina(auth.uid(), 'rh.ponto') OR public.can_view_pagina(auth.uid(), 'rh.estatistica') OR public.can_view_pagina(auth.uid(), 'rh.aniversarios'))));
-
-ALTER POLICY "hr documents update" ON storage.objects
-  USING (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')))
-  WITH CHECK (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "matricula documentos read" ON storage.objects
-  USING (((bucket_id = 'matricula-documentos'::text) AND public.can_view_pagina(auth.uid(), 'eformulario')));
-
-ALTER POLICY "rh atestados delete" ON storage.objects
-  USING (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "rh atestados insert" ON storage.objects
-  WITH CHECK (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "rh atestados read" ON storage.objects
-  USING (((bucket_id = 'rh-atestados'::text) AND (public.can_view_pagina(auth.uid(), 'rh.pessoal.efetivos') OR public.can_view_pagina(auth.uid(), 'rh.pessoal.terceirizados') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas') OR public.can_view_pagina(auth.uid(), 'rh.contracheques') OR public.can_view_pagina(auth.uid(), 'rh.ponto') OR public.can_view_pagina(auth.uid(), 'rh.estatistica') OR public.can_view_pagina(auth.uid(), 'rh.aniversarios'))));
-
-ALTER POLICY "rh atestados update" ON storage.objects
-  USING (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')))
-  WITH CHECK (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
-
-ALTER POLICY "whatsapp media insert saida" ON storage.objects
-  WITH CHECK (((bucket_id = 'whatsapp-media'::text) AND (name ~~ 'saida/%'::text) AND public.can_edit_pagina(auth.uid(), 'atendimento')));
-
-ALTER POLICY "whatsapp media read" ON storage.objects
-  USING (((bucket_id = 'whatsapp-media'::text) AND public.can_view_pagina(auth.uid(), 'atendimento')));
-
 ALTER POLICY "edit delete onboarding" ON public.onboarding
   USING ((public.can_edit_pagina(auth.uid(), 'onboarding') AND can_access_school(auth.uid(), school_id)));
 
@@ -947,43 +988,43 @@ ALTER POLICY "view onboarding" ON public.onboarding
   USING ((public.can_view_pagina(auth.uid(), 'onboarding') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin delete reconciliations" ON public.reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin insert reconciliations" ON public.reconciliations
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin update reconciliations" ON public.reconciliations
-  USING (public.can_edit_pagina(auth.uid(), 'faturamento'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'faturamento'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin view reconciliations" ON public.reconciliations
-  USING ((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')));
+  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin delete recurring_forecasts" ON public.recurring_forecasts
-  USING ((public.can_edit_pagina(auth.uid(), 'fluxo') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin insert recurring_forecasts" ON public.recurring_forecasts
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'fluxo') AND can_access_school(auth.uid(), school_id)));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin update recurring_forecasts" ON public.recurring_forecasts
-  USING ((public.can_edit_pagina(auth.uid(), 'fluxo') AND can_access_school(auth.uid(), school_id)))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'fluxo') AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin view recurring_forecasts" ON public.recurring_forecasts
-  USING (((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')) AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin delete recurring_series" ON public.recurring_series
-  USING (public.can_edit_pagina(auth.uid(), 'fluxo'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin insert recurring_series" ON public.recurring_series
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'fluxo'));
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin update recurring_series" ON public.recurring_series
-  USING (public.can_edit_pagina(auth.uid(), 'fluxo'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'fluxo'));
+  USING (public.can_edit_pagina(auth.uid(), 'analises_ia'))
+  WITH CHECK (public.can_edit_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "fin view recurring_series" ON public.recurring_series
-  USING ((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia')));
+  USING (public.can_view_pagina(auth.uid(), 'analises_ia'));
 
 ALTER POLICY "rematricula_acessos_select" ON public.rematricula_acessos
   USING ((public.can_view_pagina(auth.uid(), 'matricula.alunos') OR public.can_view_pagina(auth.uid(), 'matricula.contratos') OR public.can_view_pagina(auth.uid(), 'matricula.campanhas')));
@@ -1019,24 +1060,24 @@ ALTER POLICY "rematricula_responsavel_financeiro_select" ON public.rematricula_r
   USING ((public.can_view_pagina(auth.uid(), 'matricula.alunos') OR public.can_view_pagina(auth.uid(), 'matricula.contratos') OR public.can_view_pagina(auth.uid(), 'matricula.campanhas')));
 
 ALTER POLICY "ref delete revenue_categories" ON public.revenue_categories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref insert revenue_categories" ON public.revenue_categories
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref update revenue_categories" ON public.revenue_categories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref delete revenue_subcategories" ON public.revenue_subcategories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref insert revenue_subcategories" ON public.revenue_subcategories
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref update revenue_subcategories" ON public.revenue_subcategories
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.receitas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "rh experiencia lidas insert" ON public.rh_experiencia_notificacoes_lidas
   WITH CHECK ((public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos') AND (lido_por = auth.uid())));
@@ -1058,17 +1099,17 @@ ALTER POLICY "estoque_material view" ON public.school_material_stock
   USING (public.can_view_pagina(auth.uid(), 'estoque_material'));
 
 ALTER POLICY "admissoes view student_routine" ON public.student_routine
-  USING ((public.can_view_pagina(auth.uid(), 'eformulario') OR public.can_view_pagina(auth.uid(), 'diario.registro')));
+  USING (public.can_view_pagina(auth.uid(), 'eformulario'));
 
 ALTER POLICY "ref delete sub_cost_centers" ON public.sub_cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref insert sub_cost_centers" ON public.sub_cost_centers
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "ref update sub_cost_centers" ON public.sub_cost_centers
-  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')))
-  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'extrato')));
+  USING ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'configuracoes.despesas') OR public.can_edit_pagina(auth.uid(), 'analises_ia')));
 
 ALTER POLICY "terceirizados delete" ON public.terceirizados
   USING (public.can_edit_pagina(auth.uid(), 'rh.pessoal.terceirizados'));
@@ -1084,17 +1125,17 @@ ALTER POLICY "terceirizados update" ON public.terceirizados
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'rh.pessoal.terceirizados'));
 
 ALTER POLICY "fin delete transactions" ON public.transactions
-  USING (((public.can_edit_pagina(auth.uid(), 'extrato') OR public.can_edit_pagina(auth.uid(), 'importar')) AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin insert transactions" ON public.transactions
-  WITH CHECK (((public.can_edit_pagina(auth.uid(), 'extrato') OR public.can_edit_pagina(auth.uid(), 'importar')) AND can_access_school(auth.uid(), school_id)));
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin update transactions" ON public.transactions
-  USING (((public.can_edit_pagina(auth.uid(), 'extrato') OR public.can_edit_pagina(auth.uid(), 'importar')) AND can_access_school(auth.uid(), school_id)))
-  WITH CHECK (((public.can_edit_pagina(auth.uid(), 'extrato') OR public.can_edit_pagina(auth.uid(), 'importar')) AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)))
+  WITH CHECK ((public.can_edit_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "fin view transactions" ON public.transactions
-  USING (((public.can_view_pagina(auth.uid(), 'extrato') OR public.can_view_pagina(auth.uid(), 'importar') OR public.can_view_pagina(auth.uid(), 'faturamento') OR public.can_view_pagina(auth.uid(), 'fluxo') OR public.can_view_pagina(auth.uid(), 'analises_ia') OR public.can_view_pagina(auth.uid(), 'inadimplencia')) AND can_access_school(auth.uid(), school_id)));
+  USING ((public.can_view_pagina(auth.uid(), 'analises_ia') AND can_access_school(auth.uid(), school_id)));
 
 ALTER POLICY "unidade_valores_opcionais_select" ON public.unidade_valores_opcionais
   USING (public.can_view_pagina(auth.uid(), 'eformulario'));
@@ -1165,24 +1206,24 @@ ALTER POLICY "cobranca view whatsapp_billing_exceptions" ON public.whatsapp_bill
   USING (public.can_view_pagina(auth.uid(), 'mensagens.cobrancas'));
 
 ALTER POLICY "cobranca delete whatsapp_billing_logs" ON public.whatsapp_billing_logs
-  USING (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "cobranca insert whatsapp_billing_logs" ON public.whatsapp_billing_logs
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'));
+  WITH CHECK (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "cobranca update whatsapp_billing_logs" ON public.whatsapp_billing_logs
-  USING (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "cobranca view whatsapp_billing_logs" ON public.whatsapp_billing_logs
-  USING (public.can_view_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "cobranca update whatsapp_billing_pause" ON public.whatsapp_billing_pause
-  USING (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'))
-  WITH CHECK (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "cobranca view whatsapp_billing_pause" ON public.whatsapp_billing_pause
-  USING (public.can_view_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "delete whatsapp_billing_pauses" ON public.whatsapp_billing_pauses
   USING ((public.can_edit_pagina(auth.uid(), 'atendimento') OR (public.can_edit_pagina(auth.uid(), 'mensagens.cobrancas') OR public.can_edit_pagina(auth.uid(), 'mensagens.lembretes'))));
@@ -1207,7 +1248,7 @@ ALTER POLICY "atendimento view whatsapp_conversations" ON public.whatsapp_conver
   USING (public.can_view_pagina(auth.uid(), 'atendimento'));
 
 ALTER POLICY "cobranca view whatsapp_cron_runs" ON public.whatsapp_cron_runs
-  USING (public.can_view_pagina(auth.uid(), 'mensagens.cobrancas'));
+  USING (public.has_role(auth.uid(), 'admin'::public.app_role));
 
 ALTER POLICY "insert whatsapp_falhas_arquivadas" ON public.whatsapp_falhas_arquivadas
   WITH CHECK (public.can_edit_pagina(auth.uid(), 'mensagens.falhas'));
@@ -1249,6 +1290,74 @@ ALTER POLICY "zapsign_eventos read" ON public.zapsign_eventos
 ALTER POLICY "zapsign_webhooks read" ON public.zapsign_webhooks
   USING ((public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign')));
 
+ALTER POLICY "diario fotos delete" ON storage.objects
+  USING (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
+
+ALTER POLICY "diario fotos insert" ON storage.objects
+  WITH CHECK (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
+
+ALTER POLICY "diario fotos update" ON storage.objects
+  USING (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')))
+  WITH CHECK (((bucket_id = 'diario-fotos'::text) AND public.can_edit_pagina(auth.uid(), 'diario.registro')));
+
+ALTER POLICY "documentos storage delete" ON storage.objects
+  USING (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
+
+ALTER POLICY "documentos storage insert" ON storage.objects
+  WITH CHECK (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
+
+ALTER POLICY "documentos storage read" ON storage.objects
+  USING (((bucket_id = 'documentos'::text) AND (public.can_view_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_view_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_view_pagina(auth.uid(), 'documentos.historico') OR public.can_view_pagina(auth.uid(), 'documentos.zapsign'))));
+
+ALTER POLICY "documentos storage update" ON storage.objects
+  USING (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))))
+  WITH CHECK (((bucket_id = 'documentos'::text) AND (public.can_edit_pagina(auth.uid(), 'documentos.gerar.individual') OR public.can_edit_pagina(auth.uid(), 'documentos.gerar.lote') OR public.can_edit_pagina(auth.uid(), 'documentos.historico') OR public.can_edit_pagina(auth.uid(), 'documentos.zapsign'))));
+
+ALTER POLICY "hr documents delete" ON storage.objects
+  USING (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "hr documents insert" ON storage.objects
+  WITH CHECK (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "hr documents read" ON storage.objects
+  USING (((bucket_id = 'hr-documents'::text) AND (public.can_view_pagina(auth.uid(), 'rh.pessoal.efetivos') OR public.can_view_pagina(auth.uid(), 'rh.pessoal.terceirizados') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas') OR public.can_view_pagina(auth.uid(), 'rh.contracheques') OR public.can_view_pagina(auth.uid(), 'rh.ponto') OR public.can_view_pagina(auth.uid(), 'rh.estatistica') OR public.can_view_pagina(auth.uid(), 'rh.aniversarios'))));
+
+ALTER POLICY "hr documents update" ON storage.objects
+  USING (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')))
+  WITH CHECK (((bucket_id = 'hr-documents'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "matricula documentos read" ON storage.objects
+  USING (((bucket_id = 'matricula-documentos'::text) AND public.can_view_pagina(auth.uid(), 'eformulario')));
+
+ALTER POLICY "rh atestados delete" ON storage.objects
+  USING (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "rh atestados insert" ON storage.objects
+  WITH CHECK (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "rh atestados read" ON storage.objects
+  USING (((bucket_id = 'rh-atestados'::text) AND (public.can_view_pagina(auth.uid(), 'rh.pessoal.efetivos') OR public.can_view_pagina(auth.uid(), 'rh.pessoal.terceirizados') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.vt') OR public.can_view_pagina(auth.uid(), 'rh.pagamentos.folhas') OR public.can_view_pagina(auth.uid(), 'rh.contracheques') OR public.can_view_pagina(auth.uid(), 'rh.ponto') OR public.can_view_pagina(auth.uid(), 'rh.estatistica') OR public.can_view_pagina(auth.uid(), 'rh.aniversarios'))));
+
+ALTER POLICY "rh atestados update" ON storage.objects
+  USING (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')))
+  WITH CHECK (((bucket_id = 'rh-atestados'::text) AND public.can_edit_pagina(auth.uid(), 'rh.pessoal.efetivos')));
+
+ALTER POLICY "whatsapp media insert saida" ON storage.objects
+  WITH CHECK (((bucket_id = 'whatsapp-media'::text) AND (name ~~ 'saida/%'::text) AND public.can_edit_pagina(auth.uid(), 'atendimento')));
+
+ALTER POLICY "whatsapp media read" ON storage.objects
+  USING (((bucket_id = 'whatsapp-media'::text) AND public.can_view_pagina(auth.uid(), 'atendimento')));
+
+-- hr_timesheet_days (20260915090000) ainda não existe em produção; a policy
+-- é recriada só se a tabela existir, para a migration valer nos dois cenários.
+DO $$
+BEGIN
+  IF to_regclass('public.hr_timesheet_days') IS NOT NULL THEN
+    EXECUTE $p$ALTER POLICY "hr timesheet days select" ON public.hr_timesheet_days
+      USING ((public.can_view_pagina(auth.uid(), 'rh.ponto') OR public.can_view_pagina(auth.uid(), 'rh.estatistica')))$p$;
+  END IF;
+END $$;
+
 -- ---------- (d) funções auxiliares que checavam módulo ----------
 -- Pedagógico: 'pedagogico' -> módulo Secretaria (qualquer página, por prefixo)
 -- para leitura; gravação por página responsável (sobrecarga com _pagina).
@@ -1289,7 +1398,8 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.pedagogico_pode_editar(uuid, uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.pedagogico_pode_editar(uuid, uuid, text) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.pedagogico_pode_editar(uuid, uuid, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.pedagogico_pode_editar(uuid, uuid, text) TO authenticated, service_role;
 
 ALTER POLICY "pedagogico edit disciplinas" ON public.disciplinas
   USING (public.pedagogico_pode_editar(auth.uid(), school_id, 'secretaria.disciplinas'))
@@ -1350,3 +1460,30 @@ AS $$
   SELECT public.can_edit_pagina(_user_id, 'esportes')
     AND NOT public.esportes_restrito_por_modalidade(_user_id);
 $$;
+
+-- ---------- (e) remoção das funções antigas ----------
+-- Falha (e desfaz tudo) se ainda houver policy/função dependente.
+
+DROP FUNCTION public.can_view_module(uuid, public.app_module);
+DROP FUNCTION public.can_edit_module(uuid, public.app_module);
+
+-- ---------- (f) auditoria: zero referência a can_*_module / chaves antigas ----------
+DO $$
+DECLARE
+  n_pol int;
+  n_fn int;
+BEGIN
+  SELECT count(*) INTO n_pol
+  FROM pg_policies
+  WHERE coalesce(qual, '') || coalesce(with_check, '') ~ 'can_(view|edit)_module';
+  SELECT count(*) INTO n_fn
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND (p.proname IN ('can_view_module', 'can_edit_module')
+         OR p.prosrc ~ 'can_(view|edit)_module');
+  IF n_pol <> 0 OR n_fn <> 0 THEN
+    RAISE EXCEPTION 'permissoes_arvore: ainda há % policies e % funções com can_*_module', n_pol, n_fn;
+  END IF;
+END $$;
+
+COMMIT;

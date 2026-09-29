@@ -87,7 +87,7 @@ export const Route = createFileRoute("/matriculas")({
 function MatriculasGate() {
   const { canView, loading } = usePermissions();
   if (loading) return null;
-  if (!canView("admissoes"))
+  if (!canView("eformulario"))
     return <AccessDenied message="Você não tem permissão para acessar as Matrículas." />;
   return <MatriculasPage />;
 }
@@ -249,7 +249,7 @@ function StatusBadge({ status }: { status: SubmissionStatus }) {
 function MatriculasPage() {
   const { canEdit } = usePermissions();
   const { isAdmin } = useRole();
-  const podeReprocessar = canEdit("admissoes");
+  const podeReprocessar = canEdit("eformulario");
   const queryClient = useQueryClient();
   const reprocessarFn = useServerFn(reprocessarMatricula);
   const [excluindo, setExcluindo] = useState<Submissao | null>(null);

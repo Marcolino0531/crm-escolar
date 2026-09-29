@@ -3,7 +3,13 @@
 //
 //   npx tsx scripts/permissoes-arvore/gerar-migration.ts enum   > (ADD VALUE por folha)
 //   npx tsx scripts/permissoes-arvore/gerar-migration.ts copia  > (INSERT por folha)
-import { CHAVES_LEGADAS, FOLHAS_PERMISSAO, type ExpressaoLegada } from "../../src/lib/permissoes-arvore";
+//   npx tsx scripts/permissoes-arvore/gerar-migration.ts folhas > (função permissoes_folhas())
+import {
+  CHAVES_LEGADAS,
+  CHAVES_PERMISSAO_GRAVAVEIS,
+  FOLHAS_PERMISSAO,
+  type ExpressaoLegada,
+} from "../../src/lib/permissoes-arvore";
 
 const modo = process.argv[2];
 
@@ -21,7 +27,18 @@ function sqlEdit(expr: ExpressaoLegada): string {
     .join(" OR ");
 }
 
-if (modo === "enum") {
+if (modo === "folhas") {
+  // Lista de folhas (CHAVES_PERMISSAO_GRAVAVEIS): só estas linhas de
+  // user_permissions contam em can_view_pagina / can_edit_pagina.
+  console.log("CREATE OR REPLACE FUNCTION public.permissoes_folhas()");
+  console.log("RETURNS text[]");
+  console.log("LANGUAGE sql IMMUTABLE");
+  console.log("AS $$");
+  console.log("  SELECT ARRAY[");
+  console.log(CHAVES_PERMISSAO_GRAVAVEIS.map((c) => `    '${c}'`).join(",\n"));
+  console.log("  ]::text[];");
+  console.log("$$;");
+} else if (modo === "enum") {
   for (const f of FOLHAS_PERMISSAO) {
     if ((CHAVES_LEGADAS as readonly string[]).includes(f.chave)) continue;
     console.log(`ALTER TYPE public.app_module ADD VALUE IF NOT EXISTS '${f.chave}';`);
@@ -58,6 +75,6 @@ if (modo === "enum") {
   console.log("WHERE can_view OR can_edit");
   console.log("ON CONFLICT (user_id, module) DO NOTHING;");
 } else {
-  console.error("uso: gerar-migration.ts enum|copia");
+  console.error("uso: gerar-migration.ts enum|copia|folhas");
   process.exit(1);
 }

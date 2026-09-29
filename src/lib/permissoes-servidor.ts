@@ -4,7 +4,7 @@
 // uma das chaves informadas (a lista do PR de casos compartilhados vive nos
 // próprios chamadores).
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { ehChavePermissao, type ChavePermissao } from "@/lib/permissoes-arvore";
+import { ehChaveGravavel, type ChavePermissao } from "@/lib/permissoes-arvore";
 
 export type ModoPermissao = "ver" | "editar";
 
@@ -15,7 +15,8 @@ export async function temPermissaoPagina(
   modo: ModoPermissao,
 ): Promise<boolean> {
   for (const chave of chaves) {
-    if (!ehChavePermissao(chave)) throw new Error(`Chave de permissão desconhecida: ${chave}`);
+    if (!ehChaveGravavel(chave))
+      throw new Error(`Chave de permissão não é folha da árvore: ${chave}`);
   }
   const fn = modo === "editar" ? "can_edit_pagina" : "can_view_pagina";
   const resultados = await Promise.all(

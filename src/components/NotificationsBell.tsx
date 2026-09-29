@@ -25,6 +25,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows, selectAll } from "@/lib/supabase-paginate";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
+import { PAGINAS_RH_SEM_SALARIO } from "@/lib/permissoes-arvore";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDateBR, todayISOLocal, monthKeyFromISO } from "@/lib/date-utils";
@@ -199,15 +200,15 @@ export function NotificationsBell() {
   const canCartao = canView("cartao");
   const canDiarioFin = canView("diario.faturamento");
   const canAgenda = canView("agenda");
-  const canColonia = canView("colonia");
+  const canColonia = canView("colonia.registro");
   const canColoniaFin = canView("colonia.fechamento");
   const canExtrato = canView("extrato");
   const canConciliacao = canView("faturamento");
-  const canRh = canView("rh");
-  const canRhEdit = canEdit("rh");
+  const canRh = PAGINAS_RH_SEM_SALARIO.some((c) => canView(c));
+  const canRhEdit = PAGINAS_RH_SEM_SALARIO.some((c) => canEdit(c));
   // Alerta do dia 25 é para o Administrador responsável pelo envio dos boletos
   // (quem pode marcar o checklist no módulo de Cobrança).
-  const canCobranca = canEdit("regua.cobrancas");
+  const canCobranca = canEdit("regua.cobrancas") || canEdit("mensagens.cobrancas");
 
   // --- Task notifications ("Task Concluída" — únicas descartáveis: cada uma
   // tem um check para marcar como lida e sair da lista; não há descarte em

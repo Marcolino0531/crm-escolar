@@ -91,7 +91,10 @@ const LOG = "[cobrança manual]";
 export async function exigirPermissao(userId: string, edicao: boolean): Promise<void> {
   await exigirPermissaoPagina(
     userId,
-    edicao ? ["regua.cobrancas"] : ["regua.cobrancas", "regua.historico"],
+    // Regra de base: o antigo `financeiro_cobranca` (Mensagens Automáticas) também libera, sem guarda-chuva Financeiro.
+    edicao
+      ? ["regua.cobrancas", "mensagens.cobrancas"]
+      : ["regua.cobrancas", "regua.historico", "mensagens.cobrancas"],
     edicao ? "editar" : "ver",
     edicao
       ? "Você não tem permissão para editar a Cobrança."
