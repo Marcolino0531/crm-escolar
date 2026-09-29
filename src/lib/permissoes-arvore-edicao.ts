@@ -117,8 +117,10 @@ export function paginasDoFinanceiro(): string[] {
 
 /**
  * Dependências entre folhas (mesma regra do servidor/RLS):
- * - Financeiro: marcar Visualizar/Editar em qualquer página do grupo marca o mesmo
- *   em "Financeiro: acesso aos dados"; desmarcar o acesso aos dados desmarca as páginas.
+ * - Financeiro: marcar Visualizar ou Editar em qualquer página do grupo marca só
+ *   Visualizar em "Financeiro: acesso aos dados" (Editar nele é escolha explícita do
+ *   administrador); desmarcar Visualizar do acesso aos dados desmarca as páginas;
+ *   desmarcar só o Editar dele não mexe nas páginas.
  * - Diário do Aluno: Visualizar em Auditoria ou Faturamento marca Visualizar em Registro.
  */
 function aplicarDependencias(
@@ -132,14 +134,14 @@ function aplicarDependencias(
   const alterouPaginaFin = alteradas.some((c) => fin.includes(c));
   const alterouDados = alteradas.includes(FINANCEIRO_DADOS);
   if (valor) {
-    if (alterouPaginaFin && fin.some((c) => e[c]?.[campo])) aplicar(FINANCEIRO_DADOS, campo, true);
+    if (alterouPaginaFin && fin.some((c) => e[c]?.view)) aplicar(FINANCEIRO_DADOS, "view", true);
     if (
       alteradas.some((c) => DIARIO_DEPENDE_DE_REGISTRO.includes(c)) &&
       DIARIO_DEPENDE_DE_REGISTRO.some((c) => e[c]?.view)
     )
       aplicar("diario.registro", "view", true);
-  } else if (alterouDados && !e[FINANCEIRO_DADOS]?.[campo]) {
-    for (const c of fin) aplicar(c, campo, false);
+  } else if (alterouDados && campo === "view" && !e[FINANCEIRO_DADOS]?.view) {
+    for (const c of fin) aplicar(c, "view", false);
   }
 }
 
