@@ -33,6 +33,7 @@ import {
   type MatriculaResultado,
 } from "@/lib/matriculas.sponte";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { sincronizarNomeSubmissao, type NomeSubmissaoResult } from "@/lib/matriculas-nome.server";
 
 export interface ReprocessarMatriculaResult {
   ok: boolean;
@@ -609,4 +610,14 @@ export const desarquivarMatricula = createServerFn({ method: "POST" })
       arquivada_por_nome: null,
     });
     return { ok: true };
+  });
+
+// Ao abrir a ficha: relê o nome do aluno no Sponte (só leitura) e atualiza
+// aluno_nome quando o cadastro de lá foi corrigido.
+export const atualizarNomeMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<NomeSubmissaoResult> => {
+    await assertCanViewAdmissoes(context.userId);
+    return sincronizarNomeSubmissao(data.id);
   });
