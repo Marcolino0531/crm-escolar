@@ -10,7 +10,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
-import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
+import { UNIDADES_SPONTE, coletarTitulosAluno, resolverCredenciais } from "@/lib/sponte.functions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import { BUCKET_DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
@@ -34,6 +34,21 @@ import {
 } from "@/lib/matriculas.sponte";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 import { sincronizarNomeSubmissao, type NomeSubmissaoResult } from "@/lib/matriculas-nome.server";
+import { buscarCursos, buscarTurmasDoAno, matriculasDoAluno } from "@/lib/matricula-turma.sponte";
+import {
+  CATEGORIA_CONFERENCIA,
+  MENSAGEM_CONFERIDO,
+  TIPOS_CONFERENCIA,
+  conferirCobrancas,
+  conferirTurma,
+  itemAceito,
+  montarEsperadoConferencia,
+  montarResultadoConferencia,
+  type LancamentoEnvio,
+  type ParcelaSponte,
+  type ResultadoConferencia,
+  type TipoConferencia,
+} from "@/lib/matricula-conferencia";
 
 export interface ReprocessarMatriculaResult {
   ok: boolean;
@@ -49,6 +64,7 @@ type SubmissaoRow = {
   sponte_aluno_id: number | null;
   payload: unknown;
   tentativas: number | null;
+  conferido_em: string | null;
 };
 
 const STATUS_REPROCESSAVEIS = ["erro_aluno", "erro_responsavel"];
@@ -81,11 +97,17 @@ export const reprocessarMatricula = createServerFn({ method: "POST" })
 
     const { data: row } = await supabaseAdmin
       .from("enrollment_submissions" as never)
-      .select("id, status, sponte_aluno_id, payload, tentativas")
+      .select("id, status, sponte_aluno_id, payload, tentativas, conferido_em")
       .eq("id", data.id)
       .maybeSingle();
     const submissao = row as unknown as SubmissaoRow | null;
     if (!submissao) return { ok: false, error: "Submissão não encontrada." };
+    if (submissao.conferido_em) {
+      return {
+        ok: false,
+        error: "Submissão conferida no Sponte — desfaça a conferência antes de reprocessar.",
+      };
+    }
 
     if (!STATUS_REPROCESSAVEIS.includes(submissao.status)) {
       return {
@@ -620,4 +642,198 @@ export const atualizarNomeMatricula = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<NomeSubmissaoResult> => {
     await assertCanViewAdmissoes(context.userId);
     return sincronizarNomeSubmissao(data.id);
+  });
+
+// ─── Conferência "Verificar no Sponte" (só admin) ───────────────────────────
+//
+// Compara o que a família escolheu NAQUELE envio (rotina gravada em
+// student_routine e plano em matricula_faturamento_lancamentos da submissão)
+// com o estado atual do Sponte (GetCursos, GetTurmas, GetMatriculas e
+// GetParcelas; só leitura). Credenciais pela unidade gravada na submissão.
+// Estando tudo de acordo, fixa a conferência (conferido_em/por/por_nome); o
+// gatilho da migration 20261122090000 impede rotinas automáticas de alterar a
+// turma, a cobrança, as pendências e os lançamentos a partir daí.
+
+const DispensasSchema = z.record(
+  z.enum(TIPOS_CONFERENCIA as [TipoConferencia, ...TipoConferencia[]]),
+  z.string().max(300),
+);
+
+const VerificarConferenciaSchema = z.object({
+  id: z.string().uuid(),
+  dispensas: DispensasSchema.default({}),
+});
+
+type SubmissaoConferenciaRow = {
+  id: string;
+  submission_id: string | null;
+  unidade: string | null;
+  sponte_aluno_id: number | null;
+  created_at: string;
+  conferido_em: string | null;
+};
+
+type RotinaConferenciaRow = {
+  serie: string | null;
+  ano_letivo: number | null;
+  sem_refeicoes: boolean;
+  refeicoes: Record<string, number[]> | null;
+  horario_estendido: boolean;
+};
+
+export interface VerificarConferenciaResult {
+  resultado: ResultadoConferencia;
+  fixado: boolean;
+  mensagem: string;
+}
+
+function dataSaoPaulo(iso: string): string {
+  return new Date(iso).toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+}
+
+export const verificarConferenciaMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => VerificarConferenciaSchema.parse(input))
+  .handler(async ({ data, context }): Promise<VerificarConferenciaResult> => {
+    await assertCanViewAdmissoes(context.userId);
+    await assertAdmin(context.userId, "Apenas administradores podem verificar no Sponte.");
+
+    for (const [tipo, motivo] of Object.entries(data.dispensas)) {
+      if (!motivo.trim()) {
+        throw new Error(
+          `Informe o motivo para dispensar ${CATEGORIA_CONFERENCIA[tipo as TipoConferencia]}.`,
+        );
+      }
+    }
+
+    const { data: row, error: erroSub } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .select("id, submission_id, unidade, sponte_aluno_id, created_at, conferido_em")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (erroSub) throw new Error(erroSub.message);
+    const sub = row as unknown as SubmissaoConferenciaRow | null;
+    if (!sub) throw new Error("Submissão não encontrada.");
+    if (sub.conferido_em) throw new Error("Esta submissão já foi conferida.");
+    if (!sub.sponte_aluno_id) throw new Error("Submissão sem AlunoID no Sponte.");
+    if (!sub.submission_id) throw new Error("Submissão sem protocolo do formulário.");
+    const creds = sub.unidade ? resolverCredenciais(sub.unidade) : null;
+    if (!sub.unidade || !creds) {
+      throw new Error(`A unidade "${sub.unidade ?? "—"}" não tem integração com o Sponte.`);
+    }
+
+    const [rotinaRes, lancRes] = await Promise.all([
+      supabaseAdmin
+        .from("student_routine" as never)
+        .select("serie, ano_letivo, sem_refeicoes, refeicoes, horario_estendido")
+        .eq("submission_id", sub.submission_id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("matricula_faturamento_lancamentos" as never)
+        .select(
+          "tipo, parcelas, valor_parcela, valor_primeira_parcela, total, primeiro_vencimento, status",
+        )
+        .eq("submission_id", sub.submission_id),
+    ]);
+    if (rotinaRes.error) throw new Error(rotinaRes.error.message);
+    if (lancRes.error) throw new Error(lancRes.error.message);
+    const rotina = rotinaRes.data as unknown as RotinaConferenciaRow | null;
+    if (!rotina?.serie || !rotina.ano_letivo) {
+      throw new Error("A submissão não tem série e ano letivo gravados na rotina do envio.");
+    }
+    const serie = rotina.serie;
+    const anoLetivo = rotina.ano_letivo;
+    const alunoId = sub.sponte_aluno_id;
+
+    const [cursos, turmasDoAno, matriculas, titulos] = await Promise.all([
+      buscarCursos(creds),
+      buscarTurmasDoAno(creds, anoLetivo),
+      matriculasDoAluno(creds, alunoId),
+      coletarTitulosAluno(sub.unidade, String(alunoId)),
+    ]);
+    if (titulos.indisponivel || titulos.error) {
+      throw new Error(
+        `Não foi possível ler as parcelas no Sponte: ${titulos.error ?? "indisponível"}.`,
+      );
+    }
+
+    const esperados = montarEsperadoConferencia({
+      anoLetivo,
+      dataPreenchimento: dataSaoPaulo(sub.created_at),
+      rotina: {
+        semRefeicoes: rotina.sem_refeicoes,
+        refeicoes: rotina.refeicoes ?? {},
+        horarioEstendido: rotina.horario_estendido,
+      },
+      lancamentos: (lancRes.data ?? []) as unknown as LancamentoEnvio[],
+    });
+    const parcelas: ParcelaSponte[] = titulos.titulos
+      .filter((t) => t.vencimento)
+      .map((t) => ({
+        contaReceberId: t.contaReceberID,
+        numeroParcela: t.numeroParcela,
+        vencimento: t.vencimento,
+        categoria: t.categoria,
+        valor: t.valor,
+        situacao: t.situacao,
+      }));
+    const agora = new Date().toISOString();
+    const nome = await nomeDoUsuario(context.userId);
+    const resultado = montarResultadoConferencia({
+      turma: conferirTurma({ serie, anoLetivo, matriculas, turmasDoAno, cursos }),
+      itens: conferirCobrancas(esperados, parcelas, data.dispensas),
+      verificadoEm: agora,
+      verificadoPor: nome,
+    });
+
+    const campos: Record<string, unknown> = { conferencia: resultado };
+    if (resultado.turma.ok) {
+      campos.turma_status = "matriculado";
+      campos.turma_nome = resultado.turma.turmaNome;
+      campos.turma_pendencia = null;
+    }
+    const cobrancasOk = resultado.itens.every(itemAceito);
+    if (cobrancasOk) {
+      campos.faturamento_status = "lancado";
+      campos.faturamento_pendencia = null;
+    }
+    if (resultado.fixavel) {
+      campos.conferido_em = agora;
+      campos.conferido_por = context.userId;
+      campos.conferido_por_nome = nome;
+      campos.pendencia_resolvida_em = agora;
+      campos.pendencia_resolvida_por = nome;
+    }
+    const { data: gravadas, error } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .update(campos as never)
+      .eq("id", sub.id)
+      .is("conferido_em", null)
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!gravadas || (gravadas as unknown[]).length === 0) {
+      throw new Error("Esta submissão já foi conferida.");
+    }
+
+    return {
+      resultado,
+      fixado: resultado.fixavel,
+      mensagem: resultado.fixavel
+        ? MENSAGEM_CONFERIDO
+        : `Ainda falta: ${resultado.faltando.join("; ")}.`,
+    };
+  });
+
+export const desfazerConferenciaMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await assertCanViewAdmissoes(context.userId);
+    await assertAdmin(context.userId, "Apenas administradores podem desfazer a conferência.");
+    const { error } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .update({ conferido_em: null, conferido_por: null, conferido_por_nome: null } as never)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
