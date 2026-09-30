@@ -81,10 +81,14 @@ const OG_DESCRICAO =
   "Preencha os dados do aluno e dos responsáveis para iniciar a matrícula, direto pelo celular.";
 
 export const Route = createFileRoute("/matricula")({
-  // /matricula?colegio=CEC deixa o link já apontando para a unidade certa.
-  validateSearch: (search: Record<string, unknown>): { colegio: string } => ({
-    colegio: typeof search.colegio === "string" ? search.colegio : "",
-  }),
+  // /matricula?colegio=CEC&ano=2027 deixa o link já apontando para a unidade e o ano certos.
+  validateSearch: (search: Record<string, unknown>): { colegio: string; ano?: number } => {
+    const ano = Number(search.ano);
+    return {
+      colegio: typeof search.colegio === "string" ? search.colegio : "",
+      ...(Number.isInteger(ano) && ano > 0 ? { ano } : {}),
+    };
+  },
   head: () => ({
     meta: [
       { title: OG_TITULO },
@@ -377,7 +381,7 @@ function hojeLocal(): string {
 }
 
 function MatriculaPublicaPage() {
-  const { colegio } = Route.useSearch();
+  const { colegio, ano: anoDoLink } = Route.useSearch();
   const configFn = useServerFn(configMatriculaPublica);
   const enviarFn = useServerFn(enviarMatriculaPublica);
 
@@ -410,7 +414,7 @@ function MatriculaPublicaPage() {
   // errado e reprovar o ano letivo que o envio aceita.
   const hoje = config.data?.hoje ?? hojeLocal();
   // Mesma regra de corte (31/03) da admissão interna, no ano letivo escolhido.
-  const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
+  const serie = form.anoLetivo > 0 ? serieCalculada(form.aluno.dataNascimento, form.anoLetivo) : "";
 
   // Unidade vinda do link (?colegio=CEC) — só quando ela existe de fato.
   useEffect(() => {
@@ -419,12 +423,12 @@ function MatriculaPublicaPage() {
     }
   }, [colegio, unidades, form.unidade]);
 
+  // Ano letivo só vem preenchido pelo link (?ano=2027) e se estiver entre os disponíveis.
   useEffect(() => {
-    const primeiro = anosLetivos[0];
-    if (form.anoLetivo === 0 && primeiro !== undefined) {
-      setForm((atual) => ({ ...atual, anoLetivo: primeiro }));
+    if (form.anoLetivo === 0 && anoDoLink !== undefined && anosLetivos.includes(anoDoLink)) {
+      setForm((atual) => ({ ...atual, anoLetivo: anoDoLink }));
     }
-  }, [anosLetivos, form.anoLetivo]);
+  }, [anoDoLink, anosLetivos, form.anoLetivo]);
 
   // Valor do material pela unidade + data de nascimento + ano letivo. A série
   // e o valor são resolvidos no servidor; a tela não decide preço.
@@ -501,7 +505,11 @@ function MatriculaPublicaPage() {
 
   const errosDaEtapa = (numero: 1 | 2 | 3 | 4): ErrosForm => {
     if (numero === 1) return validarMatriculaForm(form, hoje, unidades);
-    if (numero === 2) return validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true });
+    if (numero === 2)
+      return validarRotinaForm(rotina, serie, {
+        exigirHorarioCurricular: true,
+        anoLetivo: form.anoLetivo,
+      });
     if (numero === 3) return validarSaudeForm(saude);
     return {
       ...validarDocumentosForm(documentos, serie),
@@ -531,7 +539,10 @@ function MatriculaPublicaPage() {
   const submeter = () => {
     const encontrados = {
       ...validarMatriculaForm(form, hoje, unidades),
-      ...validarRotinaForm(rotina, serie, { exigirHorarioCurricular: true }),
+      ...validarRotinaForm(rotina, serie, {
+        exigirHorarioCurricular: true,
+        anoLetivo: form.anoLetivo,
+      }),
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfigurado),
@@ -636,6 +647,11 @@ function MatriculaPublicaPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {serie !== "" && (
+                  <p className="text-xs text-muted-foreground">
+                    Série em {form.anoLetivo}: <strong>{serie}</strong>.
+                  </p>
+                )}
               </Campo>
 
               <section className="space-y-4 rounded-lg border p-4">
@@ -682,7 +698,7 @@ function MatriculaPublicaPage() {
                     />
                     {serie !== "" && (
                       <p className="text-xs text-muted-foreground">
-                        Série correspondente: <strong>{serie}</strong>
+                        Série em {form.anoLetivo}: <strong>{serie}</strong>.
                       </p>
                     )}
                   </Campo>

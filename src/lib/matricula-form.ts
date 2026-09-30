@@ -529,12 +529,24 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
  * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
  * ("rotina.horario.1"), para a tela destacar campo a campo.
  */
+/** A data de início precisa estar entre 01/01 e 31/12 do ano letivo escolhido. */
+export function erroDataInicioForaDoAnoLetivo(dataInicio: string, anoLetivo: number): string {
+  if (!dataValida(dataInicio) || !anoLetivo) return "";
+  const anoData = Number(dataInicio.trim().slice(0, 4));
+  if (anoData === anoLetivo) return "";
+  return `A data de início é de ${anoData}, mas o ano letivo escolhido é ${anoLetivo}. Confira o ano letivo ou a data de início.`;
+}
+
 export function validarRotinaForm(
   rotina: RotinaForm,
   serie: string,
   // O horário curricular só é cobrado na matrícula nova, que é quem precisa da
   // turma; na Rematrícula o aluno já tem turma no Sponte.
-  opcoes: { exigirHorarioCurricular?: boolean; exigirDataInicio?: boolean } = {},
+  opcoes: {
+    exigirHorarioCurricular?: boolean;
+    exigirDataInicio?: boolean;
+    anoLetivo?: number;
+  } = {},
 ): ErrosForm {
   const erros: ErrosForm = {};
 
@@ -543,6 +555,10 @@ export function validarRotinaForm(
     erros["rotina.dataInicio"] = "Informe a data de início.";
   else if (!exigirDataInicio && rotina.dataInicio.trim() && !dataValida(rotina.dataInicio))
     erros["rotina.dataInicio"] = "Data de início inválida.";
+  else if (opcoes.anoLetivo !== undefined) {
+    const erroAno = erroDataInicioForaDoAnoLetivo(rotina.dataInicio, opcoes.anoLetivo);
+    if (erroAno) erros["rotina.dataInicio"] = erroAno;
+  }
 
   const ativos = diasAtivosRotina(rotina);
   if (ativos.length === 0)
