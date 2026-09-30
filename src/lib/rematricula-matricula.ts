@@ -26,7 +26,7 @@ import { addMesesYMD } from "./confissao-divida";
 import { chaveSerie, mensalidadesDeReferencia } from "./rematricula";
 import { turnoDaTurma, type TurnoTurma } from "./matricula-turma";
 import { dataNoMes, diaVencimentoHabitual, type ParcelaAberta } from "./cantina";
-import { proximoDiaUtil } from "./billing-schedule";
+import { addDaysYMD, proximoDiaUtil } from "./billing-schedule";
 
 // ─── Segmento e valor ───────────────────────────────────────────────────────
 
@@ -105,13 +105,14 @@ export function valorMatricula(valores: ValoresMatricula, serie: string): number
   return valor && valor > 0 ? valor : null;
 }
 
-// Etapa da Matrícula no portal: segmento, valor e parcelamento disponível na
-// data. null = sem valor no colégio — a etapa é bloqueada e NENHUMA parcela é
+// Etapa da Matrícula no portal: segmento, valor cheio e parcelamento disponível
+// na data para o ano letivo. null = sem valor no colégio — a etapa é bloqueada e NENHUMA parcela é
 // calculada (nunca com valor 0).
 export function matriculaPortal(
   valores: ValoresMatricula,
   serie: string,
   hoje: string,
+  anoLetivo: number,
 ): {
   segmento: SegmentoMatricula;
   valor: number;
@@ -120,7 +121,7 @@ export function matriculaPortal(
   const segmento = segmentoMatricula(serie);
   const valor = valorMatricula(valores, serie);
   if (!segmento || valor === null) return null;
-  return { segmento, valor, disponivel: parcelamentoMatriculaDisponivel(valor, hoje) };
+  return { segmento, valor, disponivel: parcelamentoMatriculaDisponivel(valor, hoje, anoLetivo) };
 }
 
 // ─── Frequência parcial: só até o Maternal 3 ────────────────────────────────
@@ -143,12 +144,18 @@ export function serveJantar(serie: string): boolean {
   return indice < 0 || indice <= INDICE_PRIMEIRO_PERIODO;
 }
 
-// ─── Mês de referência e parcelas ───────────────────────────────────────────
+// ─── Parcelas e vencimento da 1ª parcela ────────────────────────────────────
+//
+// Antecipada (preenchida antes do ano letivo): 1ª parcela entre preenchimento
+// + 3 dias e o fim do mês M = janeiro do ano letivo − (N−1) meses, de modo que a
+// última parcela vença até janeiro. Ano em curso (preenchida no próprio ano
+// letivo): só à vista, até o fim do mês do preenchimento, com valor proporcional
+// aos meses restantes a partir do mês de início.
 
-export const DIA_LIMITE_MES_ATUAL = 25;
 export const MAX_PARCELAS_MATRICULA = 5;
-// Mês (1-12) em que a janela de parcelamento fecha: janeiro do ano seguinte.
-export const MES_FIM_JANELA = 1;
+export const PRAZO_MINIMO_1A_PARCELA_DIAS = 3;
+// Início até fevereiro do ano letivo: valor cheio.
+export const ULTIMO_MES_VALOR_CHEIO = 2;
 
 const RE_YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -156,32 +163,141 @@ function exigirYMD(ymd: string, campo: string): void {
   if (!RE_YMD.test(ymd)) throw new Error(`${campo} inválida (esperado YYYY-MM-DD).`);
 }
 
-// "YYYY-MM" do mês de referência: até o dia 25 é o mês do preenchimento, do 26
-// em diante é o seguinte.
-export function mesReferenciaMatricula(dataPreenchimento: string): string {
+function parcelasNoIntervalo(parcelas: number): boolean {
+  return Number.isInteger(parcelas) && parcelas >= 1 && parcelas <= MAX_PARCELAS_MATRICULA;
+}
+
+export function matriculaNoAnoEmCurso(dataPreenchimento: string, anoLetivo: number): boolean {
   exigirYMD(dataPreenchimento, "Data de preenchimento");
-  const dia = Number(dataPreenchimento.slice(8, 10));
-  const base = dia <= DIA_LIMITE_MES_ATUAL ? dataPreenchimento : addMesesYMD(dataPreenchimento, 1);
-  return base.slice(0, 7);
+  return Number(dataPreenchimento.slice(0, 4)) >= anoLetivo;
 }
 
-// Quantidade máxima de parcelas: meses do mês de referência até janeiro
-// (inclusive), limitada a 5. Referência em janeiro conta 1 (só janeiro);
-// fevereiro em diante já está fora da janela → 1 (à vista).
-export function maxParcelasMatricula(dataPreenchimento: string): number {
-  const [ano, mes] = mesReferenciaMatricula(dataPreenchimento).split("-").map(Number);
-  // Janela fecha em janeiro do ano seguinte ao mês de referência quando este
-  // está em fev–dez; se a referência já é janeiro, fecha nele mesmo.
-  const anoFim = mes === MES_FIM_JANELA ? ano : ano + 1;
-  const meses = anoFim * 12 + MES_FIM_JANELA - (ano * 12 + mes) + 1;
-  return Math.max(1, Math.min(MAX_PARCELAS_MATRICULA, meses));
+export function vencimentoMinimoMatricula(dataPreenchimento: string): string {
+  exigirYMD(dataPreenchimento, "Data de preenchimento");
+  return addDaysYMD(dataPreenchimento, PRAZO_MINIMO_1A_PARCELA_DIAS);
 }
 
-// Referência dentro da janela de parcelamento (setembro a janeiro)?
-export function referenciaDentroDaJanela(dataPreenchimento: string): boolean {
-  const mes = Number(mesReferenciaMatricula(dataPreenchimento).slice(5, 7));
-  return mes >= 9 || mes === MES_FIM_JANELA;
+// Vencimento lançado: a data escolhida, rolada para o próximo dia útil.
+export function vencimentoEfetivoPrimeiraParcela(escolhido: string): string {
+  exigirYMD(escolhido, "Vencimento da 1ª parcela");
+  return proximoDiaUtil(escolhido);
 }
+
+export function ultimoDiaDoMes(ymd: string): string {
+  exigirYMD(ymd, "Data");
+  const [ano, mes] = ymd.split("-").map(Number);
+  const dias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  return `${ymd.slice(0, 7)}-${String(dias).padStart(2, "0")}`;
+}
+
+function fimDoMesAntesDeJaneiro(anoLetivo: number, mesesAntes: number): string {
+  const indice = anoLetivo * 12 - mesesAntes;
+  const ano = Math.floor(indice / 12);
+  const mes = (indice % 12) + 1;
+  return ultimoDiaDoMes(`${ano}-${String(mes).padStart(2, "0")}-01`);
+}
+
+export interface LimitesPrimeiroVencimento {
+  minimo: string;
+  maximo: string;
+  // Sem janela de escolha: a data é a mínima (preenchimento + 3 dias).
+  semEscolha: boolean;
+}
+
+// null = número de parcelas indisponível para o preenchimento/ano letivo.
+export function limitesPrimeiroVencimento(
+  dataPreenchimento: string,
+  anoLetivo: number,
+  parcelas: number,
+): LimitesPrimeiroVencimento | null {
+  const minimo = vencimentoMinimoMatricula(dataPreenchimento);
+  if (!parcelasNoIntervalo(parcelas)) return null;
+  const maximo = matriculaNoAnoEmCurso(dataPreenchimento, anoLetivo)
+    ? parcelas === 1
+      ? ultimoDiaDoMes(dataPreenchimento)
+      : null
+    : fimDoMesAntesDeJaneiro(anoLetivo, parcelas - 1);
+  if (maximo === null) return null;
+  if (minimo <= maximo) return { minimo, maximo, semEscolha: false };
+  return parcelas === 1 ? { minimo, maximo: minimo, semEscolha: true } : null;
+}
+
+export function parcelasMatriculaValida(
+  parcelas: number,
+  dataPreenchimento: string,
+  anoLetivo: number,
+): boolean {
+  return limitesPrimeiroVencimento(dataPreenchimento, anoLetivo, parcelas) !== null;
+}
+
+// Mensagem de erro ou "" quando válida. Os limites valem para a data escolhida,
+// antes do ajuste para dia útil.
+export function validarPrimeiroVencimento(
+  vencimento: string,
+  dataPreenchimento: string,
+  anoLetivo: number,
+  parcelas: number,
+): string {
+  if (!RE_YMD.test(vencimento)) return "Informe a data de vencimento da 1ª parcela.";
+  const limites = limitesPrimeiroVencimento(dataPreenchimento, anoLetivo, parcelas);
+  if (!limites) return "Escolha uma quantidade de parcelas disponível.";
+  if (vencimento < limites.minimo) {
+    return `A data não pode ser anterior a ${formatarDataBR(limites.minimo)}.`;
+  }
+  if (vencimento > limites.maximo) {
+    return parcelas > 1
+      ? `Em ${parcelas}x, a 1ª parcela deve vencer até ${formatarDataBR(limites.maximo)}, para a última vencer até 31/01/${anoLetivo}.`
+      : `A data deve ser até ${formatarDataBR(limites.maximo)}.`;
+  }
+  return "";
+}
+
+export function textoJanelaPrimeiroVencimento(limites: LimitesPrimeiroVencimento): string {
+  if (limites.semEscolha) {
+    return `A parcela vence em ${formatarDataBR(limites.minimo)} (ou no próximo dia útil).`;
+  }
+  return `Escolha o vencimento da 1ª parcela entre ${formatarDataBR(limites.minimo)} e ${formatarDataBR(limites.maximo)}. As demais acompanham o vencimento da mensalidade.`;
+}
+
+// ─── Valor proporcional no ano em curso ─────────────────────────────────────
+
+export interface ProporcaoMatricula {
+  meses: number;
+  de: 12;
+}
+
+// Mês de início = data de início da rotina (ou o mês do preenchimento, sem data
+// válida). Início até fevereiro do ano letivo (ou antes dele): valor cheio.
+export function proporcaoMatriculaAnoEmCurso(
+  anoLetivo: number,
+  dataPreenchimento: string,
+  dataInicio?: string | null,
+): ProporcaoMatricula | null {
+  exigirYMD(dataPreenchimento, "Data de preenchimento");
+  const base = dataInicio && RE_YMD.test(dataInicio) ? dataInicio : dataPreenchimento;
+  const ano = Number(base.slice(0, 4));
+  const mes = Number(base.slice(5, 7));
+  if (ano !== anoLetivo || mes <= ULTIMO_MES_VALOR_CHEIO) return null;
+  return { meses: 12 - mes + 1, de: 12 };
+}
+
+// Arredondado ao centavo, meio para cima.
+export function valorMatriculaProporcional(
+  valor: number,
+  proporcao: ProporcaoMatricula | null,
+): number {
+  const centavos = Math.round(valor * 100);
+  if (!proporcao) return centavos / 100;
+  return Math.round((centavos * proporcao.meses) / proporcao.de) / 100;
+}
+
+export function textoMatriculaAnoEmCurso(proporcao: ProporcaoMatricula | null): string {
+  return proporcao
+    ? `Matrícula para o ano letivo em andamento: pagamento à vista, proporcional aos meses restantes (${proporcao.meses} de ${proporcao.de}).`
+    : "Matrícula para o ano letivo em andamento: pagamento à vista.";
+}
+
+// ─── Opções de parcelamento ─────────────────────────────────────────────────
 
 export interface ParcelaMatriculaOpcao {
   parcelas: number;
@@ -193,7 +309,7 @@ export interface ParcelaMatriculaOpcao {
 // Divide o valor em N parcelas, sobra de centavos na 1ª (mesmo critério do
 // material pedagógico).
 export function parcelamentoMatricula(valor: number, parcelas: number): ParcelaMatriculaOpcao {
-  if (!Number.isInteger(parcelas) || parcelas < 1 || parcelas > MAX_PARCELAS_MATRICULA) {
+  if (!parcelasNoIntervalo(parcelas)) {
     throw new Error(
       `Número de parcelas da matrícula fora do intervalo (1 a ${MAX_PARCELAS_MATRICULA}).`,
     );
@@ -209,64 +325,66 @@ export function parcelamentoMatricula(valor: number, parcelas: number): ParcelaM
   };
 }
 
+export interface OpcaoParcelamentoMatricula extends ParcelaMatriculaOpcao {
+  vencimentoMinimo: string;
+  vencimentoMaximo: string;
+  semEscolha: boolean;
+}
+
 export interface ParcelamentoMatriculaDisponivel {
-  mesReferencia: string; // YYYY-MM
+  // Mês (YYYY-MM) da data mínima da 1ª parcela.
+  mesReferencia: string;
+  anoEmCurso: boolean;
   somenteAVista: boolean;
   maxParcelas: number;
-  opcoes: ParcelaMatriculaOpcao[];
+  valorCheio: number;
+  // Valor cobrado: proporcional no ano em curso, cheio na antecipada.
+  valor: number;
+  proporcao: ProporcaoMatricula | null;
+  opcoes: OpcaoParcelamentoMatricula[];
 }
 
-// Tudo que a tela precisa: quantas parcelas cabem hoje e o valor de cada opção.
-// Fora da janela (referência em janeiro ou depois) só existe 1x.
+// Tudo que a tela precisa: as opções cuja janela de 1ª parcela não é vazia, com
+// valor e limites de cada uma.
 export function parcelamentoMatriculaDisponivel(
-  valor: number,
+  valorCheio: number,
   dataPreenchimento: string,
+  anoLetivo: number,
+  dataInicio?: string | null,
 ): ParcelamentoMatriculaDisponivel {
-  const mesReferencia = mesReferenciaMatricula(dataPreenchimento);
-  const mes = Number(mesReferencia.slice(5, 7));
-  const somenteAVista = mes === MES_FIM_JANELA || !referenciaDentroDaJanela(dataPreenchimento);
-  const maxParcelas = somenteAVista ? 1 : maxParcelasMatricula(dataPreenchimento);
-  const opcoes: ParcelaMatriculaOpcao[] = [];
-  for (let n = 1; n <= maxParcelas; n++) opcoes.push(parcelamentoMatricula(valor, n));
-  return { mesReferencia, somenteAVista, maxParcelas, opcoes };
-}
-
-export function parcelasMatriculaValida(parcelas: number, dataPreenchimento: string): boolean {
-  if (!Number.isInteger(parcelas) || parcelas < 1) return false;
-  return parcelas <= parcelamentoMatriculaDisponivel(0, dataPreenchimento).maxParcelas;
-}
-
-// ─── Vencimento da 1ª parcela ───────────────────────────────────────────────
-
-export function ultimoDiaDoMes(ymd: string): string {
-  exigirYMD(ymd, "Data");
-  const [ano, mes] = ymd.split("-").map(Number);
-  const dias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
-  return `${ymd.slice(0, 7)}-${String(dias).padStart(2, "0")}`;
-}
-
-export interface LimitesPrimeiroVencimento {
-  minimo: string; // = data de preenchimento
-  maximo: string; // último dia do mês do preenchimento
-}
-
-export function limitesPrimeiroVencimento(dataPreenchimento: string): LimitesPrimeiroVencimento {
-  exigirYMD(dataPreenchimento, "Data de preenchimento");
-  return { minimo: dataPreenchimento, maximo: ultimoDiaDoMes(dataPreenchimento) };
-}
-
-// Mensagem de erro ou "" quando válida.
-export function validarPrimeiroVencimento(vencimento: string, dataPreenchimento: string): string {
-  if (!RE_YMD.test(vencimento)) return "Informe a data de vencimento da 1ª parcela.";
-  const { minimo, maximo } = limitesPrimeiroVencimento(dataPreenchimento);
-  if (vencimento < minimo) return `A data não pode ser anterior a ${formatarDataBR(minimo)}.`;
-  if (vencimento > maximo) return `A data deve ser até ${formatarDataBR(maximo)}.`;
-  return "";
+  const anoEmCurso = matriculaNoAnoEmCurso(dataPreenchimento, anoLetivo);
+  const proporcao = anoEmCurso
+    ? proporcaoMatriculaAnoEmCurso(anoLetivo, dataPreenchimento, dataInicio)
+    : null;
+  const valor = valorMatriculaProporcional(valorCheio, proporcao);
+  const opcoes: OpcaoParcelamentoMatricula[] = [];
+  for (let n = 1; n <= MAX_PARCELAS_MATRICULA; n++) {
+    const limites = limitesPrimeiroVencimento(dataPreenchimento, anoLetivo, n);
+    if (!limites) continue;
+    opcoes.push({
+      ...parcelamentoMatricula(valor, n),
+      vencimentoMinimo: limites.minimo,
+      vencimentoMaximo: limites.maximo,
+      semEscolha: limites.semEscolha,
+    });
+  }
+  const maxParcelas = Math.max(...opcoes.map((o) => o.parcelas));
+  return {
+    mesReferencia: vencimentoMinimoMatricula(dataPreenchimento).slice(0, 7),
+    anoEmCurso,
+    somenteAVista: maxParcelas === 1,
+    maxParcelas,
+    valorCheio: Math.round(valorCheio * 100) / 100,
+    valor,
+    proporcao,
+    opcoes,
+  };
 }
 
 // ─── Vencimentos das parcelas 2+ pelas mensalidades reais ───────────────────
 
-// 1ª parcela: exatamente a data escolhida pelo responsável. Da 2ª em diante: o
+// 1ª parcela: a data escolhida pelo responsável, no próximo dia útil. Da 2ª em
+// diante (a partir do mês seguinte ao da data escolhida): o
 // vencimento real da mensalidade do aluno no mês correspondente; sem
 // mensalidade naquele mês (ex.: as do ano seguinte ainda não emitidas), o dia
 // habitual da mensalidade do aluno, rolado para o dia útil seguinte. Só sem
@@ -277,7 +395,7 @@ export function vencimentosMatriculaPelasMensalidades<T extends ParcelaAberta>(
   parcelas: number,
 ): string[] {
   exigirYMD(primeiroVencimento, "Vencimento da 1ª parcela");
-  if (!Number.isInteger(parcelas) || parcelas < 1 || parcelas > MAX_PARCELAS_MATRICULA) {
+  if (!parcelasNoIntervalo(parcelas)) {
     throw new Error(
       `Número de parcelas da matrícula fora do intervalo (1 a ${MAX_PARCELAS_MATRICULA}).`,
     );
@@ -290,7 +408,7 @@ export function vencimentosMatriculaPelasMensalidades<T extends ParcelaAberta>(
     if (!atual || p.vencimento < atual) porMes.set(mes, p.vencimento);
   }
   const diaHabitual = diaVencimentoHabitual(referencia);
-  const datas: string[] = [primeiroVencimento];
+  const datas: string[] = [vencimentoEfetivoPrimeiraParcela(primeiroVencimento)];
   for (let i = 1; i < parcelas; i++) {
     const nominal = addMesesYMD(primeiroVencimento, i);
     const mes = nominal.slice(0, 7);

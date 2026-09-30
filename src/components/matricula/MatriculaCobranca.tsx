@@ -1,6 +1,6 @@
 // Bloco "Matrícula" do formulário público: valor do School Hub (colégio ×
-// segmento da série), parcelas com a mesma janela set–jan da rematrícula e a
-// data da 1ª parcela escolhida pelo responsável (entre hoje e o fim do mês).
+// segmento da série), parcelas com a mesma regra da rematrícula e a data da 1ª
+// parcela escolhida pelo responsável dentro da janela da opção escolhida.
 //
 // Valor, opções e limites vêm do servidor; a tela só mostra e guarda a escolha.
 
@@ -20,6 +20,7 @@ interface Props {
 }
 
 export function MatriculaCobranca({ cobranca, dados, carregando, erros, onChange }: Props) {
+  const opcao = dados?.opcoes.find((op) => op.parcelas === cobranca.parcelas);
   return (
     <div className="space-y-3 rounded-lg border p-4">
       <h2 className="text-sm font-semibold">Matrícula</h2>
@@ -37,19 +38,30 @@ export function MatriculaCobranca({ cobranca, dados, carregando, erros, onChange
       {!carregando && dados?.disponivel && (
         <>
           <p className="text-sm text-muted-foreground">
-            Série {dados.serie} — valor de {formatarBRL(dados.valor)}.
+            Série {dados.serie} — valor de {formatarBRL(dados.valor)}
+            {dados.valor !== dados.valorCheio ? ` (cheio: ${formatarBRL(dados.valorCheio)})` : ""}.
           </p>
           <p className="text-sm text-muted-foreground">
-            {dados.somenteAVista
-              ? "Nesta data a Matrícula é paga à vista."
-              : "Escolha em quantas parcelas quer pagar."}
+            {dados.anoEmCurso
+              ? dados.textoAnoEmCurso
+              : dados.somenteAVista
+                ? "Nesta data a Matrícula é paga à vista."
+                : "Escolha em quantas parcelas quer pagar."}
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
             {dados.opcoes.map((op) => (
               <button
                 key={op.parcelas}
                 type="button"
-                onClick={() => onChange({ ...cobranca, parcelas: op.parcelas })}
+                onClick={() =>
+                  onChange({
+                    ...cobranca,
+                    parcelas: op.parcelas,
+                    primeiroVencimento: op.semEscolha
+                      ? op.vencimentoMinimo
+                      : cobranca.primeiroVencimento,
+                  })
+                }
                 className={`rounded-md border px-3 py-2 text-left text-sm transition ${
                   cobranca.parcelas === op.parcelas
                     ? "border-primary bg-primary/10"
@@ -71,16 +83,15 @@ export function MatriculaCobranca({ cobranca, dados, carregando, erros, onChange
             <Input
               id="matricula-primeiro-vencimento"
               type="date"
-              min={dados.vencimentoMinimo}
-              max={dados.vencimentoMaximo}
+              min={opcao?.vencimentoMinimo}
+              max={opcao?.vencimentoMaximo}
               value={cobranca.primeiroVencimento}
               onChange={(e) => onChange({ ...cobranca, primeiroVencimento: e.target.value })}
             />
             <p className="text-xs text-muted-foreground">
-              Entre hoje e o fim do mês.
-              {cobranca.parcelas > 1
-                ? " As demais parcelas vencem no dia 05 dos meses seguintes."
-                : ""}
+              {opcao
+                ? `${opcao.textoVencimento} Se cair em fim de semana ou feriado, vence no próximo dia útil.`
+                : "Escolha primeiro a quantidade de parcelas."}
             </p>
             {erros["matriculaCobranca.primeiroVencimento"] && (
               <p className="text-sm text-destructive">

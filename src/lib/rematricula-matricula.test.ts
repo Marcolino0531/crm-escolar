@@ -4,12 +4,16 @@ import {
   cronogramaMatricula,
   formatarDataBR,
   limitesPrimeiroVencimento,
-  maxParcelasMatricula,
-  mesReferenciaMatricula,
   parcelamentoMatricula,
   parcelamentoMatriculaDisponivel,
   parcelasMatriculaValida,
   perguntaFrequenciaParcial,
+  proporcaoMatriculaAnoEmCurso,
+  textoJanelaPrimeiroVencimento,
+  textoMatriculaAnoEmCurso,
+  valorMatriculaProporcional,
+  vencimentoEfetivoPrimeiraParcela,
+  vencimentoMinimoMatricula,
   segmentoMatricula,
   turnosDisponiveisParaSerie,
   unidadeRestringeTurno,
@@ -25,53 +29,143 @@ import {
   type TurmaParaTurno,
 } from "./rematricula-matricula";
 
-describe("mês de referência da matrícula", () => {
-  it("até o dia 25 usa o mês do preenchimento", () => {
-    expect(mesReferenciaMatricula("2026-09-25")).toBe("2026-09");
-    expect(mesReferenciaMatricula("2026-09-01")).toBe("2026-09");
+describe("matrícula antecipada: janela da 1ª parcela por número de parcelas (T4.1–T4.7, T4.11)", () => {
+  it("T4.1: preenchida em 28/09/2026 para 2027 — 4x até 31/10, 3x até 30/11, 2x até 31/12, 1x até 31/01", () => {
+    expect(limitesPrimeiroVencimento("2026-09-28", 2027, 4)).toEqual({
+      minimo: "2026-10-01",
+      maximo: "2026-10-31",
+      semEscolha: false,
+    });
+    expect(limitesPrimeiroVencimento("2026-09-28", 2027, 3)?.maximo).toBe("2026-11-30");
+    expect(limitesPrimeiroVencimento("2026-09-28", 2027, 2)?.maximo).toBe("2026-12-31");
+    expect(limitesPrimeiroVencimento("2026-09-28", 2027, 1)?.maximo).toBe("2027-01-31");
+    const d = parcelamentoMatriculaDisponivel(1200, "2026-09-28", 2027);
+    expect(d.anoEmCurso).toBe(false);
+    expect(d.maxParcelas).toBe(4);
+    expect(d.opcoes.map((o) => [o.parcelas, o.vencimentoMinimo, o.vencimentoMaximo])).toEqual([
+      [1, "2026-10-01", "2027-01-31"],
+      [2, "2026-10-01", "2026-12-31"],
+      [3, "2026-10-01", "2026-11-30"],
+      [4, "2026-10-01", "2026-10-31"],
+    ]);
+    expect(textoJanelaPrimeiroVencimento(limitesPrimeiroVencimento("2026-09-28", 2027, 4)!)).toBe(
+      "Escolha o vencimento da 1ª parcela entre 01/10/2026 e 31/10/2026. As demais acompanham o vencimento da mensalidade.",
+    );
   });
-  it("do dia 26 em diante passa para o mês seguinte (inclusive virada de ano)", () => {
-    expect(mesReferenciaMatricula("2026-09-26")).toBe("2026-10");
-    expect(mesReferenciaMatricula("2026-12-26")).toBe("2027-01");
-    expect(mesReferenciaMatricula("2027-01-26")).toBe("2027-02");
+  it("T4.2: domingo 20/12/2026 é aceito e o vencimento efetivo é segunda 21/12/2026", () => {
+    expect(validarPrimeiroVencimento("2026-12-20", "2026-09-28", 2027, 2)).toBe("");
+    expect(vencimentoEfetivoPrimeiraParcela("2026-12-20")).toBe("2026-12-21");
+    expect(vencimentosMatriculaPelasMensalidades([], "2026-12-20", 1)).toEqual(["2026-12-21"]);
+  });
+  it("T4.3: preenchida em 20/09/2026 — mínimo 23/09 e 5x até 30/09/2026", () => {
+    expect(vencimentoMinimoMatricula("2026-09-20")).toBe("2026-09-23");
+    expect(limitesPrimeiroVencimento("2026-09-20", 2027, 5)).toEqual({
+      minimo: "2026-09-23",
+      maximo: "2026-09-30",
+      semEscolha: false,
+    });
+    expect(parcelamentoMatriculaDisponivel(1200, "2026-09-20", 2027).maxParcelas).toBe(5);
+  });
+  it("T4.4: preenchida em 29/09/2026 — 5x indisponível, máximo 4x", () => {
+    expect(limitesPrimeiroVencimento("2026-09-29", 2027, 5)).toBeNull();
+    expect(parcelasMatriculaValida(5, "2026-09-29", 2027)).toBe(false);
+    expect(parcelasMatriculaValida(4, "2026-09-29", 2027)).toBe(true);
+    expect(parcelamentoMatriculaDisponivel(1200, "2026-09-29", 2027).maxParcelas).toBe(4);
+  });
+  it("T4.5: 30/09/2026 para a matrícula de 28/09 é recusada (mínimo 01/10/2026)", () => {
+    expect(validarPrimeiroVencimento("2026-09-30", "2026-09-28", 2027, 1)).toBe(
+      "A data não pode ser anterior a 01/10/2026.",
+    );
+  });
+  it("T4.6: 2x com a 1ª em 10/01/2027 é recusada — a 2ª passaria de 31/01", () => {
+    const erro = validarPrimeiroVencimento("2027-01-10", "2026-09-28", 2027, 2);
+    expect(erro).toContain("31/12/2026");
+    expect(erro).toContain("31/01/2027");
+  });
+  it("T4.7: centavos — 1.200 em 3x = 400 × 3; 1.000 em 3x = 333,34 + 333,33 + 333,33", () => {
+    const a = parcelamentoMatricula(1200, 3);
+    expect([a.valorPrimeiraParcela, a.valorParcela, a.valorParcela]).toEqual([400, 400, 400]);
+    const b = parcelamentoMatricula(1000, 3);
+    expect([b.valorPrimeiraParcela, b.valorParcela, b.valorParcela]).toEqual([
+      333.34, 333.33, 333.33,
+    ]);
+    expect(
+      cronogramaMatricula(1000, 3, ["2026-10-05", "2026-11-05", "2026-12-07"]).map((i) => i.valor),
+    ).toEqual([333.34, 333.33, 333.33]);
+  });
+  it("T4.11: preenchida em 30/12/2026 para 2027 — mínimo 02/01/2027, só 1x, até 31/01/2027", () => {
+    const d = parcelamentoMatriculaDisponivel(1200, "2026-12-30", 2027);
+    expect(d.maxParcelas).toBe(1);
+    expect(d.somenteAVista).toBe(true);
+    expect(d.opcoes).toHaveLength(1);
+    expect(d.opcoes[0]).toMatchObject({
+      parcelas: 1,
+      vencimentoMinimo: "2027-01-02",
+      vencimentoMaximo: "2027-01-31",
+      semEscolha: false,
+    });
+  });
+  it("ano em curso com preenchimento + 3 dias além do mês: sem escolha, vence em preenchimento + 3", () => {
+    expect(limitesPrimeiroVencimento("2026-12-30", 2026, 1)).toEqual({
+      minimo: "2027-01-02",
+      maximo: "2027-01-02",
+      semEscolha: true,
+    });
+    expect(vencimentoEfetivoPrimeiraParcela("2027-01-02")).toBe("2027-01-04");
+  });
+  it("quantidade fora de 1 a 5 é inválida", () => {
+    expect(parcelasMatriculaValida(0, "2026-09-20", 2027)).toBe(false);
+    expect(parcelasMatriculaValida(6, "2026-09-20", 2027)).toBe(false);
   });
 });
 
-describe("quantidade de parcelas disponíveis (set–jan, máx 5x)", () => {
-  it("até 25/09: 5x (set, out, nov, dez, jan)", () => {
-    expect(maxParcelasMatricula("2026-09-25")).toBe(5);
-    expect(
-      parcelamentoMatriculaDisponivel(2057.1, "2026-09-10").opcoes.map((o) => o.parcelas),
-    ).toEqual([1, 2, 3, 4, 5]);
+describe("matrícula no ano letivo em curso (T4.8–T4.10)", () => {
+  it("T4.8: 28/09/2026, início 19/10/2026 — R$ 300,00 (3/12), à vista em 01/10/2026", () => {
+    const d = parcelamentoMatriculaDisponivel(1200, "2026-09-28", 2026, "2026-10-19");
+    expect(d.anoEmCurso).toBe(true);
+    expect(d.proporcao).toEqual({ meses: 3, de: 12 });
+    expect(d.valor).toBe(300);
+    expect(d.opcoes.map((o) => o.parcelas)).toEqual([1]);
+    expect(d.opcoes[0]).toMatchObject({
+      vencimentoMinimo: "2026-10-01",
+      vencimentoMaximo: "2026-10-01",
+      semEscolha: true,
+      total: 300,
+    });
+    expect(validarPrimeiroVencimento("2026-10-01", "2026-09-28", 2026, 1)).toBe("");
+    expect(vencimentoEfetivoPrimeiraParcela("2026-10-01")).toBe("2026-10-01");
+    expect(textoMatriculaAnoEmCurso(d.proporcao)).toBe(
+      "Matrícula para o ano letivo em andamento: pagamento à vista, proporcional aos meses restantes (3 de 12).",
+    );
   });
-  it("26/09: 4x (out–jan)", () => {
-    expect(maxParcelasMatricula("2026-09-26")).toBe(4);
+  it("T4.9: 10/09/2026, início 15/09/2026 — R$ 400,00 (4/12), janela 13/09–30/09; domingo 13/09 vence 14/09", () => {
+    const d = parcelamentoMatriculaDisponivel(1200, "2026-09-10", 2026, "2026-09-15");
+    expect(d.proporcao).toEqual({ meses: 4, de: 12 });
+    expect(d.valor).toBe(400);
+    expect(d.opcoes).toHaveLength(1);
+    expect(d.opcoes[0]).toMatchObject({
+      vencimentoMinimo: "2026-09-13",
+      vencimentoMaximo: "2026-09-30",
+      semEscolha: false,
+    });
+    expect(validarPrimeiroVencimento("2026-09-13", "2026-09-10", 2026, 1)).toBe("");
+    expect(vencimentoEfetivoPrimeiraParcela("2026-09-13")).toBe("2026-09-14");
+    expect(parcelasMatriculaValida(2, "2026-09-10", 2026)).toBe(false);
   });
-  it("26/10: 3x (nov–jan)", () => {
-    expect(maxParcelasMatricula("2026-10-26")).toBe(3);
+  it("T4.10: 15/01/2027, início 03/02/2027 — valor cheio, janela 18/01–31/01/2027", () => {
+    const d = parcelamentoMatriculaDisponivel(1200, "2027-01-15", 2027, "2027-02-03");
+    expect(d.anoEmCurso).toBe(true);
+    expect(d.proporcao).toBeNull();
+    expect(d.valor).toBe(1200);
+    expect(d.opcoes.map((o) => [o.parcelas, o.vencimentoMinimo, o.vencimentoMaximo])).toEqual([
+      [1, "2027-01-18", "2027-01-31"],
+    ]);
   });
-  it("dezembro: 2x; 26/12 vira janeiro e fica só à vista", () => {
-    expect(maxParcelasMatricula("2026-12-10")).toBe(2);
-    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-12-26").somenteAVista).toBe(true);
-  });
-  it("janeiro: só à vista, sem seleção de parcelas", () => {
-    const jan = parcelamentoMatriculaDisponivel(2057.1, "2027-01-20");
-    expect(jan.somenteAVista).toBe(true);
-    expect(jan.maxParcelas).toBe(1);
-    expect(jan.opcoes).toHaveLength(1);
-    expect(jan.mesReferencia).toBe("2027-01");
-  });
-  it("26/01 (referência fevereiro, fora da janela): só à vista", () => {
-    const fev = parcelamentoMatriculaDisponivel(2057.1, "2027-01-26");
-    expect(fev.mesReferencia).toBe("2027-02");
-    expect(fev.somenteAVista).toBe(true);
-    expect(fev.maxParcelas).toBe(1);
-  });
-  it("valida a quantidade escolhida contra a data de preenchimento", () => {
-    expect(parcelasMatriculaValida(5, "2026-09-25")).toBe(true);
-    expect(parcelasMatriculaValida(5, "2026-09-26")).toBe(false);
-    expect(parcelasMatriculaValida(2, "2027-01-20")).toBe(false);
-    expect(parcelasMatriculaValida(1, "2027-01-26")).toBe(true);
+  it("sem data de início válida usa o mês do preenchimento; arredonda meio centavo para cima", () => {
+    expect(proporcaoMatriculaAnoEmCurso(2026, "2026-09-10", "")).toEqual({ meses: 4, de: 12 });
+    expect(proporcaoMatriculaAnoEmCurso(2026, "2026-09-10", null)).toEqual({ meses: 4, de: 12 });
+    // 1.000,06 × 3/12 = 250,015 → 250,02
+    expect(valorMatriculaProporcional(1000.06, { meses: 3, de: 12 })).toBe(250.02);
   });
 });
 
@@ -91,7 +185,7 @@ describe("valor da matrícula por segmento e ano", () => {
     expect(segmentoMatricula("Ensino Médio")).toBeNull();
     expect(segmentoMatricula("")).toBeNull();
     expect(valorMatricula(cec, "Ensino Médio")).toBeNull();
-    expect(matriculaPortal(cec, "Ensino Médio", "2026-09-20")).toBeNull();
+    expect(matriculaPortal(cec, "Ensino Médio", "2026-09-20", 2027)).toBeNull();
   });
   it("cada segmento devolve o valor cadastrado", () => {
     expect(valorMatricula(cec, "2º Período")).toBe(2057.1);
@@ -108,10 +202,10 @@ describe("valor da matrícula por segmento e ano", () => {
   it("segmento excluído no colégio devolve null e o portal não gera parcelas", () => {
     const cecBaby = { infantil: 1500 };
     expect(valorMatricula(cecBaby, "1º Ano")).toBeNull();
-    expect(matriculaPortal(cecBaby, "1º Ano", "2026-09-20")).toBeNull();
+    expect(matriculaPortal(cecBaby, "1º Ano", "2026-09-20", 2027)).toBeNull();
     expect(valorMatricula({ fundamental_2: 0 }, "6º Ano")).toBeNull();
-    expect(matriculaPortal({ fundamental_2: 0 }, "6º Ano", "2026-09-20")).toBeNull();
-    const ok = matriculaPortal(cecBaby, "2º Período", "2026-09-20");
+    expect(matriculaPortal({ fundamental_2: 0 }, "6º Ano", "2026-09-20", 2027)).toBeNull();
+    const ok = matriculaPortal(cecBaby, "2º Período", "2026-09-20", 2027);
     expect(ok?.segmento).toBe("infantil");
     expect(ok?.valor).toBe(1500);
     expect(ok?.disponivel.opcoes.length).toBeGreaterThan(0);
@@ -169,20 +263,6 @@ describe("valor da matrícula por segmento e ano", () => {
     expect(op4.valorParcela).toBe(558.56);
     expect(op4.valorPrimeiraParcela).toBe(558.57);
     expect(Math.round((op4.valorPrimeiraParcela + op4.valorParcela * 3) * 100)).toBe(223425);
-  });
-});
-
-describe("vencimento da 1ª parcela", () => {
-  it("fica entre a data de preenchimento e o último dia do mês", () => {
-    expect(limitesPrimeiroVencimento("2026-09-10")).toEqual({
-      minimo: "2026-09-10",
-      maximo: "2026-09-30",
-    });
-    expect(validarPrimeiroVencimento("2026-09-10", "2026-09-10")).toBe("");
-    expect(validarPrimeiroVencimento("2026-09-30", "2026-09-10")).toBe("");
-    expect(validarPrimeiroVencimento("2026-09-09", "2026-09-10")).toContain("10/09/2026");
-    expect(validarPrimeiroVencimento("2026-10-01", "2026-09-10")).toContain("30/09/2026");
-    expect(validarPrimeiroVencimento("", "2026-09-10")).not.toBe("");
   });
 });
 

@@ -459,6 +459,7 @@ function MatriculaPublicaPage() {
       form.unidade,
       form.aluno.dataNascimento,
       form.anoLetivo,
+      rotina.dataInicio,
     ],
     queryFn: async () =>
       cobrancaFn({
@@ -466,6 +467,7 @@ function MatriculaPublicaPage() {
           unidade: form.unidade,
           dataNascimento: form.aluno.dataNascimento,
           anoLetivo: form.anoLetivo,
+          dataInicio: rotina.dataInicio || undefined,
         },
       }),
     enabled: form.unidade !== "" && serie !== "" && form.anoLetivo > 0,
@@ -504,7 +506,7 @@ function MatriculaPublicaPage() {
     return {
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfigurado),
-      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje),
+      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje, form.anoLetivo),
     };
   };
 
@@ -533,7 +535,7 @@ function MatriculaPublicaPage() {
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfigurado),
-      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje),
+      ...validarMatriculaCobrancaForm(cobranca, matriculaDisponivel, hoje, form.anoLetivo),
     };
     setErros(encontrados);
     if (!formValido(encontrados)) {

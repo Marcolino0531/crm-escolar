@@ -525,26 +525,26 @@ describe("Matrícula pelo valor do School Hub (colégio × segmento)", () => {
     expect(tiposPendentes(plano)).toEqual(["matricula"]);
   });
 
-  it("opções até janeiro: set 5x … dez 2x, jan só à vista", () => {
-    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-09-10").maxParcelas).toBe(5);
-    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-12-10").maxParcelas).toBe(2);
-    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-01-10").somenteAVista).toBe(true);
-    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-03-10").somenteAVista).toBe(true);
+  it("opções pela janela até 31/01 do ano letivo: set 5x … dez 2x; no próprio ano só à vista", () => {
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-09-10", 2027).maxParcelas).toBe(5);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2026-12-10", 2027).maxParcelas).toBe(2);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-01-10", 2027).somenteAVista).toBe(true);
+    expect(parcelamentoMatriculaDisponivel(2057.1, "2027-03-10", 2027).somenteAVista).toBe(true);
   });
 
-  it("1ª na data escolhida, demais no dia 05 dos meses seguintes; soma igual ao valor", () => {
+  it("1ª na data escolhida (sábado → dia útil), demais no dia 05 útil dos meses seguintes; soma igual ao valor", () => {
     const plano = montarPlanoFaturamento(
       entrada({ matriculaParcelas: 3, matriculaPrimeiroVencimento: "2025-09-20" }),
     );
     const matricula = plano.lancamentos.find((l) => l.tipo === "matricula")!;
     expect(matricula.categoria).toBe(CATEGORIA_MATRICULA_SPONTE);
-    expect(matricula.vencimentos).toEqual(["2025-09-20", "2025-10-06", "2025-11-05"]);
+    expect(matricula.vencimentos).toEqual(["2025-09-22", "2025-10-06", "2025-11-05"]);
     expect(soma(matricula)).toBe(2057.1);
     expect(matricula.valorParcela).toBe(685.7);
     expect(matricula.valorPrimeiraParcela).toBe(685.7);
   });
 
-  it("parcelas fora da janela ou 1º vencimento fora do mês viram pendência da matrícula", () => {
+  it("parcelas fora da janela ou 1º vencimento fora da janela viram pendência da matrícula", () => {
     expect(
       tiposPendentes(
         montarPlanoFaturamento(entrada({ dataMatricula: "2026-01-10", matriculaParcelas: 2 })),
@@ -552,12 +552,42 @@ describe("Matrícula pelo valor do School Hub (colégio × segmento)", () => {
     ).toContain("matricula");
     expect(
       tiposPendentes(
-        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-10-02" })),
+        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-12-02" })),
       ),
     ).toContain("matricula");
     expect(
       tiposPendentes(
-        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-09-05" })),
+        montarPlanoFaturamento(entrada({ matriculaPrimeiroVencimento: "2025-09-12" })),
+      ),
+    ).toContain("matricula");
+  });
+
+  it("ano em curso (T4.8): 28/09/2026, início 19/10/2026 → 1x de R$ 300,00 (3/12) em 01/10/2026", () => {
+    const plano = montarPlanoFaturamento(
+      entrada({
+        anoLetivo: 2026,
+        dataMatricula: "2026-09-28",
+        dataInicio: "2026-10-19",
+        matriculaValor: 1200,
+        matriculaParcelas: 1,
+        matriculaPrimeiroVencimento: "2026-10-01",
+      }),
+    );
+    const m = plano.lancamentos.find((l) => l.tipo === "matricula")!;
+    expect(m.vencimentos).toEqual(["2026-10-01"]);
+    expect(soma(m)).toBe(300);
+    expect(m.observacao).toContain("proporcional 3/12");
+    expect(
+      tiposPendentes(
+        montarPlanoFaturamento(
+          entrada({
+            anoLetivo: 2026,
+            dataMatricula: "2026-09-28",
+            dataInicio: "2026-10-19",
+            matriculaParcelas: 2,
+            matriculaPrimeiroVencimento: "2026-10-01",
+          }),
+        ),
       ),
     ).toContain("matricula");
   });

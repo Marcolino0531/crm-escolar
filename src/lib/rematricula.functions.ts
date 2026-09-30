@@ -107,8 +107,9 @@ import {
   segmentosSemValorMatricula,
   vencimentosMatriculaPelasMensalidades,
   type ParcelaMatriculaLancada,
-  type ParcelaMatriculaOpcao,
+  type OpcaoParcelamentoMatricula,
   type PendenciaCampanhaColegio,
+  type ProporcaoMatricula,
   type SegmentoMatricula,
   type SegmentoMatriculaHistorico,
   type TurnosDisponiveis,
@@ -858,13 +859,18 @@ export interface MaterialRematricula {
 export interface MatriculaRematricula {
   serie: string;
   segmento: SegmentoMatricula;
+  // Valor cobrado (proporcional quando a matrícula é no ano letivo em curso).
   valor: number;
-  // Data de hoje no servidor (Brasília): define o mês de referência, o máximo
-  // de parcelas e os limites do 1º vencimento — o relógio do navegador não conta.
+  valorCheio: number;
+  anoLetivo: number;
+  // Data de hoje no servidor (Brasília): define as parcelas disponíveis e os
+  // limites do 1º vencimento — o relógio do navegador não conta.
   dataPreenchimento: string;
   mesReferencia: string;
+  anoEmCurso: boolean;
+  proporcao: ProporcaoMatricula | null;
   somenteAVista: boolean;
-  opcoes: ParcelaMatriculaOpcao[];
+  opcoes: OpcaoParcelamentoMatricula[];
   escolhaAtual: {
     parcelas: number;
     primeiroVencimento: string;
@@ -918,17 +924,22 @@ export function montarMatricula(
   valores: ValoresMatricula,
   serie: string,
   escolha: MatriculaEscolhaResumo | null,
+  anoLetivo: number,
   hoje: string = hojeBRT(),
 ): MatriculaRematricula | null {
-  const portal = matriculaPortal(valores, serie, hoje);
+  const portal = matriculaPortal(valores, serie, hoje, anoLetivo);
   if (!portal) return null;
-  const { segmento, valor, disponivel } = portal;
+  const { segmento, disponivel } = portal;
   return {
     serie,
     segmento,
-    valor,
+    valor: disponivel.valor,
+    valorCheio: disponivel.valorCheio,
+    anoLetivo,
     dataPreenchimento: hoje,
     mesReferencia: disponivel.mesReferencia,
+    anoEmCurso: disponivel.anoEmCurso,
+    proporcao: disponivel.proporcao,
     somenteAVista: disponivel.somenteAVista,
     opcoes: disponivel.opcoes,
     escolhaAtual: escolha
@@ -1056,7 +1067,12 @@ export const dadosRematricula = createServerFn({ method: "POST" })
       itens: material ? await itensMaterialDaSerie(sessao.unidade, serieAlvo, anoLetivo) : [],
     });
 
-    const matricula = montarMatricula(valoresMatricula, serieAlvo, escolhaMatricula.data ?? null);
+    const matricula = montarMatricula(
+      valoresMatricula,
+      serieAlvo,
+      escolhaMatricula.data ?? null,
+      anoLetivo,
+    );
 
     return {
       ok: true,
@@ -1519,11 +1535,17 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
     // Regras recalculadas no servidor com a data de hoje: a tela só sugere.
     const hoje = hojeBRT();
     const erros: Record<string, string> = {};
-    if (!parcelasMatriculaValida(data.matricula.parcelas, hoje)) {
+    if (!parcelasMatriculaValida(data.matricula.parcelas, hoje, anoLetivo)) {
       erros["matricula.parcelas"] = "Escolha uma quantidade de parcelas disponível.";
+    } else {
+      const erroVencimento = validarPrimeiroVencimento(
+        data.matricula.primeiroVencimento,
+        hoje,
+        anoLetivo,
+        data.matricula.parcelas,
+      );
+      if (erroVencimento) erros["matricula.primeiroVencimento"] = erroVencimento;
     }
-    const erroVencimento = validarPrimeiroVencimento(data.matricula.primeiroVencimento, hoje);
-    if (erroVencimento) erros["matricula.primeiroVencimento"] = erroVencimento;
 
     // As demais seções precisam ter sido salvas antes do envio final.
     const [rotina, material, escolhaMaterial, existente, valoresMatricula] = await Promise.all([
@@ -1601,11 +1623,12 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
       };
     }
 
-    const portalMatricula = matriculaPortal(valoresMatricula, serieAlvo, hoje);
+    const portalMatricula = matriculaPortal(valoresMatricula, serieAlvo, hoje, anoLetivo);
     if (!portalMatricula) {
       return { ok: false, erro: mensagemMatriculaSemValor(anoLetivo) };
     }
-    const { segmento, valor, disponivel } = portalMatricula;
+    const { segmento, disponivel } = portalMatricula;
+    const valor = disponivel.valor;
     const parcelamento = parcelamentoMatricula(valor, data.matricula.parcelas);
     const agora = new Date().toISOString();
     const { error } = await supabaseAdmin.from("rematricula_matricula_escolhas" as never).upsert(
@@ -3155,7 +3178,7 @@ async function lancarMatriculaNoSponte(
     unidade: escolha.unidade,
     sponteAlunoId: escolha.aluno_id,
     valor: Number(escolha.valor_parcela),
-    vencimento: escolha.primeiro_vencimento,
+    vencimento: vencimentos[0],
     categoria: CATEGORIA_MATRICULA_SPONTE,
     observacao,
     logTag,
@@ -3195,7 +3218,7 @@ async function lancarMatriculaNoSponte(
   const pendencias: string[] = [];
   for (const item of itens) {
     const valorNominal = Number(escolha.valor_parcela);
-    const vencimentoNominal = addMesesYMD(escolha.primeiro_vencimento, item.numero - 1);
+    const vencimentoNominal = addMesesYMD(vencimentos[0], item.numero - 1);
     const precisaAjuste =
       Math.round(item.valor * 100) !== Math.round(valorNominal * 100) ||
       item.vencimento !== vencimentoNominal;

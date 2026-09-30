@@ -66,8 +66,9 @@ import {
 } from "@/lib/rematricula";
 import { itensMaterialDaSerie, valoresMatriculaDoAno } from "@/lib/rematricula.functions";
 import {
-  limitesPrimeiroVencimento,
   parcelamentoMatriculaDisponivel,
+  textoJanelaPrimeiroVencimento,
+  textoMatriculaAnoEmCurso,
   valorMatricula,
 } from "@/lib/rematricula-matricula";
 import { MSG_MATRICULA_SEM_VALOR, opcoesParcelasMaterial } from "@/lib/matricula-faturamento";
@@ -176,32 +177,40 @@ export const materialMatriculaPublica = createServerFn({ method: "POST" })
 export interface OpcaoMatriculaPublica {
   parcelas: number;
   rotulo: string;
+  vencimentoMinimo: string;
+  vencimentoMaximo: string;
+  semEscolha: boolean;
+  textoVencimento: string;
 }
 
 export interface MatriculaCobrancaPublica {
   disponivel: boolean;
   serie: string;
+  // Valor cobrado: proporcional no ano em curso.
   valor: number;
+  valorCheio: number;
+  anoEmCurso: boolean;
+  textoAnoEmCurso: string;
   somenteAVista: boolean;
   opcoes: OpcaoMatriculaPublica[];
-  vencimentoMinimo: string;
-  vencimentoMaximo: string;
   mensagemIndisponivel: string;
 }
 
+// A data de preenchimento é sempre a do servidor; a data de início só define o
+// mês da proporcionalidade no ano em curso (recalculada no envio).
 export const matriculaCobrancaPublica = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => MaterialInput.parse(input))
   .handler(async ({ data }): Promise<MatriculaCobrancaPublica> => {
     const hoje = hojeSaoPaulo();
-    const limites = limitesPrimeiroVencimento(hoje);
     const vazio: MatriculaCobrancaPublica = {
       disponivel: false,
       serie: "",
       valor: 0,
+      valorCheio: 0,
+      anoEmCurso: false,
+      textoAnoEmCurso: "",
       somenteAVista: true,
       opcoes: [],
-      vencimentoMinimo: limites.minimo,
-      vencimentoMaximo: limites.maximo,
       mensagemIndisponivel: MSG_MATRICULA_SEM_VALOR,
     };
     if (!UNIDADES_SPONTE.includes(data.unidade)) return vazio;
@@ -210,15 +219,28 @@ export const matriculaCobrancaPublica = createServerFn({ method: "POST" })
     const serie = serieCalculada(data.dataNascimento, data.anoLetivo);
     if (!serie) return vazio;
 
-    const valor = valorMatricula(await valoresMatriculaDoAno(data.unidade, data.anoLetivo), serie);
-    if (valor === null) return { ...vazio, serie };
+    const valorCheio = valorMatricula(
+      await valoresMatriculaDoAno(data.unidade, data.anoLetivo),
+      serie,
+    );
+    if (valorCheio === null) return { ...vazio, serie };
 
-    const parcelamento = parcelamentoMatriculaDisponivel(valor, hoje);
+    const parcelamento = parcelamentoMatriculaDisponivel(
+      valorCheio,
+      hoje,
+      data.anoLetivo,
+      data.dataInicio,
+    );
     return {
       ...vazio,
       disponivel: true,
       serie,
-      valor,
+      valor: parcelamento.valor,
+      valorCheio: parcelamento.valorCheio,
+      anoEmCurso: parcelamento.anoEmCurso,
+      textoAnoEmCurso: parcelamento.anoEmCurso
+        ? textoMatriculaAnoEmCurso(parcelamento.proporcao)
+        : "",
       somenteAVista: parcelamento.somenteAVista,
       opcoes: parcelamento.opcoes.map((op) => ({
         parcelas: op.parcelas,
@@ -228,6 +250,14 @@ export const matriculaCobrancaPublica = createServerFn({ method: "POST" })
             : op.valorPrimeiraParcela === op.valorParcela
               ? `${op.parcelas}x de ${formatarBRL(op.valorParcela)}`
               : `${op.parcelas}x de ${formatarBRL(op.valorParcela)} (1ª de ${formatarBRL(op.valorPrimeiraParcela)})`,
+        vencimentoMinimo: op.vencimentoMinimo,
+        vencimentoMaximo: op.vencimentoMaximo,
+        semEscolha: op.semEscolha,
+        textoVencimento: textoJanelaPrimeiroVencimento({
+          minimo: op.vencimentoMinimo,
+          maximo: op.vencimentoMaximo,
+          semEscolha: op.semEscolha,
+        }),
       })),
     };
   });
@@ -817,7 +847,7 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
       ...validarSaudeForm(saude),
       ...validarDocumentosForm(documentos, serie),
       ...validarMaterialForm(material, materialConfig !== null),
-      ...validarMatriculaCobrancaForm(cobranca, matriculaValor !== null, hoje),
+      ...validarMatriculaCobrancaForm(cobranca, matriculaValor !== null, hoje, form.anoLetivo),
     };
     if (Object.keys(erros).length > 0) {
       return { ok: false, erros, erro: "Confira os campos destacados." };
