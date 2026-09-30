@@ -81,7 +81,7 @@ export function seloCobranca(s: SituacaoSubmissao): Selo<SeloCobranca> | null {
     return {
       valor: "conferido",
       rotulo: ROTULO_COBRANCA.conferido,
-      motivo: `Conferido no Sponte em ${quando}${s.conferido_por_nome ? ` por ${s.conferido_por_nome}` : ""}.`,
+      motivo: `Conferido em ${quando}${s.conferido_por_nome ? ` por ${s.conferido_por_nome}` : ""}.`,
     };
   }
   switch (s.faturamento_status) {
