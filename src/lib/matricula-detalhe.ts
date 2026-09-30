@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { MEALS, WEEKDAYS } from "@/lib/diario";
 import { DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
+import { nomeInformadoDiferente } from "@/lib/matriculas-nome";
 import {
   montarSecoesFinanceiras,
   type LancamentoFicha,
@@ -35,6 +36,8 @@ export interface SubmissaoDetalhe {
   submissionId: string | null;
   unidade: string | null;
   alunoNome: string | null;
+  /** Nome digitado no formulário (antes de acompanhar o Sponte). */
+  alunoNomeFormulario?: string | null;
   alunoCpf: string | null;
   status: string;
   criadoEm: string;
@@ -171,6 +174,10 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
   const payload = lerPayloadSubmissao(submissao.payload);
   const aluno = payload.aluno ?? {};
   const responsaveis = payload.responsaveis ?? [];
+  const nomeInformado = nomeInformadoDiferente(
+    submissao.alunoNome,
+    submissao.alunoNomeFormulario ?? aluno.nome,
+  );
 
   const grupos: SecaoDetalhe["grupos"] = [
     {
@@ -187,7 +194,8 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
     {
       titulo: "Aluno",
       campos: [
-        campo("Nome", aluno.nome ?? submissao.alunoNome),
+        campo("Nome", submissao.alunoNome ?? aluno.nome),
+        ...(nomeInformado ? [campo("Nome informado no formulário", nomeInformado)] : []),
         campo("Data de nascimento", aluno.dataNascimento),
         campo("CPF", aluno.cpf ?? submissao.alunoCpf),
         campo("RG", aluno.rg),

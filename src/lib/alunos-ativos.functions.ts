@@ -18,6 +18,10 @@ import {
   type HistoricoRow,
   type VinculoAtivoRow,
 } from "@/lib/alunos-ativos";
+import {
+  sincronizarNomesMatriculas,
+  type SincronizarNomesResult,
+} from "@/lib/matriculas-nome.server";
 
 type VinculoJoinRow = {
   student_id: string;
@@ -166,17 +170,28 @@ export async function handleAlunosAtivosApi(request: Request): Promise<Response 
   if (cronSecret && bearer(request) !== cronSecret) {
     return json({ ok: false, error: "não autorizado" }, 401);
   }
+  let res: FechamentoMensalResult;
   try {
-    const res = await runFechamentoMensalAlunosAtivos(
+    res = await runFechamentoMensalAlunosAtivos(
       hojeEmBrasilia(),
       url.searchParams.get("forcar") === "1",
     );
     if (res.executado)
       console.log(`[alunos-ativos] fechamento ${res.anoMes}:`, res.linhas ?? res.error);
-    return json(res, res.ok ? 200 : 500);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[alunos-ativos] cron falhou:", msg);
-    return json({ ok: false, error: msg }, 500);
+    res = { ok: false, executado: false, anoMes: anoMesDe(hojeEmBrasilia()), error: msg };
   }
+  // Nome do aluno nas submissões de matrícula acompanha o Sponte (só leitura lá).
+  let nomesMatriculas: SincronizarNomesResult | { error: string };
+  try {
+    nomesMatriculas = await sincronizarNomesMatriculas();
+    console.log("[alunos-ativos] nomes das matrículas:", nomesMatriculas);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[alunos-ativos] nomes das matrículas falharam:", msg);
+    nomesMatriculas = { error: msg };
+  }
+  return json({ ...res, nomesMatriculas }, res.ok ? 200 : 500);
 }

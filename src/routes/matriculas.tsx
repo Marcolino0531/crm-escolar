@@ -58,6 +58,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   arquivarMatricula,
   desarquivarMatricula,
+  atualizarNomeMatricula,
   detalheMatricula,
   excluirMatricula,
   reprocessarMatricula,
@@ -191,6 +192,7 @@ type Submissao = {
   submission_id: string | null;
   unidade: string | null;
   aluno_nome: string | null;
+  aluno_nome_formulario: string | null;
   aluno_cpf: string | null;
   sponte_aluno_id: number | null;
   status: SubmissionStatus;
@@ -325,7 +327,10 @@ function MatriculasPage() {
       // Vírgula e parênteses quebram a sintaxe do filtro `or` do PostgREST.
       const termo = buscaDebounced.replace(/[,()]/g, " ").trim();
       // Com busca, ativas e arquivadas aparecem juntas; sem busca vale o "Exibir".
-      if (termo) q = q.or(`aluno_nome.ilike.%${termo}%,aluno_cpf.ilike.%${termo}%`);
+      if (termo)
+        q = q.or(
+          `aluno_nome.ilike.%${termo}%,aluno_nome_formulario.ilike.%${termo}%,aluno_cpf.ilike.%${termo}%`,
+        );
       else if (exibir === "arquivadas") q = q.not("arquivada_em", "is", null);
       else q = q.is("arquivada_em", null);
 
@@ -346,6 +351,24 @@ function MatriculasPage() {
     const atualizada = rows.find((r) => r.id === detalhe.id);
     if (atualizada && atualizada !== detalhe) setDetalhe(atualizada);
   }, [rows, detalhe]);
+
+  // Ao abrir a ficha, o nome do aluno é relido no Sponte (só leitura).
+  const atualizarNomeFn = useServerFn(atualizarNomeMatricula);
+  const idDetalhe = detalhe?.id ?? null;
+  useEffect(() => {
+    if (!idDetalhe) return;
+    let cancelado = false;
+    atualizarNomeFn({ data: { id: idDetalhe } })
+      .then(async (res) => {
+        if (cancelado || !res.atualizado) return;
+        await queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+        setDetalhe((d) => (d && d.id === idDetalhe ? { ...d, aluno_nome: res.alunoNome } : d));
+      })
+      .catch((e) => console.error("[matrículas] falha ao atualizar o nome pelo Sponte:", e));
+    return () => {
+      cancelado = true;
+    };
+  }, [idDetalhe, atualizarNomeFn, queryClient]);
 
   const reprocessar = useMutation({
     mutationFn: (id: string) => reprocessarFn({ data: { id } }),
@@ -919,6 +942,7 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
       submissionId: submissao.submission_id,
       unidade: submissao.unidade,
       alunoNome: submissao.aluno_nome,
+      alunoNomeFormulario: submissao.aluno_nome_formulario,
       alunoCpf: submissao.aluno_cpf,
       status: STATUS_STYLE[submissao.status]?.label ?? submissao.status,
       criadoEm: formatDataHora(submissao.created_at),
