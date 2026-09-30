@@ -213,6 +213,17 @@ export interface EntradaFaturamento {
   horarios?: HorariosRotina;
 }
 
+/** Submissão já conferida no Sponte: turma, cobranças e lançamentos ficam fixos. */
+export async function submissaoConferida(submissionId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from("enrollment_submissions" as never)
+    .select("conferido_em")
+    .eq("submission_id", submissionId)
+    .maybeSingle<{ conferido_em: string | null }>();
+  if (error) throw new Error(`Falha ao ler a conferência da submissão: ${error.message}`);
+  return !!data?.conferido_em;
+}
+
 async function linhasExistentes(submissionId: string): Promise<LinhaLancamento[]> {
   const { data } = await supabaseAdmin
     .from("matricula_faturamento_lancamentos" as never)
@@ -407,6 +418,14 @@ async function valorMatriculaDaSerie(entrada: EntradaFaturamento): Promise<numbe
  * pendência do próprio tipo.
  */
 export async function faturarMatricula(entrada: EntradaFaturamento): Promise<ResultadoFaturamento> {
+  if (await submissaoConferida(entrada.submissionId)) {
+    return {
+      status: "sem_lancamento",
+      planoCursoId: null,
+      lancamentos: [],
+      pendencias: ["Submissão conferida no Sponte — lançamentos fixados."],
+    };
+  }
   const creds = resolverCredenciais(entrada.unidade);
   if (!creds) {
     return {

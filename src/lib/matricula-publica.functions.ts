@@ -56,8 +56,10 @@ import {
 import {
   faturarMatricula,
   materialAnualDaSerie,
+  submissaoConferida,
   type ResultadoFaturamento,
 } from "@/lib/matricula-faturamento.sponte";
+import { tocaCamposFixados } from "@/lib/matricula-conferencia";
 import {
   formatarBRL,
   parcelamentoMaterialPrimeira,
@@ -643,10 +645,12 @@ async function gravarSubmissao(
   submissionId: string,
   campos: Record<string, unknown>,
 ): Promise<void> {
-  const { error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("enrollment_submissions" as never)
     .update(campos as never)
     .eq("submission_id", submissionId);
+  if (tocaCamposFixados(campos)) query = query.is("conferido_em", null);
+  const { error } = await query;
   if (error) console.error("[matrículas] falha ao gravar a submissão:", error.message);
 }
 
@@ -742,9 +746,17 @@ async function formalizar(
         turno,
         ...campos,
       } as never)
-      .eq("submission_id", submissionId);
+      .eq("submission_id", submissionId)
+      .is("conferido_em", null);
     if (error) console.error("[matrículas] falha ao gravar o resultado da turma:", error.message);
   };
+
+  try {
+    if (await submissaoConferida(submissionId)) return;
+  } catch (e) {
+    console.error("[matrículas]", e instanceof Error ? e.message : String(e));
+    return;
+  }
 
   if (alunoId === null) {
     await registrar({

@@ -20,9 +20,12 @@ import {
   Printer,
   RefreshCw,
   RotateCw,
+  SearchCheck,
   Trash2,
+  Undo2,
   Users,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { usePermissions, useRole } from "@/lib/app-context";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -59,16 +62,27 @@ import {
   arquivarMatricula,
   desarquivarMatricula,
   atualizarNomeMatricula,
+  desfazerConferenciaMatricula,
   detalheMatricula,
   excluirMatricula,
   reprocessarMatricula,
   resolverPendenciaMatricula,
   resumoExclusaoMatricula,
+  verificarConferenciaMatricula,
 } from "@/lib/matriculas.functions";
+import {
+  ROTULO_SITUACAO_ITEM,
+  type ItemConferido,
+  type ResultadoConferencia,
+  type SituacaoItemConferencia,
+  type TipoConferencia,
+} from "@/lib/matricula-conferencia";
+import { formatarBRL } from "@/lib/atendimento-ia";
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
 import { montarSecoesDetalhe, type SecaoDetalhe } from "@/lib/matricula-detalhe";
 import {
   FILTRO_OR_PENDENCIA,
+  dataBR,
   seloCobranca,
   seloTurma,
   temPendencia,
@@ -214,10 +228,14 @@ type Submissao = {
   material_parcelas: number | null;
   pendencia_resolvida_em: string | null;
   arquivada_em: string | null;
+  conferido_em: string | null;
+  conferido_por_nome: string | null;
+  conferencia: ResultadoConferencia | null;
 };
 
 const SELO_CLS: Record<string, string> = {
   matriculado: "bg-emerald-100 text-emerald-900",
+  conferido: "bg-sky-100 text-sky-900",
   lancada: "bg-emerald-100 text-emerald-900",
   parcial: "bg-amber-100 text-amber-900",
   pendente: "bg-amber-100 text-amber-900",
@@ -269,6 +287,8 @@ function MatriculasPage() {
   const arquivarFn = useServerFn(arquivarMatricula);
   const desarquivarFn = useServerFn(desarquivarMatricula);
   const [excluindo, setExcluindo] = useState<Submissao | null>(null);
+  const [conferindo, setConferindo] = useState<Submissao | null>(null);
+  const desfazerFn = useServerFn(desfazerConferenciaMatricula);
 
   // Escopo da listagem: unidade do topo (consolidado em "Todas as Unidades").
   const unidade = useUnidadeAtiva();
@@ -390,6 +410,17 @@ function MatriculasPage() {
       queryClient.invalidateQueries({ queryKey: ["matriculas-pendencias"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao arquivar a matrícula."),
+  });
+
+  const desfazer = useMutation({
+    mutationFn: (id: string) => desfazerFn({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Conferência desfeita. O histórico da verificação foi mantido.");
+      queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+      queryClient.invalidateQueries({ queryKey: ["matriculas-pendencias"] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Falha ao desfazer a conferência."),
   });
 
   const filtrosAtivos = status !== "todos" || exibir !== "ativas" || busca !== "";
@@ -582,6 +613,14 @@ function MatriculasPage() {
                       </Button>
                     )}
                     {isAdmin && (
+                      <BotaoConferencia
+                        submissao={row}
+                        desfazendo={desfazer.isPending && desfazer.variables === row.id}
+                        onVerificar={() => setConferindo(row)}
+                        onDesfazer={() => desfazer.mutate(row.id)}
+                      />
+                    )}
+                    {isAdmin && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -655,7 +694,13 @@ function MatriculasPage() {
         reprocessando={reprocessar.isPending}
         onReprocessar={(id) => reprocessar.mutate(id)}
         onClose={() => setDetalhe(null)}
+        podeConferir={isAdmin}
+        desfazendo={desfazer.isPending}
+        onVerificar={(s) => setConferindo(s)}
+        onDesfazer={(id) => desfazer.mutate(id)}
       />
+
+      <ConferenciaDialog submissao={conferindo} onClose={() => setConferindo(null)} />
 
       <ExcluirSubmissaoDialog
         submissao={excluindo}
@@ -666,6 +711,256 @@ function MatriculasPage() {
           queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
         }}
       />
+    </div>
+  );
+}
+
+function BotaoConferencia({
+  submissao,
+  desfazendo,
+  onVerificar,
+  onDesfazer,
+}: {
+  submissao: Submissao;
+  desfazendo: boolean;
+  onVerificar: () => void;
+  onDesfazer: () => void;
+}) {
+  if (submissao.conferido_em) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="ml-1"
+        disabled={desfazendo}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDesfazer();
+        }}
+      >
+        <Undo2 className="mr-2 h-3.5 w-3.5" /> Desfazer conferência
+      </Button>
+    );
+  }
+  if (!submissao.sponte_aluno_id) return null;
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="ml-1"
+      onClick={(e) => {
+        e.stopPropagation();
+        onVerificar();
+      }}
+    >
+      <SearchCheck className="mr-2 h-3.5 w-3.5" /> Verificar no Sponte
+    </Button>
+  );
+}
+
+const SITUACAO_ITEM_CLS: Record<SituacaoItemConferencia, string> = {
+  ok: "bg-emerald-100 text-emerald-900",
+  aviso: "bg-amber-100 text-amber-900",
+  faltando: "bg-red-100 text-red-900",
+  dispensado: "bg-slate-200 text-slate-700",
+};
+
+function descreverPlano(p: { parcelas: number; total: number } | null): string {
+  if (!p) return "sem plano registrado no envio";
+  return `${p.parcelas}x · total ${formatarBRL(p.total)}`;
+}
+
+// Resultado da conferência "Verificar no Sponte" (só admin). A primeira
+// verificação roda ao abrir; itens faltando podem ser dispensados com motivo
+// e a verificação é refeita com as dispensas.
+function ConferenciaDialog({
+  submissao,
+  onClose,
+}: {
+  submissao: Submissao | null;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const verificarFn = useServerFn(verificarConferenciaMatricula);
+  const [dispensar, setDispensar] = useState<Partial<Record<TipoConferencia, boolean>>>({});
+  const [motivos, setMotivos] = useState<Partial<Record<TipoConferencia, string>>>({});
+
+  const verificar = useMutation({
+    mutationFn: (dispensas: Partial<Record<TipoConferencia, string>>) =>
+      verificarFn({ data: { id: submissao!.id, dispensas } }),
+    onSuccess: (res) => {
+      if (res.fixado) toast.success(res.mensagem);
+      queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+      queryClient.invalidateQueries({ queryKey: ["matriculas-pendencias"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao verificar no Sponte."),
+  });
+  const { mutate, reset } = verificar;
+
+  const idAberto = submissao?.id ?? null;
+  useEffect(() => {
+    setDispensar({});
+    setMotivos({});
+    reset();
+    if (idAberto) mutate({});
+  }, [idAberto, mutate, reset]);
+
+  const res = verificar.data;
+  const faltaMotivo = Object.entries(dispensar).some(
+    ([tipo, marcado]) => marcado && !(motivos[tipo as TipoConferencia] ?? "").trim(),
+  );
+
+  function verificarComDispensas() {
+    const dispensas: Partial<Record<TipoConferencia, string>> = {};
+    for (const [tipo, marcado] of Object.entries(dispensar)) {
+      if (marcado)
+        dispensas[tipo as TipoConferencia] = (motivos[tipo as TipoConferencia] ?? "").trim();
+    }
+    mutate(dispensas);
+  }
+
+  return (
+    <Dialog open={!!submissao} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Verificar no Sponte</DialogTitle>
+          <DialogDescription>
+            {submissao?.aluno_nome ?? "Aluno"} · {submissao?.unidade ?? "—"}. Compara o que foi
+            escolhido neste envio com o que está hoje no Sponte (só leitura).
+          </DialogDescription>
+        </DialogHeader>
+
+        {verificar.isPending && <Skeleton className="h-40 w-full" />}
+        {verificar.isError && (
+          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {verificar.error instanceof Error ? verificar.error.message : String(verificar.error)}
+          </p>
+        )}
+
+        {res && !verificar.isPending && (
+          <div className="space-y-4 text-sm">
+            <div
+              className={`rounded-md border p-3 ${
+                res.fixado
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              {res.mensagem}
+            </div>
+
+            <section className="space-y-1">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Turma
+              </h4>
+              <div className="flex items-center justify-between gap-2 rounded-md border p-2">
+                <span>{res.resultado.turma.mensagem}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                    res.resultado.turma.ok ? SITUACAO_ITEM_CLS.ok : SITUACAO_ITEM_CLS.faltando
+                  }`}
+                >
+                  {res.resultado.turma.ok ? "OK" : "FALTANDO"}
+                </span>
+              </div>
+            </section>
+
+            <section className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Cobranças
+              </h4>
+              {res.resultado.itens.map((item) => (
+                <ItemConferenciaLinha
+                  key={item.tipo}
+                  item={item}
+                  podeDispensar={!res.fixado && item.situacao === "faltando"}
+                  marcado={dispensar[item.tipo] ?? false}
+                  motivo={motivos[item.tipo] ?? ""}
+                  onMarcar={(v) => setDispensar((d) => ({ ...d, [item.tipo]: v }))}
+                  onMotivo={(v) => setMotivos((m) => ({ ...m, [item.tipo]: v }))}
+                />
+              ))}
+            </section>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Fechar
+          </Button>
+          {res && !res.fixado && (
+            <Button disabled={verificar.isPending || faltaMotivo} onClick={verificarComDispensas}>
+              <SearchCheck className="mr-2 h-4 w-4" /> Verificar novamente
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ItemConferenciaLinha({
+  item,
+  podeDispensar,
+  marcado,
+  motivo,
+  onMarcar,
+  onMotivo,
+}: {
+  item: ItemConferido;
+  podeDispensar: boolean;
+  marcado: boolean;
+  motivo: string;
+  onMarcar: (v: boolean) => void;
+  onMotivo: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1 rounded-md border p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">{item.categoria}</span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${SITUACAO_ITEM_CLS[item.situacao]}`}
+        >
+          {ROTULO_SITUACAO_ITEM[item.situacao]}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        No envio: {item.situacaoNoEnvio} · Vencimentos de {dataBR(item.janela.de)} a{" "}
+        {dataBR(item.janela.ate)}
+      </p>
+      {(item.situacao === "aviso" || item.situacao === "faltando") && (
+        <p className="text-xs">
+          Esperado: {descreverPlano(item.esperado)} · Encontrado:{" "}
+          {item.encontrado
+            ? `${descreverPlano(item.encontrado)} (${item.encontrado.vencimentos.map(dataBR).join(", ")})`
+            : "nada no Sponte"}
+        </p>
+      )}
+      {item.avisos.map((a) => (
+        <p key={a} className="text-xs text-amber-800">
+          {a}
+        </p>
+      ))}
+      {item.motivoDispensa && (
+        <p className="text-xs text-muted-foreground">Dispensado: {item.motivoDispensa}</p>
+      )}
+      {podeDispensar && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <label className="flex items-center gap-2 text-xs">
+            <Checkbox checked={marcado} onCheckedChange={(v) => onMarcar(v === true)} />
+            Dispensar
+          </label>
+          {marcado && (
+            <Input
+              className="h-8 flex-1 text-xs"
+              placeholder="Motivo (obrigatório), ex.: série sem material pedagógico"
+              value={motivo}
+              maxLength={300}
+              onChange={(e) => onMotivo(e.target.value)}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -791,12 +1086,20 @@ function DetalheSubmissao({
   reprocessando,
   onReprocessar,
   onClose,
+  podeConferir,
+  desfazendo,
+  onVerificar,
+  onDesfazer,
 }: {
   submissao: Submissao | null;
   podeReprocessar: boolean;
   reprocessando: boolean;
   onReprocessar: (id: string) => void;
   onClose: () => void;
+  podeConferir: boolean;
+  desfazendo: boolean;
+  onVerificar: (s: Submissao) => void;
+  onDesfazer: (id: string) => void;
 }) {
   const responsaveis = submissao?.resultado?.responsaveis ?? [];
   const ehReprocessavel = submissao
@@ -842,6 +1145,24 @@ function DetalheSubmissao({
                   }
                 />
               </dl>
+
+              {podeConferir && (submissao.sponte_aluno_id || submissao.conferido_em) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3">
+                  <p className="flex-1 text-xs text-muted-foreground">
+                    {submissao.conferido_em
+                      ? `Conferido no Sponte em ${formatDataHora(submissao.conferido_em)}${
+                          submissao.conferido_por_nome ? ` por ${submissao.conferido_por_nome}` : ""
+                        }.`
+                      : "Confere turma e cobranças deste envio no Sponte (só leitura)."}
+                  </p>
+                  <BotaoConferencia
+                    submissao={submissao}
+                    desfazendo={desfazendo}
+                    onVerificar={() => onVerificar(submissao)}
+                    onDesfazer={() => onDesfazer(submissao.id)}
+                  />
+                </div>
+              )}
 
               {submissao.erro && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

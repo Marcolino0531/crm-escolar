@@ -13,7 +13,7 @@ import {
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
 
 export type SeloTurma = "matriculado" | "pendente" | "erro";
-export type SeloCobranca = "lancada" | "parcial" | "pendente" | "erro";
+export type SeloCobranca = "conferido" | "lancada" | "parcial" | "pendente" | "erro";
 
 export interface SituacaoSubmissao {
   status: string;
@@ -24,6 +24,8 @@ export interface SituacaoSubmissao {
   faturamento_status: string | null;
   faturamento_pendencia: string | null;
   pendencia_resolvida_em?: string | null;
+  conferido_em?: string | null;
+  conferido_por_nome?: string | null;
 }
 
 export interface Selo<T extends string> {
@@ -39,6 +41,7 @@ const ROTULO_TURMA: Record<SeloTurma, string> = {
 };
 
 const ROTULO_COBRANCA: Record<SeloCobranca, string> = {
+  conferido: "Conferido",
   lancada: "Lançada",
   parcial: "Parcial",
   pendente: "Pendente",
@@ -73,6 +76,14 @@ export function seloTurma(s: SituacaoSubmissao): Selo<SeloTurma> | null {
 
 /** Selo "Cobrança"; null enquanto o faturamento nem chegou a ser tentado. */
 export function seloCobranca(s: SituacaoSubmissao): Selo<SeloCobranca> | null {
+  if (s.conferido_em) {
+    const quando = dataBR(s.conferido_em.slice(0, 10));
+    return {
+      valor: "conferido",
+      rotulo: ROTULO_COBRANCA.conferido,
+      motivo: `Conferido no Sponte em ${quando}${s.conferido_por_nome ? ` por ${s.conferido_por_nome}` : ""}.`,
+    };
+  }
   switch (s.faturamento_status) {
     case "lancado":
       return {
@@ -111,7 +122,7 @@ export function seloCobranca(s: SituacaoSubmissao): Selo<SeloCobranca> | null {
  * tratar. Uma pendência marcada como resolvida pela secretaria não conta.
  */
 export function motivosPendencia(s: SituacaoSubmissao): string[] {
-  if (s.pendencia_resolvida_em) return [];
+  if (s.pendencia_resolvida_em || s.conferido_em) return [];
   const motivos: string[] = [];
   if ((STATUS_ERRO as readonly string[]).includes(s.status)) {
     motivos.push(`Criação no Sponte: ${s.erro ?? "falhou"}`);
@@ -119,7 +130,8 @@ export function motivosPendencia(s: SituacaoSubmissao): string[] {
   const turma = seloTurma(s);
   if (turma && turma.valor !== "matriculado") motivos.push(`Turma: ${turma.motivo}`);
   const cobranca = seloCobranca(s);
-  if (cobranca && cobranca.valor !== "lancada") motivos.push(`Cobrança: ${cobranca.motivo}`);
+  if (cobranca && cobranca.valor !== "lancada" && cobranca.valor !== "conferido")
+    motivos.push(`Cobrança: ${cobranca.motivo}`);
   return motivos;
 }
 
