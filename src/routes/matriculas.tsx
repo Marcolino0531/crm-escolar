@@ -9,6 +9,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   CheckCircle2,
   ClipboardList,
   Copy,
@@ -54,6 +56,8 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  arquivarMatricula,
+  desarquivarMatricula,
   detalheMatricula,
   excluirMatricula,
   reprocessarMatricula,
@@ -151,6 +155,13 @@ const STATUS_FILTROS = [
   { value: "erro_validacao", label: "Erro de validação" },
 ];
 
+type Exibir = "ativas" | "arquivadas";
+
+const EXIBIR_FILTROS: { value: Exibir; label: string }[] = [
+  { value: "ativas", label: "Ativas" },
+  { value: "arquivadas", label: "Arquivadas" },
+];
+
 // Espelha `ResponsavelResultado` do motor da matrícula (matriculas.sponte).
 type ResponsavelResultado = {
   nome: string;
@@ -200,6 +211,7 @@ type Submissao = {
   material_valor_anual: number | null;
   material_parcelas: number | null;
   pendencia_resolvida_em: string | null;
+  arquivada_em: string | null;
 };
 
 const SELO_CLS: Record<string, string> = {
@@ -252,11 +264,14 @@ function MatriculasPage() {
   const podeReprocessar = canEdit("eformulario");
   const queryClient = useQueryClient();
   const reprocessarFn = useServerFn(reprocessarMatricula);
+  const arquivarFn = useServerFn(arquivarMatricula);
+  const desarquivarFn = useServerFn(desarquivarMatricula);
   const [excluindo, setExcluindo] = useState<Submissao | null>(null);
 
   // Escopo da listagem: unidade do topo (consolidado em "Todas as Unidades").
   const unidade = useUnidadeAtiva();
   const [status, setStatus] = useState("todos");
+  const [exibir, setExibir] = useState<Exibir>("ativas");
   const [busca, setBusca] = useState("");
   const [buscaDebounced, setBuscaDebounced] = useState("");
   const [page, setPage] = useState(1);
@@ -291,7 +306,7 @@ function MatriculasPage() {
   // Trocar a unidade no topo recomeça a paginação.
   useEffect(() => setPage(1), [unidade]);
 
-  const queryKey = ["matriculas-submissoes", unidade, status, buscaDebounced, page];
+  const queryKey = ["matriculas-submissoes", unidade, status, exibir, buscaDebounced, page];
 
   const { data, isFetching, isError, error, refetch } = useQuery({
     queryKey,
@@ -307,11 +322,12 @@ function MatriculasPage() {
       else if (status === "pendencia")
         q = q.is("pendencia_resolvida_em", null).or(FILTRO_OR_PENDENCIA);
       else if (status !== "todos") q = q.eq("status", status);
-      if (buscaDebounced) {
-        // Vírgula e parênteses quebram a sintaxe do filtro `or` do PostgREST.
-        const termo = buscaDebounced.replace(/[,()]/g, " ").trim();
-        if (termo) q = q.or(`aluno_nome.ilike.%${termo}%,aluno_cpf.ilike.%${termo}%`);
-      }
+      // Vírgula e parênteses quebram a sintaxe do filtro `or` do PostgREST.
+      const termo = buscaDebounced.replace(/[,()]/g, " ").trim();
+      // Com busca, ativas e arquivadas aparecem juntas; sem busca vale o "Exibir".
+      if (termo) q = q.or(`aluno_nome.ilike.%${termo}%,aluno_cpf.ilike.%${termo}%`);
+      else if (exibir === "arquivadas") q = q.not("arquivada_em", "is", null);
+      else q = q.is("arquivada_em", null);
 
       const { data: rows, count, error: err } = await q;
       if (err) throw new Error(err.message);
@@ -342,7 +358,18 @@ function MatriculasPage() {
       toast.error(e instanceof Error ? e.message : "Falha ao reprocessar a matrícula."),
   });
 
-  const filtrosAtivos = status !== "todos" || busca !== "";
+  const arquivamento = useMutation({
+    mutationFn: ({ id, arquivar }: { id: string; arquivar: boolean }) =>
+      arquivar ? arquivarFn({ data: { id } }) : desarquivarFn({ data: { id } }),
+    onSuccess: (_res, { arquivar }) => {
+      toast.success(arquivar ? "Matrícula arquivada." : "Matrícula desarquivada.");
+      queryClient.invalidateQueries({ queryKey: ["matriculas-submissoes"] });
+      queryClient.invalidateQueries({ queryKey: ["matriculas-pendencias"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao arquivar a matrícula."),
+  });
+
+  const filtrosAtivos = status !== "todos" || exibir !== "ativas" || busca !== "";
 
   return (
     <div className="space-y-4">
@@ -389,6 +416,27 @@ function MatriculasPage() {
             </SelectContent>
           </Select>
         </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-muted-foreground">Exibir</label>
+          <Select
+            value={exibir}
+            onValueChange={(v) => {
+              setExibir(v as Exibir);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 w-40">
+              <SelectValue placeholder="Exibir" />
+            </SelectTrigger>
+            <SelectContent>
+              {EXIBIR_FILTROS.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex flex-1 flex-col gap-1">
           <label className="text-[11px] font-medium text-muted-foreground">
             Buscar por aluno ou CPF
@@ -407,6 +455,7 @@ function MatriculasPage() {
             size="sm"
             onClick={() => {
               setStatus("todos");
+              setExibir("ativas");
               setBusca("");
               setPage(1);
             }}
@@ -431,10 +480,16 @@ function MatriculasPage() {
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
             <Inbox className="h-8 w-8 text-muted-foreground/60" />
-            <p className="text-sm font-medium">Nenhuma matrícula registrada.</p>
-            <p className="text-xs text-muted-foreground">
-              As respostas do formulário aparecem aqui assim que são enviadas.
+            <p className="text-sm font-medium">
+              {filtrosAtivos
+                ? "Nenhuma matrícula encontrada com estes filtros."
+                : "Nenhuma matrícula registrada."}
             </p>
+            {!filtrosAtivos && (
+              <p className="text-xs text-muted-foreground">
+                As respostas do formulário aparecem aqui assim que são enviadas.
+              </p>
+            )}
           </div>
         ) : (
           <Table>
@@ -461,7 +516,14 @@ function MatriculasPage() {
                   <TableCell className="whitespace-nowrap text-sm">
                     {formatDataHora(row.created_at)}
                   </TableCell>
-                  <TableCell className="text-sm font-medium">{row.aluno_nome || "—"}</TableCell>
+                  <TableCell className="text-sm font-medium">
+                    {row.aluno_nome || "—"}
+                    {row.arquivada_em && (
+                      <span className="ml-2 inline-flex items-center whitespace-nowrap rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                        Arquivada
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                     {row.aluno_cpf || "—"}
                   </TableCell>
@@ -494,6 +556,25 @@ function MatriculasPage() {
                           }`}
                         />
                         Reprocessar
+                      </Button>
+                    )}
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-1"
+                        title={row.arquivada_em ? "Desarquivar" : "Arquivar"}
+                        disabled={arquivamento.isPending && arquivamento.variables?.id === row.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          arquivamento.mutate({ id: row.id, arquivar: !row.arquivada_em });
+                        }}
+                      >
+                        {row.arquivada_em ? (
+                          <ArchiveRestore className="h-4 w-4" />
+                        ) : (
+                          <Archive className="h-4 w-4" />
+                        )}
                       </Button>
                     )}
                     {isAdmin && (
