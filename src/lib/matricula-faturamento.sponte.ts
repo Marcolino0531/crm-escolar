@@ -213,7 +213,7 @@ export interface EntradaFaturamento {
   horarios?: HorariosRotina;
 }
 
-/** Submissão já conferida no Sponte: turma, cobranças e lançamentos ficam fixos. */
+/** Submissão conferida: turma, cobranças e lançamentos ficam fixos. */
 export async function submissaoConferida(submissionId: string): Promise<boolean> {
   const { data, error } = await supabaseAdmin
     .from("enrollment_submissions" as never)
@@ -423,7 +423,7 @@ export async function faturarMatricula(entrada: EntradaFaturamento): Promise<Res
       status: "sem_lancamento",
       planoCursoId: null,
       lancamentos: [],
-      pendencias: ["Submissão conferida no Sponte — lançamentos fixados."],
+      pendencias: ["Submissão conferida — lançamentos fixados."],
     };
   }
   const creds = resolverCredenciais(entrada.unidade);

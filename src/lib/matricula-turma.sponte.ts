@@ -30,8 +30,6 @@ import {
   parseXmlValue,
   resolverCredenciais,
 } from "@/lib/sponte.functions";
-import { valorTopoXml } from "@/lib/diario-sync";
-import type { MatriculaSponteAluno } from "@/lib/matricula-conferencia";
 
 interface Credenciais {
   codigoCliente: string;
@@ -146,28 +144,6 @@ export async function contratoExistente(
     }
   }
   return null;
-}
-
-// Todas as matrículas (contratos) do aluno, para a conferência "Verificar no
-// Sponte" da tela Matrículas. Só leitura.
-export async function matriculasDoAluno(
-  creds: Credenciais,
-  alunoId: number,
-): Promise<MatriculaSponteAluno[]> {
-  const xml = await callSponte(
-    "GetMatriculas",
-    `AlunoID=${alunoId}`,
-    creds.codigoCliente,
-    creds.token,
-  );
-  const falha = checkFault(xml);
-  if (falha) throw new Error(`GetMatriculas: ${falha}`);
-  return parseXmlList(xml, "wsMatricula").map((item) => ({
-    contratoId: numero(item, "ContratoID"),
-    turmaId: numero(item, "TurmaID"),
-    turma: valorTopoXml(item, "NomeTurma"),
-    situacao: valorTopoXml(item, "Situacao"),
-  }));
 }
 
 export async function inserirMatricula(
