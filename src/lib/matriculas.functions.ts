@@ -352,6 +352,7 @@ export const listarPendenciasMatricula = createServerFn({ method: "GET" })
         "id, submission_id, unidade, aluno_nome, created_at, status, erro, turma_status, turma_pendencia, turma_nome, faturamento_status, faturamento_pendencia, pendencia_resolvida_em",
       )
       .is("pendencia_resolvida_em", null)
+      .is("arquivada_em", null)
       .or(FILTRO_OR_PENDENCIA)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -404,13 +405,16 @@ export const resolverPendenciaMatricula = createServerFn({ method: "POST" })
 // apagar. Os arquivos só saem do bucket depois que todas as linhas foram
 // apagadas com sucesso; falha ao apagar arquivo vai para o log.
 
-async function assertAdmin(userId: string) {
+async function assertAdmin(
+  userId: string,
+  mensagem = "Apenas administradores podem excluir uma submissão.",
+) {
   const { data } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
     .eq("user_id", userId);
   const admin = ((data ?? []) as { role: string }[]).some((r) => r.role === "admin");
-  if (!admin) throw new Error("Apenas administradores podem excluir uma submissão.");
+  if (!admin) throw new Error(mensagem);
 }
 
 type SubmissaoExclusaoRow = {
@@ -560,4 +564,49 @@ export const excluirMatricula = createServerFn({ method: "POST" })
     }
 
     return { ok: true, arquivosRemovidos };
+  });
+
+// ─── Arquivamento (somente admin) ───────────────────────────────────────────
+//
+// Arquivar só marca a submissão (arquivada_em/por/por_nome): nada muda no
+// Sponte, nas cobranças, na turma, nos documentos nem no status. A submissão
+// arquivada sai da lista "Ativas" e das pendências do sino, mas continua
+// encontrável pela busca por nome/CPF.
+
+const ArquivarInputSchema = z.object({ id: z.string().uuid() });
+
+async function marcarArquivada(id: string, campos: Record<string, unknown>): Promise<void> {
+  const { data, error } = await supabaseAdmin
+    .from("enrollment_submissions" as never)
+    .update(campos as never)
+    .eq("id", id)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (((data ?? []) as unknown[]).length === 0) throw new Error("Submissão não encontrada.");
+}
+
+export const arquivarMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await assertAdmin(context.userId, "Apenas administradores podem arquivar uma submissão.");
+    await marcarArquivada(data.id, {
+      arquivada_em: new Date().toISOString(),
+      arquivada_por: context.userId,
+      arquivada_por_nome: await nomeDoUsuario(context.userId),
+    });
+    return { ok: true };
+  });
+
+export const desarquivarMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await assertAdmin(context.userId, "Apenas administradores podem desarquivar uma submissão.");
+    await marcarArquivada(data.id, {
+      arquivada_em: null,
+      arquivada_por: null,
+      arquivada_por_nome: null,
+    });
+    return { ok: true };
   });
