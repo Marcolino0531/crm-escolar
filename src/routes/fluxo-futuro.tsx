@@ -1022,6 +1022,22 @@ function ForecastDialog({
             notes: notes.trim() || null,
           };
           if (forecast.series_id && tipo === "nao_fixa") patch.series_id = null;
+          // Lançamento da série movido para outro mês: o mês original passa a ser
+          // pulado pela série para não ser recriado pela materialização.
+          if (forecast.series_id && monthOfDue !== forecast.month) {
+            const { data: serie, error: sErr } = await supabase
+              .from("recurring_series")
+              .select("skipped_months")
+              .eq("id", forecast.series_id)
+              .single();
+            if (sErr) throw sErr;
+            const skipped = Array.from(new Set([...(serie?.skipped_months ?? []), forecast.month]));
+            const { error: uErr } = await supabase
+              .from("recurring_series")
+              .update({ skipped_months: skipped })
+              .eq("id", forecast.series_id);
+            if (uErr) throw uErr;
+          }
           const { error } = await supabase
             .from("recurring_forecasts")
             .update(patch)
