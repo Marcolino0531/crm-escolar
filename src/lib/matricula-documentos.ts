@@ -33,6 +33,7 @@ export function ehDocumentoLivre(chave: string): boolean {
 export function rotuloDocumento(doc: { documento: string; nomeDocumento?: string | null }): string {
   const nome = doc.nomeDocumento?.trim();
   if (nome) return nome;
+  if (ehDocumentoLivre(doc.documento)) return "Outro documento";
   return DOCUMENTOS_MATRICULA.find((d) => d.chave === doc.documento)?.rotulo ?? doc.documento;
 }
 

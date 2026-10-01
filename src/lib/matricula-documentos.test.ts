@@ -51,3 +51,17 @@ describe("regras do arquivo", () => {
     expect(caminhoDaSubmissao("secretaria/abc/x/y", "abc")).toBe(false);
   });
 });
+
+describe("rotuloDocumento", () => {
+  it("usa o nome da lista, o nome livre ou um rótulo genérico, nunca a chave técnica", () => {
+    expect(rotuloDocumento({ documento: "certidao_ou_rg" })).toBe(
+      DOCUMENTOS_MATRICULA.find((d) => d.chave === "certidao_ou_rg")?.rotulo,
+    );
+    expect(rotuloDocumento({ documento: "outro_abc", nomeDocumento: "Laudo médico" })).toBe(
+      "Laudo médico",
+    );
+    expect(rotuloDocumento({ documento: "outro_abc", nomeDocumento: null })).toBe(
+      "Outro documento",
+    );
+  });
+});

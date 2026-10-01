@@ -79,6 +79,7 @@ import {
   parseXmlValue,
   resolverCredenciais,
 } from "@/lib/sponte.functions";
+import { rotuloDocumento } from "@/lib/matricula-documentos";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { BUCKET_ZAPSIGN_ASSINADOS, guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
@@ -1180,6 +1181,7 @@ export interface DocumentoMatriculaDisponivel {
   id: string;
   alunoNome: string;
   documento: string;
+  rotulo: string;
   nomeArquivo: string;
   tipoArquivo: string;
   tamanhoBytes: number;
@@ -1189,6 +1191,7 @@ interface MatriculaDocRow {
   id: string;
   sponte_aluno_id: number | null;
   documento: string;
+  nome_documento?: string | null;
   storage_path: string;
   nome_arquivo: string;
   tipo_arquivo: string;
@@ -1207,7 +1210,7 @@ export const documentosMatriculaDoCaso = createServerFn({ method: "POST" })
     const { data: rows, error } = await supabaseAdmin
       .from("matricula_documentos" as never)
       .select(
-        "id, sponte_aluno_id, documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes",
+        "id, sponte_aluno_id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes",
       )
       .eq("unidade", caso.unidade)
       .in("sponte_aluno_id", ids)
@@ -1218,6 +1221,7 @@ export const documentosMatriculaDoCaso = createServerFn({ method: "POST" })
       id: r.id,
       alunoNome: nomePorId.get(String(r.sponte_aluno_id)) ?? "",
       documento: r.documento,
+      rotulo: rotuloDocumento({ documento: r.documento, nomeDocumento: r.nome_documento }),
       nomeArquivo: r.nome_arquivo,
       tipoArquivo: r.tipo_arquivo,
       tamanhoBytes: r.tamanho_bytes,
