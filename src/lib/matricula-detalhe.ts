@@ -6,7 +6,8 @@
 
 import { z } from "zod";
 import { MEALS, WEEKDAYS } from "@/lib/diario";
-import { DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
+import { origemDocumentoTexto, rotuloDocumento } from "@/lib/matricula-documentos";
+import { PERGUNTAS_SAUDE } from "@/lib/matricula-form";
 import { nomeInformadoDiferente } from "@/lib/matriculas-nome";
 import {
   montarSecoesFinanceiras,
@@ -346,9 +347,11 @@ function secaoDocumentos(documentos: DocumentoSubmissao[]): SecaoDetalhe {
       {
         titulo: null,
         campos: documentos.map((doc) => {
-          const rotulo =
-            DOCUMENTOS_MATRICULA.find((d) => d.chave === doc.documento)?.rotulo ?? doc.documento;
-          const base = campo(rotulo, `${doc.nomeArquivo} · ${tamanhoLegivel(doc.tamanhoBytes)}`);
+          const arquivo = `${doc.nomeArquivo} · ${tamanhoLegivel(doc.tamanhoBytes)}`;
+          const base = campo(
+            rotuloDocumento(doc),
+            doc.origem === "secretaria" ? `${arquivo}\n${origemDocumentoTexto(doc)}` : arquivo,
+          );
           return doc.url === null ? base : { ...base, link: doc.url };
         }),
       },

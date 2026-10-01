@@ -1744,7 +1744,7 @@ function BuscarNoSistema({ casoId, onDone }: { casoId: string; onDone: () => voi
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="font-medium">{doc.documento}</span>
+                      <span className="font-medium">{doc.rotulo}</span>
                       <span className="block text-xs text-muted-foreground">
                         {doc.alunoNome} · {doc.nomeArquivo}
                       </span>

@@ -6,6 +6,7 @@
 // Se o aluno já tinha sido criado na tentativa anterior, o reenvio vai direto
 // para os responsáveis (`alunoIdExistente`), sem duplicar o cadastro.
 
+import { randomUUID } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -13,7 +14,16 @@ import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
-import { BUCKET_DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
+import { BUCKET_DOCUMENTOS_MATRICULA, DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
+import {
+  PREFIXO_DOCUMENTO_LIVRE,
+  TAMANHO_MAX_NOME_DOCUMENTO,
+  caminhoDaSubmissao,
+  erroArquivoDocumento,
+  ordemDocumento,
+  pastaDocumentosSecretaria,
+  type OrigemDocumento,
+} from "@/lib/matricula-documentos";
 import {
   FILTRO_OR_PENDENCIA,
   motivosPendencia,
@@ -199,12 +209,26 @@ export interface SaudeSubmissao {
 }
 
 export interface DocumentoSubmissao {
+  id?: string;
   documento: string;
+  /** Nome livre ("Anexar outro documento"); null nos documentos da lista. */
+  nomeDocumento?: string | null;
   nomeArquivo: string;
   tipoArquivo: string;
   tamanhoBytes: number;
+  origem?: OrigemDocumento;
+  anexadoPorNome?: string | null;
+  anexadoEm?: string | null;
   // Assinado agora, de curta duração; null se o arquivo sumiu do bucket.
   url: string | null;
+  /** Mesmo arquivo, com o nome original para download. */
+  urlDownload?: string | null;
+}
+
+/** Versão anterior de um documento substituído na ficha (o arquivo continua no bucket). */
+export interface DocumentoHistoricoSubmissao extends DocumentoSubmissao {
+  substituidoEm: string;
+  substituidoPorNome: string | null;
 }
 
 export interface DetalheMatriculaResult {
@@ -213,7 +237,46 @@ export interface DetalheMatriculaResult {
   rotina?: RotinaSubmissao | null;
   saude?: SaudeSubmissao | null;
   documentos?: DocumentoSubmissao[];
+  historicoDocumentos?: DocumentoHistoricoSubmissao[];
   lancamentos?: LancamentoFicha[];
+}
+
+interface LinhaDocumento {
+  id: string;
+  documento: string;
+  nome_documento: string | null;
+  storage_path: string;
+  nome_arquivo: string;
+  tipo_arquivo: string;
+  tamanho_bytes: number;
+  origem: OrigemDocumento | null;
+  anexado_por_nome: string | null;
+}
+
+async function documentoAssinado(
+  doc: LinhaDocumento,
+  anexadoEm: string,
+): Promise<DocumentoSubmissao> {
+  const bucket = supabaseAdmin.storage.from(BUCKET_DOCUMENTOS_MATRICULA);
+  const [ver, baixar] = await Promise.all([
+    bucket.createSignedUrl(doc.storage_path, VALIDADE_LINK_DOCUMENTO),
+    bucket.createSignedUrl(doc.storage_path, VALIDADE_LINK_DOCUMENTO, {
+      download: doc.nome_arquivo,
+    }),
+  ]);
+  return {
+    id: doc.id,
+    documento: doc.documento,
+    nomeDocumento: doc.nome_documento,
+    nomeArquivo: doc.nome_arquivo,
+    tipoArquivo: doc.tipo_arquivo,
+    tamanhoBytes: doc.tamanho_bytes,
+    origem: doc.origem ?? "familia",
+    anexadoPorNome: doc.anexado_por_nome,
+    anexadoEm,
+    url: ver.data?.signedUrl ?? null,
+    urlDownload: baixar.data?.signedUrl ?? null,
+  };
 }
 
 const DetalheInputSchema = z.object({ submissionId: z.string().min(1).max(200) });
@@ -224,7 +287,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<DetalheMatriculaResult> => {
     await assertCanViewAdmissoes(context.userId);
 
-    const [rotinaRes, saudeRes, docsRes, lancRes] = await Promise.all([
+    const [rotinaRes, saudeRes, docsRes, histRes, lancRes] = await Promise.all([
       supabaseAdmin
         .from("student_routine" as never)
         .select(
@@ -239,9 +302,18 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         .maybeSingle(),
       supabaseAdmin
         .from("matricula_documentos" as never)
-        .select("documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes")
+        .select(
+          "id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes, origem, anexado_por_nome, created_at",
+        )
         .eq("submission_id", data.submissionId)
-        .order("documento"),
+        .order("created_at"),
+      supabaseAdmin
+        .from("matricula_documentos_historico" as never)
+        .select(
+          "id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes, origem, anexado_por_nome, anexado_em, substituido_em, substituido_por_nome",
+        )
+        .eq("submission_id", data.submissionId)
+        .order("substituido_em", { ascending: false }),
       supabaseAdmin
         .from("matricula_faturamento_lancamentos" as never)
         .select(
@@ -267,27 +339,29 @@ export const detalheMatricula = createServerFn({ method: "POST" })
 
     const linhaSaude = saudeRes.data as unknown as Record<string, string> | null;
 
-    const linhasDoc = (docsRes.data ?? []) as unknown as {
-      documento: string;
-      storage_path: string;
-      nome_arquivo: string;
-      tipo_arquivo: string;
-      tamanho_bytes: number;
-    }[];
+    if (docsRes.error) throw new Error(docsRes.error.message);
+    if (histRes.error) throw new Error(histRes.error.message);
+    const linhasDoc = (docsRes.data ?? []) as unknown as (LinhaDocumento & {
+      created_at: string;
+    })[];
+    const linhasHist = (histRes.data ?? []) as unknown as (LinhaDocumento & {
+      anexado_em: string;
+      substituido_em: string;
+      substituido_por_nome: string | null;
+    })[];
 
-    const documentos: DocumentoSubmissao[] = [];
-    for (const doc of linhasDoc) {
-      const { data: assinado } = await supabaseAdmin.storage
-        .from("matricula-documentos")
-        .createSignedUrl(doc.storage_path, VALIDADE_LINK_DOCUMENTO);
-      documentos.push({
-        documento: doc.documento,
-        nomeArquivo: doc.nome_arquivo,
-        tipoArquivo: doc.tipo_arquivo,
-        tamanhoBytes: doc.tamanho_bytes,
-        url: assinado?.signedUrl ?? null,
-      });
-    }
+    const documentos = await Promise.all(
+      [...linhasDoc]
+        .sort((a, b) => ordemDocumento(a.documento) - ordemDocumento(b.documento))
+        .map((doc) => documentoAssinado(doc, doc.created_at)),
+    );
+    const historicoDocumentos: DocumentoHistoricoSubmissao[] = await Promise.all(
+      linhasHist.map(async (doc) => ({
+        ...(await documentoAssinado(doc, doc.anexado_em)),
+        substituidoEm: doc.substituido_em,
+        substituidoPorNome: doc.substituido_por_nome,
+      })),
+    );
 
     return {
       ok: true,
@@ -323,6 +397,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
           }
         : null,
       documentos,
+      historicoDocumentos,
       lancamentos: (lancRes.data ?? []) as unknown as LancamentoFicha[],
     };
   });
@@ -508,6 +583,7 @@ const TABELAS_LIGADAS = [
   "student_routine",
   "matricula_saude",
   "matricula_documentos",
+  "matricula_documentos_historico",
   "onboarding",
   "matricula_faturamento_lancamentos",
 ] as const;
@@ -535,11 +611,23 @@ export const excluirMatricula = createServerFn({ method: "POST" })
 
     let caminhos: string[] = [];
     if (row.submission_id) {
-      const { data: docs } = await supabaseAdmin
-        .from("matricula_documentos" as never)
-        .select("storage_path")
-        .eq("submission_id", row.submission_id);
-      caminhos = ((docs ?? []) as unknown as { storage_path: string }[]).map((d) => d.storage_path);
+      const [{ data: docs }, { data: hist }] = await Promise.all([
+        supabaseAdmin
+          .from("matricula_documentos" as never)
+          .select("storage_path")
+          .eq("submission_id", row.submission_id),
+        supabaseAdmin
+          .from("matricula_documentos_historico" as never)
+          .select("storage_path")
+          .eq("submission_id", row.submission_id),
+      ]);
+      caminhos = [
+        ...new Set(
+          [...((docs ?? []) as unknown[]), ...((hist ?? []) as unknown[])].map(
+            (d) => (d as { storage_path: string }).storage_path,
+          ),
+        ),
+      ];
 
       for (const tabela of TABELAS_LIGADAS) {
         const { error } = await supabaseAdmin
@@ -697,5 +785,278 @@ export const desfazerConferenciaMatricula = createServerFn({ method: "POST" })
       .update({ conferido_em: null, conferido_por: null, conferido_por_nome: null } as never)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ─── Documentos anexados pela secretaria na ficha ───────────────────────────
+//
+// Para arquivos que a família mandou depois do envio (ex.: WhatsApp). Mesmo
+// bucket privado e mesmo mecanismo do formulário (link de upload assinado),
+// mas só para quem tem Editar no e-Formulário. A linha vai para
+// matricula_documentos com a submission_id, a unidade e o sponte_aluno_id da
+// submissão (é assim que a Cobrança já encontra os documentos do aluno). O
+// payload, a turma, as cobranças, a conferência e o arquivamento não mudam.
+// Substituir guarda a versão anterior em matricula_documentos_historico; o
+// arquivo antigo continua no bucket. Excluir: só admin e só anexos da
+// secretaria.
+
+const CHAVES_DOCUMENTO = DOCUMENTOS_MATRICULA.map((d) => d.chave) as [string, ...string[]];
+
+async function assertCanAnexarDocumento(userId: string) {
+  await exigirPermissaoPagina(
+    userId,
+    ["eformulario"],
+    "editar",
+    "Você não tem permissão para anexar documentos à matrícula.",
+  );
+}
+
+interface SubmissaoDocumentos {
+  id: string;
+  submission_id: string;
+  unidade: string;
+  sponte_aluno_id: number | null;
+}
+
+async function carregarSubmissaoDocumentos(id: string): Promise<SubmissaoDocumentos> {
+  const { data, error } = await supabaseAdmin
+    .from("enrollment_submissions" as never)
+    .select("id, submission_id, unidade, sponte_aluno_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const row = data as unknown as {
+    id: string;
+    submission_id: string | null;
+    unidade: string | null;
+    sponte_aluno_id: number | null;
+  } | null;
+  if (!row) throw new Error("Submissão não encontrada.");
+  if (!row.submission_id || !row.unidade)
+    throw new Error("Esta submissão não tem ficha local para receber documentos.");
+  return {
+    id: row.id,
+    submission_id: row.submission_id,
+    unidade: row.unidade,
+    sponte_aluno_id: row.sponte_aluno_id,
+  };
+}
+
+const UrlUploadSecretariaSchema = z.object({
+  id: z.string().uuid(),
+  tipo: z.string().max(100),
+  tamanho: z.number().int().nonnegative(),
+});
+
+export type UrlUploadSecretaria =
+  | { ok: true; path: string; token: string }
+  | { ok: false; erro: string };
+
+export const urlUploadDocumentoSecretaria = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => UrlUploadSecretariaSchema.parse(input))
+  .handler(async ({ data, context }): Promise<UrlUploadSecretaria> => {
+    await assertCanAnexarDocumento(context.userId);
+    const erro = erroArquivoDocumento(data.tipo, data.tamanho);
+    if (erro) return { ok: false, erro };
+    const sub = await carregarSubmissaoDocumentos(data.id);
+
+    const path = `${pastaDocumentosSecretaria(sub.id)}/${randomUUID()}`;
+    const { data: assinado, error } = await supabaseAdmin.storage
+      .from(BUCKET_DOCUMENTOS_MATRICULA)
+      .createSignedUploadUrl(path);
+    if (error || !assinado)
+      return { ok: false, erro: "Não foi possível enviar o arquivo agora. Tente novamente." };
+    return { ok: true, path: assinado.path, token: assinado.token };
+  });
+
+const RegistrarDocumentoSchema = z
+  .object({
+    id: z.string().uuid(),
+    path: z.string().min(1).max(300),
+    nomeArquivo: z.string().min(1).max(300),
+    documento: z.enum(CHAVES_DOCUMENTO).optional(),
+    nomeDocumento: z.string().max(TAMANHO_MAX_NOME_DOCUMENTO).optional(),
+  })
+  .refine((d) => (d.documento !== undefined) !== (d.nomeDocumento !== undefined), {
+    message: "Informe o documento da lista ou o nome do documento.",
+  });
+
+async function metadadosDoArquivo(path: string): Promise<{ tipo: string; tamanho: number } | null> {
+  const barra = path.lastIndexOf("/");
+  const { data } = await supabaseAdmin.storage
+    .from(BUCKET_DOCUMENTOS_MATRICULA)
+    .list(path.slice(0, barra), { search: path.slice(barra + 1), limit: 10 });
+  const obj = (data ?? []).find((o) => o.name === path.slice(barra + 1));
+  if (!obj) return null;
+  const meta = (obj.metadata ?? {}) as { mimetype?: unknown; size?: unknown };
+  return {
+    tipo: typeof meta.mimetype === "string" ? meta.mimetype : "",
+    tamanho: typeof meta.size === "number" ? meta.size : 0,
+  };
+}
+
+async function removerArquivo(path: string): Promise<void> {
+  const { error } = await supabaseAdmin.storage.from(BUCKET_DOCUMENTOS_MATRICULA).remove([path]);
+  if (error) console.error("[matrículas] falha ao remover arquivo do bucket:", error.message, path);
+}
+
+export const registrarDocumentoSecretaria = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => RegistrarDocumentoSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true; substituido: boolean }> => {
+    await assertCanAnexarDocumento(context.userId);
+    const sub = await carregarSubmissaoDocumentos(data.id);
+    if (!caminhoDaSubmissao(data.path, sub.id)) throw new Error("Arquivo inválido.");
+
+    const nomeDocumento = data.nomeDocumento?.trim() ?? null;
+    if (data.documento === undefined && !nomeDocumento)
+      throw new Error("Informe o nome do documento.");
+
+    const meta = await metadadosDoArquivo(data.path);
+    if (!meta) throw new Error("O arquivo não chegou ao armazenamento. Envie de novo.");
+    const erro = erroArquivoDocumento(meta.tipo, meta.tamanho);
+    if (erro) {
+      await removerArquivo(data.path);
+      throw new Error(erro);
+    }
+
+    const agora = new Date().toISOString();
+    const nomeUsuario = await nomeDoUsuario(context.userId);
+    const novo = {
+      storage_path: data.path,
+      nome_arquivo: data.nomeArquivo.slice(0, 200),
+      tipo_arquivo: meta.tipo,
+      tamanho_bytes: meta.tamanho,
+      origem: "secretaria",
+      anexado_por: context.userId,
+      anexado_por_nome: nomeUsuario,
+      created_at: agora,
+    };
+
+    if (data.documento === undefined) {
+      const { error } = await supabaseAdmin.from("matricula_documentos" as never).insert({
+        submission_id: sub.submission_id,
+        unidade: sub.unidade,
+        sponte_aluno_id: sub.sponte_aluno_id,
+        documento: `${PREFIXO_DOCUMENTO_LIVRE}${randomUUID()}`,
+        nome_documento: nomeDocumento,
+        ...novo,
+      } as never);
+      if (error) {
+        await removerArquivo(data.path);
+        throw new Error(`Falha ao registrar o documento: ${error.message}`);
+      }
+      return { ok: true, substituido: false };
+    }
+
+    const { data: atualRaw, error: atualErr } = await supabaseAdmin
+      .from("matricula_documentos" as never)
+      .select(
+        "id, submission_id, unidade, sponte_aluno_id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes, origem, anexado_por, anexado_por_nome, created_at",
+      )
+      .eq("submission_id", sub.submission_id)
+      .eq("documento", data.documento)
+      .maybeSingle();
+    if (atualErr) {
+      await removerArquivo(data.path);
+      throw new Error(atualErr.message);
+    }
+    const atual = atualRaw as unknown as
+      | (LinhaDocumento & {
+          submission_id: string;
+          unidade: string;
+          sponte_aluno_id: number | null;
+          anexado_por: string | null;
+          created_at: string;
+        })
+      | null;
+
+    if (!atual) {
+      const { error } = await supabaseAdmin.from("matricula_documentos" as never).insert({
+        submission_id: sub.submission_id,
+        unidade: sub.unidade,
+        sponte_aluno_id: sub.sponte_aluno_id,
+        documento: data.documento,
+        ...novo,
+      } as never);
+      if (error) {
+        await removerArquivo(data.path);
+        throw new Error(`Falha ao registrar o documento: ${error.message}`);
+      }
+      return { ok: true, substituido: false };
+    }
+
+    const { data: histRow, error: histErr } = await supabaseAdmin
+      .from("matricula_documentos_historico" as never)
+      .insert({
+        documento_id: atual.id,
+        submission_id: atual.submission_id,
+        unidade: atual.unidade,
+        sponte_aluno_id: atual.sponte_aluno_id,
+        documento: atual.documento,
+        nome_documento: atual.nome_documento,
+        storage_path: atual.storage_path,
+        nome_arquivo: atual.nome_arquivo,
+        tipo_arquivo: atual.tipo_arquivo,
+        tamanho_bytes: atual.tamanho_bytes,
+        origem: atual.origem ?? "familia",
+        anexado_por: atual.anexado_por,
+        anexado_por_nome: atual.anexado_por_nome,
+        anexado_em: atual.created_at,
+        substituido_em: agora,
+        substituido_por: context.userId,
+        substituido_por_nome: nomeUsuario,
+      } as never)
+      .select("id")
+      .single();
+    if (histErr) {
+      await removerArquivo(data.path);
+      throw new Error(`Falha ao guardar a versão anterior: ${histErr.message}`);
+    }
+
+    const { error: updErr } = await supabaseAdmin
+      .from("matricula_documentos" as never)
+      .update({ ...novo, sponte_aluno_id: atual.sponte_aluno_id ?? sub.sponte_aluno_id } as never)
+      .eq("id", atual.id);
+    if (updErr) {
+      await supabaseAdmin
+        .from("matricula_documentos_historico" as never)
+        .delete()
+        .eq("id", (histRow as unknown as { id: string }).id);
+      await removerArquivo(data.path);
+      throw new Error(`Falha ao substituir o documento: ${updErr.message}`);
+    }
+    return { ok: true, substituido: true };
+  });
+
+const ExcluirDocumentoSchema = z.object({ documentoId: z.string().uuid() });
+
+export const excluirDocumentoSecretaria = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => ExcluirDocumentoSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await assertAdmin(context.userId, "Apenas administradores podem excluir um documento anexado.");
+    const { data: raw, error } = await supabaseAdmin
+      .from("matricula_documentos" as never)
+      .select("id, storage_path, origem")
+      .eq("id", data.documentoId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const doc = raw as unknown as {
+      id: string;
+      storage_path: string;
+      origem: string | null;
+    } | null;
+    if (!doc) throw new Error("Documento não encontrado.");
+    if (doc.origem !== "secretaria")
+      throw new Error("Documentos enviados pela família no formulário não podem ser excluídos.");
+
+    const { error: delErr } = await supabaseAdmin
+      .from("matricula_documentos" as never)
+      .delete()
+      .eq("id", doc.id);
+    if (delErr) throw new Error(`Falha ao excluir o documento: ${delErr.message}`);
+    await removerArquivo(doc.storage_path);
     return { ok: true };
   });

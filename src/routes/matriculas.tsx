@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { AVISO_SPONTE, rotuloCobrancas } from "@/lib/matricula-exclusao";
 import { AccessDenied } from "@/components/AccessDenied";
+import { DocumentosFicha } from "@/components/matricula/DocumentosFicha";
 import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1050,6 +1051,7 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
   });
   const queryClient = useQueryClient();
   const { isAdmin } = useRole();
+  const { canEdit } = usePermissions();
   const resolverFn = useServerFn(resolverPendenciaMatricula);
   const resolver = useMutation({
     mutationFn: async () => resolverFn({ data: { id: submissao.id } }),
@@ -1136,9 +1138,21 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
         </p>
       )}
 
-      {secoes.map((secao) => (
-        <BlocoSecao key={secao.titulo} secao={secao} />
-      ))}
+      {secoes.map((secao) =>
+        secao.titulo === "Documentos" && submissionId !== null && data?.ok ? (
+          <DocumentosFicha
+            key={secao.titulo}
+            submissaoId={submissao.id}
+            submissionId={submissionId}
+            documentos={data.documentos ?? []}
+            historico={data.historicoDocumentos ?? []}
+            podeAnexar={canEdit("eformulario")}
+            podeExcluir={isAdmin}
+          />
+        ) : (
+          <BlocoSecao key={secao.titulo} secao={secao} />
+        ),
+      )}
     </div>
   );
 }
