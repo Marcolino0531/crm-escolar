@@ -7,6 +7,7 @@ import { avisarExtrasContrato } from "@/lib/contrato-avisos-toast";
 import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { BaixarAssinadoButton } from "@/components/documentos/BaixarAssinadoButton";
+import { SeloSignatario } from "@/components/zapsign/SeloSignatario";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -167,13 +168,6 @@ function DialogoCancelamento({
   );
 }
 
-const SIGNER_LABEL: Record<string, string> = {
-  new: "Aguardando",
-  link_opened: "Abriu o link",
-  signed: "Assinou",
-  refused: "Recusou",
-};
-
 // Um bloco por signatário (CONTRATANTE, CONTRATADO, TESTEMUNHA 1 e 2): quem já
 // assinou, quem falta e o link individual de cada um.
 export function Signatarios({ signatarios }: { signatarios: SignatarioContratoStatus[] }) {
@@ -187,24 +181,13 @@ export function Signatarios({ signatarios }: { signatarios: SignatarioContratoSt
     >
       {signatarios.map((s, i) => {
         const assinou = s.status === "signed";
-        const recusou = s.status === "refused";
         return (
           <div key={`${s.papel}-${i}`} className="contents">
             <span className="truncate font-medium">{s.papel}</span>
             <span className="truncate text-muted-foreground" title={s.nome}>
               {s.nome}
             </span>
-            <Badge
-              className={`justify-center whitespace-nowrap ${
-                assinou
-                  ? "bg-emerald-100 text-emerald-800"
-                  : recusou
-                    ? "bg-red-100 text-red-800"
-                    : "bg-amber-100 text-amber-900"
-              }`}
-            >
-              {SIGNER_LABEL[s.status] ?? s.status}
-            </Badge>
+            <SeloSignatario status={s.status} />
             {!assinou && s.signUrl ? (
               <a
                 href={s.signUrl}

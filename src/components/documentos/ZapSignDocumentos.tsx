@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { SeloSignatario } from "@/components/zapsign/SeloSignatario";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -716,14 +717,28 @@ function TabelaDocumentos({
                 {d.erro && <div className="text-xs text-red-600">{d.erro}</div>}
               </TableCell>
               <TableCell>
-                <ul className="space-y-1">
-                  {d.signatarios.map((s, i) => (
-                    <li key={i} className="text-sm">
-                      <div className="flex items-center gap-1">
-                        <span>{s.nome}</span>
-                        <span className="text-xs text-muted-foreground">({s.status})</span>
-                        {s.sign_url && (
-                          <>
+                {/* Colunas fixas (nome | selo | links) para os selos ficarem alinhados em todas as linhas. */}
+                <div
+                  className="grid min-w-[18rem] items-center gap-x-2 gap-y-1.5 text-sm"
+                  style={{ gridTemplateColumns: "minmax(0, 1fr) 6rem 3.25rem" }}
+                >
+                  {d.signatarios.map((s, i) => {
+                    const assinou = s.status === "signed";
+                    return (
+                      <div key={i} className="contents">
+                        <div className="min-w-0">
+                          <div className="truncate" title={s.nome}>
+                            {s.nome}
+                          </div>
+                          {(s.email || s.telefone) && (
+                            <div className="truncate text-xs text-muted-foreground">
+                              {[s.email, s.telefone].filter(Boolean).join(" · ")}
+                            </div>
+                          )}
+                        </div>
+                        <SeloSignatario status={s.status} />
+                        {!assinou && s.sign_url ? (
+                          <div className="flex items-center gap-1">
                             <Button
                               type="button"
                               variant="ghost"
@@ -743,17 +758,14 @@ function TabelaDocumentos({
                             >
                               <ExternalLink className="h-3 w-3" />
                             </a>
-                          </>
+                          </div>
+                        ) : (
+                          <span />
                         )}
                       </div>
-                      {(s.email || s.telefone) && (
-                        <div className="text-xs text-muted-foreground">
-                          {[s.email, s.telefone].filter(Boolean).join(" · ")}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                    );
+                  })}
+                </div>
               </TableCell>
               <TableCell>
                 <StatusBadge status={d.status} />
