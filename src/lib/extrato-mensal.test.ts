@@ -76,7 +76,12 @@ describe("integridade", () => {
     const alterada = {
       ...folha,
       colaboradores: folha.colaboradores.map((c, i) =>
-        i === 0 ? { ...c, rubricas: c.rubricas.map((r, j) => (j === 0 ? { ...r, valor: r.valor + 0.01 } : r)) } : c,
+        i === 0
+          ? {
+              ...c,
+              rubricas: c.rubricas.map((r, j) => (j === 0 ? { ...r, valor: r.valor + 0.01 } : r)),
+            }
+          : c,
       ),
     };
     const erros = conferirIntegridade(alterada);
@@ -110,7 +115,10 @@ describe("integridade", () => {
 
   it("outro cálculo (13º, férias) é recusado", () => {
     const pags = clonar();
-    for (const p of pags) for (const i of p.itens) if (i.str.includes("Folha Mensal")) i.str = i.str.replace("Folha Mensal", "13º Salário Integral");
+    for (const p of pags)
+      for (const i of p.itens)
+        if (i.str.includes("Folha Mensal"))
+          i.str = i.str.replace("Folha Mensal", "13º Salário Integral");
     expect(() => lerExtratoMensal(pags)).toThrow(/Folha Mensal/);
   });
 });

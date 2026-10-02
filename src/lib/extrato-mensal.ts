@@ -116,7 +116,8 @@ export function formatarReais(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-export const somenteDigitos = (s: string | null | undefined): string => (s ?? "").replace(/\D/g, "");
+export const somenteDigitos = (s: string | null | undefined): string =>
+  (s ?? "").replace(/\D/g, "");
 
 // ---------- Linhas ----------
 
@@ -172,7 +173,8 @@ const juntar = (v: string[] | undefined) => (v ?? []).join(" ").trim();
 function valorCampo(m: Map<string, string[]>, rotulo: string, onde: string): number {
   const bruto = juntar(m.get(rotulo)?.slice(0, 1));
   const c = centavosBR(bruto);
-  if (c == null) throw new ErroExtratoMensal(`${onde}: valor de "${rotulo}" ilegível ("${bruto}").`);
+  if (c == null)
+    throw new ErroExtratoMensal(`${onde}: valor de "${rotulo}" ilegível ("${bruto}").`);
   return deCentavos(c);
 }
 
@@ -182,17 +184,14 @@ const comeca = (l: Linha, prefixo: string) => l.itens[0]?.str.trim().startsWith(
 
 const RE_REFERENCIA = /^-?[\d.]+(?:,\d+)?$|^\d{1,3}:\d{2}$/;
 
-function rubricaDe(
-  tokens: string[],
-  tipo: TipoRubrica,
-  onde: string,
-): RubricaExtrato {
+function rubricaDe(tokens: string[], tipo: TipoRubrica, onde: string): RubricaExtrato {
   const t = tokens.slice();
   // valor + letra: "417,16 D" (um item) ou "566,03" + "P" (dois itens)
   const ultimo = t.pop() ?? "";
   let valorTxt: string;
   if (ultimo === tipo) valorTxt = t.pop() ?? "";
-  else if (ultimo.endsWith(` ${tipo}`) || ultimo.endsWith(tipo)) valorTxt = ultimo.slice(0, -1).trim();
+  else if (ultimo.endsWith(` ${tipo}`) || ultimo.endsWith(tipo))
+    valorTxt = ultimo.slice(0, -1).trim();
   else throw new ErroExtratoMensal(`${onde}: rubrica sem a letra ${tipo} ("${tokens.join(" ")}").`);
   const c = centavosBR(valorTxt);
   if (c == null) {
@@ -249,7 +248,15 @@ const ROT_ND = [
   "Líquido:",
 ];
 const ROT_NF = ["NF:", "Base INSS:", "Excedente INSS:", "Base FGTS:", "Valor FGTS:", "Base IRRF:"];
-const ROT_CABECALHO = ["Empresa:", "CNPJ:", "Cálculo:", "Competência:", "Página:", "Emissão:", "Horas:"];
+const ROT_CABECALHO = [
+  "Empresa:",
+  "CNPJ:",
+  "Cálculo:",
+  "Competência:",
+  "Página:",
+  "Emissão:",
+  "Horas:",
+];
 
 function ehCabecalho(l: Linha): boolean {
   const t = textoLinha(l);
@@ -281,7 +288,11 @@ function nomeColaborador(c: { codigo: string; nome: string }) {
  */
 export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato {
   const cab = { empresa: "", cnpj: "", calculo: "", competencia: "" };
-  const totais = { proventos: null as number | null, descontos: null as number | null, liquido: null as number | null };
+  const totais = {
+    proventos: null as number | null,
+    descontos: null as number | null,
+    liquido: null as number | null,
+  };
   const colaboradores: ColaboradorExtrato[] = [];
   let atual: Parcial | null = null;
   let fimDaFolha = false;
@@ -290,9 +301,12 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
     if (!atual) return;
     const onde = `Colaborador ${nomeColaborador(atual)} (página ${atual.pagina})`;
     if (atual.proventos == null || atual.descontos == null || atual.liquido == null) {
-      throw new ErroExtratoMensal(`${onde}: linha "ND:" com Proventos/Descontos/Líquido não encontrada.`);
+      throw new ErroExtratoMensal(
+        `${onde}: linha "ND:" com Proventos/Descontos/Líquido não encontrada.`,
+      );
     }
-    if (!atual.nfLido) throw new ErroExtratoMensal(`${onde}: linha "NF:" com as bases não encontrada.`);
+    if (!atual.nfLido)
+      throw new ErroExtratoMensal(`${onde}: linha "NF:" com as bases não encontrada.`);
     const { nfLido: _nf, ...resto } = atual;
     void _nf;
     colaboradores.push({
@@ -315,7 +329,9 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
         if (m.has("Cálculo:")) {
           const calc = juntar(m.get("Cálculo:"));
           if (cab.calculo && calc !== cab.calculo) {
-            throw new ErroExtratoMensal(`${onde}: cálculo "${calc}" diferente de "${cab.calculo}".`);
+            throw new ErroExtratoMensal(
+              `${onde}: cálculo "${calc}" diferente de "${cab.calculo}".`,
+            );
           }
           cab.calculo = calc;
         }
@@ -325,7 +341,9 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
           if (!mm) throw new ErroExtratoMensal(`${onde}: competência ilegível ("${comp}").`);
           const iso = `${mm[2]}-${mm[1]}`;
           if (cab.competencia && iso !== cab.competencia) {
-            throw new ErroExtratoMensal(`${onde}: competência ${comp} diferente das páginas anteriores.`);
+            throw new ErroExtratoMensal(
+              `${onde}: competência ${comp} diferente das páginas anteriores.`,
+            );
           }
           cab.competencia = iso;
         }
@@ -333,11 +351,17 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
       }
       if (fimDaFolha) continue;
 
-      if (comeca(l, "Total Geral Proventos:") || comeca(l, "Total Geral Descontos:") || comeca(l, "Líquido Geral:")) {
+      if (
+        comeca(l, "Total Geral Proventos:") ||
+        comeca(l, "Total Geral Descontos:") ||
+        comeca(l, "Líquido Geral:")
+      ) {
         fechar();
         const m = campos(l, ["Total Geral Proventos:", "Total Geral Descontos:", "Líquido Geral:"]);
-        if (m.has("Total Geral Proventos:")) totais.proventos = valorCampo(m, "Total Geral Proventos:", onde);
-        if (m.has("Total Geral Descontos:")) totais.descontos = valorCampo(m, "Total Geral Descontos:", onde);
+        if (m.has("Total Geral Proventos:"))
+          totais.proventos = valorCampo(m, "Total Geral Proventos:", onde);
+        if (m.has("Total Geral Descontos:"))
+          totais.descontos = valorCampo(m, "Total Geral Descontos:", onde);
         if (m.has("Líquido Geral:")) totais.liquido = valorCampo(m, "Líquido Geral:", onde);
         if (totais.proventos != null && totais.descontos != null && totais.liquido != null) {
           fimDaFolha = true; // o que vem depois (Resumo por Rubrica, Situações / Bases) não é colaborador
@@ -351,7 +375,8 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
         const m = campos(l, ROT_IDENT);
         const ident = juntar(m.get(tipo === "empregado" ? "Empr.:" : "Contr:"));
         const mm = /^(\d+)\s+(.+)$/.exec(ident);
-        if (!mm) throw new ErroExtratoMensal(`${onde}: código/nome do colaborador ilegível ("${ident}").`);
+        if (!mm)
+          throw new ErroExtratoMensal(`${onde}: código/nome do colaborador ilegível ("${ident}").`);
         atual = {
           tipo,
           codigo: mm[1],
@@ -400,7 +425,8 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
         c.cargoCodigo = mm ? mm[1] : "";
         c.cargo = mm ? mm[2].trim() : cargo;
         c.cbo = juntar(m.get("C.B.O:"));
-        c.salarioBase = m.has("Salário:") && juntar(m.get("Salário:")) ? valorCampo(m, "Salário:", ondeC) : 0;
+        c.salarioBase =
+          m.has("Salário:") && juntar(m.get("Salário:")) ? valorCampo(m, "Salário:", ondeC) : 0;
       } else if (comeca(l, "ND:")) {
         const m = campos(l, ROT_ND);
         c.proventos = valorCampo(m, "Proventos:", ondeC);
@@ -437,7 +463,8 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
   }
   fechar();
 
-  if (!cab.calculo) throw new ErroExtratoMensal('Cabeçalho sem "Cálculo:". Não parece um Extrato Mensal.');
+  if (!cab.calculo)
+    throw new ErroExtratoMensal('Cabeçalho sem "Cálculo:". Não parece um Extrato Mensal.');
   if (cab.calculo !== CALCULO_ACEITO) {
     throw new ErroExtratoMensal(
       `Este PDF é do cálculo "${cab.calculo}". Só é aceito o Extrato Mensal de "${CALCULO_ACEITO}" (13º, férias e adiantamento não entram aqui).`,
@@ -449,7 +476,8 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
       'Totais gerais não encontrados ("Total Geral Proventos", "Total Geral Descontos", "Líquido Geral"). O PDF pode estar incompleto.',
     );
   }
-  if (colaboradores.length === 0) throw new ErroExtratoMensal("Nenhum colaborador encontrado no PDF.");
+  if (colaboradores.length === 0)
+    throw new ErroExtratoMensal("Nenhum colaborador encontrado no PDF.");
 
   return {
     ...cab,
@@ -539,6 +567,10 @@ export function importarExtratoMensal(paginas: readonly PaginaItens[]): FolhaExt
 }
 
 /** INSS do mês = rubricas de DESCONTO de código 998 (não entram 826, 989, 843…). */
-export function inssDoColaborador(c: { rubricas: readonly Pick<RubricaExtrato, "tipo" | "codigo" | "valor">[] }): number {
-  return somaReais(c.rubricas.filter((r) => r.tipo === "D" && r.codigo === CODIGO_INSS).map((r) => r.valor));
+export function inssDoColaborador(c: {
+  rubricas: readonly Pick<RubricaExtrato, "tipo" | "codigo" | "valor">[];
+}): number {
+  return somaReais(
+    c.rubricas.filter((r) => r.tipo === "D" && r.codigo === CODIGO_INSS).map((r) => r.valor),
+  );
 }

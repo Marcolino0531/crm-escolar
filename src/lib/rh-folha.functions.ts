@@ -43,6 +43,7 @@ export type ImportacaoFolha = {
   status: StatusCompetencia;
   empresa: string;
   cnpj: string;
+  calculo: string;
   cnpjColegio: string;
   cnpjDivergente: boolean;
   totalProventos: number;
@@ -115,6 +116,7 @@ type ImportacaoRow = {
   status: StatusCompetencia;
   empresa: string;
   cnpj: string;
+  calculo: string;
   cnpj_colegio: string;
   cnpj_divergente: boolean;
   total_proventos: Num;
@@ -192,7 +194,7 @@ type FuncionarioRow = {
 };
 
 const IMPORTACAO_COLS =
-  "id, school_id, competencia, status, empresa, cnpj, cnpj_colegio, cnpj_divergente, total_proventos, total_descontos, liquido_geral, total_colaboradores, importado_em, importado_por_nome, reimportado_em, reimportado_por_nome, fechado_em, fechado_por_nome, reaberto_em, reaberto_por_nome";
+  "id, school_id, competencia, status, empresa, cnpj, calculo, cnpj_colegio, cnpj_divergente, total_proventos, total_descontos, liquido_geral, total_colaboradores, importado_em, importado_por_nome, reimportado_em, reimportado_por_nome, fechado_em, fechado_por_nome, reaberto_em, reaberto_por_nome";
 
 const COLABORADOR_COLS =
   "id, importacao_id, funcionario_id, vinculo_manual, tipo, codigo, nome, cpf, situacao, vinculo, admissao, cargo, cbo, horas_mes, salario_base, informativa, informativa_dedutora, base_inss, excedente_inss, base_fgts, valor_fgts, base_irrf, observacoes, proventos_pdf, descontos_pdf, liquido_pdf, proventos, descontos, liquido, status, divergencias, confirmado_em, confirmado_por_nome, ajustado_em, ajustado_por_nome, ajuste_observacao";
@@ -206,6 +208,7 @@ function paraImportacao(r: ImportacaoRow): ImportacaoFolha {
     status: r.status,
     empresa: r.empresa,
     cnpj: r.cnpj,
+    calculo: r.calculo,
     cnpjColegio: r.cnpj_colegio,
     cnpjDivergente: r.cnpj_divergente,
     totalProventos: n(r.total_proventos),
@@ -348,7 +351,10 @@ async function importacaoDa(schoolId: string, competencia: string): Promise<Impo
   return (data as ImportacaoRow | null) ?? null;
 }
 
-async function exigirImportacaoAberta(schoolId: string, competencia: string): Promise<ImportacaoRow> {
+async function exigirImportacaoAberta(
+  schoolId: string,
+  competencia: string,
+): Promise<ImportacaoRow> {
   const imp = await importacaoDa(schoolId, competencia);
   if (!imp) throw new Error("Não há folha importada nesta competência.");
   exigirCompetenciaAberta(imp.status);
@@ -411,7 +417,12 @@ function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
     liquido: c.liquidoPdf,
     rubricas: c.rubricas
       .filter((r) => r.origem === "pdf")
-      .map((r) => ({ tipo: r.tipo, codigo: r.codigo, descricao: r.descricao, valor: r.valorOriginal ?? r.valor })),
+      .map((r) => ({
+        tipo: r.tipo,
+        codigo: r.codigo,
+        descricao: r.descricao,
+        valor: r.valorOriginal ?? r.valor,
+      })),
     ajustadoManualmente: c.ajustadoEm != null,
   };
 }
@@ -445,7 +456,10 @@ async function folhaAnterior(
   if (error) throw new Error(error.message);
   if (!data) return null;
   const imp = data as { id: string; competencia: string };
-  return { competencia: imp.competencia, colaboradores: (await colaboradoresDa(imp.id)).map(vigente) };
+  return {
+    competencia: imp.competencia,
+    colaboradores: (await colaboradoresDa(imp.id)).map(vigente),
+  };
 }
 
 async function funcionariosDa(schoolId: string): Promise<FuncionarioRow[]> {
@@ -578,7 +592,9 @@ function revalidarFolha(folha: FolhaRecebida): void {
     if (codigos.has(c.codigo)) throw new Error(`Código ${c.codigo} repetido na folha.`);
     codigos.add(c.codigo);
   }
-  const erros = conferirIntegridade(folha as { colaboradores: ColaboradorExtrato[] } & FolhaRecebida);
+  const erros = conferirIntegridade(
+    folha as { colaboradores: ColaboradorExtrato[] } & FolhaRecebida,
+  );
   if (erros.length) throw new Error(`A folha não fecha; nada foi importado.\n${erros.join("\n")}`);
 }
 
@@ -611,7 +627,10 @@ export const obterFolhaCompetencia = createServerFn({ method: "POST" })
     async ({
       data,
       context,
-    }): Promise<{ importacao: ImportacaoFolha | null; colaboradores: ColaboradorFolhaGravado[] }> => {
+    }): Promise<{
+      importacao: ImportacaoFolha | null;
+      colaboradores: ColaboradorFolhaGravado[];
+    }> => {
       await contexto(context.userId, data.schoolId, false);
       if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
       const imp = await importacaoDa(data.schoolId, data.competencia);
@@ -742,31 +761,38 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       });
 
       const nome = await nomeDoUsuario(context.userId);
-      const { error } = await supabaseAdmin.rpc("rh_folha_gravar_importacao" as never, {
-        p: {
-          school_id: data.schoolId,
-          competencia: folha.competencia,
-          empresa: folha.empresa,
-          cnpj: folha.cnpj,
-          cnpj_colegio: cnpjColegio,
-          cnpj_divergente: cnpjDivergente,
-          total_proventos: folha.totalProventos,
-          total_descontos: folha.totalDescontos,
-          liquido_geral: folha.liquidoGeral,
-          total_colaboradores: folha.colaboradores.length,
-          por: context.userId,
-          por_nome: nome,
-          gravar,
-          retirar: [...retirar],
-        },
-      } as never);
+      const { error } = await supabaseAdmin.rpc(
+        "rh_folha_gravar_importacao" as never,
+        {
+          p: {
+            school_id: data.schoolId,
+            competencia: folha.competencia,
+            empresa: folha.empresa,
+            cnpj: folha.cnpj,
+            cnpj_colegio: cnpjColegio,
+            cnpj_divergente: cnpjDivergente,
+            total_proventos: folha.totalProventos,
+            total_descontos: folha.totalDescontos,
+            liquido_geral: folha.liquidoGeral,
+            total_colaboradores: folha.colaboradores.length,
+            por: context.userId,
+            por_nome: nome,
+            gravar,
+            retirar: [...retirar],
+          },
+        } as never,
+      );
       if (error) throw new Error(error.message);
 
       await sincronizarSalarios(
         folha.competencia,
         gravar
           .filter((g) => g.status === "confirmado")
-          .map((g) => ({ funcionarioId: g.funcionario_id, proventos: g.proventos, liquido: g.liquido })),
+          .map((g) => ({
+            funcionarioId: g.funcionario_id,
+            proventos: g.proventos,
+            liquido: g.liquido,
+          })),
         context.userId,
         nome,
       );
@@ -815,7 +841,8 @@ export const confirmarColaboradoresFolha = createServerFn({ method: "POST" })
       )
       .eq("status", "em_conferencia");
     if (error) throw new Error(error.message);
-    for (const c of alvo) await registrarEvento(imp.id, c.id, "confirmacao", {}, context.userId, nome);
+    for (const c of alvo)
+      await registrarEvento(imp.id, c.id, "confirmacao", {}, context.userId, nome);
     await sincronizarSalarios(data.competencia, alvo, context.userId, nome);
     return { confirmados: alvo.length };
   });
@@ -863,7 +890,13 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
         id: z.string().uuid(),
         observacao: z.string().trim().min(1, "A observação do ajuste é obrigatória.").max(1000),
         pdf: z
-          .array(z.object({ ordem: z.number().int(), valor: numero.nonnegative(), removida: z.boolean() }))
+          .array(
+            z.object({
+              ordem: z.number().int(),
+              valor: numero.nonnegative(),
+              removida: z.boolean(),
+            }),
+          )
           .max(200),
         manuais: z
           .array(
@@ -891,9 +924,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
         .filter((r) => r.origem === "pdf")
         .map((r) => {
           const e = edicao.get(r.ordem);
-          return e
-            ? { ...r, valor: Math.round(e.valor * 100) / 100, removida: e.removida }
-            : r;
+          return e ? { ...r, valor: Math.round(e.valor * 100) / 100, removida: e.removida } : r;
         }),
       ...data.manuais.map((m, i) => ({
         ordem: 10000 + i,
@@ -909,28 +940,31 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
       })),
     ];
     const t = totaisAjustados(rubricas);
-    const { error } = await supabaseAdmin.rpc("rh_folha_ajustar_colaborador" as never, {
-      p: {
-        colaborador_id: c.id,
-        observacao: data.observacao,
-        por: context.userId,
-        por_nome: await nomeDoUsuario(context.userId),
-        proventos: t.proventos,
-        descontos: t.descontos,
-        liquido: t.liquido,
-        rubricas: rubricas.map((r) => ({
-          tipo: r.tipo,
-          codigo: r.codigo,
-          descricao: r.descricao,
-          referencia: r.referencia,
-          valor_hora: r.valorHora,
-          valor: r.valor,
-          valor_original: r.valorOriginal,
-          origem: r.origem,
-          removida: r.removida,
-        })),
-      },
-    } as never);
+    const { error } = await supabaseAdmin.rpc(
+      "rh_folha_ajustar_colaborador" as never,
+      {
+        p: {
+          colaborador_id: c.id,
+          observacao: data.observacao,
+          por: context.userId,
+          por_nome: await nomeDoUsuario(context.userId),
+          proventos: t.proventos,
+          descontos: t.descontos,
+          liquido: t.liquido,
+          rubricas: rubricas.map((r) => ({
+            tipo: r.tipo,
+            codigo: r.codigo,
+            descricao: r.descricao,
+            referencia: r.referencia,
+            valor_hora: r.valorHora,
+            valor: r.valor,
+            valor_original: r.valorOriginal,
+            origem: r.origem,
+            removida: r.removida,
+          })),
+        },
+      } as never,
+    );
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -997,7 +1031,9 @@ async function marcacoesDa(schoolId: string): Promise<MarcacaoRestituicao[]> {
   }>(() =>
     supabaseAdmin
       .from("rh_restituicao_inss_marcacoes" as never)
-      .select("funcionario_id, recebe, atualizado_em, atualizado_por_nome, funcionarios!inner(school_id)")
+      .select(
+        "funcionario_id, recebe, atualizado_em, atualizado_por_nome, funcionarios!inner(school_id)",
+      )
       .eq("funcionarios.school_id", schoolId)
       .order("funcionario_id"),
   );
@@ -1018,7 +1054,9 @@ export const fecharCompetenciaFolha = createServerFn({ method: "POST" })
     const colaboradores = await colaboradoresDa(imp.id);
     const pendentes = pendentesParaFechar(colaboradores);
     if (pendentes.length) {
-      throw new Error(`Ainda há ${pendentes.length} colaborador(es) Em conferência: ${pendentes.join(", ")}.`);
+      throw new Error(
+        `Ainda há ${pendentes.length} colaborador(es) Em conferência: ${pendentes.join(", ")}.`,
+      );
     }
     const marcados = new Set(
       (await marcacoesDa(data.schoolId)).filter((m) => m.recebe).map((m) => m.funcionarioId),
@@ -1048,7 +1086,12 @@ export const fecharCompetenciaFolha = createServerFn({ method: "POST" })
     }
     const { error } = await supabaseAdmin
       .from("rh_folha_importacoes" as never)
-      .update({ status: "fechada", fechado_em: agora, fechado_por: context.userId, fechado_por_nome: nome } as never)
+      .update({
+        status: "fechada",
+        fechado_em: agora,
+        fechado_por: context.userId,
+        fechado_por_nome: nome,
+      } as never)
       .eq("id", imp.id)
       .eq("status", "aberta");
     if (error) throw new Error(error.message);
@@ -1123,13 +1166,15 @@ export const marcarRestituicaoInss = createServerFn({ method: "POST" })
       { onConflict: "funcionario_id" } as never,
     );
     if (error) throw new Error(error.message);
-    const { error: hErr } = await supabaseAdmin.from("rh_restituicao_inss_historico" as never).insert({
-      funcionario_id: data.funcionarioId,
-      recebe: data.recebe,
-      em: agora,
-      por: context.userId,
-      por_nome: nome,
-    } as never);
+    const { error: hErr } = await supabaseAdmin
+      .from("rh_restituicao_inss_historico" as never)
+      .insert({
+        funcionario_id: data.funcionarioId,
+        recebe: data.recebe,
+        em: agora,
+        por: context.userId,
+        por_nome: nome,
+      } as never);
     if (hErr) throw new Error(hErr.message);
     return { ok: true };
   });

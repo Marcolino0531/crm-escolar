@@ -14,6 +14,7 @@ import {
   exigirUnidadeFolha,
 } from "@/lib/rh-folha.functions";
 import { selectAll } from "@/lib/supabase-paginate";
+import { somaReais } from "@/lib/extrato-mensal";
 
 type SalarioRow = {
   id: string;
@@ -160,7 +161,7 @@ export const salvarFolhaSalario = createServerFn({ method: "POST" })
     if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
     await exigirUnidadeFolha(context.userId, data.schoolId);
     await conferirLoteComFolha(data.schoolId, data.competencia, data.itens);
-    const total = Math.round(data.itens.reduce((acc, i) => acc + i.total_amount, 0) * 100) / 100;
+    const total = somaReais(data.itens.map((i) => i.total_amount));
     const { data: batch, error: bErr } = await supabaseAdmin
       .from("hr_transport_batches" as never)
       .insert({

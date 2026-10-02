@@ -5,7 +5,12 @@
 // extrato-mensal.ts. O servidor recebe apenas os dados estruturados.
 
 import { lerItensDeTexto } from "./pdf-text";
-import { importarExtratoMensal, type FolhaExtrato, type ItemTexto, type PaginaItens } from "./extrato-mensal";
+import {
+  importarExtratoMensal,
+  type FolhaExtrato,
+  type ItemTexto,
+  type PaginaItens,
+} from "./extrato-mensal";
 import { ErroLeituraPdf, TAMANHO_MAXIMO_PDF_MB } from "./contracheques.pdf";
 import { classificarErroPdf } from "./contracheques";
 

@@ -85,7 +85,11 @@ function rubricasPorCodigo(rubricas: readonly RubricaComparavel[]): Map<string, 
     const k = `${r.tipo}:${r.codigo}`;
     const atual = m.get(k);
     if (atual) atual.centavos += paraCentavos(r.valor);
-    else m.set(k, { rotulo: `${r.tipo} ${r.codigo} ${r.descricao}`.trim(), centavos: paraCentavos(r.valor) });
+    else
+      m.set(k, {
+        rotulo: `${r.tipo} ${r.codigo} ${r.descricao}`.trim(),
+        centavos: paraCentavos(r.valor),
+      });
   }
   return m;
 }
@@ -108,7 +112,12 @@ export function divergenciasDoColaborador(
   if (!anterior) return [{ tipo: "novo", antes: null, depois: atual.nome, diferenca: null }];
   const out: Divergencia[] = [];
   if (anterior.situacao.trim() !== atual.situacao.trim()) {
-    out.push({ tipo: "situacao", antes: anterior.situacao, depois: atual.situacao, diferenca: null });
+    out.push({
+      tipo: "situacao",
+      antes: anterior.situacao,
+      depois: atual.situacao,
+      diferenca: null,
+    });
   }
   const p = diferencaValor("proventos", anterior.proventos, atual.proventos);
   if (p) out.push(p);
@@ -134,7 +143,13 @@ export function divergenciasDoColaborador(
   for (const [k, a] of antes) {
     if (depois.has(k)) continue;
     const v = deCentavos(a.centavos);
-    out.push({ tipo: "rubrica_removida", rubrica: a.rotulo, antes: v, depois: null, diferenca: -v });
+    out.push({
+      tipo: "rubrica_removida",
+      rubrica: a.rotulo,
+      antes: v,
+      depois: null,
+      diferenca: -v,
+    });
   }
   return out;
 }
@@ -211,7 +226,12 @@ export function planejarReimportacao<T extends ColaboradorComparavel>(
     const div = divergenciasDoColaborador(g, c);
     const descontosIguais = paraCentavos(g.descontos) === paraCentavos(c.descontos);
     if (div.length === 0 && descontosIguais && g.nome === c.nome) plano.iguais.push(c);
-    else plano.substituidos.push({ colaborador: c, divergencias: div, perdeAjusteManual: g.ajustadoManualmente });
+    else
+      plano.substituidos.push({
+        colaborador: c,
+        divergencias: div,
+        perdeAjusteManual: g.ajustadoManualmente,
+      });
   }
   plano.retirados = gravados.filter((g) => !vistos.has(chaveColaborador(g)));
   return plano;
@@ -233,7 +253,10 @@ export type AjusteRubrica =
   | { op: "incluir"; tipo: TipoRubrica; codigo: string; descricao: string; valor: number }
   | { op: "remover"; indice: number };
 
-export function aplicarAjuste(rubricas: readonly RubricaFolha[], ajuste: AjusteRubrica): RubricaFolha[] {
+export function aplicarAjuste(
+  rubricas: readonly RubricaFolha[],
+  ajuste: AjusteRubrica,
+): RubricaFolha[] {
   const out = rubricas.map((r) => ({ ...r }));
   if (ajuste.op === "incluir") {
     if (!ajuste.descricao.trim()) throw new Error("Informe a descrição da rubrica.");
@@ -284,16 +307,24 @@ export function foiAjustada(rubricas: readonly RubricaFolha[]): boolean {
 // ---------- Restituição do INSS ----------
 
 /** INSS do mês = rubricas de DESCONTO de código 998 vigentes (não entram 826, 989, 843…). */
-export function inssDoMes(rubricas: readonly (Pick<RubricaComparavel, "tipo" | "codigo" | "valor"> & { removida?: boolean })[]): number {
+export function inssDoMes(
+  rubricas: readonly (Pick<RubricaComparavel, "tipo" | "codigo" | "valor"> & {
+    removida?: boolean;
+  })[],
+): number {
   return somaReais(
-    rubricas.filter((r) => !r.removida && r.tipo === "D" && r.codigo === CODIGO_INSS).map((r) => r.valor),
+    rubricas
+      .filter((r) => !r.removida && r.tipo === "D" && r.codigo === CODIGO_INSS)
+      .map((r) => r.valor),
   );
 }
 
 export type ColaboradorRestituicao = {
   id: string;
   funcionarioId: string | null;
-  rubricas: readonly (Pick<RubricaComparavel, "tipo" | "codigo" | "valor"> & { removida?: boolean })[];
+  rubricas: readonly (Pick<RubricaComparavel, "tipo" | "codigo" | "valor"> & {
+    removida?: boolean;
+  })[];
   /** Valor gravado no fechamento (null enquanto a competência está aberta). */
   restituicaoGravada: number | null;
 };

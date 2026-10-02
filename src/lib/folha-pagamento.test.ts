@@ -60,12 +60,29 @@ describe("comparação entre competências", () => {
     });
     const d = divergenciasDoColaborador(antes, depois);
     const por = (t: string) => d.filter((x) => x.tipo === t);
-    expect(por("situacao")).toEqual([{ tipo: "situacao", antes: "Trabalhando", depois: "Férias", diferenca: null }]);
+    expect(por("situacao")).toEqual([
+      { tipo: "situacao", antes: "Trabalhando", depois: "Férias", diferenca: null },
+    ]);
     expect(por("proventos")[0]).toMatchObject({ antes: 3000, depois: 3100.1, diferenca: 100.1 });
     expect(por("liquido")[0]).toMatchObject({ antes: 2670, depois: 2850.09, diferenca: 180.09 });
-    expect(por("rubrica_nova")[0]).toMatchObject({ rubrica: "P 150 HORA EXTRA", antes: null, depois: 100.1, diferenca: 100.1 });
-    expect(por("rubrica_valor")[0]).toMatchObject({ rubrica: "D 998 INSS", antes: 250, depois: 250.01, diferenca: 0.01 });
-    expect(por("rubrica_removida")[0]).toMatchObject({ rubrica: "D 48 VALE TRANSPORTE", antes: 80, depois: null, diferenca: -80 });
+    expect(por("rubrica_nova")[0]).toMatchObject({
+      rubrica: "P 150 HORA EXTRA",
+      antes: null,
+      depois: 100.1,
+      diferenca: 100.1,
+    });
+    expect(por("rubrica_valor")[0]).toMatchObject({
+      rubrica: "D 998 INSS",
+      antes: 250,
+      depois: 250.01,
+      diferenca: 0.01,
+    });
+    expect(por("rubrica_removida")[0]).toMatchObject({
+      rubrica: "D 48 VALE TRANSPORTE",
+      antes: 80,
+      depois: null,
+      diferenca: -80,
+    });
   });
 
   it("um centavo de diferença conta (sem erro de ponto flutuante)", () => {
@@ -73,11 +90,17 @@ describe("comparação entre competências", () => {
     const b = colab({ proventos: 0.3 });
     expect(divergenciasDoColaborador(a, b)).toEqual([]);
     const c = colab({ proventos: 0.31 });
-    expect(divergenciasDoColaborador(b, c)[0]).toMatchObject({ tipo: "proventos", diferenca: 0.01 });
+    expect(divergenciasDoColaborador(b, c)[0]).toMatchObject({
+      tipo: "proventos",
+      diferenca: 0.01,
+    });
   });
 
   it("ausentes, pré-seleção e primeira importação", () => {
-    const anterior = [colab(), colab({ codigo: "2", cpf: "900.000.002-56", nome: "SAIU DA FOLHA" })];
+    const anterior = [
+      colab(),
+      colab({ codigo: "2", cpf: "900.000.002-56", nome: "SAIU DA FOLHA" }),
+    ];
     const atual = [colab(), colab({ codigo: "3", cpf: "900.000.003-37", nome: "ENTROU" })];
     const cmp = compararFolhas(anterior, atual);
     expect(cmp.primeiraImportacao).toBe(false);
@@ -112,7 +135,9 @@ describe("reimportação da mesma competência", () => {
     ];
     const plano = planejarReimportacao(gravados, novo);
     expect(plano.iguais.map((c) => c.codigo)).toEqual(["1"]);
-    expect(plano.substituidos.map((s) => [s.colaborador.codigo, s.perdeAjusteManual])).toEqual([["2", true]]);
+    expect(plano.substituidos.map((s) => [s.colaborador.codigo, s.perdeAjusteManual])).toEqual([
+      ["2", true],
+    ]);
     expect(plano.novos.map((c) => c.codigo)).toEqual(["3"]);
     expect(plano.retirados.map((c) => c.codigo)).toEqual(["4"]);
   });
@@ -120,9 +145,36 @@ describe("reimportação da mesma competência", () => {
 
 describe("ajuste manual", () => {
   const base: RubricaFolha[] = [
-    { tipo: "P", codigo: "1", descricao: "SALARIO", referencia: "30", valor: 3000, origem: "pdf", valorOriginal: 3000, removida: false },
-    { tipo: "D", codigo: "998", descricao: "INSS", referencia: "", valor: 250, origem: "pdf", valorOriginal: 250, removida: false },
-    { tipo: "D", codigo: "48", descricao: "VALE TRANSPORTE", referencia: "", valor: 80, origem: "pdf", valorOriginal: 80, removida: false },
+    {
+      tipo: "P",
+      codigo: "1",
+      descricao: "SALARIO",
+      referencia: "30",
+      valor: 3000,
+      origem: "pdf",
+      valorOriginal: 3000,
+      removida: false,
+    },
+    {
+      tipo: "D",
+      codigo: "998",
+      descricao: "INSS",
+      referencia: "",
+      valor: 250,
+      origem: "pdf",
+      valorOriginal: 250,
+      removida: false,
+    },
+    {
+      tipo: "D",
+      codigo: "48",
+      descricao: "VALE TRANSPORTE",
+      referencia: "",
+      valor: 80,
+      origem: "pdf",
+      valorOriginal: 80,
+      removida: false,
+    },
   ];
 
   it("editar valor recalcula e preserva o original", () => {
@@ -133,7 +185,13 @@ describe("ajuste manual", () => {
   });
 
   it("incluir rubrica manual recalcula", () => {
-    const r = aplicarAjuste(base, { op: "incluir", tipo: "D", codigo: "", descricao: "ADIANTAMENTO", valor: 500.1 });
+    const r = aplicarAjuste(base, {
+      op: "incluir",
+      tipo: "D",
+      codigo: "",
+      descricao: "ADIANTAMENTO",
+      valor: 500.1,
+    });
     expect(r.at(-1)).toMatchObject({ origem: "manual", valorOriginal: null });
     expect(totaisAjustados(r)).toEqual({ proventos: 3000, descontos: 830.1, liquido: 2169.9 });
   });
@@ -143,7 +201,13 @@ describe("ajuste manual", () => {
     expect(r).toHaveLength(3);
     expect(r[2].removida).toBe(true);
     expect(totaisAjustados(r)).toEqual({ proventos: 3000, descontos: 250, liquido: 2750 });
-    const comManual = aplicarAjuste(base, { op: "incluir", tipo: "P", codigo: "", descricao: "BONUS", valor: 10 });
+    const comManual = aplicarAjuste(base, {
+      op: "incluir",
+      tipo: "P",
+      codigo: "",
+      descricao: "BONUS",
+      valor: 10,
+    });
     expect(aplicarAjuste(comManual, { op: "remover", indice: 3 })).toHaveLength(3);
   });
 
@@ -157,12 +221,25 @@ describe("restituição do INSS", () => {
   const rub = (codigo: string, valor: number, tipo: "P" | "D" = "D") => ({ tipo, codigo, valor });
 
   it("só rubrica D 998 (não 826, 989, 843 nem P 998)", () => {
-    expect(inssDoMes([rub("998", 100.1), rub("826", 50), rub("989", 30), rub("843", 20), rub("998", 9, "P")])).toBe(100.1);
+    expect(
+      inssDoMes([
+        rub("998", 100.1),
+        rub("826", 50),
+        rub("989", 30),
+        rub("843", 20),
+        rub("998", 9, "P"),
+      ]),
+    ).toBe(100.1);
     expect(inssDoMes([{ ...rub("998", 100), removida: true }])).toBe(0);
   });
 
   const colaboradores = [
-    { id: "c1", funcionarioId: "f1", rubricas: [rub("998", 417.16), rub("826", 99)], restituicaoGravada: null },
+    {
+      id: "c1",
+      funcionarioId: "f1",
+      rubricas: [rub("998", 417.16), rub("826", 99)],
+      restituicaoGravada: null,
+    },
     { id: "c2", funcionarioId: "f2", rubricas: [rub("998", 300.05)], restituicaoGravada: null },
     { id: "c3", funcionarioId: null, rubricas: [rub("998", 200)], restituicaoGravada: null },
     { id: "c4", funcionarioId: "f4", rubricas: [rub("843", 500)], restituicaoGravada: null },
@@ -175,7 +252,10 @@ describe("restituição do INSS", () => {
   });
 
   it("mês fechado usa o valor gravado e não muda ao desmarcar", () => {
-    const gravadas = colaboradores.map((c) => ({ ...c, restituicaoGravada: c.id === "c1" ? 417.16 : c.id === "c2" ? 300.05 : 0 }));
+    const gravadas = colaboradores.map((c) => ({
+      ...c,
+      restituicaoGravada: c.id === "c1" ? 417.16 : c.id === "c2" ? 300.05 : 0,
+    }));
     const r = restituicoesDaCompetencia(gravadas, new Set(), true);
     expect(r.total).toBe(717.21);
     expect(restituicoesDaCompetencia(gravadas, new Set(["f4"]), true).total).toBe(717.21);
@@ -195,10 +275,42 @@ describe("restituição do INSS", () => {
 
 describe("resumo e lote de pagamento", () => {
   const linhas: LinhaResumo[] = [
-    { chave: "1", funcionarioId: "f1", nome: "CONFIRMADA", status: "confirmado", bruto: 4754.6, liquido: 4052.17, restituicao: 417.16 },
-    { chave: "2", funcionarioId: "f2", nome: "PENDENTE", status: "em_conferencia", bruto: 3000, liquido: 2670, restituicao: 0 },
-    { chave: "3", funcionarioId: "f3", nome: "ESTAGIARIA", status: "manual", bruto: 1200, liquido: 1200.1, restituicao: 0 },
-    { chave: "4", funcionarioId: null, nome: "SEM CADASTRO", status: "confirmado", bruto: 10, liquido: 10, restituicao: 0 },
+    {
+      chave: "1",
+      funcionarioId: "f1",
+      nome: "CONFIRMADA",
+      status: "confirmado",
+      bruto: 4754.6,
+      liquido: 4052.17,
+      restituicao: 417.16,
+    },
+    {
+      chave: "2",
+      funcionarioId: "f2",
+      nome: "PENDENTE",
+      status: "em_conferencia",
+      bruto: 3000,
+      liquido: 2670,
+      restituicao: 0,
+    },
+    {
+      chave: "3",
+      funcionarioId: "f3",
+      nome: "ESTAGIARIA",
+      status: "manual",
+      bruto: 1200,
+      liquido: 1200.1,
+      restituicao: 0,
+    },
+    {
+      chave: "4",
+      funcionarioId: null,
+      nome: "SEM CADASTRO",
+      status: "confirmado",
+      bruto: 10,
+      liquido: 10,
+      restituicao: 0,
+    },
   ];
 
   it("lote soma só Confirmados e Manuais pelo líquido; Em conferência fora; restituição não entra", () => {
