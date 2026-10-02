@@ -9,63 +9,188 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as UploadRouteImport } from './routes/upload'
-import { Route as UniformesRouteImport } from './routes/uniformes'
-import { Route as TasksRouteImport } from './routes/tasks'
-import { Route as RhRouteImport } from './routes/rh'
-import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
-import { Route as ProfessorRouteImport } from './routes/professor'
-import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
-import { Route as PortalRouteImport } from './routes/portal'
-import { Route as PedagogicoRouteImport } from './routes/pedagogico'
-import { Route as OnboardingRouteImport } from './routes/onboarding'
-import { Route as MatriculasRouteImport } from './routes/matriculas'
-import { Route as MatriculaRouteImport } from './routes/matricula'
-import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
-import { Route as FundosRouteImport } from './routes/fundos'
-import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
-import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
-import { Route as EstoqueMaterialRouteImport } from './routes/estoque-material'
-import { Route as EsportesRouteImport } from './routes/esportes'
-import { Route as DocumentosRouteImport } from './routes/documentos'
-import { Route as DiarioRouteImport } from './routes/diario'
-import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
-import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
-import { Route as ColoniaRouteImport } from './routes/colonia'
-import { Route as CobrancaAutomaticaRouteImport } from './routes/cobranca-automatica'
-import { Route as CobrancaRouteImport } from './routes/cobranca'
-import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
-import { Route as CantinaRouteImport } from './routes/cantina'
-import { Route as BibliotecaRouteImport } from './routes/biblioteca'
-import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
-import { Route as AtendimentoRouteImport } from './routes/atendimento'
-import { Route as AnalisesIaRouteImport } from './routes/analises-ia'
-import { Route as AgendaRouteImport } from './routes/agenda'
-import { Route as AdmissoesRouteImport } from './routes/admissoes'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdmissoesRouteImport } from './routes/admissoes'
+import { Route as AgendaRouteImport } from './routes/agenda'
+import { Route as AnalisesIaRouteImport } from './routes/analises-ia'
+import { Route as AtendimentoRouteImport } from './routes/atendimento'
+import { Route as AtendimentoIaRouteImport } from './routes/atendimento-ia'
+import { Route as BibliotecaRouteImport } from './routes/biblioteca'
+import { Route as CantinaRouteImport } from './routes/cantina'
+import { Route as CartaoCreditoRouteImport } from './routes/cartao-credito'
+import { Route as CobrancaRouteImport } from './routes/cobranca'
+import { Route as CobrancaAutomaticaRouteImport } from './routes/cobranca-automatica'
+import { Route as ColoniaRouteImport } from './routes/colonia'
+import { Route as ConciliacaoRouteImport } from './routes/conciliacao'
+import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
+import { Route as DiarioRouteImport } from './routes/diario'
+import { Route as DocumentosRouteImport } from './routes/documentos'
+import { Route as EsportesRouteImport } from './routes/esportes'
+import { Route as EstoqueMaterialRouteImport } from './routes/estoque-material'
+import { Route as ExtratoBancarioRouteImport } from './routes/extrato-bancario'
+import { Route as FluxoFuturoRouteImport } from './routes/fluxo-futuro'
+import { Route as FundosRouteImport } from './routes/fundos'
+import { Route as InadimplenciaRouteImport } from './routes/inadimplencia'
+import { Route as MatriculaRouteImport } from './routes/matricula'
+import { Route as MatriculasRouteImport } from './routes/matriculas'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as PedagogicoRouteImport } from './routes/pedagogico'
+import { Route as PortalRouteImport } from './routes/portal'
+import { Route as PortalCantinaRouteImport } from './routes/portal-cantina'
+import { Route as ProfessorRouteImport } from './routes/professor'
+import { Route as RematriculaAcompanhamentoRouteImport } from './routes/rematricula-acompanhamento'
+import { Route as RhRouteImport } from './routes/rh'
+import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as UniformesRouteImport } from './routes/uniformes'
+import { Route as UploadRouteImport } from './routes/upload'
 import { Route as RematriculaIndexRouteImport } from './routes/rematricula.index'
-import { Route as RematriculaVerificarRouteImport } from './routes/rematricula_.verificar'
 import { Route as RematriculaAnoRouteImport } from './routes/rematricula.$ano'
+import { Route as RematriculaVerificarRouteImport } from './routes/rematricula_.verificar'
 import { Route as RematriculaAnoVerificarRouteImport } from './routes/rematricula_.$ano_.verificar'
 
-const UploadRoute = UploadRouteImport.update({
-  id: '/upload',
-  path: '/upload',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const UniformesRoute = UniformesRouteImport.update({
-  id: '/uniformes',
-  path: '/uniformes',
+const AdmissoesRoute = AdmissoesRouteImport.update({
+  id: '/admissoes',
+  path: '/admissoes',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TasksRoute = TasksRouteImport.update({
-  id: '/tasks',
-  path: '/tasks',
+const AgendaRoute = AgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RhRoute = RhRouteImport.update({
-  id: '/rh',
-  path: '/rh',
+const AnalisesIaRoute = AnalisesIaRouteImport.update({
+  id: '/analises-ia',
+  path: '/analises-ia',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtendimentoRoute = AtendimentoRouteImport.update({
+  id: '/atendimento',
+  path: '/atendimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtendimentoIaRoute = AtendimentoIaRouteImport.update({
+  id: '/atendimento-ia',
+  path: '/atendimento-ia',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BibliotecaRoute = BibliotecaRouteImport.update({
+  id: '/biblioteca',
+  path: '/biblioteca',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CantinaRoute = CantinaRouteImport.update({
+  id: '/cantina',
+  path: '/cantina',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
+  id: '/cartao-credito',
+  path: '/cartao-credito',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CobrancaRoute = CobrancaRouteImport.update({
+  id: '/cobranca',
+  path: '/cobranca',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CobrancaAutomaticaRoute = CobrancaAutomaticaRouteImport.update({
+  id: '/cobranca-automatica',
+  path: '/cobranca-automatica',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ColoniaRoute = ColoniaRouteImport.update({
+  id: '/colonia',
+  path: '/colonia',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConciliacaoRoute = ConciliacaoRouteImport.update({
+  id: '/conciliacao',
+  path: '/conciliacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
+  id: '/configuracoes',
+  path: '/configuracoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DiarioRoute = DiarioRouteImport.update({
+  id: '/diario',
+  path: '/diario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentosRoute = DocumentosRouteImport.update({
+  id: '/documentos',
+  path: '/documentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EsportesRoute = EsportesRouteImport.update({
+  id: '/esportes',
+  path: '/esportes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstoqueMaterialRoute = EstoqueMaterialRouteImport.update({
+  id: '/estoque-material',
+  path: '/estoque-material',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExtratoBancarioRoute = ExtratoBancarioRouteImport.update({
+  id: '/extrato-bancario',
+  path: '/extrato-bancario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
+  id: '/fluxo-futuro',
+  path: '/fluxo-futuro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FundosRoute = FundosRouteImport.update({
+  id: '/fundos',
+  path: '/fundos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InadimplenciaRoute = InadimplenciaRouteImport.update({
+  id: '/inadimplencia',
+  path: '/inadimplencia',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatriculaRoute = MatriculaRouteImport.update({
+  id: '/matricula',
+  path: '/matricula',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MatriculasRoute = MatriculasRouteImport.update({
+  id: '/matriculas',
+  path: '/matriculas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedagogicoRoute = PedagogicoRouteImport.update({
+  id: '/pedagogico',
+  path: '/pedagogico',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalCantinaRoute = PortalCantinaRouteImport.update({
+  id: '/portal-cantina',
+  path: '/portal-cantina',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfessorRoute = ProfessorRouteImport.update({
+  id: '/professor',
+  path: '/professor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RematriculaAcompanhamentoRoute =
@@ -74,149 +199,24 @@ const RematriculaAcompanhamentoRoute =
     path: '/rematricula-acompanhamento',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ProfessorRoute = ProfessorRouteImport.update({
-  id: '/professor',
-  path: '/professor',
+const RhRoute = RhRouteImport.update({
+  id: '/rh',
+  path: '/rh',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PortalCantinaRoute = PortalCantinaRouteImport.update({
-  id: '/portal-cantina',
-  path: '/portal-cantina',
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PortalRoute = PortalRouteImport.update({
-  id: '/portal',
-  path: '/portal',
+const UniformesRoute = UniformesRouteImport.update({
+  id: '/uniformes',
+  path: '/uniformes',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PedagogicoRoute = PedagogicoRouteImport.update({
-  id: '/pedagogico',
-  path: '/pedagogico',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OnboardingRoute = OnboardingRouteImport.update({
-  id: '/onboarding',
-  path: '/onboarding',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MatriculasRoute = MatriculasRouteImport.update({
-  id: '/matriculas',
-  path: '/matriculas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MatriculaRoute = MatriculaRouteImport.update({
-  id: '/matricula',
-  path: '/matricula',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InadimplenciaRoute = InadimplenciaRouteImport.update({
-  id: '/inadimplencia',
-  path: '/inadimplencia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FundosRoute = FundosRouteImport.update({
-  id: '/fundos',
-  path: '/fundos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FluxoFuturoRoute = FluxoFuturoRouteImport.update({
-  id: '/fluxo-futuro',
-  path: '/fluxo-futuro',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExtratoBancarioRoute = ExtratoBancarioRouteImport.update({
-  id: '/extrato-bancario',
-  path: '/extrato-bancario',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EstoqueMaterialRoute = EstoqueMaterialRouteImport.update({
-  id: '/estoque-material',
-  path: '/estoque-material',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EsportesRoute = EsportesRouteImport.update({
-  id: '/esportes',
-  path: '/esportes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DocumentosRoute = DocumentosRouteImport.update({
-  id: '/documentos',
-  path: '/documentos',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiarioRoute = DiarioRouteImport.update({
-  id: '/diario',
-  path: '/diario',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
-  id: '/configuracoes',
-  path: '/configuracoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConciliacaoRoute = ConciliacaoRouteImport.update({
-  id: '/conciliacao',
-  path: '/conciliacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ColoniaRoute = ColoniaRouteImport.update({
-  id: '/colonia',
-  path: '/colonia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CobrancaAutomaticaRoute = CobrancaAutomaticaRouteImport.update({
-  id: '/cobranca-automatica',
-  path: '/cobranca-automatica',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CobrancaRoute = CobrancaRouteImport.update({
-  id: '/cobranca',
-  path: '/cobranca',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CartaoCreditoRoute = CartaoCreditoRouteImport.update({
-  id: '/cartao-credito',
-  path: '/cartao-credito',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CantinaRoute = CantinaRouteImport.update({
-  id: '/cantina',
-  path: '/cantina',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BibliotecaRoute = BibliotecaRouteImport.update({
-  id: '/biblioteca',
-  path: '/biblioteca',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AtendimentoIaRoute = AtendimentoIaRouteImport.update({
-  id: '/atendimento-ia',
-  path: '/atendimento-ia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AtendimentoRoute = AtendimentoRouteImport.update({
-  id: '/atendimento',
-  path: '/atendimento',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AnalisesIaRoute = AnalisesIaRouteImport.update({
-  id: '/analises-ia',
-  path: '/analises-ia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgendaRoute = AgendaRouteImport.update({
-  id: '/agenda',
-  path: '/agenda',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdmissoesRoute = AdmissoesRouteImport.update({
-  id: '/admissoes',
-  path: '/admissoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const UploadRoute = UploadRouteImport.update({
+  id: '/upload',
+  path: '/upload',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RematriculaIndexRoute = RematriculaIndexRouteImport.update({
@@ -224,14 +224,14 @@ const RematriculaIndexRoute = RematriculaIndexRouteImport.update({
   path: '/rematricula/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RematriculaVerificarRoute = RematriculaVerificarRouteImport.update({
-  id: '/rematricula_/verificar',
-  path: '/rematricula/verificar',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const RematriculaAnoRoute = RematriculaAnoRouteImport.update({
   id: '/rematricula/$ano',
   path: '/rematricula/$ano',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RematriculaVerificarRoute = RematriculaVerificarRouteImport.update({
+  id: '/rematricula_/verificar',
+  path: '/rematricula/verificar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RematriculaAnoVerificarRoute = RematriculaAnoVerificarRouteImport.update({
@@ -527,228 +527,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/upload': {
-      id: '/upload'
-      path: '/upload'
-      fullPath: '/upload'
-      preLoaderRoute: typeof UploadRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/uniformes': {
-      id: '/uniformes'
-      path: '/uniformes'
-      fullPath: '/uniformes'
-      preLoaderRoute: typeof UniformesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tasks': {
-      id: '/tasks'
-      path: '/tasks'
-      fullPath: '/tasks'
-      preLoaderRoute: typeof TasksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rh': {
-      id: '/rh'
-      path: '/rh'
-      fullPath: '/rh'
-      preLoaderRoute: typeof RhRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rematricula-acompanhamento': {
-      id: '/rematricula-acompanhamento'
-      path: '/rematricula-acompanhamento'
-      fullPath: '/rematricula-acompanhamento'
-      preLoaderRoute: typeof RematriculaAcompanhamentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/professor': {
-      id: '/professor'
-      path: '/professor'
-      fullPath: '/professor'
-      preLoaderRoute: typeof ProfessorRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/portal-cantina': {
-      id: '/portal-cantina'
-      path: '/portal-cantina'
-      fullPath: '/portal-cantina'
-      preLoaderRoute: typeof PortalCantinaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/portal': {
-      id: '/portal'
-      path: '/portal'
-      fullPath: '/portal'
-      preLoaderRoute: typeof PortalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pedagogico': {
-      id: '/pedagogico'
-      path: '/pedagogico'
-      fullPath: '/pedagogico'
-      preLoaderRoute: typeof PedagogicoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/onboarding': {
-      id: '/onboarding'
-      path: '/onboarding'
-      fullPath: '/onboarding'
-      preLoaderRoute: typeof OnboardingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/matriculas': {
-      id: '/matriculas'
-      path: '/matriculas'
-      fullPath: '/matriculas'
-      preLoaderRoute: typeof MatriculasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/matricula': {
-      id: '/matricula'
-      path: '/matricula'
-      fullPath: '/matricula'
-      preLoaderRoute: typeof MatriculaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/inadimplencia': {
-      id: '/inadimplencia'
-      path: '/inadimplencia'
-      fullPath: '/inadimplencia'
-      preLoaderRoute: typeof InadimplenciaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fundos': {
-      id: '/fundos'
-      path: '/fundos'
-      fullPath: '/fundos'
-      preLoaderRoute: typeof FundosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fluxo-futuro': {
-      id: '/fluxo-futuro'
-      path: '/fluxo-futuro'
-      fullPath: '/fluxo-futuro'
-      preLoaderRoute: typeof FluxoFuturoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/extrato-bancario': {
-      id: '/extrato-bancario'
-      path: '/extrato-bancario'
-      fullPath: '/extrato-bancario'
-      preLoaderRoute: typeof ExtratoBancarioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/estoque-material': {
-      id: '/estoque-material'
-      path: '/estoque-material'
-      fullPath: '/estoque-material'
-      preLoaderRoute: typeof EstoqueMaterialRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/esportes': {
-      id: '/esportes'
-      path: '/esportes'
-      fullPath: '/esportes'
-      preLoaderRoute: typeof EsportesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/documentos': {
-      id: '/documentos'
-      path: '/documentos'
-      fullPath: '/documentos'
-      preLoaderRoute: typeof DocumentosRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/diario': {
-      id: '/diario'
-      path: '/diario'
-      fullPath: '/diario'
-      preLoaderRoute: typeof DiarioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/configuracoes': {
-      id: '/configuracoes'
-      path: '/configuracoes'
-      fullPath: '/configuracoes'
-      preLoaderRoute: typeof ConfiguracoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/conciliacao': {
-      id: '/conciliacao'
-      path: '/conciliacao'
-      fullPath: '/conciliacao'
-      preLoaderRoute: typeof ConciliacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/colonia': {
-      id: '/colonia'
-      path: '/colonia'
-      fullPath: '/colonia'
-      preLoaderRoute: typeof ColoniaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cobranca-automatica': {
-      id: '/cobranca-automatica'
-      path: '/cobranca-automatica'
-      fullPath: '/cobranca-automatica'
-      preLoaderRoute: typeof CobrancaAutomaticaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cobranca': {
-      id: '/cobranca'
-      path: '/cobranca'
-      fullPath: '/cobranca'
-      preLoaderRoute: typeof CobrancaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cartao-credito': {
-      id: '/cartao-credito'
-      path: '/cartao-credito'
-      fullPath: '/cartao-credito'
-      preLoaderRoute: typeof CartaoCreditoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cantina': {
-      id: '/cantina'
-      path: '/cantina'
-      fullPath: '/cantina'
-      preLoaderRoute: typeof CantinaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/biblioteca': {
-      id: '/biblioteca'
-      path: '/biblioteca'
-      fullPath: '/biblioteca'
-      preLoaderRoute: typeof BibliotecaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/atendimento-ia': {
-      id: '/atendimento-ia'
-      path: '/atendimento-ia'
-      fullPath: '/atendimento-ia'
-      preLoaderRoute: typeof AtendimentoIaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/atendimento': {
-      id: '/atendimento'
-      path: '/atendimento'
-      fullPath: '/atendimento'
-      preLoaderRoute: typeof AtendimentoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/analises-ia': {
-      id: '/analises-ia'
-      path: '/analises-ia'
-      fullPath: '/analises-ia'
-      preLoaderRoute: typeof AnalisesIaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agenda': {
-      id: '/agenda'
-      path: '/agenda'
-      fullPath: '/agenda'
-      preLoaderRoute: typeof AgendaRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admissoes': {
@@ -758,11 +541,228 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdmissoesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/agenda': {
+      id: '/agenda'
+      path: '/agenda'
+      fullPath: '/agenda'
+      preLoaderRoute: typeof AgendaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/analises-ia': {
+      id: '/analises-ia'
+      path: '/analises-ia'
+      fullPath: '/analises-ia'
+      preLoaderRoute: typeof AnalisesIaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atendimento': {
+      id: '/atendimento'
+      path: '/atendimento'
+      fullPath: '/atendimento'
+      preLoaderRoute: typeof AtendimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atendimento-ia': {
+      id: '/atendimento-ia'
+      path: '/atendimento-ia'
+      fullPath: '/atendimento-ia'
+      preLoaderRoute: typeof AtendimentoIaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/biblioteca': {
+      id: '/biblioteca'
+      path: '/biblioteca'
+      fullPath: '/biblioteca'
+      preLoaderRoute: typeof BibliotecaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cantina': {
+      id: '/cantina'
+      path: '/cantina'
+      fullPath: '/cantina'
+      preLoaderRoute: typeof CantinaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cartao-credito': {
+      id: '/cartao-credito'
+      path: '/cartao-credito'
+      fullPath: '/cartao-credito'
+      preLoaderRoute: typeof CartaoCreditoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cobranca': {
+      id: '/cobranca'
+      path: '/cobranca'
+      fullPath: '/cobranca'
+      preLoaderRoute: typeof CobrancaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cobranca-automatica': {
+      id: '/cobranca-automatica'
+      path: '/cobranca-automatica'
+      fullPath: '/cobranca-automatica'
+      preLoaderRoute: typeof CobrancaAutomaticaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/colonia': {
+      id: '/colonia'
+      path: '/colonia'
+      fullPath: '/colonia'
+      preLoaderRoute: typeof ColoniaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/conciliacao': {
+      id: '/conciliacao'
+      path: '/conciliacao'
+      fullPath: '/conciliacao'
+      preLoaderRoute: typeof ConciliacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/configuracoes': {
+      id: '/configuracoes'
+      path: '/configuracoes'
+      fullPath: '/configuracoes'
+      preLoaderRoute: typeof ConfiguracoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/diario': {
+      id: '/diario'
+      path: '/diario'
+      fullPath: '/diario'
+      preLoaderRoute: typeof DiarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documentos': {
+      id: '/documentos'
+      path: '/documentos'
+      fullPath: '/documentos'
+      preLoaderRoute: typeof DocumentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/esportes': {
+      id: '/esportes'
+      path: '/esportes'
+      fullPath: '/esportes'
+      preLoaderRoute: typeof EsportesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estoque-material': {
+      id: '/estoque-material'
+      path: '/estoque-material'
+      fullPath: '/estoque-material'
+      preLoaderRoute: typeof EstoqueMaterialRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/extrato-bancario': {
+      id: '/extrato-bancario'
+      path: '/extrato-bancario'
+      fullPath: '/extrato-bancario'
+      preLoaderRoute: typeof ExtratoBancarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fluxo-futuro': {
+      id: '/fluxo-futuro'
+      path: '/fluxo-futuro'
+      fullPath: '/fluxo-futuro'
+      preLoaderRoute: typeof FluxoFuturoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fundos': {
+      id: '/fundos'
+      path: '/fundos'
+      fullPath: '/fundos'
+      preLoaderRoute: typeof FundosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inadimplencia': {
+      id: '/inadimplencia'
+      path: '/inadimplencia'
+      fullPath: '/inadimplencia'
+      preLoaderRoute: typeof InadimplenciaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/matricula': {
+      id: '/matricula'
+      path: '/matricula'
+      fullPath: '/matricula'
+      preLoaderRoute: typeof MatriculaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/matriculas': {
+      id: '/matriculas'
+      path: '/matriculas'
+      fullPath: '/matriculas'
+      preLoaderRoute: typeof MatriculasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedagogico': {
+      id: '/pedagogico'
+      path: '/pedagogico'
+      fullPath: '/pedagogico'
+      preLoaderRoute: typeof PedagogicoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal-cantina': {
+      id: '/portal-cantina'
+      path: '/portal-cantina'
+      fullPath: '/portal-cantina'
+      preLoaderRoute: typeof PortalCantinaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/professor': {
+      id: '/professor'
+      path: '/professor'
+      fullPath: '/professor'
+      preLoaderRoute: typeof ProfessorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rematricula-acompanhamento': {
+      id: '/rematricula-acompanhamento'
+      path: '/rematricula-acompanhamento'
+      fullPath: '/rematricula-acompanhamento'
+      preLoaderRoute: typeof RematriculaAcompanhamentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rh': {
+      id: '/rh'
+      path: '/rh'
+      fullPath: '/rh'
+      preLoaderRoute: typeof RhRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/uniformes': {
+      id: '/uniformes'
+      path: '/uniformes'
+      fullPath: '/uniformes'
+      preLoaderRoute: typeof UniformesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/upload': {
+      id: '/upload'
+      path: '/upload'
+      fullPath: '/upload'
+      preLoaderRoute: typeof UploadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rematricula/': {
@@ -772,18 +772,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RematriculaIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/rematricula_/verificar': {
-      id: '/rematricula_/verificar'
-      path: '/rematricula/verificar'
-      fullPath: '/rematricula/verificar'
-      preLoaderRoute: typeof RematriculaVerificarRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/rematricula/$ano': {
       id: '/rematricula/$ano'
       path: '/rematricula/$ano'
       fullPath: '/rematricula/$ano'
       preLoaderRoute: typeof RematriculaAnoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rematricula_/verificar': {
+      id: '/rematricula_/verificar'
+      path: '/rematricula/verificar'
+      fullPath: '/rematricula/verificar'
+      preLoaderRoute: typeof RematriculaVerificarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rematricula_/$ano_/verificar': {
