@@ -19,7 +19,7 @@ import FolhasSalvas from "./FolhasSalvas";
 import Terceirizados from "./Terceirizados";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
-import SalariosRH from "./SalariosRH";
+import FolhaPagamentoRH from "./FolhaPagamentoRH";
 import Aniversariantes from "./Aniversariantes";
 import {
   acessoSalario,
@@ -450,7 +450,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
         <Contracheques funcionarios={funcionarios} isAdmin={isAdmin} schoolId={schoolId} />
       ) : abaRh === "folhas" ? (
         subPagamentosEfetiva === "salario" ? (
-          <SalariosRH
+          <FolhaPagamentoRH
             schoolId={schoolId}
             funcionarios={funcionarios}
             podeEditar={salario.editavel}

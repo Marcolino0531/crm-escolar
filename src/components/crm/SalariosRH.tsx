@@ -23,6 +23,7 @@ import {
   salvarSalario,
 } from "@/lib/rh-salario.functions";
 import { montarFolhaSalario } from "@/lib/rh-folhas";
+import type { ItemLote } from "@/lib/folha-pagamento";
 
 interface SalariosRHProps {
   schoolId: string | null;
@@ -31,6 +32,18 @@ interface SalariosRHProps {
   podeEditar: boolean;
   // Chamado após salvar uma folha de Salário (recarrega Folhas Salvas).
   onFolhaSalva?: () => void;
+  // Competência controlada pela tela da Folha (Resumo).
+  competencia?: string;
+  onCompetenciaChange?: (c: string) => void;
+  // Lote da folha importada na competência (Confirmados + Manuais); null = sem folha importada.
+  loteFolha?: {
+    itens: ItemLote[];
+    total: number;
+    emConferencia: string[];
+    semCadastro: string[];
+  } | null;
+  // Funcionários presentes na folha importada da competência (salário vem do Extrato Mensal).
+  naFolha?: ReadonlySet<string>;
 }
 
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -41,7 +54,7 @@ const paraInput = (n: number | null) =>
     : n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Dois selects lado a lado (mês e ano), mesmo estilo da Estatística.
-const SeletorCompetencia: React.FC<{
+export const SeletorCompetencia: React.FC<{
   value: string;
   onChange: (c: string) => void;
   compacto?: boolean;
@@ -87,6 +100,10 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
   funcionarios,
   podeEditar,
   onFolhaSalva,
+  competencia,
+  onCompetenciaChange,
+  loteFolha = null,
+  naFolha,
 }) => {
   const qc = useQueryClient();
   const listar = useServerFn(listarSalarios);
@@ -97,13 +114,14 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
   const [folhaTitulo, setFolhaTitulo] = useState("");
   const [folhaData, setFolhaData] = useState("");
 
-  const [competenciaRef, setCompetenciaRef] = useState(() => competenciaAtual());
+  const [competenciaLocal, setCompetenciaLocal] = useState(() => competenciaAtual());
+  const competenciaRef = competencia ?? competenciaLocal;
+  const setCompetenciaRef = onCompetenciaChange ?? setCompetenciaLocal;
   const [selecionadoId, setSelecionadoId] = useState<string | null>(null);
   const [novaCompetencia, setNovaCompetencia] = useState(() => competenciaAtual());
   const [novoValor, setNovoValor] = useState("");
   const [novoLiquido, setNovoLiquido] = useState("");
   const [novaObs, setNovaObs] = useState("");
-  const [campo, setCampo] = useState<"bruto" | "liquido">("bruto");
 
   const salarios = useQuery({
     queryKey: ["rh-salarios", schoolId],
@@ -149,10 +167,17 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
     [funcionarios],
   );
   const registros = useMemo(() => salarios.data ?? [], [salarios.data]);
-  const folha = useMemo(
-    () => montarFolhaSalario(ativos, registros, competenciaRef),
-    [ativos, registros, competenciaRef],
-  );
+  const folha = useMemo(() => {
+    if (loteFolha) {
+      return {
+        itens: loteFolha.itens,
+        total: loteFolha.total,
+        semSalario: loteFolha.semCadastro,
+        emConferencia: loteFolha.emConferencia,
+      };
+    }
+    return { ...montarFolhaSalario(ativos, registros, competenciaRef), emConferencia: [] };
+  }, [loteFolha, ativos, registros, competenciaRef]);
 
   const abrirModalFolha = () => {
     if (!schoolId) {
@@ -160,7 +185,7 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
       return;
     }
     if (folha.itens.length === 0) {
-      toast.error("Nenhum funcionário com salário vigente nesta competência.");
+      toast.error("Nenhum funcionário para entrar na folha desta competência.");
       return;
     }
     setFolhaTitulo(`Salário ${rotuloCompetencia(competenciaRef)}`);
@@ -292,7 +317,13 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
         </h3>
         {selecionado && (
           <>
-            {podeEditar && (
+            {naFolha?.has(selecionado.id) && (
+              <p className="text-xs text-emerald-700">
+                Na folha importada (Extrato Mensal) de {rotuloCompetencia(competenciaRef)}: bruto e
+                líquido vêm da aba Folha.
+              </p>
+            )}
+            {podeEditar && !naFolha?.has(selecionado.id) && (
               <form
                 className="space-y-2"
                 onSubmit={(e) => {
@@ -306,30 +337,9 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
                     <SeletorCompetencia value={novaCompetencia} onChange={setNovaCompetencia} />
                   </div>
                 </div>
-                <div className="flex border-b border-gray-200 text-sm">
-                  {(
-                    [
-                      { id: "bruto", label: "Bruto" },
-                      { id: "liquido", label: "Líquido" },
-                    ] as const
-                  ).map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setCampo(t.id)}
-                      className={`px-3 py-1.5 -mb-px border-b-2 font-medium ${
-                        campo === t.id
-                          ? "border-emerald-600 text-emerald-700"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                {campo === "bruto" ? (
+                <div className="grid grid-cols-2 gap-2">
                   <label className="block text-xs text-gray-500">
-                    Salário bruto (R$)
+                    Bruto (R$)
                     <input
                       inputMode="decimal"
                       placeholder="0,00"
@@ -338,9 +348,8 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
                       className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
                     />
                   </label>
-                ) : (
                   <label className="block text-xs text-gray-500">
-                    Salário líquido (R$)
+                    Líquido (R$)
                     <input
                       inputMode="decimal"
                       placeholder="0,00"
@@ -349,7 +358,7 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
                       className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
                     />
                   </label>
-                )}
+                </div>
                 {preenchimento && !preenchimento.proprio && preenchimento.origem && (
                   <p className="text-[11px] text-amber-700">
                     Sem registro em {rotuloCompetencia(novaCompetencia)}: valores herdados de{" "}
@@ -442,12 +451,20 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
               Salvar folha de Salário — {rotuloCompetencia(competenciaRef)}
             </h4>
             <p className="text-xs text-gray-500">
-              {folha.itens.length} funcionário(s) · total {brl(folha.total)}. Usa o líquido quando
-              informado, senão o bruto.
+              {folha.itens.length} funcionário(s) · total {brl(folha.total)}.{" "}
+              {loteFolha
+                ? "Folha importada: entram os Confirmados e os Manuais, pelo líquido (sem restituição)."
+                : "Usa o líquido quando informado, senão o bruto."}
             </p>
+            {folha.emConferencia.length > 0 && (
+              <p className="text-xs font-medium text-amber-700">
+                Em conferência (ficam fora): {folha.emConferencia.join(", ")}
+              </p>
+            )}
             {folha.semSalario.length > 0 && (
               <p className="text-xs text-amber-700">
-                Sem salário vigente (ficam fora): {folha.semSalario.join(", ")}
+                {loteFolha ? "Sem cadastro no RH (ficam fora)" : "Sem salário vigente (ficam fora)"}
+                : {folha.semSalario.join(", ")}
               </p>
             )}
             <label className="block text-xs text-gray-600">
