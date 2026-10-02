@@ -8,6 +8,7 @@ import {
   useRouterState,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import {
   LayoutDashboard,
@@ -151,7 +152,7 @@ function descricaoDoErro(error: unknown): string {
   return s && s !== "[object Object]" ? s : "Erro desconhecido.";
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   return (
