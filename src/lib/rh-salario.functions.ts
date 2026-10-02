@@ -8,6 +8,12 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { competenciaValida, type SalarioRegistro } from "@/lib/rh-salario";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import {
+  conferirLoteComFolha,
+  exigirSalarioManual,
+  exigirUnidadeFolha,
+} from "@/lib/rh-folha.functions";
+import { selectAll } from "@/lib/supabase-paginate";
 
 type SalarioRow = {
   id: string;
@@ -42,24 +48,24 @@ const paraRegistro = (r: SalarioRow): SalarioRegistro => ({
   criadoPor: r.created_by_nome ?? "",
 });
 
-// Todos os salários dos funcionários da unidade (ou de todas, se schoolId for null).
+// Todos os salários dos funcionários da unidade do seletor global.
 export const listarSalarios = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z.object({ schoolId: z.string().uuid().nullable() }).parse(input),
-  )
+  .inputValidator((input: unknown) => z.object({ schoolId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<SalarioRegistro[]> => {
     await exigirPermissaoSalario(context.userId, false);
-    let q = supabaseAdmin
-      .from("funcionarios_salarios" as never)
-      .select(
-        "id, funcionario_id, competencia, valor, valor_liquido, observacao, created_at, created_by_nome, funcionarios!inner(school_id)",
-      )
-      .order("competencia", { ascending: false });
-    if (data.schoolId) q = q.eq("funcionarios.school_id", data.schoolId);
-    const { data: rows, error } = await q.returns<SalarioRow[]>();
-    if (error) throw new Error(error.message);
-    return (rows ?? []).map(paraRegistro);
+    await exigirUnidadeFolha(context.userId, data.schoolId);
+    const rows = await selectAll<SalarioRow>(() =>
+      supabaseAdmin
+        .from("funcionarios_salarios" as never)
+        .select(
+          "id, funcionario_id, competencia, valor, valor_liquido, observacao, created_at, created_by_nome, funcionarios!inner(school_id)",
+        )
+        .eq("funcionarios.school_id", data.schoolId)
+        .order("competencia", { ascending: false })
+        .order("id"),
+    );
+    return rows.map(paraRegistro);
   });
 
 export const salvarSalario = createServerFn({ method: "POST" })
@@ -78,6 +84,7 @@ export const salvarSalario = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoSalario(context.userId, true);
     if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
+    await exigirSalarioManual(context.userId, data.funcionarioId, data.competencia);
     if (!Number.isFinite(data.valor) || data.valor < 0) {
       throw new Error("Informe um valor bruto maior ou igual a zero.");
     }
@@ -107,6 +114,15 @@ export const excluirSalario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoSalario(context.userId, true);
+    const { data: reg, error: rErr } = await supabaseAdmin
+      .from("funcionarios_salarios" as never)
+      .select("funcionario_id, competencia")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (rErr) throw new Error(rErr.message);
+    const alvo = reg as { funcionario_id: string; competencia: string } | null;
+    if (!alvo) throw new Error("Registro não encontrado.");
+    await exigirSalarioManual(context.userId, alvo.funcionario_id, alvo.competencia);
     const { error } = await supabaseAdmin
       .from("funcionarios_salarios" as never)
       .delete()
@@ -142,6 +158,8 @@ export const salvarFolhaSalario = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<{ id: string }> => {
     await exigirPermissaoSalario(context.userId, true);
     if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
+    await exigirUnidadeFolha(context.userId, data.schoolId);
+    await conferirLoteComFolha(data.schoolId, data.competencia, data.itens);
     const total = Math.round(data.itens.reduce((acc, i) => acc + i.total_amount, 0) * 100) / 100;
     const { data: batch, error: bErr } = await supabaseAdmin
       .from("hr_transport_batches" as never)
