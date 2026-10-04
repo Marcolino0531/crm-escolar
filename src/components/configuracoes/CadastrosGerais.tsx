@@ -19,6 +19,7 @@ import {
 import { ValoresBiblioteca } from "@/components/configuracoes/ValoresBiblioteca";
 import { ValoresColonia } from "@/components/configuracoes/ValoresColonia";
 import { ValorPacotesExtras } from "@/components/configuracoes/ValorPacotesExtras";
+import { CnpjsFolhaPagamento } from "@/components/configuracoes/CnpjsFolhaPagamento";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { abasDe, noPorChave, type ChavePermissao } from "@/lib/permissoes-arvore";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
@@ -33,6 +34,7 @@ const CHAVE_POR_TIPO = {
   diario: "configuracoes.cadastros.valor_diario",
   colonia: "configuracoes.cadastros.valor_colonia",
   biblioteca: "configuracoes.cadastros.valor_biblioteca",
+  cnpjs_folha: "configuracoes.cadastros.cnpjs_folha",
 } as const satisfies Record<string, ChavePermissao>;
 
 export type TipoCadastro = keyof typeof CHAVE_POR_TIPO;
@@ -50,7 +52,7 @@ export function chaveCadastro(tipo: TipoCadastro): ChavePermissao {
   return CHAVE_POR_TIPO[tipo];
 }
 
-// Cadastros de valor por unidade × ano letivo visíveis para o usuário, na ordem da árvore.
+// Cadastros visíveis para o usuário, na ordem da árvore.
 export function abasCadastrosGerais(canView: (c: ChavePermissao) => boolean): TipoCadastro[] {
   const porChave = new Map<string, TipoCadastro>(
     (Object.keys(CHAVE_POR_TIPO) as TipoCadastro[]).map((id) => [CHAVE_POR_TIPO[id], id]),
@@ -141,6 +143,9 @@ export function CadastrosGerais() {
       {tipo === "colonia" && <ValoresColonia podeEditar={canEdit(chaveCadastro("colonia"))} />}
       {tipo === "biblioteca" && (
         <ValoresBiblioteca podeEditar={canEdit(chaveCadastro("biblioteca"))} />
+      )}
+      {tipo === "cnpjs_folha" && (
+        <CnpjsFolhaPagamento podeEditar={canEdit(chaveCadastro("cnpjs_folha"))} />
       )}
     </div>
   );

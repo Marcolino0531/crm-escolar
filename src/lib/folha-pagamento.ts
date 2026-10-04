@@ -541,3 +541,129 @@ export function pendentesParaFechar(
 ): string[] {
   return colaboradores.filter((c) => c.status === "em_conferencia").map((c) => c.nome);
 }
+
+// ---------- Várias empresas (CNPJ) no mesmo colégio ----------
+// Cada PDF é a folha de UMA empresa: a importação é única por colégio +
+// competência + CNPJ (comparado só pelos dígitos, porque é gravado como vem no PDF).
+
+/** CNPJ com 14 dígitos e dígitos verificadores corretos. */
+export function cnpjValido(cnpj: string): boolean {
+  const d = somenteDigitos(cnpj);
+  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+  const digito = (ate: number): number => {
+    let soma = 0;
+    for (let i = 0; i < ate; i += 1) soma += Number(d[i]) * (((ate - 1 - i) % 8) + 2);
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+  return digito(12) === Number(d[12]) && digito(13) === Number(d[13]);
+}
+
+/** 00.000.000/0000-00 quando tem 14 dígitos; senão, como veio. */
+export function formatarCnpj(cnpj: string): string {
+  const d = somenteDigitos(cnpj);
+  return d.length === 14
+    ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+    : cnpj;
+}
+
+/** Mesmo CNPJ (só dígitos); vazio nunca é igual a nada. */
+export function mesmoCnpj(a: string, b: string): boolean {
+  const d = somenteDigitos(a);
+  return d !== "" && d === somenteDigitos(b);
+}
+
+/** O CNPJ do PDF está entre os aceitos do colégio (o do cadastro do colégio + os adicionais). */
+export function cnpjAceito(cnpj: string, aceitos: readonly string[]): boolean {
+  return aceitos.some((a) => mesmoCnpj(cnpj, a));
+}
+
+export function mensagemCnpjNaoCadastrado(cnpj: string, empresa: string, colegio: string): string {
+  return `O CNPJ ${cnpj || "vazio"} (${empresa || "empresa sem nome"}) não está cadastrado para ${colegio}. Cadastre em Configurações > Cadastros Gerais > CNPJs Folha de Pagamento.`;
+}
+
+type ImportacaoEmpresa = { cnpj: string; empresa: string; competencia: string };
+
+/** Importação da competência que é DESTA empresa (reimportação), ou null (importação nova). */
+export function importacaoDoCnpj<T extends { cnpj: string }>(
+  importacoes: readonly T[],
+  cnpj: string,
+): T | null {
+  return importacoes.find((i) => mesmoCnpj(i.cnpj, cnpj)) ?? null;
+}
+
+/** Importação anterior mais recente do MESMO CNPJ (null = primeira importação desta empresa). */
+export function importacaoAnteriorDoCnpj<T extends ImportacaoEmpresa>(
+  importacoes: readonly T[],
+  competencia: string,
+  cnpj: string,
+): T | null {
+  let melhor: T | null = null;
+  for (const i of importacoes) {
+    if (i.competencia >= competencia || !mesmoCnpj(i.cnpj, cnpj)) continue;
+    if (!melhor || i.competencia > melhor.competencia) melhor = i;
+  }
+  return melhor;
+}
+
+/**
+ * Empresas importadas na competência anterior (a mais recente com folha, antes
+ * desta) que ainda não foram importadas nesta. Usado no aviso antes de fechar.
+ */
+export function empresasNaoImportadas<T extends ImportacaoEmpresa>(
+  todas: readonly T[],
+  competencia: string,
+): T[] {
+  const anteriores = todas.filter((i) => i.competencia < competencia);
+  if (!anteriores.length) return [];
+  const ultima = anteriores.reduce((m, i) => (i.competencia > m ? i.competencia : m), "");
+  const atuais = todas.filter((i) => i.competencia === competencia);
+  return anteriores.filter(
+    (i) => i.competencia === ultima && !atuais.some((a) => mesmoCnpj(a.cnpj, i.cnpj)),
+  );
+}
+
+/** Competência fechada quando qualquer empresa dela está fechada (fecham e reabrem juntas). */
+export function competenciaFechada(importacoes: readonly { status: StatusCompetencia }[]): boolean {
+  return importacoes.some((i) => i.status === "fechada");
+}
+
+/** Totais do colégio na competência = soma das empresas. */
+export function totaisDasEmpresas(
+  importacoes: readonly {
+    totalProventos: number;
+    totalDescontos: number;
+    liquidoGeral: number;
+    totalColaboradores: number;
+  }[],
+) {
+  return {
+    proventos: somaReais(importacoes.map((i) => i.totalProventos)),
+    descontos: somaReais(importacoes.map((i) => i.totalDescontos)),
+    liquido: somaReais(importacoes.map((i) => i.liquidoGeral)),
+    colaboradores: importacoes.reduce((s, i) => s + i.totalColaboradores, 0),
+  };
+}
+
+/**
+ * Vínculo com o RH: o funcionário só pode receber registros da folha (de
+ * qualquer empresa da competência) com o MESMO CPF. Compara com os CPFs dos
+ * registros já ligados a ele, não com o CPF do cadastro do RH (que pode estar vazio).
+ * Devolve a mensagem de recusa, ou null quando pode vincular.
+ */
+export function conflitoVinculoCpf(
+  registros: readonly { id: string; nome: string; cpf: string; funcionarioId: string | null }[],
+  registroId: string,
+  funcionarioId: string,
+): string | null {
+  const alvo = registros.find((r) => r.id === registroId);
+  if (!alvo) return null;
+  const cpf = somenteDigitos(alvo.cpf);
+  const outro = registros.find(
+    (r) =>
+      r.id !== registroId && r.funcionarioId === funcionarioId && somenteDigitos(r.cpf) !== cpf,
+  );
+  return outro
+    ? `Este funcionário já está ligado a ${outro.nome}, com outro CPF, nesta folha. Só registros com o mesmo CPF podem ir para o mesmo cadastro do RH.`
+    : null;
+}

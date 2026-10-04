@@ -19,6 +19,8 @@ import {
   ROTULO_STATUS,
   chaveColaborador,
   compararFolhas,
+  competenciaFechada,
+  conflitoVinculoCpf,
   montarLoteFolha,
   planejarReimportacao,
   preSelecao,
@@ -27,6 +29,7 @@ import {
   restituicoesPorPessoa,
   resumoDaFolha,
   totaisAjustados,
+  totaisDasEmpresas,
   totaisResumo,
   type ComparacaoFolhas,
   type Divergencia,
@@ -48,6 +51,7 @@ import {
   reabrirConferenciaFolha,
   vincularFuncionarioFolha,
   type ColaboradorFolhaGravado,
+  type ImportacaoFolha,
 } from "@/lib/rh-folha.functions";
 import SalariosRH, { SeletorCompetencia } from "@/components/crm/SalariosRH";
 
@@ -128,8 +132,6 @@ const SeloStatus: React.FC<{ status: LinhaResumo["status"] }> = ({ status }) => 
 
 type Preparo = {
   folha: FolhaExtrato;
-  cnpjColegio: string;
-  cnpjDivergente: boolean;
   anteriorCompetencia: string | null;
   comparacao: ComparacaoFolhas<ColaboradorExtrato> | null;
   plano: PlanoReimportacao<ColaboradorExtrato> | null;
@@ -139,13 +141,12 @@ const ModalImportacao: React.FC<{
   preparo: Preparo;
   gravando: boolean;
   onCancelar: () => void;
-  onGravar: (selecionados: string[], confirmarCnpj: boolean) => void;
+  onGravar: (selecionados: string[]) => void;
 }> = ({ preparo, gravando, onCancelar, onGravar }) => {
   const { folha, comparacao, plano } = preparo;
   const [selecionados, setSelecionados] = useState<Set<string>>(() =>
     comparacao ? preSelecao(comparacao) : new Set(),
   );
-  const [confirmarCnpj, setConfirmarCnpj] = useState(false);
   const alternar = (chave: string) =>
     setSelecionados((s) => {
       const n = new Set(s);
@@ -170,7 +171,6 @@ const ModalImportacao: React.FC<{
         c: p.colaborador,
         divergencias: p.divergencias,
       }));
-  const bloqueado = preparo.cnpjDivergente && !confirmarCnpj;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -186,26 +186,12 @@ const ModalImportacao: React.FC<{
           </p>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-          {preparo.cnpjDivergente && (
-            <div className="rounded-lg border-2 border-red-400 bg-red-50 p-3 text-sm text-red-800">
-              <p className="font-bold">CNPJ do PDF diferente do CNPJ do colégio selecionado.</p>
-              <p>
-                PDF: <b>{folha.cnpj || "vazio"}</b> · Colégio:{" "}
-                <b>{preparo.cnpjColegio || "não cadastrado"}</b>
-              </p>
-              <label className="mt-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={confirmarCnpj}
-                  onChange={(e) => setConfirmarCnpj(e.target.checked)}
-                />
-                Confirmo que esta folha é deste colégio.
-              </label>
-            </div>
-          )}
           {plano ? (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-              <p className="font-semibold">Reimportação da mesma competência.</p>
+              <p className="font-semibold">
+                Reimportação desta empresa (CNPJ {folha.cnpj}) na competência. As demais empresas do
+                colégio não mudam.
+              </p>
               <p>
                 {plano.iguais.length} igual(is) ao gravado (nada muda) · {plano.substituidos.length}{" "}
                 serão substituído(s) · {plano.novos.length} novo(s) · {plano.retirados.length}{" "}
@@ -221,7 +207,8 @@ const ModalImportacao: React.FC<{
           ) : comparacao?.primeiraImportacao ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
               <span>
-                Primeira importação deste colégio: não há competência anterior para comparar.
+                Primeira importação desta empresa (CNPJ {folha.cnpj}) neste colégio: não há
+                competência anterior para comparar.
               </span>
               <button
                 type="button"
@@ -308,8 +295,8 @@ const ModalImportacao: React.FC<{
             </button>
             <button
               type="button"
-              onClick={() => onGravar([...selecionados], confirmarCnpj)}
-              disabled={gravando || bloqueado}
+              onClick={() => onGravar([...selecionados])}
+              disabled={gravando}
               className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
               {gravando ? "Gravando…" : "Gravar e confirmar selecionados"}
@@ -636,13 +623,19 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     void qc.invalidateQueries({ queryKey: ["rh-salarios", schoolId] });
   };
 
-  const importacao = folhaQ.data?.importacao ?? null;
+  const importacoes = useMemo<ImportacaoFolha[]>(
+    () => folhaQ.data?.importacoes ?? [],
+    [folhaQ.data],
+  );
+  const temFolha = importacoes.length > 0;
   const colaboradores = useMemo(
     () => [...(folhaQ.data?.colaboradores ?? [])].sort((a, b) => collator.compare(a.nome, b.nome)),
     [folhaQ.data],
   );
-  const fechada = importacao?.status === "fechada";
-  const editavel = podeEditar && !!importacao && !fechada;
+  const fechada = competenciaFechada(importacoes);
+  const editavel = podeEditar && temFolha && !fechada;
+  const totaisFolha = totaisDasEmpresas(importacoes);
+  const empresasFaltando = folhaQ.data?.empresasNaoImportadas ?? [];
   const pendentes = colaboradores.filter((c) => c.status === "em_conferencia");
   const porId = useMemo(() => new Map(funcionarios.map((f) => [f.id, f])), [funcionarios]);
   const ordenados = useMemo(
@@ -693,8 +686,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   }, [colaboradores, restituicao, salariosQ.data, ativosForaDaFolha, competencia]);
   const totais = totaisResumo(linhasResumo);
   const lote = useMemo(
-    () => (importacao ? montarLoteFolha(linhasResumo) : null),
-    [importacao, linhasResumo],
+    () => (temFolha ? montarLoteFolha(linhasResumo) : null),
+    [temFolha, linhasResumo],
   );
 
   // ----- Importação -----
@@ -708,17 +701,15 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     try {
       const folha = await lerExtratoMensalPdf(arquivo);
       const prep = await fnPreparar({
-        data: { schoolId, competencia: folha.competencia, cnpj: folha.cnpj },
+        data: {
+          schoolId,
+          competencia: folha.competencia,
+          cnpj: folha.cnpj,
+          empresa: folha.empresa,
+        },
       });
-      if (prep.gravada?.status === "fechada") {
-        throw new Error(
-          `A competência ${rotuloCompetencia(folha.competencia)} está fechada e não aceita reimportação.`,
-        );
-      }
       setPreparo({
         folha,
-        cnpjColegio: prep.cnpjColegio,
-        cnpjDivergente: prep.cnpjDivergente,
         anteriorCompetencia: prep.anterior?.competencia ?? null,
         comparacao: prep.gravada
           ? null
@@ -736,7 +727,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   };
 
   const gravar = useMutation({
-    mutationFn: async (v: { selecionados: string[]; confirmarCnpj: boolean }) => {
+    mutationFn: async (v: { selecionados: string[] }) => {
       if (!schoolId || !preparo) throw new Error("Selecione uma unidade específica.");
       return fnGravar({ data: { schoolId, folha: preparo.folha, ...v } });
     },
@@ -776,7 +767,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     recarregar,
   );
   const fechar = useAcao(
-    async (_: null) => fnFechar({ data: base }),
+    async (confirmarEmpresasFaltando: boolean) =>
+      fnFechar({ data: { ...base, confirmarEmpresasFaltando } }),
     "Competência fechada.",
     recarregar,
   );
@@ -810,15 +802,24 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   }
 
   const visiveis = soConferencia ? pendentes : colaboradores;
-  // Livres + o funcionário do mesmo CPF (contratos da mesma pessoa vão para o mesmo cadastro).
-  const funcionariosLivres = (c: ColaboradorFolhaGravado) => {
-    const cpf = somenteDigitos(c.cpf);
-    return ordenados.filter(
-      (f) =>
-        f.id === c.funcionarioId ||
-        !naFolha.has(f.id) ||
-        (!!cpf && somenteDigitos(f.cpf ?? "") === cpf),
+  // Livres + os já ligados só a registros com o mesmo CPF deste (contratos da mesma
+  // pessoa, em qualquer empresa, vão para o mesmo cadastro). Mesma regra do servidor.
+  const funcionariosLivres = (c: ColaboradorFolhaGravado) =>
+    ordenados.filter(
+      (f) => f.id === c.funcionarioId || !conflitoVinculoCpf(colaboradores, c.id, f.id),
     );
+  const pendentesPorEmpresa = (id: string) =>
+    colaboradores.filter((c) => c.importacaoId === id && c.status === "em_conferencia").length;
+  const fecharCompetencia = () => {
+    const aviso = empresasFaltando.length
+      ? `\n\nAtenção: ${empresasFaltando.length === 1 ? "esta empresa foi importada" : "estas empresas foram importadas"} em ${rotuloCompetencia(empresasFaltando[0].competencia)} e não nesta competência: ${empresasFaltando.map((e) => `${e.empresa} (CNPJ ${e.cnpj})`).join(", ")}.`
+      : "";
+    if (
+      confirm(
+        `Fechar a competência ${rotuloCompetencia(competencia)} de todas as empresas (${importacoes.length})? Ela fica somente leitura.${aviso}`,
+      )
+    )
+      fechar.mutate(empresasFaltando.length > 0);
   };
 
   const cabecalho = (
@@ -844,7 +845,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           Competência
           <SeletorCompetencia value={competencia} onChange={setCompetencia} compacto />
         </label>
-        {importacao && (
+        {temFolha && (
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               fechada ? "bg-gray-200 text-gray-700" : "bg-emerald-100 text-emerald-800"
@@ -873,25 +874,11 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
             <div className="text-xs text-gray-500">
-              {importacao ? (
-                <>
-                  {importacao.empresa} · CNPJ {importacao.cnpj} · {importacao.calculo} · importada
-                  por {importacao.importadoPorNome} em {dataHora(importacao.importadoEm)}
-                  {importacao.reimportadoEm &&
-                    ` · reimportada por ${importacao.reimportadoPorNome} em ${dataHora(importacao.reimportadoEm)}`}
-                  {importacao.fechadoEm &&
-                    ` · fechada por ${importacao.fechadoPorNome} em ${dataHora(importacao.fechadoEm)}`}
-                  {importacao.cnpjDivergente && (
-                    <span className="ml-1 font-semibold text-red-700">
-                      (CNPJ diferente do colégio: {importacao.cnpjColegio || "não cadastrado"})
-                    </span>
-                  )}
-                </>
-              ) : folhaQ.isLoading ? (
-                "Carregando…"
-              ) : (
-                `Nenhuma folha importada em ${rotuloCompetencia(competencia)}.`
-              )}
+              {temFolha
+                ? `${importacoes.length} empresa(s) importada(s) em ${rotuloCompetencia(competencia)}. Outro PDF na mesma competência entra como outra empresa (ou reimporta a do mesmo CNPJ).`
+                : folhaQ.isLoading
+                  ? "Carregando…"
+                  : `Nenhuma folha importada em ${rotuloCompetencia(competencia)}.`}
             </div>
             <div className="flex flex-wrap gap-2">
               {podeEditar && !fechada && (
@@ -931,14 +918,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   type="button"
                   disabled={pendentes.length > 0 || fechar.isPending}
                   title={pendentes.length ? "Ainda há colaboradores Em conferência." : undefined}
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Fechar a competência ${rotuloCompetencia(competencia)}? Ela fica somente leitura.`,
-                      )
-                    )
-                      fechar.mutate(null);
-                  }}
+                  onClick={fecharCompetencia}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Fechar competência
@@ -949,7 +929,11 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   type="button"
                   disabled={reabrir.isPending}
                   onClick={() => {
-                    if (confirm(`Reabrir a competência ${rotuloCompetencia(competencia)}?`))
+                    if (
+                      confirm(
+                        `Reabrir a competência ${rotuloCompetencia(competencia)} de todas as empresas?`,
+                      )
+                    )
                       reabrir.mutate(null);
                   }}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -960,7 +944,78 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
             </div>
           </div>
 
-          {importacao && (
+          {temFolha && (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Empresa</th>
+                    <th className="px-3 py-2 text-left">CNPJ</th>
+                    <th className="px-3 py-2 text-right">Registros</th>
+                    <th className="px-3 py-2 text-right">Proventos</th>
+                    <th className="px-3 py-2 text-right">Descontos</th>
+                    <th className="px-3 py-2 text-right">Líquido</th>
+                    <th className="px-3 py-2 text-right">Em conferência</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importacoes.map((imp) => (
+                    <tr key={imp.id} className="border-t border-gray-100 align-top">
+                      <td className="px-3 py-2">
+                        <span className="font-medium text-gray-800">{imp.empresa}</span>
+                        <span className="block text-xs text-gray-500">
+                          {imp.calculo} · importada por {imp.importadoPorNome} em{" "}
+                          {dataHora(imp.importadoEm)}
+                          {imp.reimportadoEm &&
+                            ` · reimportada por ${imp.reimportadoPorNome} em ${dataHora(imp.reimportadoEm)}`}
+                          {imp.fechadoEm &&
+                            ` · fechada por ${imp.fechadoPorNome} em ${dataHora(imp.fechadoEm)}`}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">{imp.cnpj}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {imp.totalColaboradores}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {brl(imp.totalProventos)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {brl(imp.totalDescontos)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{brl(imp.liquidoGeral)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {pendentesPorEmpresa(imp.id)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {importacoes.length > 1 && (
+                  <tfoot className="bg-gray-50 font-semibold">
+                    <tr>
+                      <td className="px-3 py-2" colSpan={2}>
+                        Total do colégio
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {totaisFolha.colaboradores}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {brl(totaisFolha.proventos)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {brl(totaisFolha.descontos)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {brl(totaisFolha.liquido)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{pendentes.length}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          )}
+
+          {temFolha && (
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-2 text-xs">
                 <label className="flex items-center gap-2 text-gray-600">
@@ -972,9 +1027,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   Só em conferência
                 </label>
                 <span className="tabular-nums text-gray-600">
-                  {colaboradores.length} colaborador(es) · proventos{" "}
-                  {brl(importacao.totalProventos)} · descontos {brl(importacao.totalDescontos)} ·
-                  líquido {brl(importacao.liquidoGeral)}
+                  {colaboradores.length} colaborador(es) · proventos {brl(totaisFolha.proventos)} ·
+                  descontos {brl(totaisFolha.descontos)} · líquido {brl(totaisFolha.liquido)}
                 </span>
               </div>
               <table className="w-full text-sm">
@@ -1003,200 +1057,224 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {visiveis.map((c) => {
-                    const ajustado = c.ajustadoEm != null;
+                  {importacoes.map((imp) => {
+                    const doGrupo = visiveis.filter((c) => c.importacaoId === imp.id);
+                    if (!doGrupo.length) return null;
                     return (
-                      <React.Fragment key={c.id}>
-                        <tr
-                          className={`border-t border-gray-100 align-top ${
-                            c.status === "em_conferencia" ? "bg-amber-50" : ""
-                          }`}
-                        >
-                          <td className="px-2 py-2">
-                            {editavel && c.status === "em_conferencia" && (
-                              <input
-                                type="checkbox"
-                                checked={selecionados.has(c.id)}
-                                onChange={() =>
-                                  setSelecionados((s) => {
-                                    const n = new Set(s);
-                                    if (n.has(c.id)) n.delete(c.id);
-                                    else n.add(c.id);
-                                    return n;
-                                  })
-                                }
-                              />
-                            )}
-                          </td>
-                          <td className="px-2 py-2">
-                            <button
-                              type="button"
-                              onClick={() => setAberto(aberto === c.id ? null : c.id)}
-                              className="text-left font-medium text-gray-800 hover:underline"
-                            >
-                              {c.nome}
-                            </button>
-                            <SeloContratos contratos={contratosPorCpf.get(somenteDigitos(c.cpf))} />
-                            <span className="block text-xs text-gray-500">
-                              {c.codigo} ·{" "}
-                              {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
-                              {c.situacao}
-                              {c.cargo && ` · ${c.cargo}`}
-                            </span>
-                            {ajustado && (
-                              <span className="block text-xs text-blue-700">
-                                Ajustado manualmente por {c.ajustadoPorNome} em{" "}
-                                {dataHora(c.ajustadoEm)}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-xs">
-                            {editavel ? (
-                              <select
-                                value={c.funcionarioId ?? ""}
-                                onChange={(e) =>
-                                  vincular.mutate({
-                                    id: c.id,
-                                    funcionarioId: e.target.value || null,
-                                  })
-                                }
-                                className={`max-w-[14rem] rounded-md border px-1 py-0.5 ${
-                                  c.funcionarioId
-                                    ? "border-gray-300"
-                                    : "border-red-400 text-red-700"
-                                }`}
-                              >
-                                <option value="">Sem cadastro no RH</option>
-                                {funcionariosLivres(c).map((f) => (
-                                  <option key={f.id} value={f.id}>
-                                    {f.nomeCompleto}
-                                    {f.dataRescisao ? " (desligado)" : ""}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : c.funcionarioId ? (
-                              (porId.get(c.funcionarioId)?.nomeCompleto ?? "Vinculado")
-                            ) : (
-                              <span className="font-medium text-red-700">Sem cadastro no RH</span>
-                            )}
-                            {c.vinculoManual && (
-                              <span className="block text-gray-400">vínculo manual</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums">{brl(c.proventos)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{brl(c.descontos)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">
-                            {brl(c.liquido)}
-                            {ajustado && (
-                              <span className="block text-xs text-gray-400">
-                                PDF {brl(c.liquidoPdf)}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2">
-                            <SeloStatus status={c.status} />
-                            {c.confirmadoEm && (
-                              <span className="block text-xs text-gray-400">
-                                {c.confirmadoPorNome} · {dataHora(c.confirmadoEm)}
-                              </span>
-                            )}
-                          </td>
-                          <td className="space-y-1 px-2 py-2 text-right text-xs">
-                            {editavel && c.status === "em_conferencia" && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => confirmar.mutate([c.id])}
-                                  className="block w-full text-emerald-700 hover:underline"
-                                >
-                                  Confirmar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setAjustando(c)}
-                                  className="block w-full text-blue-700 hover:underline"
-                                >
-                                  Ajustar
-                                </button>
-                              </>
-                            )}
-                            {editavel && c.status === "confirmado" && (
-                              <button
-                                type="button"
-                                onClick={() => reabrirConferencia.mutate(c.id)}
-                                className="block w-full text-amber-700 hover:underline"
-                              >
-                                Reabrir conferência
-                              </button>
-                            )}
+                      <React.Fragment key={imp.id}>
+                        <tr className="border-t border-gray-200 bg-gray-100">
+                          <td
+                            colSpan={8}
+                            className="px-2 py-1.5 text-xs font-semibold text-gray-700"
+                          >
+                            {imp.empresa} · CNPJ {imp.cnpj} · {doGrupo.length} registro(s)
                           </td>
                         </tr>
-                        {(aberto === c.id || c.status === "em_conferencia") && (
-                          <tr className="border-t border-gray-50 bg-gray-50/60">
-                            <td />
-                            <td colSpan={7} className="px-2 py-2">
-                              {c.status === "em_conferencia" && c.divergencias.length > 0 && (
-                                <div className="mb-2">
-                                  <ListaDivergencias divergencias={c.divergencias} />
-                                </div>
-                              )}
-                              {aberto === c.id && (
-                                <div className="grid gap-3 md:grid-cols-2">
-                                  {(["P", "D"] as const).map((tipo) => (
-                                    <table key={tipo} className="w-full text-xs">
-                                      <thead className="text-gray-500">
-                                        <tr>
-                                          <th className="text-left">
-                                            {tipo === "P" ? "Proventos" : "Descontos"}
-                                          </th>
-                                          <th className="text-right">Ref.</th>
-                                          <th className="text-right">Valor</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {c.rubricas
-                                          .filter((r) => r.tipo === tipo)
-                                          .map((r) => (
-                                            <tr
-                                              key={r.ordem}
-                                              className={
-                                                r.removida ? "text-gray-400 line-through" : ""
-                                              }
-                                            >
-                                              <td>
-                                                {r.codigo} {r.descricao}
-                                                {r.origem === "manual" && (
-                                                  <span className="ml-1 text-blue-700">
-                                                    (manual)
-                                                  </span>
-                                                )}
-                                              </td>
-                                              <td className="text-right">{r.referencia}</td>
-                                              <td className="text-right tabular-nums">
-                                                {brl(r.valor)}
-                                                {r.valorOriginal != null &&
-                                                  Math.round(r.valorOriginal * 100) !==
-                                                    Math.round(r.valor * 100) && (
-                                                    <span className="ml-1 text-gray-400">
-                                                      (PDF {brl(r.valorOriginal)})
-                                                    </span>
-                                                  )}
-                                              </td>
-                                            </tr>
-                                          ))}
-                                      </tbody>
-                                    </table>
-                                  ))}
-                                  {c.ajusteObservacao && (
-                                    <p className="text-xs text-gray-600 md:col-span-2">
-                                      Observação do ajuste: {c.ajusteObservacao}
-                                    </p>
+                        {doGrupo.map((c) => {
+                          const ajustado = c.ajustadoEm != null;
+                          return (
+                            <React.Fragment key={c.id}>
+                              <tr
+                                className={`border-t border-gray-100 align-top ${
+                                  c.status === "em_conferencia" ? "bg-amber-50" : ""
+                                }`}
+                              >
+                                <td className="px-2 py-2">
+                                  {editavel && c.status === "em_conferencia" && (
+                                    <input
+                                      type="checkbox"
+                                      checked={selecionados.has(c.id)}
+                                      onChange={() =>
+                                        setSelecionados((s) => {
+                                          const n = new Set(s);
+                                          if (n.has(c.id)) n.delete(c.id);
+                                          else n.add(c.id);
+                                          return n;
+                                        })
+                                      }
+                                    />
                                   )}
-                                </div>
+                                </td>
+                                <td className="px-2 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAberto(aberto === c.id ? null : c.id)}
+                                    className="text-left font-medium text-gray-800 hover:underline"
+                                  >
+                                    {c.nome}
+                                  </button>
+                                  <SeloContratos
+                                    contratos={contratosPorCpf.get(somenteDigitos(c.cpf))}
+                                  />
+                                  <span className="block text-xs text-gray-500">
+                                    {c.codigo} ·{" "}
+                                    {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
+                                    {c.situacao}
+                                    {c.cargo && ` · ${c.cargo}`}
+                                  </span>
+                                  {ajustado && (
+                                    <span className="block text-xs text-blue-700">
+                                      Ajustado manualmente por {c.ajustadoPorNome} em{" "}
+                                      {dataHora(c.ajustadoEm)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2 text-xs">
+                                  {editavel ? (
+                                    <select
+                                      value={c.funcionarioId ?? ""}
+                                      onChange={(e) =>
+                                        vincular.mutate({
+                                          id: c.id,
+                                          funcionarioId: e.target.value || null,
+                                        })
+                                      }
+                                      className={`max-w-[14rem] rounded-md border px-1 py-0.5 ${
+                                        c.funcionarioId
+                                          ? "border-gray-300"
+                                          : "border-red-400 text-red-700"
+                                      }`}
+                                    >
+                                      <option value="">Sem cadastro no RH</option>
+                                      {funcionariosLivres(c).map((f) => (
+                                        <option key={f.id} value={f.id}>
+                                          {f.nomeCompleto}
+                                          {f.dataRescisao ? " (desligado)" : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : c.funcionarioId ? (
+                                    (porId.get(c.funcionarioId)?.nomeCompleto ?? "Vinculado")
+                                  ) : (
+                                    <span className="font-medium text-red-700">
+                                      Sem cadastro no RH
+                                    </span>
+                                  )}
+                                  {c.vinculoManual && (
+                                    <span className="block text-gray-400">vínculo manual</span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums">
+                                  {brl(c.proventos)}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums">
+                                  {brl(c.descontos)}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums">
+                                  {brl(c.liquido)}
+                                  {ajustado && (
+                                    <span className="block text-xs text-gray-400">
+                                      PDF {brl(c.liquidoPdf)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2">
+                                  <SeloStatus status={c.status} />
+                                  {c.confirmadoEm && (
+                                    <span className="block text-xs text-gray-400">
+                                      {c.confirmadoPorNome} · {dataHora(c.confirmadoEm)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="space-y-1 px-2 py-2 text-right text-xs">
+                                  {editavel && c.status === "em_conferencia" && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => confirmar.mutate([c.id])}
+                                        className="block w-full text-emerald-700 hover:underline"
+                                      >
+                                        Confirmar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAjustando(c)}
+                                        className="block w-full text-blue-700 hover:underline"
+                                      >
+                                        Ajustar
+                                      </button>
+                                    </>
+                                  )}
+                                  {editavel && c.status === "confirmado" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => reabrirConferencia.mutate(c.id)}
+                                      className="block w-full text-amber-700 hover:underline"
+                                    >
+                                      Reabrir conferência
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                              {(aberto === c.id || c.status === "em_conferencia") && (
+                                <tr className="border-t border-gray-50 bg-gray-50/60">
+                                  <td />
+                                  <td colSpan={7} className="px-2 py-2">
+                                    {c.status === "em_conferencia" && c.divergencias.length > 0 && (
+                                      <div className="mb-2">
+                                        <ListaDivergencias divergencias={c.divergencias} />
+                                      </div>
+                                    )}
+                                    {aberto === c.id && (
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        {(["P", "D"] as const).map((tipo) => (
+                                          <table key={tipo} className="w-full text-xs">
+                                            <thead className="text-gray-500">
+                                              <tr>
+                                                <th className="text-left">
+                                                  {tipo === "P" ? "Proventos" : "Descontos"}
+                                                </th>
+                                                <th className="text-right">Ref.</th>
+                                                <th className="text-right">Valor</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {c.rubricas
+                                                .filter((r) => r.tipo === tipo)
+                                                .map((r) => (
+                                                  <tr
+                                                    key={r.ordem}
+                                                    className={
+                                                      r.removida ? "text-gray-400 line-through" : ""
+                                                    }
+                                                  >
+                                                    <td>
+                                                      {r.codigo} {r.descricao}
+                                                      {r.origem === "manual" && (
+                                                        <span className="ml-1 text-blue-700">
+                                                          (manual)
+                                                        </span>
+                                                      )}
+                                                    </td>
+                                                    <td className="text-right">{r.referencia}</td>
+                                                    <td className="text-right tabular-nums">
+                                                      {brl(r.valor)}
+                                                      {r.valorOriginal != null &&
+                                                        Math.round(r.valorOriginal * 100) !==
+                                                          Math.round(r.valor * 100) && (
+                                                          <span className="ml-1 text-gray-400">
+                                                            (PDF {brl(r.valorOriginal)})
+                                                          </span>
+                                                        )}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                            </tbody>
+                                          </table>
+                                        ))}
+                                        {c.ajusteObservacao && (
+                                          <p className="text-xs text-gray-600 md:col-span-2">
+                                            Observação do ajuste: {c.ajusteObservacao}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                          </tr>
-                        )}
+                            </React.Fragment>
+                          );
+                        })}
                       </React.Fragment>
                     );
                   })}
@@ -1212,7 +1290,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
             </div>
           )}
 
-          {importacao && ativosForaDaFolha.length > 0 && (
+          {temFolha && ativosForaDaFolha.length > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-600">
               <p className="mb-1 font-semibold text-gray-700">
                 Funcionários ativos do RH que não estão nesta folha ({ativosForaDaFolha.length}) —
@@ -1269,7 +1347,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 </span>
               )}
             </h3>
-            {!importacao ? (
+            {!temFolha ? (
               <p className="px-4 py-6 text-sm text-gray-400">
                 Nenhuma folha importada nesta competência.
               </p>
@@ -1377,7 +1455,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           preparo={preparo}
           gravando={gravar.isPending}
           onCancelar={() => setPreparo(null)}
-          onGravar={(sel, confirmarCnpj) => gravar.mutate({ selecionados: sel, confirmarCnpj })}
+          onGravar={(sel) => gravar.mutate({ selecionados: sel })}
         />
       )}
       {ajustando && (
