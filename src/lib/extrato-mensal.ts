@@ -4,12 +4,15 @@
 // e revalida a integridade com conferirIntegridade().
 //
 // Layout (por rótulos; a única posição fixa é a divisão das rubricas):
-//   cabeçalho  Empresa: / CNPJ: / Cálculo: / Competência: / Página: / Emissão:
+//   cabeçalho  Empresa: / CNPJ: / Cálculo: / Complemento de cálculo: / Competência: /
+//              Página: / Emissão:. "Cálculo:" pode ser uma lista ("Folha Mensal,
+//              Resilição Professor e Complementar"); aí cada cálculo abre uma seção com
+//              uma linha só com o título ("Folha Mensal") antes dos seus colaboradores.
 //   bloco      Empr.: (empregado) ou Contr: (contribuinte) → Vínculo: → Cargo:
 //              → rubricas (x < 290 provento "… valor P"; x >= 290 desconto "… valor D")
 //              → ND: (totais) → NF: (bases) → observações livres
 //   final      Total Geral Proventos: / Total Geral Descontos: / Líquido Geral:
-//              seguidos de "Resumo por Rubrica" e "Situações / Bases" (ignorados).
+//              seguidos de "Resumo por Rubrica" e do quadro de bases (ignorados).
 
 export type ItemTexto = {
   str: string;
@@ -69,7 +72,10 @@ export type ColaboradorExtrato = {
 export type FolhaExtrato = {
   empresa: string;
   cnpj: string;
+  /** Sempre CALCULO_ACEITO ("Folha Mensal"). */
   calculo: string;
+  /** Texto original do "Cálculo:" do cabeçalho (só informativo). */
+  calculoOriginal: string;
   /** AAAA-MM. */
   competencia: string;
   totalProventos: number;
@@ -252,6 +258,7 @@ const ROT_CABECALHO = [
   "Empresa:",
   "CNPJ:",
   "Cálculo:",
+  "Complemento de cálculo:",
   "Competência:",
   "Página:",
   "Emissão:",
@@ -280,6 +287,20 @@ function nomeColaborador(c: { codigo: string; nome: string }) {
   return `${c.codigo} ${c.nome}`;
 }
 
+/** "Folha Mensal, Resilição Professor e Complementar" → ["Folha Mensal", "Resilição Professor", "Complementar"]. */
+export function calculosDoCabecalho(texto: string): string[] {
+  return texto
+    .split(/\s*,\s*|\s+e\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+const mensagemSecaoRecusada = (secao: string) =>
+  `Este PDF tem colaboradores na seção "${secao}", que ainda não é suportada. Nada foi importado.`;
+
+const mensagemCalculoRecusado = (calculo: string) =>
+  `Este PDF é do cálculo "${calculo}". Só é aceito o Extrato Mensal de "${CALCULO_ACEITO}" (13º, férias e adiantamento não entram aqui).`;
+
 /**
  * Lê o Extrato Mensal a partir dos itens de texto por página (formato do pdfjs:
  * x = transform[4], y = transform[5]). Lança ErroExtratoMensal com a página e
@@ -288,6 +309,9 @@ function nomeColaborador(c: { codigo: string; nome: string }) {
  */
 export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato {
   const cab = { empresa: "", cnpj: "", calculo: "", competencia: "" };
+  let calculos: string[] = [];
+  /** Seção aberta pela última linha de título; null = cálculo único, sem título. */
+  let secao: string | null = null;
   const totais = {
     proventos: null as number | null,
     descontos: null as number | null,
@@ -307,6 +331,10 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
     }
     if (!atual.nfLido)
       throw new ErroExtratoMensal(`${onde}: linha "NF:" com as bases não encontrada.`);
+    const secaoAtual = secao ?? CALCULO_ACEITO;
+    if (secaoAtual !== CALCULO_ACEITO) {
+      throw new ErroExtratoMensal(mensagemSecaoRecusada(secaoAtual));
+    }
     const { nfLido: _nf, ...resto } = atual;
     void _nf;
     colaboradores.push({
@@ -334,6 +362,9 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
             );
           }
           cab.calculo = calc;
+          calculos = calculosDoCabecalho(calc);
+          if (!calculos.includes(CALCULO_ACEITO))
+            throw new ErroExtratoMensal(mensagemCalculoRecusado(calc));
         }
         if (m.has("Competência:")) {
           const comp = juntar(m.get("Competência:"));
@@ -349,7 +380,23 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
         }
         continue;
       }
-      if (fimDaFolha) continue;
+
+      // Título de seção: uma linha só com um dos cálculos da lista do cabeçalho.
+      const titulo = l.itens.length === 1 ? l.itens[0].str.trim() : "";
+      if (titulo && calculos.includes(titulo)) {
+        if (titulo !== secao) {
+          fechar();
+          secao = titulo;
+        }
+        continue;
+      }
+      if (fimDaFolha) {
+        // Seções depois dos totais (sem colaboradores) e quadros finais são ignorados.
+        const comecaColaborador = comeca(l, "Empr.:") || comeca(l, "Contr:");
+        if (comecaColaborador && secao && secao !== CALCULO_ACEITO)
+          throw new ErroExtratoMensal(mensagemSecaoRecusada(secao));
+        continue;
+      }
 
       if (
         comeca(l, "Total Geral Proventos:") ||
@@ -364,7 +411,7 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
           totais.descontos = valorCampo(m, "Total Geral Descontos:", onde);
         if (m.has("Líquido Geral:")) totais.liquido = valorCampo(m, "Líquido Geral:", onde);
         if (totais.proventos != null && totais.descontos != null && totais.liquido != null) {
-          fimDaFolha = true; // o que vem depois (Resumo por Rubrica, Situações / Bases) não é colaborador
+          fimDaFolha = true; // o que vem depois (Resumo por Rubrica, INSS, FGTS, IRRF, Situações) não é colaborador
         }
         continue;
       }
@@ -465,11 +512,8 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
 
   if (!cab.calculo)
     throw new ErroExtratoMensal('Cabeçalho sem "Cálculo:". Não parece um Extrato Mensal.');
-  if (cab.calculo !== CALCULO_ACEITO) {
-    throw new ErroExtratoMensal(
-      `Este PDF é do cálculo "${cab.calculo}". Só é aceito o Extrato Mensal de "${CALCULO_ACEITO}" (13º, férias e adiantamento não entram aqui).`,
-    );
-  }
+  if (!calculos.includes(CALCULO_ACEITO))
+    throw new ErroExtratoMensal(mensagemCalculoRecusado(cab.calculo));
   if (!cab.competencia) throw new ErroExtratoMensal('Cabeçalho sem "Competência:".');
   if (totais.proventos == null || totais.descontos == null || totais.liquido == null) {
     throw new ErroExtratoMensal(
@@ -478,14 +522,39 @@ export function lerExtratoMensal(paginas: readonly PaginaItens[]): FolhaExtrato 
   }
   if (colaboradores.length === 0)
     throw new ErroExtratoMensal("Nenhum colaborador encontrado no PDF.");
+  const erroCodigo = codigoRepetido(colaboradores);
+  if (erroCodigo) throw new ErroExtratoMensal(erroCodigo);
 
   return {
     ...cab,
+    calculo: CALCULO_ACEITO,
+    calculoOriginal: cab.calculo,
     totalProventos: totais.proventos,
     totalDescontos: totais.descontos,
     liquidoGeral: totais.liquido,
     colaboradores,
   };
+}
+
+/**
+ * O registro gravado é único por código na importação: o mesmo código como
+ * empregado e como contribuinte (ou repetido) não é suportado.
+ */
+export function codigoRepetido(
+  colaboradores: readonly Pick<ColaboradorExtrato, "tipo" | "codigo">[],
+): string | null {
+  const tipos = new Map<string, TipoColaborador>();
+  for (const c of colaboradores) {
+    const outro = tipos.get(c.codigo);
+    if (outro === undefined) {
+      tipos.set(c.codigo, c.tipo);
+      continue;
+    }
+    return outro === c.tipo
+      ? `O código ${c.codigo} aparece repetido no PDF. Nada foi importado.`
+      : `O código ${c.codigo} aparece como empregado e como contribuinte neste PDF, o que ainda não é suportado. Nada foi importado.`;
+  }
+  return null;
 }
 
 // ---------- Integridade ----------

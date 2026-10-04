@@ -3,7 +3,9 @@ import itensFixture from "./__fixtures__/extrato-mensal-ficticio.itens.json";
 import esperado from "./__fixtures__/extrato-mensal-ficticio.esperado.json";
 import {
   ErroExtratoMensal,
+  calculosDoCabecalho,
   centavosBR,
+  codigoRepetido,
   conferirIntegridade,
   importarExtratoMensal,
   inssDoColaborador,
@@ -120,5 +122,100 @@ describe("integridade", () => {
         if (i.str.includes("Folha Mensal"))
           i.str = i.str.replace("Folha Mensal", "13º Salário Integral");
     expect(() => lerExtratoMensal(pags)).toThrow(/Folha Mensal/);
+  });
+});
+
+describe("vários cálculos e seções", () => {
+  const LISTA = "Folha Mensal, Resilição Professor e Complementar";
+  const item = (str: string, x: number, y: number) => ({ str, x, y });
+  const comLista = (): PaginaItens[] => {
+    const pags = clonar();
+    for (const p of pags) for (const i of p.itens) if (i.str === "Folha Mensal") i.str = LISTA;
+    pags[0].itens.push(
+      item("Complemento de cálculo:", 0, 785.64),
+      item("Normal", 104.64, 785.64),
+      item("Folha Mensal", 245.04, 750.2),
+    );
+    return pags;
+  };
+
+  it('lista do Cálculo separada por vírgula e por "e"', () => {
+    expect(calculosDoCabecalho(LISTA)).toEqual([
+      "Folha Mensal",
+      "Resilição Professor",
+      "Complementar",
+    ]);
+    expect(calculosDoCabecalho("Folha Mensal")).toEqual(["Folha Mensal"]);
+  });
+
+  it("seções com título, complemento de cálculo e seções vazias depois dos totais", () => {
+    const pags = comLista();
+    const ultima = pags[pags.length - 1];
+    ultima.itens.push(
+      item("Resilição Professor", 245.04, 620.1),
+      item("Complementar", 245.04, 610.1),
+      item("INSS", 0, 66.1),
+      item("FGTS, PIS e ISS", 0, 62.1),
+      item("IRRF conforme competência de pagamento", 0, 58.1),
+    );
+    const folha = importarExtratoMensal(pags);
+    expect(folha.calculo).toBe("Folha Mensal");
+    expect(folha.calculoOriginal).toBe(LISTA);
+    expect(folha.colaboradores).toHaveLength(42);
+    expect(folha.liquidoGeral).toBe(134624.32);
+    expect(conferirIntegridade(folha)).toEqual([]);
+  });
+
+  it("formato antigo (sem título) guarda o cálculo original", () => {
+    const folha = lerExtratoMensal(paginas);
+    expect(folha.calculoOriginal).toBe("Folha Mensal");
+  });
+
+  it("colaborador em seção não suportada é recusado", () => {
+    const pags = comLista();
+    pags[pags.length - 1].itens.push(item("Complementar", 245.04, 755.5));
+    expect(() => lerExtratoMensal(pags)).toThrow(/seção "Complementar".*não é suportada/);
+  });
+
+  it("colaborador em seção aberta depois dos totais também é recusado", () => {
+    const pags = comLista();
+    const ultima = pags[pags.length - 1];
+    const bloco = ultima.itens
+      .filter((i) => i.y > 670 && i.y < 752)
+      .map((i) => ({
+        ...i,
+        y: i.y - 380,
+        str: i.str === "42 FABIANA RESENDE DOS JARDIM" ? "43 OUTRA PESSOA" : i.str,
+      }));
+    ultima.itens.push(item("Complementar", 245.04, 380.1), ...bloco);
+    expect(() => lerExtratoMensal(pags)).toThrow(/seção "Complementar".*não é suportada/);
+  });
+
+  it("lista sem Folha Mensal é recusada", () => {
+    const pags = clonar();
+    for (const p of pags)
+      for (const i of p.itens) if (i.str === "Folha Mensal") i.str = "Complementar e Férias";
+    expect(() => lerExtratoMensal(pags)).toThrow(/Folha Mensal/);
+  });
+
+  it("outra linha fora de colaborador continua sendo erro", () => {
+    const pags = comLista();
+    pags[0].itens.push(item("Texto qualquer", 245.04, 745.0));
+    expect(() => lerExtratoMensal(pags)).toThrow(/fora de um colaborador/);
+  });
+
+  it("mesmo código como empregado e contribuinte é recusado", () => {
+    expect(
+      codigoRepetido([
+        { tipo: "empregado", codigo: "22" },
+        { tipo: "contribuinte", codigo: "22" },
+      ]),
+    ).toMatch(/empregado e como contribuinte/);
+    expect(
+      codigoRepetido([
+        { tipo: "empregado", codigo: "22" },
+        { tipo: "empregado", codigo: "23" },
+      ]),
+    ).toBeNull();
   });
 });
