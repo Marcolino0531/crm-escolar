@@ -427,7 +427,7 @@ describe("colégio com duas empresas (CNPJ) na mesma competência", () => {
     expect(new Set(banco.map((i) => somenteDigitos(i.cnpj)))).toEqual(
       new Set(["11222333000181", "11444777000161"]),
     );
-    const totais = totaisDasEmpresas(banco);
+    const totais = totaisDasEmpresas(banco.flatMap((i) => i.colaboradores));
     expect(totais.colaboradores).toBe(43);
     expect(totais.proventos).toBe(130320.3);
     expect(totais.descontos).toBe(31264.73);

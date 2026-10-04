@@ -28,6 +28,7 @@ import {
   restituicoesDaCompetencia,
   restituicoesPorPessoa,
   resumoDaFolha,
+  semDescartados,
   totaisAjustados,
   totaisDasEmpresas,
   totaisResumo,
@@ -40,9 +41,12 @@ import {
 import {
   ajustarColaboradorFolha,
   confirmarColaboradoresFolha,
+  desfazerExclusaoFolha,
+  excluirColaboradorFolha,
   fecharCompetenciaFolha,
   gravarImportacaoFolha,
   listarCompetenciasFolha,
+  listarExclusoesFolha,
   listarMarcacoesRestituicao,
   marcarRestituicaoInss,
   obterFolhaCompetencia,
@@ -51,6 +55,7 @@ import {
   reabrirConferenciaFolha,
   vincularFuncionarioFolha,
   type ColaboradorFolhaGravado,
+  type ExclusaoListada,
   type ImportacaoFolha,
 } from "@/lib/rh-folha.functions";
 import SalariosRH, { SeletorCompetencia } from "@/components/crm/SalariosRH";
@@ -131,7 +136,10 @@ const SeloStatus: React.FC<{ status: LinhaResumo["status"] }> = ({ status }) => 
 // ---------- Importação (conferência antes de gravar) ----------
 
 type Preparo = {
+  /** PDF inteiro (o servidor confere a integridade com todos os registros). */
   folha: FolhaExtrato;
+  /** O que aparece na conferência: sem os registros excluídos da folha. */
+  folhaTela: FolhaExtrato;
   anteriorCompetencia: string | null;
   comparacao: ComparacaoFolhas<ColaboradorExtrato> | null;
   plano: PlanoReimportacao<ColaboradorExtrato> | null;
@@ -143,7 +151,9 @@ const ModalImportacao: React.FC<{
   onCancelar: () => void;
   onGravar: (selecionados: string[]) => void;
 }> = ({ preparo, gravando, onCancelar, onGravar }) => {
-  const { folha, comparacao, plano } = preparo;
+  const { comparacao, plano } = preparo;
+  const folha = preparo.folhaTela;
+  const totaisTela = totaisDasEmpresas(folha.colaboradores);
   const [selecionados, setSelecionados] = useState<Set<string>>(() =>
     comparacao ? preSelecao(comparacao) : new Set(),
   );
@@ -181,8 +191,8 @@ const ModalImportacao: React.FC<{
           </h4>
           <p className="text-xs text-gray-500">
             {folha.empresa} · CNPJ {folha.cnpj} · {folha.colaboradores.length} colaborador(es) ·
-            proventos {brl(folha.totalProventos)} · descontos {brl(folha.totalDescontos)} · líquido{" "}
-            {brl(folha.liquidoGeral)}
+            proventos {brl(totaisTela.proventos)} · descontos {brl(totaisTela.descontos)} · líquido{" "}
+            {brl(totaisTela.liquido)}
           </p>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
@@ -548,6 +558,176 @@ const ModalAjuste: React.FC<{
   );
 };
 
+// ---------- Exclusão da folha (só admin) ----------
+
+const ModalExclusao: React.FC<{
+  colaborador: ColaboradorFolhaGravado;
+  excluindo: boolean;
+  onCancelar: () => void;
+  onExcluir: (v: { motivo: string; fixa: boolean }) => void;
+}> = ({ colaborador, excluindo, onCancelar, onExcluir }) => {
+  const [motivo, setMotivo] = useState("");
+  const [fixa, setFixa] = useState(false);
+  const excluir = () => {
+    if (!motivo.trim()) {
+      toast.error("O motivo da exclusão é obrigatório.");
+      return;
+    }
+    onExcluir({ motivo: motivo.trim(), fixa });
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <h4 className="text-sm font-bold text-gray-800">Excluir da folha — {colaborador.nome}</h4>
+          <p className="text-xs text-gray-500">
+            {colaborador.codigo} ·{" "}
+            {colaborador.tipo === "contribuinte" ? "Contribuinte" : "Empregado"}. O registro e as
+            rubricas saem da folha desta competência e de todas as telas; não volta na reimportação
+            do PDF.
+          </p>
+        </div>
+        <div className="space-y-3 px-4 py-3">
+          <label className="block text-xs text-gray-600">
+            Motivo (obrigatório)
+            <textarea
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              rows={2}
+              className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="flex items-start gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={fixa} onChange={(e) => setFixa(e.target.checked)} />
+            <span>
+              Excluir sempre este colaborador (nas próximas importações deste colégio
+              {somenteDigitos(colaborador.cpf) ? ", pelo CPF" : ", pela empresa, tipo e código"}).
+            </span>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3">
+          <button
+            type="button"
+            onClick={onCancelar}
+            disabled={excluindo}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={excluir}
+            disabled={excluindo}
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {excluindo ? "Excluindo…" : "Confirmar exclusão"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ModalExcluidos: React.FC<{
+  schoolId: string;
+  competencia: string;
+  fechada: boolean;
+  onFechar: () => void;
+}> = ({ schoolId, competencia, fechada, onFechar }) => {
+  const qc = useQueryClient();
+  const fnListar = useServerFn(listarExclusoesFolha);
+  const fnDesfazer = useServerFn(desfazerExclusaoFolha);
+  const q = useQuery({
+    queryKey: ["rh-folha-exclusoes", schoolId, competencia],
+    queryFn: async () => fnListar({ data: { schoolId, competencia } }),
+  });
+  const desfazer = useMutation({
+    mutationFn: async (id: string) => fnDesfazer({ data: { schoolId, id } }),
+    onSuccess: () => {
+      toast.success("Exclusão desfeita.");
+      void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
+    },
+    onError: (e) => toast.error(msgErro(e, "Não foi possível desfazer a exclusão.")),
+  });
+  const lista = (titulo: string, itens: ExclusaoListada[], aviso: string, bloqueado: boolean) => (
+    <div className="space-y-1">
+      <p className="text-xs font-semibold uppercase text-gray-500">{titulo}</p>
+      {itens.length === 0 ? (
+        <p className="text-xs text-gray-400">Nenhuma.</p>
+      ) : (
+        <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 text-sm">
+          {itens.map((e) => (
+            <li key={e.id} className="flex items-start justify-between gap-3 px-3 py-2">
+              <div>
+                <span className="font-medium text-gray-800">{e.nome}</span>
+                <span className="block text-xs text-gray-500">
+                  CNPJ {e.cnpj} · {e.codigo} ·{" "}
+                  {e.tipo === "contribuinte" ? "Contribuinte" : "Empregado"}
+                  {e.fixa && (e.cpf ? " · pelo CPF" : " · pela empresa, tipo e código")}
+                </span>
+                <span className="block text-xs text-gray-500">
+                  {e.excluidoPorNome} · {dataHora(e.excluidoEm)} · Motivo: {e.motivo}
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled={bloqueado || desfazer.isPending}
+                title={bloqueado ? "Competência fechada: reabra para desfazer." : undefined}
+                onClick={() => {
+                  if (confirm(`Desfazer a exclusão de ${e.nome}? ${aviso}`)) desfazer.mutate(e.id);
+                }}
+                className="shrink-0 text-xs text-blue-700 hover:underline disabled:opacity-50"
+              >
+                Desfazer
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-lg">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <h4 className="text-sm font-bold text-gray-800">Excluídos da folha</h4>
+        </div>
+        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
+          {q.isLoading ? (
+            <p className="text-sm text-gray-500">Carregando…</p>
+          ) : q.isError ? (
+            <p className="text-sm text-red-600">{msgErro(q.error, "Erro ao carregar.")}</p>
+          ) : (
+            <>
+              {lista(
+                `Nesta competência (${rotuloCompetencia(competencia)})`,
+                q.data?.daCompetencia ?? [],
+                "O registro volta na próxima reimportação do PDF desta empresa.",
+                fechada,
+              )}
+              {lista(
+                "Sempre excluídos neste colégio",
+                q.data?.fixas ?? [],
+                "Vale para as próximas importações.",
+                false,
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex justify-end border-t border-gray-100 px-4 py-3">
+          <button
+            type="button"
+            onClick={onFechar}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ---------- Tela ----------
 
 function useAcao<T>(fn: (v: T) => Promise<unknown>, ok: string, depois: () => void) {
@@ -587,6 +767,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   const fnVincular = useServerFn(vincularFuncionarioFolha);
   const fnFechar = useServerFn(fecharCompetenciaFolha);
   const fnReabrir = useServerFn(reabrirCompetenciaFolha);
+  const fnExcluir = useServerFn(excluirColaboradorFolha);
   const fnMarcacoes = useServerFn(listarMarcacoesRestituicao);
   const fnMarcar = useServerFn(marcarRestituicaoInss);
   const fnSalarios = useServerFn(listarSalarios);
@@ -634,7 +815,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   );
   const fechada = competenciaFechada(importacoes);
   const editavel = podeEditar && temFolha && !fechada;
-  const totaisFolha = totaisDasEmpresas(importacoes);
+  const totaisFolha = totaisDasEmpresas(colaboradores);
   const empresasFaltando = folhaQ.data?.empresasNaoImportadas ?? [];
   const pendentes = colaboradores.filter((c) => c.status === "em_conferencia");
   const porId = useMemo(() => new Map(funcionarios.map((f) => [f.id, f])), [funcionarios]);
@@ -706,16 +887,26 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           competencia: folha.competencia,
           cnpj: folha.cnpj,
           empresa: folha.empresa,
+          identidades: folha.colaboradores.map((c) => ({
+            tipo: c.tipo,
+            codigo: c.codigo,
+            cpf: c.cpf,
+          })),
         },
       });
+      const folhaTela = {
+        ...folha,
+        colaboradores: semDescartados(folha.colaboradores, prep.descartar),
+      };
       setPreparo({
         folha,
+        folhaTela,
         anteriorCompetencia: prep.anterior?.competencia ?? null,
         comparacao: prep.gravada
           ? null
-          : compararFolhas(prep.anterior?.colaboradores ?? null, folha.colaboradores),
+          : compararFolhas(prep.anterior?.colaboradores ?? null, folhaTela.colaboradores),
         plano: prep.gravada
-          ? planejarReimportacao(prep.gravada.colaboradores, folha.colaboradores)
+          ? planejarReimportacao(prep.gravada.colaboradores, folhaTela.colaboradores)
           : null,
       });
     } catch (e) {
@@ -747,6 +938,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   const [soConferencia, setSoConferencia] = useState(false);
   const [aberto, setAberto] = useState<string | null>(null);
   const [ajustando, setAjustando] = useState<ColaboradorFolhaGravado | null>(null);
+  const [excluindo, setExcluindo] = useState<ColaboradorFolhaGravado | null>(null);
+  const [verExcluidos, setVerExcluidos] = useState(false);
   useEffect(() => setSelecionados(new Set()), [competencia, schoolId]);
 
   const base = { schoolId: schoolId as string, competencia };
@@ -785,6 +978,17 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
       recarregar();
     },
     onError: (e) => toast.error(msgErro(e, "Não foi possível salvar o ajuste.")),
+  });
+  const excluir = useMutation({
+    mutationFn: async (v: { id: string; motivo: string; fixa: boolean }) =>
+      fnExcluir({ data: { ...base, ...v } }),
+    onSuccess: () => {
+      toast.success("Colaborador excluído da folha.");
+      setExcluindo(null);
+      recarregar();
+      void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
+    },
+    onError: (e) => toast.error(msgErro(e, "Não foi possível excluir da folha.")),
   });
   const marcar = useMutation({
     mutationFn: async (v: { funcionarioId: string; recebe: boolean }) =>
@@ -924,6 +1128,15 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   Fechar competência
                 </button>
               )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setVerExcluidos(true)}
+                  className="px-1 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                >
+                  Excluídos da folha
+                </button>
+              )}
               {fechada && isAdmin && (
                 <button
                   type="button"
@@ -959,35 +1172,34 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {importacoes.map((imp) => (
-                    <tr key={imp.id} className="border-t border-gray-100 align-top">
-                      <td className="px-3 py-2">
-                        <span className="font-medium text-gray-800">{imp.empresa}</span>
-                        <span className="block text-xs text-gray-500">
-                          {imp.calculo} · importada por {imp.importadoPorNome} em{" "}
-                          {dataHora(imp.importadoEm)}
-                          {imp.reimportadoEm &&
-                            ` · reimportada por ${imp.reimportadoPorNome} em ${dataHora(imp.reimportadoEm)}`}
-                          {imp.fechadoEm &&
-                            ` · fechada por ${imp.fechadoPorNome} em ${dataHora(imp.fechadoEm)}`}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 tabular-nums">{imp.cnpj}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {imp.totalColaboradores}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {brl(imp.totalProventos)}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {brl(imp.totalDescontos)}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{brl(imp.liquidoGeral)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {pendentesPorEmpresa(imp.id)}
-                      </td>
-                    </tr>
-                  ))}
+                  {importacoes.map((imp) => {
+                    const t = totaisDasEmpresas(
+                      colaboradores.filter((c) => c.importacaoId === imp.id),
+                    );
+                    return (
+                      <tr key={imp.id} className="border-t border-gray-100 align-top">
+                        <td className="px-3 py-2">
+                          <span className="font-medium text-gray-800">{imp.empresa}</span>
+                          <span className="block text-xs text-gray-500">
+                            {imp.calculo} · importada por {imp.importadoPorNome} em{" "}
+                            {dataHora(imp.importadoEm)}
+                            {imp.reimportadoEm &&
+                              ` · reimportada por ${imp.reimportadoPorNome} em ${dataHora(imp.reimportadoEm)}`}
+                            {imp.fechadoEm &&
+                              ` · fechada por ${imp.fechadoPorNome} em ${dataHora(imp.fechadoEm)}`}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">{imp.cnpj}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{t.colaboradores}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{brl(t.proventos)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{brl(t.descontos)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{brl(t.liquido)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {pendentesPorEmpresa(imp.id)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 {importacoes.length > 1 && (
                   <tfoot className="bg-gray-50 font-semibold">
@@ -1202,6 +1414,15 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                       className="block w-full text-amber-700 hover:underline"
                                     >
                                       Reabrir conferência
+                                    </button>
+                                  )}
+                                  {isAdmin && !fechada && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExcluindo(c)}
+                                      className="block w-full text-red-700 hover:underline"
+                                    >
+                                      Excluir da folha
                                     </button>
                                   )}
                                 </td>
@@ -1456,6 +1677,22 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           gravando={gravar.isPending}
           onCancelar={() => setPreparo(null)}
           onGravar={(sel) => gravar.mutate({ selecionados: sel })}
+        />
+      )}
+      {isAdmin && excluindo && (
+        <ModalExclusao
+          colaborador={excluindo}
+          excluindo={excluir.isPending}
+          onCancelar={() => setExcluindo(null)}
+          onExcluir={(v) => excluir.mutate({ id: excluindo.id, ...v })}
+        />
+      )}
+      {isAdmin && verExcluidos && (
+        <ModalExcluidos
+          schoolId={schoolId}
+          competencia={competencia}
+          fechada={fechada}
+          onFechar={() => setVerExcluidos(false)}
         />
       )}
       {ajustando && (
