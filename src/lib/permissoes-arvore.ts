@@ -754,6 +754,11 @@ export const ARVORE_PERMISSOES = [
                 tipo: "pagina",
                 legado: l([["configuracoes", "biblioteca"]], [["biblioteca"]]),
               },
+              {
+                chave: "configuracoes.cadastros.cnpjs_folha",
+                nome: "CNPJs Folha de Pagamento",
+                tipo: "pagina",
+              },
             ],
           },
           {

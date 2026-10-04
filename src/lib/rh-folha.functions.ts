@@ -21,9 +21,16 @@ import {
   agruparPorPessoa,
   casarPorCpf,
   chaveColaborador,
+  cnpjAceito,
+  competenciaFechada,
+  conflitoVinculoCpf,
   divergenciasDoColaborador,
+  empresasNaoImportadas,
   exigirCompetenciaAberta,
+  importacaoAnteriorDoCnpj,
+  importacaoDoCnpj,
   inssDoMes,
+  mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
   salariosDaFolha,
@@ -68,6 +75,8 @@ export type RubricaGravada = RubricaFolha & { ordem: number; valorHora: string }
 
 export type ColaboradorFolhaGravado = Omit<ColaboradorComparavel, "rubricas"> & {
   id: string;
+  /** Empresa (importação/CNPJ) a que o registro pertence. */
+  importacaoId: string;
   tipo: "empregado" | "contribuinte";
   vinculo: string;
   admissao: string;
@@ -252,6 +261,7 @@ function paraColaborador(
 ): ColaboradorFolhaGravado {
   return {
     id: r.id,
+    importacaoId: r.importacao_id,
     tipo: r.tipo,
     codigo: r.codigo,
     nome: r.nome,
@@ -344,26 +354,58 @@ async function contexto(userId: string, schoolId: string, edicao: boolean) {
 
 // ---------- Leitura ----------
 
-async function importacaoDa(schoolId: string, competencia: string): Promise<ImportacaoRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from("rh_folha_importacoes" as never)
-    .select(IMPORTACAO_COLS)
-    .eq("school_id", schoolId)
-    .eq("competencia", competencia)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return (data as ImportacaoRow | null) ?? null;
+/** Importações (uma por empresa/CNPJ) do colégio na competência. */
+async function importacoesDa(schoolId: string, competencia: string): Promise<ImportacaoRow[]> {
+  return selectAll<ImportacaoRow>(() =>
+    supabaseAdmin
+      .from("rh_folha_importacoes" as never)
+      .select(IMPORTACAO_COLS)
+      .eq("school_id", schoolId)
+      .eq("competencia", competencia)
+      .order("importado_em")
+      .order("id"),
+  );
 }
 
-async function exigirImportacaoAberta(
+/** Importações do colégio em competências anteriores a esta. */
+async function importacoesAnterioresDa(
   schoolId: string,
   competencia: string,
-): Promise<ImportacaoRow> {
-  const imp = await importacaoDa(schoolId, competencia);
-  if (!imp) throw new Error("Não há folha importada nesta competência.");
-  exigirCompetenciaAberta(imp.status);
-  return imp;
+): Promise<ImportacaoRow[]> {
+  return selectAll<ImportacaoRow>(() =>
+    supabaseAdmin
+      .from("rh_folha_importacoes" as never)
+      .select(IMPORTACAO_COLS)
+      .eq("school_id", schoolId)
+      .lt("competencia", competencia)
+      .order("competencia", { ascending: false })
+      .order("id"),
+  );
 }
+
+/** Todas as empresas da competência abertas (fecham e reabrem juntas). */
+async function exigirCompetenciaAbertaDa(
+  schoolId: string,
+  competencia: string,
+): Promise<ImportacaoRow[]> {
+  const imps = await importacoesDa(schoolId, competencia);
+  if (!imps.length) throw new Error("Não há folha importada nesta competência.");
+  for (const i of imps) exigirCompetenciaAberta(i.status);
+  return imps;
+}
+
+/** Registros de todas as empresas da competência. */
+async function colaboradoresDaCompetencia(
+  imps: readonly { id: string }[],
+): Promise<ColaboradorFolhaGravado[]> {
+  return (await Promise.all(imps.map((i) => colaboradoresDa(i.id)))).flat();
+}
+
+const paraEmpresa = (i: { cnpj: string; empresa: string; competencia: string }) => ({
+  cnpj: i.cnpj,
+  empresa: i.empresa,
+  competencia: i.competencia,
+});
 
 async function colaboradoresDa(importacaoId: string): Promise<ColaboradorFolhaGravado[]> {
   const cols = await selectAll<ColaboradorRow>(() =>
@@ -447,21 +489,18 @@ function vigente(c: ColaboradorFolhaGravado): ColaboradorComparavel {
   };
 }
 
+/** Folha anterior mais recente do MESMO CNPJ no colégio (null = primeira desta empresa). */
 async function folhaAnterior(
   schoolId: string,
   competencia: string,
+  cnpj: string,
 ): Promise<{ competencia: string; colaboradores: ColaboradorComparavel[] } | null> {
-  const { data, error } = await supabaseAdmin
-    .from("rh_folha_importacoes" as never)
-    .select("id, competencia")
-    .eq("school_id", schoolId)
-    .lt("competencia", competencia)
-    .order("competencia", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) return null;
-  const imp = data as { id: string; competencia: string };
+  const imp = importacaoAnteriorDoCnpj(
+    await importacoesAnterioresDa(schoolId, competencia),
+    competencia,
+    cnpj,
+  );
+  if (!imp) return null;
   return {
     competencia: imp.competencia,
     colaboradores: (await colaboradoresDa(imp.id)).map(vigente),
@@ -478,15 +517,49 @@ async function funcionariosDa(schoolId: string): Promise<FuncionarioRow[]> {
   );
 }
 
-async function cnpjDoColegio(unidade: string): Promise<string> {
+/** CNPJ e razão social do cadastro principal do colégio (documentos_colegios). */
+export async function empresaDoColegio(
+  unidade: string,
+): Promise<{ cnpj: string; razaoSocial: string }> {
   const { data, error } = await supabaseAdmin
     .from("documentos_colegios" as never)
-    .select("cnpj")
+    .select("cnpj, razao_social")
     .eq("unidade", unidade)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return ((data as { cnpj: string | null } | null)?.cnpj ?? "").trim();
+  const row = data as { cnpj: string | null; razao_social: string | null } | null;
+  return { cnpj: (row?.cnpj ?? "").trim(), razaoSocial: (row?.razao_social ?? "").trim() };
 }
+
+async function cnpjDoColegio(unidade: string): Promise<string> {
+  return (await empresaDoColegio(unidade)).cnpj;
+}
+
+/**
+ * Só entra PDF de CNPJ aceito para o colégio: o do cadastro do colégio ou um
+ * dos "CNPJs Folha de Pagamento" (Configurações > Cadastros Gerais). Devolve o CNPJ do colégio.
+ */
+async function exigirCnpjAceito(
+  schoolId: string,
+  unidade: string,
+  folha: { cnpj: string; empresa: string },
+): Promise<string> {
+  const cnpjColegio = await cnpjDoColegio(unidade);
+  const adicionais = await selectAll<{ cnpj: string }>(() =>
+    supabaseAdmin
+      .from("rh_folha_cnpjs" as never)
+      .select("cnpj")
+      .eq("school_id", schoolId)
+      .order("id"),
+  );
+  if (!cnpjAceito(folha.cnpj, [cnpjColegio, ...adicionais.map((a) => a.cnpj)])) {
+    throw new Error(mensagemCnpjNaoCadastrado(folha.cnpj, folha.empresa, unidade));
+  }
+  return cnpjColegio;
+}
+
+const MENSAGEM_COMPETENCIA_FECHADA =
+  "Competência fechada: não aceita PDF de nenhuma empresa até ser reaberta.";
 
 async function registrarEvento(
   importacaoId: string,
@@ -508,17 +581,19 @@ async function registrarEvento(
 }
 
 /**
- * funcionarios_salarios de TODAS as pessoas da importação: bruto e líquido somados
- * dos registros (contratos) de cada funcionário, só com todos Confirmados
- * (regra em salariosDaFolha). Chamado após importar, confirmar, reabrir, ajustar e vincular.
+ * funcionarios_salarios de TODAS as pessoas da competência: bruto e líquido somados
+ * dos registros (contratos, de todas as empresas) de cada funcionário, só com todos
+ * Confirmados (regra em salariosDaFolha). Chamado após importar, confirmar, reabrir,
+ * ajustar e vincular.
  */
 async function sincronizarSalarios(
-  importacaoId: string,
+  schoolId: string,
   competencia: string,
   userId: string,
   nome: string,
 ): Promise<void> {
-  const linhas = salariosDaFolha(await colaboradoresDa(importacaoId)).map((s) => ({
+  const registros = await colaboradoresDaCompetencia(await importacoesDa(schoolId, competencia));
+  const linhas = salariosDaFolha(registros).map((s) => ({
     funcionario_id: s.funcionarioId,
     competencia,
     valor: s.valor,
@@ -633,42 +708,53 @@ export const obterFolhaCompetencia = createServerFn({ method: "POST" })
       data,
       context,
     }): Promise<{
-      importacao: ImportacaoFolha | null;
+      /** Uma por empresa (CNPJ) importada na competência. */
+      importacoes: ImportacaoFolha[];
       colaboradores: ColaboradorFolhaGravado[];
+      /** Empresas da competência anterior ainda não importadas nesta (aviso ao fechar). */
+      empresasNaoImportadas: { cnpj: string; empresa: string; competencia: string }[];
     }> => {
       await contexto(context.userId, data.schoolId, false);
       if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
-      const imp = await importacaoDa(data.schoolId, data.competencia);
-      if (!imp) return { importacao: null, colaboradores: [] };
-      return { importacao: paraImportacao(imp), colaboradores: await colaboradoresDa(imp.id) };
+      const imps = await importacoesDa(data.schoolId, data.competencia);
+      const faltando = empresasNaoImportadas(
+        [...(await importacoesAnterioresDa(data.schoolId, data.competencia)), ...imps],
+        data.competencia,
+      );
+      return {
+        importacoes: imps.map(paraImportacao),
+        colaboradores: await colaboradoresDaCompetencia(imps),
+        empresasNaoImportadas: faltando.map(paraEmpresa),
+      };
     },
   );
 
 /** Tudo que a tela precisa para conferir o PDF antes de gravar. */
 export const prepararImportacaoFolha = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => compInput.extend({ cnpj: texto(30) }).parse(input))
+  .inputValidator((input: unknown) =>
+    compInput.extend({ cnpj: texto(30), empresa: texto(300) }).parse(input),
+  )
   .handler(
     async ({
       data,
       context,
     }): Promise<{
-      cnpjColegio: string;
-      cnpjDivergente: boolean;
       anterior: { competencia: string; colaboradores: ColaboradorComparavel[] } | null;
+      /** Importação já gravada DESTA empresa na competência (reimportação). */
       gravada: { status: StatusCompetencia; colaboradores: ColaboradorOriginal[] } | null;
     }> => {
       const unidade = await contexto(context.userId, data.schoolId, true);
       if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
-      const cnpjColegio = await cnpjDoColegio(unidade);
-      const imp = await importacaoDa(data.schoolId, data.competencia);
+      await exigirCnpjAceito(data.schoolId, unidade, data);
+      const imps = await importacoesDa(data.schoolId, data.competencia);
+      if (competenciaFechada(imps)) throw new Error(MENSAGEM_COMPETENCIA_FECHADA);
+      const imp = importacaoDoCnpj(imps, data.cnpj);
       const gravada = imp
         ? { status: imp.status, colaboradores: (await colaboradoresDa(imp.id)).map(original) }
         : null;
       return {
-        cnpjColegio,
-        cnpjDivergente: !cnpjsIguais(cnpjColegio, data.cnpj),
-        anterior: await folhaAnterior(data.schoolId, data.competencia),
+        anterior: await folhaAnterior(data.schoolId, data.competencia, data.cnpj),
         gravada,
       };
     },
@@ -684,7 +770,6 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
         folha: folhaSchema,
         /** chaveColaborador (tipo:código) dos que entram Confirmados. */
         selecionados: z.array(z.string().max(40)).max(2000),
-        confirmarCnpj: z.boolean(),
       })
       .parse(input),
   )
@@ -693,21 +778,19 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       const unidade = await contexto(context.userId, data.schoolId, true);
       const folha = data.folha;
       revalidarFolha(folha);
-      const cnpjColegio = await cnpjDoColegio(unidade);
+      const cnpjColegio = await exigirCnpjAceito(data.schoolId, unidade, folha);
+      // CNPJ aceito, mas diferente do cadastro do colégio (empresa adicional): só informativo.
       const cnpjDivergente = !cnpjsIguais(cnpjColegio, folha.cnpj);
-      if (cnpjDivergente && !data.confirmarCnpj) {
-        throw new Error(
-          `CNPJ do PDF (${folha.cnpj || "vazio"}) diferente do CNPJ cadastrado de ${unidade} (${cnpjColegio || "não cadastrado"}). Confirme para continuar.`,
-        );
-      }
 
-      const imp = await importacaoDa(data.schoolId, folha.competencia);
-      if (imp) exigirCompetenciaAberta(imp.status);
+      const imps = await importacoesDa(data.schoolId, folha.competencia);
+      if (competenciaFechada(imps)) throw new Error(MENSAGEM_COMPETENCIA_FECHADA);
+      // Mesmo CNPJ = reimportação DESTA empresa; outro CNPJ nunca é tocado.
+      const imp = importacaoDoCnpj(imps, folha.cnpj);
       const gravados = imp ? await colaboradoresDa(imp.id) : [];
       const gravadoPorChave = new Map(gravados.map((g) => [chaveColaborador(g), g]));
       const plano = planejarReimportacao(gravados.map(original), folha.colaboradores);
 
-      const anterior = await folhaAnterior(data.schoolId, folha.competencia);
+      const anterior = await folhaAnterior(data.schoolId, folha.competencia, folha.cnpj);
       const anteriorPorChave = new Map(
         (anterior?.colaboradores ?? []).map((c) => [chaveColaborador(c), c]),
       );
@@ -715,8 +798,8 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       const selecionados = new Set(data.selecionados);
 
       const aGravar = [...plano.novos, ...plano.substituidos.map((s) => s.colaborador)];
-      // Mesma chave (tipo + código) = mesmo código: só sai quem não está no PDF novo.
-      const retirar = new Set(plano.retirados.map((r) => r.codigo));
+      // Identidade dentro da empresa: tipo + código. Só sai quem não está no PDF novo.
+      const retirar = plano.retirados.map((r) => ({ tipo: r.tipo, codigo: r.codigo }));
 
       const gravar = aGravar.map((c) => {
         const g = gravadoPorChave.get(chaveColaborador(c));
@@ -781,25 +864,24 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
             por: context.userId,
             por_nome: nome,
             gravar,
-            retirar: [...retirar],
+            retirar,
           },
         } as never,
       );
       if (error) throw new Error(error.message);
 
-      const gravada = await importacaoDa(data.schoolId, folha.competencia);
-      if (gravada) await sincronizarSalarios(gravada.id, folha.competencia, context.userId, nome);
-      return { gravados: gravar.length, iguais: plano.iguais.length, retirados: retirar.size };
+      await sincronizarSalarios(data.schoolId, folha.competencia, context.userId, nome);
+      return { gravados: gravar.length, iguais: plano.iguais.length, retirados: retirar.length };
     },
   );
 
 // ---------- Conferência ----------
 
-async function colaboradoresDaImportacao(
-  importacaoId: string,
+async function colaboradoresDaFolha(
+  imps: readonly { id: string }[],
   ids: readonly string[],
 ): Promise<ColaboradorFolhaGravado[]> {
-  const todos = await colaboradoresDa(importacaoId);
+  const todos = await colaboradoresDaCompetencia(imps);
   const alvo = new Set(ids);
   const achados = todos.filter((c) => alvo.has(c.id));
   if (achados.length !== alvo.size) throw new Error("Colaborador não pertence a esta folha.");
@@ -813,8 +895,8 @@ export const confirmarColaboradoresFolha = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<{ confirmados: number }> => {
     await contexto(context.userId, data.schoolId, true);
-    const imp = await exigirImportacaoAberta(data.schoolId, data.competencia);
-    const alvo = (await colaboradoresDaImportacao(imp.id, data.ids)).filter(
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const alvo = (await colaboradoresDaFolha(imps, data.ids)).filter(
       (c) => c.status === "em_conferencia",
     );
     if (!alvo.length) return { confirmados: 0 };
@@ -835,8 +917,8 @@ export const confirmarColaboradoresFolha = createServerFn({ method: "POST" })
       .eq("status", "em_conferencia");
     if (error) throw new Error(error.message);
     for (const c of alvo)
-      await registrarEvento(imp.id, c.id, "confirmacao", {}, context.userId, nome);
-    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
+      await registrarEvento(c.importacaoId, c.id, "confirmacao", {}, context.userId, nome);
+    await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
     return { confirmados: alvo.length };
   });
 
@@ -845,8 +927,8 @@ export const reabrirConferenciaFolha = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => compInput.extend({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await contexto(context.userId, data.schoolId, true);
-    const imp = await exigirImportacaoAberta(data.schoolId, data.competencia);
-    const [c] = await colaboradoresDaImportacao(imp.id, [data.id]);
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const [c] = await colaboradoresDaFolha(imps, [data.id]);
     if (c.status !== "confirmado") return { ok: true };
     const nome = await nomeDoUsuario(context.userId);
     const { error } = await supabaseAdmin
@@ -861,14 +943,14 @@ export const reabrirConferenciaFolha = createServerFn({ method: "POST" })
       .eq("id", c.id);
     if (error) throw new Error(error.message);
     await registrarEvento(
-      imp.id,
+      c.importacaoId,
       c.id,
       "reabertura_conferencia",
       { confirmado_em: c.confirmadoEm, confirmado_por_nome: c.confirmadoPorNome },
       context.userId,
       nome,
     );
-    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
+    await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -907,8 +989,8 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await contexto(context.userId, data.schoolId, true);
-    const imp = await exigirImportacaoAberta(data.schoolId, data.competencia);
-    const [c] = await colaboradoresDaImportacao(imp.id, [data.id]);
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const [c] = await colaboradoresDaFolha(imps, [data.id]);
     if (c.status !== "em_conferencia") {
       throw new Error("Colaborador confirmado: reabra a conferência para ajustar.");
     }
@@ -961,7 +1043,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
       } as never,
     );
     if (error) throw new Error(error.message);
-    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
+    await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -974,8 +1056,8 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await contexto(context.userId, data.schoolId, true);
-    const imp = await exigirImportacaoAberta(data.schoolId, data.competencia);
-    const todos = await colaboradoresDa(imp.id);
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const todos = await colaboradoresDaCompetencia(imps);
     const c = todos.find((x) => x.id === data.id);
     if (!c) throw new Error("Colaborador não pertence a esta folha.");
     if (data.funcionarioId) {
@@ -983,6 +1065,8 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
       if (!funcionarios.some((f) => f.id === data.funcionarioId)) {
         throw new Error("Funcionário não pertence a esta unidade.");
       }
+      const conflito = conflitoVinculoCpf(todos, c.id, data.funcionarioId);
+      if (conflito) throw new Error(conflito);
     }
     const nome = await nomeDoUsuario(context.userId);
     const { error } = await supabaseAdmin
@@ -995,14 +1079,14 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
       .eq("id", c.id);
     if (error) throw new Error(error.message);
     await registrarEvento(
-      imp.id,
+      c.importacaoId,
       c.id,
       "vinculo",
       { antes: c.funcionarioId, depois: data.funcionarioId },
       context.userId,
       nome,
     );
-    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
+    await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -1031,17 +1115,31 @@ async function marcacoesDa(schoolId: string): Promise<MarcacaoRestituicao[]> {
   }));
 }
 
+/** Fecha TODAS as empresas do colégio na competência de uma vez. */
 export const fecharCompetenciaFolha = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => compInput.parse(input))
+  .inputValidator((input: unknown) =>
+    compInput.extend({ confirmarEmpresasFaltando: z.boolean().optional() }).parse(input),
+  )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await contexto(context.userId, data.schoolId, true);
-    const imp = await exigirImportacaoAberta(data.schoolId, data.competencia);
-    const colaboradores = await colaboradoresDa(imp.id);
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const colaboradores = await colaboradoresDaCompetencia(imps);
     const pendentes = pendentesParaFechar(colaboradores);
     if (pendentes.length) {
       throw new Error(
         `Ainda há ${pendentes.length} colaborador(es) Em conferência: ${pendentes.join(", ")}.`,
+      );
+    }
+    const faltando = empresasNaoImportadas(
+      [...(await importacoesAnterioresDa(data.schoolId, data.competencia)), ...imps],
+      data.competencia,
+    );
+    if (faltando.length && !data.confirmarEmpresasFaltando) {
+      throw new Error(
+        `Empresa(s) importada(s) na competência anterior e não importada(s) nesta: ${faltando
+          .map((f) => f.empresa || f.cnpj)
+          .join(", ")}. Confirme para fechar.`,
       );
     }
     const marcados = new Set(
@@ -1053,7 +1151,7 @@ export const fecharCompetenciaFolha = createServerFn({ method: "POST" })
       const inss = inssDoMes(c.rubricas);
       const marcado = c.funcionarioId != null && marcados.has(c.funcionarioId);
       return {
-        importacao_id: imp.id,
+        importacao_id: c.importacaoId,
         colaborador_id: c.id,
         funcionario_id: c.funcionarioId,
         marcado,
@@ -1078,10 +1176,22 @@ export const fecharCompetenciaFolha = createServerFn({ method: "POST" })
         fechado_por: context.userId,
         fechado_por_nome: nome,
       } as never)
-      .eq("id", imp.id)
+      .in(
+        "id",
+        imps.map((i) => i.id),
+      )
       .eq("status", "aberta");
     if (error) throw new Error(error.message);
-    await registrarEvento(imp.id, null, "fechamento", {}, context.userId, nome);
+    for (const i of imps) {
+      await registrarEvento(
+        i.id,
+        null,
+        "fechamento",
+        { empresas_nao_importadas: faltando.map(paraEmpresa) },
+        context.userId,
+        nome,
+      );
+    }
     return { ok: true };
   });
 
@@ -1093,9 +1203,11 @@ export const reabrirCompetenciaFolha = createServerFn({ method: "POST" })
     if (!(await ehAdmin(context.userId))) {
       throw new Error("Apenas administradores podem reabrir a competência.");
     }
-    const imp = await importacaoDa(data.schoolId, data.competencia);
-    if (!imp) throw new Error("Não há folha importada nesta competência.");
-    if (imp.status !== "fechada") return { ok: true };
+    const imps = await importacoesDa(data.schoolId, data.competencia);
+    if (!imps.length) throw new Error("Não há folha importada nesta competência.");
+    // Reabre TODAS as empresas da competência.
+    const fechadas = imps.filter((i) => i.status === "fechada");
+    if (!fechadas.length) return { ok: true };
     const nome = await nomeDoUsuario(context.userId);
     const { error } = await supabaseAdmin
       .from("rh_folha_importacoes" as never)
@@ -1105,16 +1217,21 @@ export const reabrirCompetenciaFolha = createServerFn({ method: "POST" })
         reaberto_por: context.userId,
         reaberto_por_nome: nome,
       } as never)
-      .eq("id", imp.id);
+      .in(
+        "id",
+        fechadas.map((i) => i.id),
+      );
     if (error) throw new Error(error.message);
-    await registrarEvento(
-      imp.id,
-      null,
-      "reabertura",
-      { fechado_em: imp.fechado_em, fechado_por_nome: imp.fechado_por_nome },
-      context.userId,
-      nome,
-    );
+    for (const i of fechadas) {
+      await registrarEvento(
+        i.id,
+        null,
+        "reabertura",
+        { fechado_em: i.fechado_em, fechado_por_nome: i.fechado_por_nome },
+        context.userId,
+        nome,
+      );
+    }
     return { ok: true };
   });
 
@@ -1180,10 +1297,11 @@ export async function conferirLoteComFolha(
   if (itens.some((i) => !funcionarios.has(i.employee_id))) {
     throw new Error("Há funcionário de outra unidade no lote.");
   }
-  const imp = await importacaoDa(schoolId, competencia);
-  if (!imp) return;
+  const imps = await importacoesDa(schoolId, competencia);
+  if (!imps.length) return;
+  // Todas as empresas da competência: a mesma pessoa em duas empresas soma.
   const porFuncionario = new Map(
-    agruparPorPessoa(await colaboradoresDa(imp.id))
+    agruparPorPessoa(await colaboradoresDaCompetencia(imps))
       .filter((g) => g.funcionarioId)
       .map((g) => [g.funcionarioId, g.registros]),
   );
