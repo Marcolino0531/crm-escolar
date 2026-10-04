@@ -29,6 +29,7 @@ import {
   parseXmlValue,
   resolverCredenciais,
 } from "@/lib/sponte.functions";
+import { formatarCpf } from "@/lib/matricula-form";
 
 // Parentesco é um inteiro NEGATIVO no Sponte (mesmo padrão de SituacaoAlunoID e
 // das formas de cobrança). A API não expõe a tabela; os códigos abaixo foram
@@ -108,6 +109,13 @@ export function paraDateTimeSponte(valor: string): string | null {
 
 function soDigitos(s: string): string {
   return s.replace(/\D/g, "");
+}
+
+// O payload guarda o CPF só em dígitos; no Sponte o padrão é 000.000.000-00.
+// Só formata CPF completo (11 dígitos); vazio ou outro tamanho vai como está.
+export function cpfParaSponte(cpf: string | undefined): string {
+  const valor = cpf?.trim() ?? "";
+  return soDigitos(valor).length === 11 ? formatarCpf(valor) : valor;
 }
 
 export interface EnderecoResolvido {
@@ -489,7 +497,7 @@ export function camposAluno(
     // levam e-mail/telefone/celular (InsertResponsaveis2).
     sEmail: "",
     sTelefone: "",
-    sCPF: aluno.cpf?.trim() ?? "",
+    sCPF: cpfParaSponte(aluno.cpf),
     sRG: aluno.rg?.trim() ?? "",
     sCelular: "",
     sObservacao: observacaoAluno(aluno),
@@ -522,7 +530,7 @@ function camposResponsavel(
     sEndereco: endereco.logradouro,
     nNumeroEndereco: endereco.numero,
     sRG: resp.rg?.trim() ?? "",
-    sCPFCNPJ: resp.cpf?.trim() ?? "",
+    sCPFCNPJ: cpfParaSponte(resp.cpf),
     sCidade: endereco.cidade,
     sBairro: endereco.bairro,
     sEmail: resp.email?.trim() ?? "",

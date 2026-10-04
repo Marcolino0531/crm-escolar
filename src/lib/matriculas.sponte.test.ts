@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { camposAluno } from "@/lib/matriculas.sponte";
+import { camposAluno, cpfParaSponte } from "@/lib/matriculas.sponte";
 
 const endereco = {
   cep: "30320000",
@@ -29,9 +29,27 @@ describe("camposAluno (InsertAlunos3)", () => {
     expect(t.sEmail).toBe("");
     expect(t.sTelefone).toBe("");
     expect(t.sCelular).toBe("");
-    expect(t.sCPF).toBe("11122233396");
+    expect(t.sCPF).toBe("111.222.333-96");
     expect(t.sCEP).toBe("30320000");
     expect(t.sEndereco).toBe("Rua das Acácias");
     expect(t.sCidade).toBe("Belo Horizonte");
+  });
+});
+
+describe("cpfParaSponte (sCPF do aluno e sCPFCNPJ do responsável novo)", () => {
+  it("CPF com 11 dígitos vai no padrão 000.000.000-00", () => {
+    expect(cpfParaSponte("11122233396")).toBe("111.222.333-96");
+    expect(cpfParaSponte(" 111.222.333-96 ")).toBe("111.222.333-96");
+  });
+
+  it("vazio continua vazio", () => {
+    expect(cpfParaSponte(undefined)).toBe("");
+    expect(cpfParaSponte("")).toBe("");
+    expect(cpfParaSponte("   ")).toBe("");
+  });
+
+  it("outra quantidade de dígitos vai como está", () => {
+    expect(cpfParaSponte("1112223339")).toBe("1112223339");
+    expect(cpfParaSponte("11222333000181")).toBe("11222333000181");
   });
 });
