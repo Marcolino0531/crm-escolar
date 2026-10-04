@@ -42,7 +42,7 @@ import {
   type MatriculaPayload,
   type MatriculaResultado,
 } from "@/lib/matriculas.sponte";
-import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirPermissaoPagina, temPermissaoPagina } from "@/lib/permissoes-servidor";
 import { sincronizarNomeSubmissao, type NomeSubmissaoResult } from "@/lib/matriculas-nome.server";
 import { MENSAGEM_CONFERIDO, montarCamposConferenciaManual } from "@/lib/matricula-conferencia";
 
@@ -792,7 +792,10 @@ export const desfazerConferenciaMatricula = createServerFn({ method: "POST" })
 //
 // Para arquivos que a família mandou depois do envio (ex.: WhatsApp). Mesmo
 // bucket privado e mesmo mecanismo do formulário (link de upload assinado),
-// mas só para quem tem Editar no e-Formulário. A linha vai para
+// e, como exceção à regra de que gravar exige Editar, basta Visualizar no
+// e-Formulário para ANEXAR (documento pendente da lista ou de nome livre): a
+// recepção recebe documentos pelo WhatsApp. Substituir um documento que já tem
+// arquivo continua exigindo Editar. A linha vai para
 // matricula_documentos com a submission_id, a unidade e o sponte_aluno_id da
 // submissão (é assim que a Cobrança já encontra os documentos do aluno). O
 // payload, a turma, as cobranças, a conferência e o arquivamento não mudam.
@@ -806,10 +809,13 @@ async function assertCanAnexarDocumento(userId: string) {
   await exigirPermissaoPagina(
     userId,
     ["eformulario"],
-    "editar",
+    "ver",
     "Você não tem permissão para anexar documentos à matrícula.",
   );
 }
+
+const MENSAGEM_SUBSTITUIR_SEM_EDITAR =
+  "Este documento já foi enviado. Só quem tem permissão de edição pode substituir.";
 
 interface SubmissaoDocumentos {
   id: string;
@@ -971,6 +977,21 @@ export const registrarDocumentoSecretaria = createServerFn({ method: "POST" })
           created_at: string;
         })
       | null;
+
+    if (atual) {
+      const podeSubstituir = await temPermissaoPagina(
+        context.userId,
+        ["eformulario"],
+        "editar",
+      ).catch(async (e: unknown) => {
+        await removerArquivo(data.path);
+        throw e;
+      });
+      if (!podeSubstituir) {
+        await removerArquivo(data.path);
+        throw new Error(MENSAGEM_SUBSTITUIR_SEM_EDITAR);
+      }
+    }
 
     if (!atual) {
       const { error } = await supabaseAdmin.from("matricula_documentos" as never).insert({
