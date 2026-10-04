@@ -1,9 +1,9 @@
 // Seção "Documentos" da ficha da matrícula (tela Matrículas / e-Formulário).
 //
 // Lista todos os documentos do formulário (presentes ou pendentes), com a
-// origem de cada um, e deixa a secretaria (Editar no e-Formulário) anexar ou
-// substituir arquivos recebidos depois do envio, além de "Anexar outro
-// documento" com nome livre. O upload usa o mesmo mecanismo do formulário: o
+// origem de cada um. Quem vê o e-Formulário pode anexar arquivos recebidos
+// depois do envio a documentos pendentes e usar "Anexar outro documento" (nome
+// livre); substituir um documento que já tem arquivo exige Editar. O upload usa o mesmo mecanismo do formulário: o
 // servidor emite um link de upload assinado do bucket privado e o navegador
 // envia o arquivo direto ao Storage. Excluir: só admin e só anexos da
 // secretaria. Todas as permissões são checadas de novo no servidor.
@@ -76,6 +76,7 @@ export function DocumentosFicha({
   documentos,
   historico,
   podeAnexar,
+  podeSubstituir,
   podeExcluir,
 }: {
   /** id da linha em enrollment_submissions. */
@@ -84,7 +85,10 @@ export function DocumentosFicha({
   submissionId: string;
   documentos: DocumentoSubmissao[];
   historico: DocumentoHistoricoSubmissao[];
+  /** Anexar em pendente e "Anexar outro documento" (Visualizar no e-Formulário). */
   podeAnexar: boolean;
+  /** Substituir documento que já tem arquivo (Editar no e-Formulário). */
+  podeSubstituir: boolean;
   podeExcluir: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -243,7 +247,7 @@ export function DocumentosFicha({
         </div>
         <div className="flex flex-wrap gap-2">
           <Links doc={doc} />
-          {podeAnexar && chave !== undefined && (
+          {podeSubstituir && chave !== undefined && (
             <BotaoArquivo chave={chave} alvo={{ documento: chave }} rotulo="Substituir" />
           )}
           {podeExcluir && doc.origem === "secretaria" && doc.id && (
