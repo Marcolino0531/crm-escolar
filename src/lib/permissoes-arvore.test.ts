@@ -294,6 +294,22 @@ describe("regras de servidor preservadas (ETAPA 2)", () => {
     expect(chaves).toEqual(["faturamento", FINANCEIRO_DADOS].sort());
   });
 
+  it("matrículas: anexar documento na ficha aceita Visualizar no e-Formulário; substituir exige Editar", () => {
+    const src = fonte("matriculas.functions.ts");
+    const anexar = src.match(
+      /async function assertCanAnexarDocumento[\s\S]*?\["eformulario"\],\s*"(ver|editar)"/,
+    );
+    expect(anexar?.[1]).toBe("ver");
+    const registrar = src.slice(src.indexOf("export const registrarDocumentoSecretaria"));
+    expect(registrar).toMatch(
+      /if \(atual\) \{\s*const podeSubstituir = await temPermissaoPagina\(\s*context\.userId,\s*\["eformulario"\],\s*"editar",/,
+    );
+    expect(src.match(/assertCanAnexarDocumento\(context\.userId\)/g)?.length).toBe(2);
+    const usos = [...src.matchAll(/\["eformulario"\],\s*"ver"/g)].length;
+    // assertCanViewAdmissoes (leitura) + assertCanAnexarDocumento: nada mais grava com "ver".
+    expect(usos).toBe(2);
+  });
+
   it("colonia-valores: salvar e excluir exigem Editar Valor Colônia (colonia_financeiro), sem Configurações a mais", () => {
     const src = fonte("colonia-valores.functions.ts");
     expect(src).toMatch(/edicao\s*\?\s*\["configuracoes\.cadastros\.valor_colonia"\]/);
