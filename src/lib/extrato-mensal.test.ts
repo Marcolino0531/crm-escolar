@@ -12,6 +12,7 @@ import {
   lerExtratoMensal,
   paraCentavos,
   somaReais,
+  type ItemTexto,
   type PaginaItens,
 } from "./extrato-mensal";
 
@@ -128,8 +129,9 @@ describe("integridade", () => {
 describe("vários cálculos e seções", () => {
   const LISTA = "Folha Mensal, Resilição Professor e Complementar";
   const item = (str: string, x: number, y: number) => ({ str, x, y });
-  const comLista = (): PaginaItens[] => {
-    const pags = clonar();
+  type PaginaEditavel = { pagina: number; itens: ItemTexto[] };
+  const comLista = (): PaginaEditavel[] => {
+    const pags = clonar() as PaginaEditavel[];
     for (const p of pags) for (const i of p.itens) if (i.str === "Folha Mensal") i.str = LISTA;
     pags[0].itens.push(
       item("Complemento de cálculo:", 0, 785.64),
