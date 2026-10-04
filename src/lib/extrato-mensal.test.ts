@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import itensFixture from "./__fixtures__/extrato-mensal-ficticio.itens.json";
 import esperado from "./__fixtures__/extrato-mensal-ficticio.esperado.json";
+import itensSecoes from "./__fixtures__/extrato-mensal-secoes-ficticio.itens.json";
+import esperadoSecoes from "./__fixtures__/extrato-mensal-secoes-ficticio.esperado.json";
+import itensContratos from "./__fixtures__/extrato-mensal-contratos-ficticio.itens.json";
+import esperadoContratos from "./__fixtures__/extrato-mensal-contratos-ficticio.esperado.json";
+import itensComplemento from "./__fixtures__/extrato-mensal-complemento-ficticio.itens.json";
+import esperadoComplemento from "./__fixtures__/extrato-mensal-complemento-ficticio.esperado.json";
+import {
+  agruparPorPessoa,
+  registrosPorCpf,
+  restituicoesDaCompetencia,
+  restituicoesPorPessoa,
+  salariosDaFolha,
+} from "./folha-pagamento";
 import {
   ErroExtratoMensal,
   calculosDoCabecalho,
@@ -12,6 +25,7 @@ import {
   lerExtratoMensal,
   paraCentavos,
   somaReais,
+  somenteDigitos,
   type ItemTexto,
   type PaginaItens,
 } from "./extrato-mensal";
@@ -219,5 +233,124 @@ describe("vários cálculos e seções", () => {
         { tipo: "empregado", codigo: "23" },
       ]),
     ).toBeNull();
+  });
+});
+
+type Esperado = {
+  empresa: string;
+  cnpj: string;
+  calculo: string;
+  calculo_cabecalho: string;
+  competencia: string;
+  total_colaboradores: number;
+  total_proventos: number;
+  total_descontos: number;
+  liquido_geral: number;
+  total_inss_998: number;
+  colaboradores: {
+    codigo: string;
+    nome: string;
+    tipo: string;
+    situacao: string;
+    cpf: string;
+    salario_base: number;
+    proventos: number;
+    descontos: number;
+    liquido: number;
+    inss: number;
+    rubricas: { tipo: string; codigo: string; valor: number }[];
+  }[];
+};
+
+describe.each([
+  ["seções", itensSecoes, esperadoSecoes],
+  ["contratos", itensContratos, esperadoContratos],
+  ["complemento de cálculo", itensComplemento, esperadoComplemento],
+] as [string, unknown, Esperado][])("fixture fictício: %s", (_nome, itens, esp) => {
+  const folha = importarExtratoMensal(itens as PaginaItens[]);
+
+  it("cabeçalho, cálculo original e totais gerais", () => {
+    expect(folha.empresa).toBe(esp.empresa);
+    expect(folha.cnpj).toBe(esp.cnpj);
+    expect(folha.calculo).toBe("Folha Mensal");
+    expect(folha.calculo).toBe(esp.calculo);
+    expect(folha.calculoOriginal).toBe(esp.calculo_cabecalho);
+    expect(folha.competencia).toBe(esp.competencia);
+    expect(folha.totalProventos).toBe(esp.total_proventos);
+    expect(folha.totalDescontos).toBe(esp.total_descontos);
+    expect(folha.liquidoGeral).toBe(esp.liquido_geral);
+    expect(folha.colaboradores).toHaveLength(esp.total_colaboradores);
+    expect(somaReais(folha.colaboradores.map(inssDoColaborador))).toBe(esp.total_inss_998);
+    expect(conferirIntegridade(folha)).toEqual([]);
+  });
+
+  it("cada colaborador igual ao esperado", () => {
+    expect(folha.colaboradores.map((c) => `${c.tipo}:${c.codigo}`).sort()).toEqual(
+      esp.colaboradores.map((e) => `${e.tipo}:${e.codigo}`).sort(),
+    );
+    for (const e of esp.colaboradores) {
+      const c = folha.colaboradores.find((x) => x.codigo === e.codigo && x.tipo === e.tipo);
+      expect(c, e.codigo).toBeDefined();
+      if (!c) continue;
+      expect(c.nome).toBe(e.nome);
+      expect(c.cpf).toBe(e.cpf);
+      expect(c.situacao).toBe(e.situacao);
+      expect(paraCentavos(c.salarioBase)).toBe(paraCentavos(e.salario_base));
+      expect(paraCentavos(c.proventos)).toBe(paraCentavos(e.proventos));
+      expect(paraCentavos(c.descontos)).toBe(paraCentavos(e.descontos));
+      expect(paraCentavos(c.liquido)).toBe(paraCentavos(e.liquido));
+      expect(paraCentavos(inssDoColaborador(c))).toBe(paraCentavos(e.inss));
+      const ordenar = (rs: readonly { tipo: string; codigo: string; valor: number }[]) =>
+        rs.map((r) => `${r.tipo}:${r.codigo}:${paraCentavos(r.valor)}`).sort();
+      expect(ordenar(c.rubricas)).toEqual(ordenar(e.rubricas));
+    }
+  });
+});
+
+describe("fixture fictício de contratos: agregação por pessoa", () => {
+  const esp = esperadoContratos as unknown as {
+    pessoas_distintas: number;
+    pessoas_com_mais_de_um_contrato: number;
+    pessoas: {
+      cpf: string;
+      codigos: string[];
+      proventos: number;
+      liquido: number;
+      inss: number;
+    }[];
+  };
+  const folha = importarExtratoMensal(itensContratos as PaginaItens[]);
+  // Simula o vínculo ao RH pelo CPF: todos os contratos da pessoa no mesmo funcionário.
+  const registros = folha.colaboradores.map((c) => ({
+    ...c,
+    id: `${c.tipo}:${c.codigo}`,
+    funcionarioId: `f-${somenteDigitos(c.cpf)}`,
+    status: "confirmado" as const,
+    restituicaoGravada: null,
+  }));
+
+  it("pessoas distintas e com mais de um contrato", () => {
+    expect(agruparPorPessoa(registros)).toHaveLength(esp.pessoas_distintas);
+    const multiplos = [...registrosPorCpf(registros).values()].filter((n) => n > 1);
+    expect(multiplos).toHaveLength(esp.pessoas_com_mais_de_um_contrato);
+  });
+
+  it("salário, líquido e INSS 998 somados por pessoa", () => {
+    const salarios = new Map(salariosDaFolha(registros).map((s) => [s.funcionarioId, s]));
+    const marcados = new Set(registros.map((r) => r.funcionarioId));
+    const rest = restituicoesDaCompetencia(registros, marcados, false);
+    const inss = new Map(
+      restituicoesPorPessoa(registros, rest.linhas).map((l) => [l.funcionarioId, l]),
+    );
+    expect(salarios.size).toBe(esp.pessoas_distintas);
+    for (const p of esp.pessoas) {
+      const f = `f-${somenteDigitos(p.cpf)}`;
+      expect(paraCentavos(salarios.get(f)?.valor ?? -1), p.cpf).toBe(paraCentavos(p.proventos));
+      expect(paraCentavos(salarios.get(f)?.valorLiquido ?? -1), p.cpf).toBe(
+        paraCentavos(p.liquido),
+      );
+      expect(paraCentavos(inss.get(f)?.inss ?? -1), p.cpf).toBe(paraCentavos(p.inss));
+      expect(inss.get(f)?.contratos).toBe(p.codigos.length);
+    }
   });
 });

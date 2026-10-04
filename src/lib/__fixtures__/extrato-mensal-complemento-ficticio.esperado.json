@@ -1,0 +1,69 @@
+{
+ "pessoas_distintas": 1,
+ "pessoas_com_mais_de_um_contrato": 0,
+ "pessoas": [
+  {
+   "cpf": "900.000.501-99",
+   "nome": "GISELE MARIA ALBUQUERQUE LACERDA",
+   "codigos": [
+    "1"
+   ],
+   "proventos": 5153.65,
+   "descontos": 891.04,
+   "liquido": 4262.61,
+   "inss": 375.67
+  }
+ ],
+ "empresa": "998 - COLEGIO EXEMPLO DOIS LTDA",
+ "cnpj": "11.444.777/0001-61",
+ "calculo": "Folha Mensal",
+ "calculo_cabecalho": "Folha Mensal e Complementar",
+ "competencia": "2026-09",
+ "total_colaboradores": 1,
+ "total_proventos": 5153.65,
+ "total_descontos": 891.04,
+ "liquido_geral": 4262.61,
+ "total_inss_998": 375.67,
+ "colaboradores": [
+  {
+   "codigo": "1",
+   "nome": "GISELE MARIA ALBUQUERQUE LACERDA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.501-99",
+   "vinculo": "Celetista",
+   "cargo": "SEGURANCA",
+   "salario_base": 5153.65,
+   "proventos": 5153.65,
+   "descontos": 891.04,
+   "liquido": 4262.61,
+   "inss": 375.67,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 5153.65
+    },
+    {
+     "tipo": "D",
+     "codigo": "8794",
+     "descricao": "DSR",
+     "valor": 343.58
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 375.67
+    },
+    {
+     "tipo": "D",
+     "codigo": "8792",
+     "descricao": "DIAS FALTAS.",
+     "valor": 171.79
+    }
+   ]
+  }
+ ]
+}

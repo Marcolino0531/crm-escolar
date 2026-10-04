@@ -1,0 +1,1978 @@
+{
+ "pessoas_distintas": 34,
+ "pessoas_com_mais_de_um_contrato": 8,
+ "pessoas": [
+  {
+   "cpf": "900.000.001-75",
+   "nome": "PATRICIA LUIZA JARDIM NOGUEIRA",
+   "codigos": [
+    "1",
+    "2"
+   ],
+   "proventos": 5199.8,
+   "descontos": 535.22,
+   "liquido": 4664.58,
+   "inss": 535.22
+  },
+  {
+   "cpf": "900.000.002-56",
+   "nome": "RAQUEL LACERDA TAVEIRA",
+   "codigos": [
+    "3"
+   ],
+   "proventos": 1109.01,
+   "descontos": 84.46,
+   "liquido": 1024.55,
+   "inss": 84.46
+  },
+  {
+   "cpf": "900.000.003-37",
+   "nome": "GISELE ALBUQUERQUE DE TAVEIRA",
+   "codigos": [
+    "4"
+   ],
+   "proventos": 1895.61,
+   "descontos": 152.17,
+   "liquido": 1743.44,
+   "inss": 152.17
+  },
+  {
+   "cpf": "900.000.004-18",
+   "nome": "GISELE MARIA OURIQUE BARCELOS",
+   "codigos": [
+    "5",
+    "6"
+   ],
+   "proventos": 5060.39,
+   "descontos": 466.59,
+   "liquido": 4593.8,
+   "inss": 466.59
+  },
+  {
+   "cpf": "900.000.005-07",
+   "nome": "DANIELA TAVEIRA DA QUINTELA",
+   "codigos": [
+    "7"
+   ],
+   "proventos": 4129.92,
+   "descontos": 329.84,
+   "liquido": 3800.08,
+   "inss": 329.84
+  },
+  {
+   "cpf": "900.000.006-80",
+   "nome": "FELIPE PEDROSA DE BARCELOS",
+   "codigos": [
+    "8"
+   ],
+   "proventos": 3009.99,
+   "descontos": 240.4,
+   "liquido": 2769.59,
+   "inss": 240.4
+  },
+  {
+   "cpf": "900.000.007-60",
+   "nome": "IVONE MARIA FIGUEIRA FALCAO",
+   "codigos": [
+    "9"
+   ],
+   "proventos": 2504.57,
+   "descontos": 189.68,
+   "liquido": 2314.89,
+   "inss": 189.68
+  },
+  {
+   "cpf": "900.000.008-41",
+   "nome": "JOANA JARDIM DA VALADARES",
+   "codigos": [
+    "10"
+   ],
+   "proventos": 3136.41,
+   "descontos": 253.05,
+   "liquido": 2883.36,
+   "inss": 253.05
+  },
+  {
+   "cpf": "900.000.009-22",
+   "nome": "TATIANA REGINA FALCAO CAMARGO",
+   "codigos": [
+    "11"
+   ],
+   "proventos": 11706.11,
+   "descontos": 11706.1,
+   "liquido": 0.01,
+   "inss": 0.0
+  },
+  {
+   "cpf": "900.000.010-66",
+   "nome": "LEANDRO HENRIQUE ZANETTI HOLANDA",
+   "codigos": [
+    "12"
+   ],
+   "proventos": 2130.98,
+   "descontos": 170.29,
+   "liquido": 1960.69,
+   "inss": 170.29
+  },
+  {
+   "cpf": "900.000.011-47",
+   "nome": "FABIANA HENRIQUE JARDIM MEIRELES",
+   "codigos": [
+    "13"
+   ],
+   "proventos": 2493.11,
+   "descontos": 190.7,
+   "liquido": 2302.41,
+   "inss": 190.7
+  },
+  {
+   "cpf": "900.000.012-28",
+   "nome": "SABRINA REGINA RESENDE PEDROSA",
+   "codigos": [
+    "14"
+   ],
+   "proventos": 1804.62,
+   "descontos": 456.94,
+   "liquido": 1347.68,
+   "inss": 145.6
+  },
+  {
+   "cpf": "900.000.013-09",
+   "nome": "VALERIA TAVEIRA NOGUEIRA",
+   "codigos": [
+    "15"
+   ],
+   "proventos": 4502.17,
+   "descontos": 366.73,
+   "liquido": 4135.44,
+   "inss": 366.73
+  },
+  {
+   "cpf": "900.000.014-90",
+   "nome": "HEITOR LUIZA IBIAPINA GUSMAO",
+   "codigos": [
+    "16"
+   ],
+   "proventos": 7120.14,
+   "descontos": 860.34,
+   "liquido": 6259.8,
+   "inss": 728.12
+  },
+  {
+   "cpf": "900.000.015-70",
+   "nome": "GUSTAVO ESTEVES DE QUINTELA",
+   "codigos": [
+    "17",
+    "18"
+   ],
+   "proventos": 5909.46,
+   "descontos": 1823.28,
+   "liquido": 4086.18,
+   "inss": 526.18
+  },
+  {
+   "cpf": "900.000.016-51",
+   "nome": "TATIANA HENRIQUE CORDOVIL NOGUEIRA",
+   "codigos": [
+    "19",
+    "20"
+   ],
+   "proventos": 6553.39,
+   "descontos": 936.01,
+   "liquido": 5617.38,
+   "inss": 668.02
+  },
+  {
+   "cpf": "900.000.017-32",
+   "nome": "OLIVIA LACERDA DOS MEIRELES",
+   "codigos": [
+    "21",
+    "22"
+   ],
+   "proventos": 2918.64,
+   "descontos": 253.68,
+   "liquido": 2664.96,
+   "inss": 253.68
+  },
+  {
+   "cpf": "900.000.018-13",
+   "nome": "CAIO REGINA GOUVEIA BARCELOS",
+   "codigos": [
+    "23"
+   ],
+   "proventos": 4102.87,
+   "descontos": 412.81,
+   "liquido": 3690.06,
+   "inss": 412.81
+  },
+  {
+   "cpf": "900.000.019-02",
+   "nome": "ELAINE HENRIQUE FALCAO LACERDA",
+   "codigos": [
+    "24"
+   ],
+   "proventos": 1201.56,
+   "descontos": 91.86,
+   "liquido": 1109.7,
+   "inss": 91.86
+  },
+  {
+   "cpf": "900.000.020-38",
+   "nome": "DANIELA ALBUQUERQUE SALDANHA",
+   "codigos": [
+    "25"
+   ],
+   "proventos": 3063.24,
+   "descontos": 244.65,
+   "liquido": 2818.59,
+   "inss": 244.65
+  },
+  {
+   "cpf": "900.000.021-19",
+   "nome": "ALICE APARECIDA LACERDA MEIRELES",
+   "codigos": [
+    "26",
+    "27"
+   ],
+   "proventos": 5052.51,
+   "descontos": 484.32,
+   "liquido": 4568.19,
+   "inss": 484.32
+  },
+  {
+   "cpf": "900.000.022-08",
+   "nome": "FABIANA QUINTELA DA NOGUEIRA",
+   "codigos": [
+    "28",
+    "29"
+   ],
+   "proventos": 6027.88,
+   "descontos": 1157.57,
+   "liquido": 4870.31,
+   "inss": 597.11
+  },
+  {
+   "cpf": "900.000.023-80",
+   "nome": "SABRINA MARIA FIGUEIRA ALBUQUERQUE",
+   "codigos": [
+    "30"
+   ],
+   "proventos": 4254.52,
+   "descontos": 346.55,
+   "liquido": 3907.97,
+   "inss": 346.55
+  },
+  {
+   "cpf": "900.000.024-61",
+   "nome": "KARINA ESTEVES FALCAO",
+   "codigos": [
+    "31"
+   ],
+   "proventos": 1395.91,
+   "descontos": 107.1,
+   "liquido": 1288.81,
+   "inss": 107.1
+  },
+  {
+   "cpf": "900.000.025-42",
+   "nome": "CAIO APARECIDA DORNELAS FALCAO",
+   "codigos": [
+    "32"
+   ],
+   "proventos": 4262.56,
+   "descontos": 404.82,
+   "liquido": 3857.74,
+   "inss": 362.51
+  },
+  {
+   "cpf": "900.000.026-23",
+   "nome": "IVONE APARECIDA RESENDE ALBUQUERQUE",
+   "codigos": [
+    "33"
+   ],
+   "proventos": 2355.04,
+   "descontos": 188.09,
+   "liquido": 2166.95,
+   "inss": 188.09
+  },
+  {
+   "cpf": "900.000.027-04",
+   "nome": "MARINA LUIZA FALCAO QUINTELA",
+   "codigos": [
+    "34"
+   ],
+   "proventos": 5951.42,
+   "descontos": 5951.42,
+   "liquido": 0.0,
+   "inss": 0.0
+  },
+  {
+   "cpf": "900.000.028-95",
+   "nome": "ALICE MARIA LACERDA NOGUEIRA",
+   "codigos": [
+    "35"
+   ],
+   "proventos": 2131.12,
+   "descontos": 176.58,
+   "liquido": 1954.54,
+   "inss": 176.58
+  },
+  {
+   "cpf": "900.000.029-76",
+   "nome": "VALERIA APARECIDA PEDROSA GOUVEIA",
+   "codigos": [
+    "36"
+   ],
+   "proventos": 2231.43,
+   "descontos": 752.63,
+   "liquido": 1478.8,
+   "inss": 180.03
+  },
+  {
+   "cpf": "900.000.030-00",
+   "nome": "OLIVIA APARECIDA IBIAPINA MEIRELES",
+   "codigos": [
+    "37"
+   ],
+   "proventos": 2015.52,
+   "descontos": 164.18,
+   "liquido": 1851.34,
+   "inss": 164.18
+  },
+  {
+   "cpf": "900.000.031-90",
+   "nome": "EDUARDO CRISTINA IBIAPINA CORDOVIL",
+   "codigos": [
+    "38"
+   ],
+   "proventos": 1660.76,
+   "descontos": 135.28,
+   "liquido": 1525.48,
+   "inss": 135.28
+  },
+  {
+   "cpf": "900.000.032-71",
+   "nome": "HEITOR PEDROSA NOGUEIRA",
+   "codigos": [
+    "39",
+    "40"
+   ],
+   "proventos": 3804.06,
+   "descontos": 341.41,
+   "liquido": 3462.65,
+   "inss": 341.41
+  },
+  {
+   "cpf": "900.000.033-52",
+   "nome": "EDUARDO CRISTINA SALDANHA FIGUEIRA",
+   "codigos": [
+    "41"
+   ],
+   "proventos": 3085.27,
+   "descontos": 246.41,
+   "liquido": 2838.86,
+   "inss": 246.41
+  },
+  {
+   "cpf": "900.000.034-33",
+   "nome": "HEITOR LUIZA TAVEIRA HOLANDA",
+   "codigos": [
+    "42"
+   ],
+   "proventos": 1386.66,
+   "descontos": 152.53,
+   "liquido": 1234.13,
+   "inss": 0.0
+  }
+ ],
+ "empresa": "999 - COLEGIO EXEMPLO LTDA",
+ "cnpj": "11.222.333/0001-81",
+ "calculo": "Folha Mensal",
+ "calculo_cabecalho": "Folha Mensal, Resilição Professor e Complementar",
+ "competencia": "2026-09",
+ "total_colaboradores": 42,
+ "total_proventos": 125166.65,
+ "total_descontos": 30373.69,
+ "liquido_geral": 94792.96,
+ "total_inss_998": 9379.62,
+ "colaboradores": [
+  {
+   "codigo": "1",
+   "nome": "PATRICIA LUIZA JARDIM NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.001-75",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ENSINO 0 A 3 ANOS",
+   "salario_base": 1455.27,
+   "proventos": 2037.37,
+   "descontos": 162.81,
+   "liquido": 1874.56,
+   "inss": 162.81,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 1455.27
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 162.81
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 242.54
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 339.56
+    }
+   ]
+  },
+  {
+   "codigo": "2",
+   "nome": "PATRICIA LUIZA JARDIM NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.001-75",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 2258.88,
+   "proventos": 3162.43,
+   "descontos": 372.41,
+   "liquido": 2790.02,
+   "inss": 372.41,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 2258.88
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 372.41
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 376.48
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 527.07
+    }
+   ]
+  },
+  {
+   "codigo": "3",
+   "nome": "RAQUEL LACERDA TAVEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.002-56",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE COZINHA",
+   "salario_base": 1109.01,
+   "proventos": 1109.01,
+   "descontos": 84.46,
+   "liquido": 1024.55,
+   "inss": 84.46,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1109.01
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 84.46
+    }
+   ]
+  },
+  {
+   "codigo": "4",
+   "nome": "GISELE ALBUQUERQUE DE TAVEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.003-37",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE MANUTENCAO",
+   "salario_base": 1895.61,
+   "proventos": 1895.61,
+   "descontos": 152.17,
+   "liquido": 1743.44,
+   "inss": 152.17,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1895.61
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 152.17
+    }
+   ]
+  },
+  {
+   "codigo": "5",
+   "nome": "GISELE MARIA OURIQUE BARCELOS",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.004-18",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 2440.62,
+   "proventos": 3416.86,
+   "descontos": 273.05,
+   "liquido": 3143.81,
+   "inss": 273.05,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 2440.62
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 273.05
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 406.76
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 569.48
+    }
+   ]
+  },
+  {
+   "codigo": "6",
+   "nome": "GISELE MARIA OURIQUE BARCELOS",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.004-18",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 1173.95,
+   "proventos": 1643.53,
+   "descontos": 193.54,
+   "liquido": 1449.99,
+   "inss": 193.54,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 1173.95
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 193.54
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 195.66
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 273.92
+    }
+   ]
+  },
+  {
+   "codigo": "7",
+   "nome": "DANIELA TAVEIRA DA QUINTELA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.005-07",
+   "vinculo": "Celetista",
+   "cargo": "FAXINEIRA",
+   "salario_base": 4129.92,
+   "proventos": 4129.92,
+   "descontos": 329.84,
+   "liquido": 3800.08,
+   "inss": 329.84,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 4129.92
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 329.84
+    }
+   ]
+  },
+  {
+   "codigo": "8",
+   "nome": "FELIPE PEDROSA DE BARCELOS",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.006-80",
+   "vinculo": "Celetista",
+   "cargo": "BERÇARISTA",
+   "salario_base": 3009.99,
+   "proventos": 3009.99,
+   "descontos": 240.4,
+   "liquido": 2769.59,
+   "inss": 240.4,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3009.99
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 240.4
+    }
+   ]
+  },
+  {
+   "codigo": "9",
+   "nome": "IVONE MARIA FIGUEIRA FALCAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.007-60",
+   "vinculo": "Celetista",
+   "cargo": "BERÇARISTA",
+   "salario_base": 2504.57,
+   "proventos": 2504.57,
+   "descontos": 189.68,
+   "liquido": 2314.89,
+   "inss": 189.68,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2504.57
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 189.68
+    }
+   ]
+  },
+  {
+   "codigo": "10",
+   "nome": "JOANA JARDIM DA VALADARES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.008-41",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE III",
+   "salario_base": 3136.41,
+   "proventos": 3136.41,
+   "descontos": 253.05,
+   "liquido": 2883.36,
+   "inss": 253.05,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3136.41
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 253.05
+    }
+   ]
+  },
+  {
+   "codigo": "11",
+   "nome": "TATIANA REGINA FALCAO CAMARGO",
+   "tipo": "empregado",
+   "situacao": "Demitido",
+   "cpf": "900.000.009-22",
+   "vinculo": "Celetista",
+   "cargo": "COORDENADORA",
+   "salario_base": 8198.82,
+   "proventos": 11706.11,
+   "descontos": 11706.1,
+   "liquido": 0.01,
+   "inss": 0,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "9180",
+     "descricao": "DIAS TRABALHADOS",
+     "valor": 4646.0
+    },
+    {
+     "tipo": "D",
+     "codigo": "51",
+     "descricao": "LIQUIDO RESCISAO",
+     "valor": 10746.59
+    },
+    {
+     "tipo": "P",
+     "codigo": "8550",
+     "descricao": "13 SALARIO RESCISAO",
+     "valor": 6149.12
+    },
+    {
+     "tipo": "D",
+     "codigo": "826",
+     "descricao": "INSS RESCISAO",
+     "valor": 389.57
+    },
+    {
+     "tipo": "P",
+     "codigo": "29",
+     "descricao": "FERIAS PROPORCIONAIS RESCISAO",
+     "valor": 683.24
+    },
+    {
+     "tipo": "D",
+     "codigo": "989",
+     "descricao": "INSS 13 RESCISAO",
+     "valor": 569.94
+    },
+    {
+     "tipo": "P",
+     "codigo": "8169",
+     "descricao": "TERCO FERIAS PROPORCIONAIS RESCISAO",
+     "valor": 227.75
+    }
+   ]
+  },
+  {
+   "codigo": "12",
+   "nome": "LEANDRO HENRIQUE ZANETTI HOLANDA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.010-66",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 1522.13,
+   "proventos": 2130.98,
+   "descontos": 170.29,
+   "liquido": 1960.69,
+   "inss": 170.29,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 1522.13
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 170.29
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 253.69
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 355.16
+    }
+   ]
+  },
+  {
+   "codigo": "13",
+   "nome": "FABIANA HENRIQUE JARDIM MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.011-47",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE",
+   "salario_base": 2493.11,
+   "proventos": 2493.11,
+   "descontos": 190.7,
+   "liquido": 2302.41,
+   "inss": 190.7,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2493.11
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 190.7
+    }
+   ]
+  },
+  {
+   "codigo": "14",
+   "nome": "SABRINA REGINA RESENDE PEDROSA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.012-28",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE III",
+   "salario_base": 1804.62,
+   "proventos": 1804.62,
+   "descontos": 456.94,
+   "liquido": 1347.68,
+   "inss": 145.6,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1804.62
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 145.6
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 1855896869GSM",
+     "valor": 311.34
+    }
+   ]
+  },
+  {
+   "codigo": "15",
+   "nome": "VALERIA TAVEIRA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.013-09",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 3215.84,
+   "proventos": 4502.17,
+   "descontos": 366.73,
+   "liquido": 4135.44,
+   "inss": 366.73,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 3215.84
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 366.73
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 535.97
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 750.36
+    }
+   ]
+  },
+  {
+   "codigo": "16",
+   "nome": "HEITOR LUIZA IBIAPINA GUSMAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.014-90",
+   "vinculo": "Celetista",
+   "cargo": "COORDENADOR (A) PEDAGÓGICO",
+   "salario_base": 7120.14,
+   "proventos": 7120.14,
+   "descontos": 860.34,
+   "liquido": 6259.8,
+   "inss": 728.12,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 7120.14
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 728.12
+    },
+    {
+     "tipo": "D",
+     "codigo": "999",
+     "descricao": "IMPOSTO DE RENDA",
+     "valor": 89.39
+    },
+    {
+     "tipo": "D",
+     "codigo": "52",
+     "descricao": "MENSALIDADE SINDICAL",
+     "valor": 42.83
+    }
+   ]
+  },
+  {
+   "codigo": "17",
+   "nome": "GUSTAVO ESTEVES DE QUINTELA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.015-70",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE",
+   "salario_base": 2697.19,
+   "proventos": 2899.6,
+   "descontos": 873.6,
+   "liquido": 2026.0,
+   "inss": 206.31,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2697.19
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 206.31
+    },
+    {
+     "tipo": "P",
+     "codigo": "995",
+     "descricao": "SALARIO FAMILIA",
+     "valor": 202.41
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 7434762757",
+     "valor": 667.29
+    }
+   ]
+  },
+  {
+   "codigo": "18",
+   "nome": "GUSTAVO ESTEVES DE QUINTELA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.015-70",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 2149.91,
+   "proventos": 3009.86,
+   "descontos": 949.68,
+   "liquido": 2060.18,
+   "inss": 319.87,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 2149.91
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 319.87
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 358.31
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 1051771328751",
+     "valor": 629.81
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 501.64
+    }
+   ]
+  },
+  {
+   "codigo": "19",
+   "nome": "TATIANA HENRIQUE CORDOVIL NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.016-51",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 2656.32,
+   "proventos": 3718.85,
+   "descontos": 302.92,
+   "liquido": 3415.93,
+   "inss": 302.92,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 2656.32
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 302.92
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 442.72
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 619.81
+    }
+   ]
+  },
+  {
+   "codigo": "20",
+   "nome": "TATIANA HENRIQUE CORDOVIL NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.016-51",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 2024.67,
+   "proventos": 2834.54,
+   "descontos": 633.09,
+   "liquido": 2201.45,
+   "inss": 365.1,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 2024.67
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 365.1
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 337.45
+    },
+    {
+     "tipo": "D",
+     "codigo": "999",
+     "descricao": "IMPOSTO DE RENDA",
+     "valor": 267.99
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 472.42
+    }
+   ]
+  },
+  {
+   "codigo": "21",
+   "nome": "OLIVIA LACERDA DOS MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.017-32",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 976.49,
+   "proventos": 1367.09,
+   "descontos": 105.31,
+   "liquido": 1261.78,
+   "inss": 105.31,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 976.49
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 105.31
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 162.75
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 227.85
+    }
+   ]
+  },
+  {
+   "codigo": "22",
+   "nome": "OLIVIA LACERDA DOS MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.017-32",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 1108.25,
+   "proventos": 1551.55,
+   "descontos": 148.37,
+   "liquido": 1403.18,
+   "inss": 148.37,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 1108.25
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 148.37
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 184.71
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 258.59
+    }
+   ]
+  },
+  {
+   "codigo": "23",
+   "nome": "CAIO REGINA GOUVEIA BARCELOS",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.018-13",
+   "vinculo": "Celetista",
+   "cargo": "COORDENADORA DE BERCARIO",
+   "salario_base": 2930.62,
+   "proventos": 4102.87,
+   "descontos": 412.81,
+   "liquido": 3690.06,
+   "inss": 412.81,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2930.62
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 412.81
+    },
+    {
+     "tipo": "P",
+     "codigo": "297",
+     "descricao": "ADICIONAL DE CARGO DE CONFIANÇA 40%",
+     "valor": 1172.25
+    }
+   ]
+  },
+  {
+   "codigo": "24",
+   "nome": "ELAINE HENRIQUE FALCAO LACERDA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.019-02",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 1201.56,
+   "proventos": 1201.56,
+   "descontos": 91.86,
+   "liquido": 1109.7,
+   "inss": 91.86,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1201.56
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 91.86
+    }
+   ]
+  },
+  {
+   "codigo": "25",
+   "nome": "DANIELA ALBUQUERQUE SALDANHA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.020-38",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 3063.24,
+   "proventos": 3063.24,
+   "descontos": 244.65,
+   "liquido": 2818.59,
+   "inss": 244.65,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3063.24
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 244.65
+    }
+   ]
+  },
+  {
+   "codigo": "26",
+   "nome": "ALICE APARECIDA LACERDA MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.021-19",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 2088.55,
+   "proventos": 2923.97,
+   "descontos": 233.66,
+   "liquido": 2690.31,
+   "inss": 233.66,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 2088.55
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 233.66
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 348.09
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 487.33
+    }
+   ]
+  },
+  {
+   "codigo": "27",
+   "nome": "ALICE APARECIDA LACERDA MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.021-19",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 1520.39,
+   "proventos": 2128.54,
+   "descontos": 250.66,
+   "liquido": 1877.88,
+   "inss": 250.66,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 1520.39
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 250.66
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 253.39
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 354.76
+    }
+   ]
+  },
+  {
+   "codigo": "28",
+   "nome": "FABIANA QUINTELA DA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.022-08",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 2307.33,
+   "proventos": 3230.26,
+   "descontos": 634.59,
+   "liquido": 2595.67,
+   "inss": 258.14,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 2307.33
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 258.14
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 384.55
+    },
+    {
+     "tipo": "D",
+     "codigo": "277",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 8102626731765",
+     "valor": 170.25
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 538.38
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 6452536054LKO",
+     "valor": 206.2
+    }
+   ]
+  },
+  {
+   "codigo": "29",
+   "nome": "FABIANA QUINTELA DA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.022-08",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 1998.3,
+   "proventos": 2797.62,
+   "descontos": 522.98,
+   "liquido": 2274.64,
+   "inss": 338.97,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 1998.3
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 338.97
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 333.05
+    },
+    {
+     "tipo": "D",
+     "codigo": "999",
+     "descricao": "IMPOSTO DE RENDA",
+     "valor": 90.64
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 466.27
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº 0224966940",
+     "valor": 93.37
+    }
+   ]
+  },
+  {
+   "codigo": "30",
+   "nome": "SABRINA MARIA FIGUEIRA ALBUQUERQUE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.023-80",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 3038.94,
+   "proventos": 4254.52,
+   "descontos": 346.55,
+   "liquido": 3907.97,
+   "inss": 346.55,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 3038.94
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 346.55
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 506.49
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 709.09
+    }
+   ]
+  },
+  {
+   "codigo": "31",
+   "nome": "KARINA ESTEVES FALCAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.024-61",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR ADMINISTRATIVO",
+   "salario_base": 1395.91,
+   "proventos": 1395.91,
+   "descontos": 107.1,
+   "liquido": 1288.81,
+   "inss": 107.1,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1395.91
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 107.1
+    }
+   ]
+  },
+  {
+   "codigo": "32",
+   "nome": "CAIO APARECIDA DORNELAS FALCAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.025-42",
+   "vinculo": "Celetista",
+   "cargo": "DIRETOR",
+   "salario_base": 4262.56,
+   "proventos": 4262.56,
+   "descontos": 404.82,
+   "liquido": 3857.74,
+   "inss": 362.51,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 4262.56
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 362.51
+    },
+    {
+     "tipo": "D",
+     "codigo": "52",
+     "descricao": "MENSALIDADE SINDICAL",
+     "valor": 42.31
+    }
+   ]
+  },
+  {
+   "codigo": "33",
+   "nome": "IVONE APARECIDA RESENDE ALBUQUERQUE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.026-23",
+   "vinculo": "Celetista",
+   "cargo": "CUIDADOR ESCOLAR",
+   "salario_base": 2355.04,
+   "proventos": 2355.04,
+   "descontos": 188.09,
+   "liquido": 2166.95,
+   "inss": 188.09,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2355.04
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 188.09
+    }
+   ]
+  },
+  {
+   "codigo": "34",
+   "nome": "MARINA LUIZA FALCAO QUINTELA",
+   "tipo": "empregado",
+   "situacao": "Demitido",
+   "cpf": "900.000.027-04",
+   "vinculo": "Celetista",
+   "cargo": "FAXINEIRA",
+   "salario_base": 2664.81,
+   "proventos": 5951.42,
+   "descontos": 5951.42,
+   "liquido": 0.0,
+   "inss": 0,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "9180",
+     "descricao": "DIAS TRABALHADOS",
+     "valor": 177.65
+    },
+    {
+     "tipo": "D",
+     "codigo": "51",
+     "descricao": "LIQUIDO RESCISAO",
+     "valor": 5756.0
+    },
+    {
+     "tipo": "P",
+     "codigo": "8550",
+     "descricao": "13 SALARIO RESCISAO",
+     "valor": 1110.34
+    },
+    {
+     "tipo": "D",
+     "codigo": "288",
+     "descricao": "Desconto de Faltas",
+     "valor": 88.83
+    },
+    {
+     "tipo": "P",
+     "codigo": "9592",
+     "descricao": "13 SALARIO INDENIZADO",
+     "valor": 222.07
+    },
+    {
+     "tipo": "D",
+     "codigo": "826",
+     "descricao": "INSS RESCISAO",
+     "valor": 6.66
+    },
+    {
+     "tipo": "P",
+     "codigo": "29",
+     "descricao": "FERIAS PROPORCIONAIS RESCISAO",
+     "valor": 1110.34
+    },
+    {
+     "tipo": "D",
+     "codigo": "989",
+     "descricao": "INSS 13 RESCISAO",
+     "valor": 99.93
+    },
+    {
+     "tipo": "P",
+     "codigo": "811",
+     "descricao": "FERIAS AVISO PREVIO INDENIZADO",
+     "valor": 222.07
+    },
+    {
+     "tipo": "P",
+     "codigo": "8126",
+     "descricao": "1/3 FERIAS INDENIZADAS RESC",
+     "valor": 74.03
+    },
+    {
+     "tipo": "P",
+     "codigo": "8169",
+     "descricao": "TERCO FERIAS PROPORCIONAIS RESCISAO",
+     "valor": 370.11
+    },
+    {
+     "tipo": "P",
+     "codigo": "9591",
+     "descricao": "AVISO PREVIO",
+     "valor": 2664.81
+    }
+   ]
+  },
+  {
+   "codigo": "35",
+   "nome": "ALICE MARIA LACERDA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.028-95",
+   "vinculo": "Celetista",
+   "cargo": "SECRETARIA",
+   "salario_base": 2131.12,
+   "proventos": 2131.12,
+   "descontos": 176.58,
+   "liquido": 1954.54,
+   "inss": 176.58,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2131.12
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 176.58
+    }
+   ]
+  },
+  {
+   "codigo": "36",
+   "nome": "VALERIA APARECIDA PEDROSA GOUVEIA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.029-76",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE III",
+   "salario_base": 2231.43,
+   "proventos": 2231.43,
+   "descontos": 752.63,
+   "liquido": 1478.8,
+   "inss": 180.03,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2231.43
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 180.03
+    },
+    {
+     "tipo": "D",
+     "codigo": "9750",
+     "descricao": "DESC. EMP. CRED. TRAB Nº PKT418774199",
+     "valor": 572.6
+    }
+   ]
+  },
+  {
+   "codigo": "37",
+   "nome": "OLIVIA APARECIDA IBIAPINA MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.030-00",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 1439.66,
+   "proventos": 2015.52,
+   "descontos": 164.18,
+   "liquido": 1851.34,
+   "inss": 164.18,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 1439.66
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 164.18
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 239.94
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 335.92
+    }
+   ]
+  },
+  {
+   "codigo": "38",
+   "nome": "EDUARDO CRISTINA IBIAPINA CORDOVIL",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.031-90",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ED INFANTIL 4 A 6 ANOS",
+   "salario_base": 1186.26,
+   "proventos": 1660.76,
+   "descontos": 135.28,
+   "liquido": 1525.48,
+   "inss": 135.28,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "228",
+     "descricao": "PROFESSOR 4 A 6 ANOS",
+     "valor": 1186.26
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 135.28
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 197.71
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 276.79
+    }
+   ]
+  },
+  {
+   "codigo": "39",
+   "nome": "HEITOR PEDROSA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.032-71",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE CLASSE",
+   "salario_base": 2110.48,
+   "proventos": 2110.48,
+   "descontos": 161.43,
+   "liquido": 1949.05,
+   "inss": 161.43,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2110.48
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 161.43
+    }
+   ]
+  },
+  {
+   "codigo": "40",
+   "nome": "HEITOR PEDROSA NOGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.032-71",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 1209.7,
+   "proventos": 1693.58,
+   "descontos": 179.98,
+   "liquido": 1513.6,
+   "inss": 179.98,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "227",
+     "descricao": "PROFESSOR 0 A 3 ANOS",
+     "valor": 1209.7
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 179.98
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 201.62
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 282.26
+    }
+   ]
+  },
+  {
+   "codigo": "41",
+   "nome": "EDUARDO CRISTINA SALDANHA FIGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.033-52",
+   "vinculo": "Celetista",
+   "cargo": "BERÇARISTA",
+   "salario_base": 3085.27,
+   "proventos": 3085.27,
+   "descontos": 246.41,
+   "liquido": 2838.86,
+   "inss": 246.41,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3085.27
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 246.41
+    }
+   ]
+  },
+  {
+   "codigo": "42",
+   "nome": "HEITOR LUIZA TAVEIRA HOLANDA",
+   "tipo": "contribuinte",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.034-33",
+   "vinculo": "Diretor",
+   "cargo": "SOCIO DIRETOR",
+   "salario_base": 1386.66,
+   "proventos": 1386.66,
+   "descontos": 152.53,
+   "liquido": 1234.13,
+   "inss": 0,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "9380",
+     "descricao": "PRO-LABORE DIAS",
+     "valor": 1386.66
+    },
+    {
+     "tipo": "D",
+     "codigo": "843",
+     "descricao": "INSS EMPREGADOR",
+     "valor": 152.53
+    }
+   ]
+  }
+ ]
+}
