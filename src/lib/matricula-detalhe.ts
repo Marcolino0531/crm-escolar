@@ -10,6 +10,7 @@ import { origemDocumentoTexto, rotuloDocumento } from "@/lib/matricula-documento
 import { PERGUNTAS_SAUDE } from "@/lib/matricula-form";
 import { nomeInformadoDiferente } from "@/lib/matriculas-nome";
 import {
+  dataBR,
   montarSecoesFinanceiras,
   type LancamentoFicha,
   type SituacaoSubmissao,
@@ -134,6 +135,15 @@ function campo(rotulo: string, valor: string | number | null | undefined): Campo
   return { rotulo, valor: texto === "" ? "—" : texto };
 }
 
+// Datas do payload e da rotina chegam como aaaa-mm-dd; na ficha saem em dd/mm/aaaa.
+// Vazio segue para `campo` (traço); o que não for data válida aparece como está.
+function dataDaFicha(valor: string | null | undefined): string | null | undefined {
+  const ymd = valor?.trim().slice(0, 10) ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return valor;
+  const d = new Date(`${ymd}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === ymd ? dataBR(ymd) : valor;
+}
+
 function enderecoEmTexto(endereco: PayloadDetalhe["endereco"]): string {
   if (!endereco) return "";
   const linha = [endereco.logradouro, endereco.numero, endereco.complemento]
@@ -197,7 +207,7 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
       campos: [
         campo("Nome", submissao.alunoNome ?? aluno.nome),
         ...(nomeInformado ? [campo("Nome informado no formulário", nomeInformado)] : []),
-        campo("Data de nascimento", aluno.dataNascimento),
+        campo("Data de nascimento", dataDaFicha(aluno.dataNascimento)),
         campo("CPF", aluno.cpf ?? submissao.alunoCpf),
         campo("RG", aluno.rg),
         campo("Gênero", aluno.sexo),
@@ -230,7 +240,7 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
         campo("Papéis", papeisDoResponsavel(r)),
         campo("CPF", r.cpf),
         campo("RG", r.rg),
-        campo("Data de nascimento", r.dataNascimento),
+        campo("Data de nascimento", dataDaFicha(r.dataNascimento)),
         campo("Sexo", r.sexo),
         campo("Profissão", r.profissao),
         campo("Email", r.email),
@@ -265,7 +275,7 @@ function secaoRotina(rotina: RotinaSubmissao | null): SecaoDetalhe {
         campos: [
           campo("Série", rotina.serie),
           campo("Ano letivo", rotina.anoLetivo),
-          campo("Início", rotina.dataInicio),
+          campo("Início", dataDaFicha(rotina.dataInicio)),
           campo("Origem", rotina.origem),
           campo("Períodos", periodos.join(" · ")),
           campo("Dias da semana", diasEmTexto(rotina.diasAtivos)),

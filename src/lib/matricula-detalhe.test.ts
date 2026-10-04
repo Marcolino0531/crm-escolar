@@ -131,7 +131,7 @@ describe("montarSecoesDetalhe", () => {
 
     for (const esperado of [
       "Aluno De Teste",
-      "2020-03-15",
+      "15/03/2020",
       "111.222.333-96",
       "MG-12.345.678",
       "Belo Horizonte",
@@ -165,6 +165,29 @@ describe("montarSecoesDetalhe", () => {
       expect(texto).toContain(esperado);
     for (const contatoDoAluno of ["aluno@example.com", "3132000000", "31990000000"])
       expect(texto).not.toContain(contatoDoAluno);
+  });
+
+  it("mostra as datas de nascimento e o início da rotina em dd/mm/aaaa", () => {
+    const texto = valores(montarSecoesDetalhe(entradaCompleta()));
+    expect(texto).toContain("Data de nascimento=15/03/2020");
+    expect(texto).toContain("Data de nascimento=10/01/1990");
+    expect(texto).toContain("Início=25/01/2027");
+    expect(texto).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+
+  it("data vazia continua traço e valor que não é data válida aparece como está", () => {
+    const entrada = entradaCompleta();
+    const payload = entrada.submissao.payload as {
+      aluno: { dataNascimento?: string };
+      responsaveis: { dataNascimento?: string }[];
+    };
+    payload.aluno.dataNascimento = "2020-02-30";
+    payload.responsaveis[0].dataNascimento = "";
+    entrada.rotina = { ...entrada.rotina!, dataInicio: "a combinar" };
+    const texto = valores(montarSecoesDetalhe(entrada));
+    expect(texto).toContain("Data de nascimento=2020-02-30");
+    expect(texto).toContain("Data de nascimento=—");
+    expect(texto).toContain("Início=a combinar");
   });
 
   it("mantém o link assinado só nos documentos que têm arquivo disponível", () => {
