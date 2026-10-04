@@ -7,16 +7,25 @@ import { useRole } from "@/lib/app-context";
 import { parseBRLNumber } from "@/lib/currency";
 import { competenciaAtual, rotuloCompetencia, salarioVigente } from "@/lib/rh-salario";
 import { listarSalarios } from "@/lib/rh-salario.functions";
-import type { FolhaExtrato, ColaboradorExtrato, TipoRubrica } from "@/lib/extrato-mensal";
+import {
+  somenteDigitos,
+  type FolhaExtrato,
+  type ColaboradorExtrato,
+  type TipoRubrica,
+} from "@/lib/extrato-mensal";
 import { lerExtratoMensalPdf } from "@/lib/extrato-mensal.pdf";
 import {
   ROTULO_DIVERGENCIA,
   ROTULO_STATUS,
+  chaveColaborador,
   compararFolhas,
   montarLoteFolha,
   planejarReimportacao,
   preSelecao,
+  registrosPorCpf,
   restituicoesDaCompetencia,
+  restituicoesPorPessoa,
+  resumoDaFolha,
   totaisAjustados,
   totaisResumo,
   type ComparacaoFolhas,
@@ -94,6 +103,13 @@ const ListaDivergencias: React.FC<{ divergencias: readonly Divergencia[] }> = ({
     </ul>
   );
 
+const SeloContratos: React.FC<{ contratos?: number }> = ({ contratos }) =>
+  contratos && contratos > 1 ? (
+    <span className="ml-2 inline-block rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800">
+      {contratos} contratos
+    </span>
+  ) : null;
+
 const SeloStatus: React.FC<{ status: LinhaResumo["status"] }> = ({ status }) => {
   const cls =
     status === "confirmado"
@@ -130,11 +146,11 @@ const ModalImportacao: React.FC<{
     comparacao ? preSelecao(comparacao) : new Set(),
   );
   const [confirmarCnpj, setConfirmarCnpj] = useState(false);
-  const alternar = (codigo: string) =>
+  const alternar = (chave: string) =>
     setSelecionados((s) => {
       const n = new Set(s);
-      if (n.has(codigo)) n.delete(codigo);
-      else n.add(codigo);
+      if (n.has(chave)) n.delete(chave);
+      else n.add(chave);
       return n;
     });
 
@@ -209,7 +225,7 @@ const ModalImportacao: React.FC<{
               </span>
               <button
                 type="button"
-                onClick={() => setSelecionados(new Set(folha.colaboradores.map((c) => c.codigo)))}
+                onClick={() => setSelecionados(new Set(folha.colaboradores.map(chaveColaborador)))}
                 className="rounded-md border border-blue-300 bg-white px-2 py-1 font-medium"
               >
                 Selecionar todos
@@ -237,7 +253,7 @@ const ModalImportacao: React.FC<{
               <tbody>
                 {linhas.map(({ c, divergencias, aviso }) => (
                   <tr
-                    key={c.codigo}
+                    key={chaveColaborador(c)}
                     className={`border-t border-gray-100 align-top ${
                       divergencias.length ? "bg-amber-50" : ""
                     }`}
@@ -245,8 +261,8 @@ const ModalImportacao: React.FC<{
                     <td className="px-2 py-2">
                       <input
                         type="checkbox"
-                        checked={selecionados.has(c.codigo)}
-                        onChange={() => alternar(c.codigo)}
+                        checked={selecionados.has(chaveColaborador(c))}
+                        onChange={() => alternar(chaveColaborador(c))}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -648,17 +664,15 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     [colaboradores, marcados, fechada],
   );
 
+  const contratosPorCpf = useMemo(() => registrosPorCpf(colaboradores), [colaboradores]);
+  const restituicaoPorPessoa = useMemo(
+    () => restituicoesPorPessoa(colaboradores, restituicao.linhas),
+    [colaboradores, restituicao],
+  );
+
   const linhasResumo = useMemo((): LinhaResumo[] => {
     const restPorId = new Map(restituicao.linhas.map((l) => [l.id, l.restituicao]));
-    const daFolha: LinhaResumo[] = colaboradores.map((c) => ({
-      chave: c.id,
-      funcionarioId: c.funcionarioId,
-      nome: c.nome,
-      status: c.status,
-      bruto: c.proventos,
-      liquido: c.liquido,
-      restituicao: restPorId.get(c.id) ?? 0,
-    }));
+    const daFolha = resumoDaFolha(colaboradores, restPorId);
     const registros = salariosQ.data ?? [];
     const manuais: LinhaResumo[] = ativosForaDaFolha.flatMap((f) => {
       const v = salarioVigente(registros, f.id, competencia);
@@ -796,8 +810,16 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   }
 
   const visiveis = soConferencia ? pendentes : colaboradores;
-  const funcionariosLivres = (atual: string | null) =>
-    ordenados.filter((f) => f.id === atual || !naFolha.has(f.id));
+  // Livres + o funcionário do mesmo CPF (contratos da mesma pessoa vão para o mesmo cadastro).
+  const funcionariosLivres = (c: ColaboradorFolhaGravado) => {
+    const cpf = somenteDigitos(c.cpf);
+    return ordenados.filter(
+      (f) =>
+        f.id === c.funcionarioId ||
+        !naFolha.has(f.id) ||
+        (!!cpf && somenteDigitos(f.cpf ?? "") === cpf),
+    );
+  };
 
   const cabecalho = (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1014,6 +1036,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                             >
                               {c.nome}
                             </button>
+                            <SeloContratos contratos={contratosPorCpf.get(somenteDigitos(c.cpf))} />
                             <span className="block text-xs text-gray-500">
                               {c.codigo} ·{" "}
                               {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
@@ -1044,7 +1067,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                 }`}
                               >
                                 <option value="">Sem cadastro no RH</option>
-                                {funcionariosLivres(c.funcionarioId).map((f) => (
+                                {funcionariosLivres(c).map((f) => (
                                   <option key={f.id} value={f.id}>
                                     {f.nomeCompleto}
                                     {f.dataRescisao ? " (desligado)" : ""}
@@ -1260,15 +1283,14 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {colaboradores.map((c, i) => (
-                    <tr key={c.id} className="border-t border-gray-100">
-                      <td className="px-4 py-2">{c.nome}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {brl(restituicao.linhas[i].inss)}
+                  {restituicaoPorPessoa.map((l) => (
+                    <tr key={l.chave} className="border-t border-gray-100">
+                      <td className="px-4 py-2">
+                        {l.nome}
+                        <SeloContratos contratos={l.contratos} />
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {brl(restituicao.linhas[i].restituicao)}
-                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">{brl(l.inss)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{brl(l.restituicao)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1305,7 +1327,10 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
               <tbody>
                 {linhasResumo.map((l) => (
                   <tr key={l.chave} className="border-t border-gray-100">
-                    <td className="px-4 py-2">{l.nome}</td>
+                    <td className="px-4 py-2">
+                      {l.nome}
+                      <SeloContratos contratos={l.contratos} />
+                    </td>
                     <td className="px-4 py-2">
                       <SeloStatus status={l.status} />
                     </td>

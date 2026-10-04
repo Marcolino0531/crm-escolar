@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  agruparPorPessoa,
   aplicarAjuste,
   casarPorCpf,
+  chaveColaborador,
   compararFolhas,
   divergenciasDoColaborador,
   exigirCompetenciaAberta,
@@ -11,7 +13,11 @@ import {
   pendentesParaFechar,
   planejarReimportacao,
   preSelecao,
+  registrosPorCpf,
   restituicoesDaCompetencia,
+  restituicoesPorPessoa,
+  resumoDaFolha,
+  salariosDaFolha,
   totaisAjustados,
   totaisResumo,
   type ColaboradorComparavel,
@@ -20,6 +26,7 @@ import {
 } from "./folha-pagamento";
 
 const colab = (over: Partial<ColaboradorComparavel> = {}): ColaboradorComparavel => ({
+  tipo: "empregado",
   codigo: "1",
   nome: "FULANA DE TESTE",
   cpf: "900.000.001-75",
@@ -105,7 +112,7 @@ describe("comparação entre competências", () => {
     const cmp = compararFolhas(anterior, atual);
     expect(cmp.primeiraImportacao).toBe(false);
     expect(cmp.ausentes.map((c) => c.nome)).toEqual(["SAIU DA FOLHA"]);
-    expect([...preSelecao(cmp)]).toEqual(["1"]);
+    expect([...preSelecao(cmp)]).toEqual(["empregado:1"]);
     const primeira = compararFolhas(null, atual);
     expect(primeira.primeiraImportacao).toBe(true);
     expect(preSelecao(primeira).size).toBe(0);
@@ -326,5 +333,159 @@ describe("resumo e lote de pagamento", () => {
 
   it("totais do resumo", () => {
     expect(totaisResumo(linhas)).toEqual({ bruto: 8964.6, liquido: 7932.27, restituicao: 417.16 });
+  });
+});
+
+describe("pessoa com mais de um contrato (mesmo CPF)", () => {
+  const CPF = "900.000.001-75";
+  const contrato1 = colab({ codigo: "22", cpf: CPF, proventos: 3000, liquido: 2670 });
+  const contrato2 = colab({ codigo: "57", cpf: CPF, proventos: 1500.1, liquido: 1300.05 });
+
+  it("chave é tipo + código, não CPF", () => {
+    expect(chaveColaborador(contrato1)).toBe("empregado:22");
+    expect(chaveColaborador({ ...contrato1, tipo: "contribuinte" })).toBe("contribuinte:22");
+    expect(chaveColaborador(contrato1)).not.toBe(chaveColaborador(contrato2));
+  });
+
+  it("comparação mensal e pré-seleção separam os contratos", () => {
+    const anterior = [contrato1, contrato2];
+    const atual = [contrato1, { ...contrato2, proventos: 1600.1, liquido: 1400.05 }];
+    const cmp = compararFolhas(anterior, atual);
+    expect(cmp.ausentes).toEqual([]);
+    expect(cmp.porColaborador.map((p) => p.divergencias.length > 0)).toEqual([false, true]);
+    expect([...preSelecao(cmp)]).toEqual(["empregado:22"]);
+  });
+
+  it("reimportação substitui só o contrato alterado e nunca retira o outro por ter o mesmo CPF", () => {
+    const gravados = [
+      { ...contrato1, ajustadoManualmente: false },
+      { ...contrato2, ajustadoManualmente: false },
+    ];
+    const novo = [contrato1, { ...contrato2, proventos: 1600.1, liquido: 1400.05 }];
+    const plano = planejarReimportacao(gravados, novo);
+    expect(plano.iguais.map((c) => c.codigo)).toEqual(["22"]);
+    expect(plano.substituidos.map((s) => s.colaborador.codigo)).toEqual(["57"]);
+    expect(plano.novos).toEqual([]);
+    expect(plano.retirados).toEqual([]);
+    const semUm = planejarReimportacao(gravados, [contrato1]);
+    expect(semUm.retirados.map((c) => c.codigo)).toEqual(["57"]);
+  });
+
+  it("mesmo código com outro tipo é outro registro", () => {
+    const plano = planejarReimportacao(
+      [{ ...colab({ codigo: "5" }), ajustadoManualmente: false }],
+      [colab({ codigo: "5", tipo: "contribuinte" })],
+    );
+    expect(plano.novos.map(chaveColaborador)).toEqual(["contribuinte:5"]);
+    expect(plano.retirados.map(chaveColaborador)).toEqual(["empregado:5"]);
+  });
+
+  const reg = (
+    id: string,
+    funcionarioId: string | null,
+    status: "confirmado" | "em_conferencia",
+    proventos: number,
+    liquido: number,
+    nome = "FULANA DE TESTE",
+  ) => ({ id, funcionarioId, status, proventos, liquido, nome, cpf: CPF });
+
+  it("salário: soma dos dois contratos confirmados numa linha só", () => {
+    const s = salariosDaFolha([
+      reg("a", "f1", "confirmado", 3000, 2670),
+      reg("b", "f1", "confirmado", 1500.1, 1300.05),
+      reg("c", "f2", "confirmado", 100, 90),
+      reg("d", null, "confirmado", 50, 40),
+    ]);
+    expect(s).toEqual([
+      { funcionarioId: "f1", valor: 4500.1, valorLiquido: 3970.05 },
+      { funcionarioId: "f2", valor: 100, valorLiquido: 90 },
+    ]);
+  });
+
+  it("salário: com um contrato em conferência a pessoa não é gravada", () => {
+    expect(
+      salariosDaFolha([
+        reg("a", "f1", "confirmado", 3000, 2670),
+        reg("b", "f1", "em_conferencia", 1500.1, 1300.05),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("resumo: uma linha por pessoa, valores somados e status de todos", () => {
+    const registros = [
+      reg("a", "f1", "confirmado", 3000, 2670),
+      reg("b", "f1", "em_conferencia", 1500.1, 1300.05),
+      reg("c", "f2", "confirmado", 100, 90, "OUTRA"),
+      reg("d", null, "confirmado", 50, 40, "SEM CADASTRO"),
+      reg("e", null, "confirmado", 60, 50, "SEM CADASTRO 2"),
+    ];
+    const r = resumoDaFolha(
+      registros,
+      new Map([
+        ["a", 10.1],
+        ["b", 5.05],
+      ]),
+    );
+    expect(
+      r.map((l) => [l.nome, l.status, l.bruto, l.liquido, l.restituicao, l.contratos]),
+    ).toEqual([
+      ["FULANA DE TESTE", "em_conferencia", 4500.1, 3970.05, 15.15, 2],
+      ["OUTRA", "confirmado", 100, 90, 0, 1],
+      ["SEM CADASTRO", "confirmado", 50, 40, 0, 1],
+      ["SEM CADASTRO 2", "confirmado", 60, 50, 0, 1],
+    ]);
+    const confirmados = resumoDaFolha(
+      registros.map((x) => ({ ...x, status: "confirmado" as const })),
+      new Map(),
+    );
+    expect(confirmados[0].status).toBe("confirmado");
+    expect(registrosPorCpf(registros).get("90000000175")).toBe(5);
+    expect(agruparPorPessoa(registros)).toHaveLength(4);
+  });
+
+  it("lote: soma os líquidos por pessoa e exclui quem tem contrato em conferência", () => {
+    const registros = [
+      reg("a", "f1", "confirmado", 3000, 2670),
+      reg("b", "f1", "confirmado", 1500.1, 1300.05),
+      reg("c", "f2", "confirmado", 100, 90, "PENDENTE"),
+      reg("d", "f2", "em_conferencia", 100, 90, "PENDENTE"),
+    ];
+    const lote = montarLoteFolha(resumoDaFolha(registros, new Map()));
+    expect(lote.itens.map((i) => [i.employee_id, i.total_amount])).toEqual([["f1", 3970.05]]);
+    expect(lote.emConferencia).toEqual(["PENDENTE"]);
+  });
+
+  it("restituição: INSS 998 somado por pessoa", () => {
+    const rub = (valor: number) => [{ tipo: "D" as const, codigo: "998", valor }];
+    const cols = [
+      {
+        id: "a",
+        funcionarioId: "f1",
+        nome: "FULANA",
+        rubricas: rub(250.1),
+        restituicaoGravada: null,
+      },
+      {
+        id: "b",
+        funcionarioId: "f1",
+        nome: "FULANA",
+        rubricas: rub(120.05),
+        restituicaoGravada: null,
+      },
+      { id: "c", funcionarioId: "f2", nome: "OUTRA", rubricas: rub(80), restituicaoGravada: null },
+    ];
+    const r = restituicoesDaCompetencia(cols, new Set(["f1"]), false);
+    const porPessoa = restituicoesPorPessoa(cols, r.linhas);
+    expect(porPessoa.map((p) => [p.nome, p.contratos, p.inss, p.restituicao])).toEqual([
+      ["FULANA", 2, 370.15, 370.15],
+      ["OUTRA", 1, 80, 0],
+    ]);
+    expect(r.total).toBe(370.15);
+    // no fechamento o valor segue gravado por registro
+    expect(r.linhas.map((l) => [l.id, l.restituicao])).toEqual([
+      ["a", 250.1],
+      ["b", 120.05],
+      ["c", 0],
+    ]);
   });
 });

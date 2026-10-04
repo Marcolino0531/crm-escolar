@@ -1,0 +1,988 @@
+{
+ "empresa": "999 - COLEGIO EXEMPLO LTDA",
+ "cnpj": "11.222.333/0001-81",
+ "calculo": "Folha Mensal",
+ "calculo_cabecalho": "Folha Mensal, Resilição Professor e Complementar",
+ "competencia": "2026-09",
+ "total_colaboradores": 20,
+ "total_proventos": 72727.21,
+ "total_descontos": 13024.06,
+ "liquido_geral": 59703.15,
+ "total_inss_998": 6244.84,
+ "colaboradores": [
+  {
+   "codigo": "1",
+   "nome": "IGOR CRISTINA BARCELOS HOLANDA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.001-75",
+   "vinculo": "Celetista",
+   "cargo": "SECRETARIA",
+   "salario_base": 5563.19,
+   "proventos": 5563.19,
+   "descontos": 1030.2,
+   "liquido": 4532.99,
+   "inss": 473.88,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 5563.19
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 473.88
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 222.53
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 333.79
+    }
+   ]
+  },
+  {
+   "codigo": "2",
+   "nome": "TATIANA APARECIDA IBIAPINA ALBUQUERQUE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.002-56",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2685.48,
+   "proventos": 3080.98,
+   "descontos": 513.17,
+   "liquido": 2567.81,
+   "inss": 244.62,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2685.48
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 244.62
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 65.92
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 107.42
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 329.58
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 161.13
+    }
+   ]
+  },
+  {
+   "codigo": "3",
+   "nome": "BRUNO HOLANDA ZANETTI",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.003-37",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2607.07,
+   "proventos": 2607.07,
+   "descontos": 359.35,
+   "liquido": 2247.72,
+   "inss": 202.93,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2607.07
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 202.93
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 156.42
+    }
+   ]
+  },
+  {
+   "codigo": "4",
+   "nome": "CAIO DORNELAS DOS OURIQUE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.004-18",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ENSINO 0 A 3 ANOS",
+   "salario_base": 2552.7,
+   "proventos": 3573.78,
+   "descontos": 501.1,
+   "liquido": 3072.68,
+   "inss": 286.67,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 2552.7
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 286.67
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 425.45
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 214.43
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 595.63
+    }
+   ]
+  },
+  {
+   "codigo": "5",
+   "nome": "JONAS CAMARGO IBIAPINA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.005-07",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ENSINO 0 A 3 ANOS",
+   "salario_base": 1017.72,
+   "proventos": 1424.81,
+   "descontos": 199.78,
+   "liquido": 1225.03,
+   "inss": 114.29,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 1017.72
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 114.29
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 169.62
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 85.49
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 237.47
+    }
+   ]
+  },
+  {
+   "codigo": "6",
+   "nome": "HEITOR APARECIDA HOLANDA MEIRELES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.006-80",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ENSINO 0 A 3 ANOS",
+   "salario_base": 3064.5,
+   "proventos": 4290.28,
+   "descontos": 601.57,
+   "liquido": 3688.71,
+   "inss": 344.15,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 3064.5
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 344.15
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 510.74
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 257.42
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 715.04
+    }
+   ]
+  },
+  {
+   "codigo": "7",
+   "nome": "OLIVIA VALADARES DE GUSMAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.007-60",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 3049.35,
+   "proventos": 4269.08,
+   "descontos": 598.59,
+   "liquido": 3670.49,
+   "inss": 342.45,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 3049.35
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 342.45
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 508.22
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 256.14
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 711.51
+    }
+   ]
+  },
+  {
+   "codigo": "8",
+   "nome": "FELIPE HENRIQUE ALBUQUERQUE FIGUEIRA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.008-41",
+   "vinculo": "Celetista",
+   "cargo": "COORDENADOR (A) PEDAGÓGICO",
+   "salario_base": 6418.2,
+   "proventos": 9186.38,
+   "descontos": 3052.74,
+   "liquido": 6133.64,
+   "inss": 1033.1,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 6418.2
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 1033.1
+    },
+    {
+     "tipo": "P",
+     "codigo": "19",
+     "descricao": "DIFERENCA DE SALARIOS CCT",
+     "valor": 120.54
+    },
+    {
+     "tipo": "D",
+     "codigo": "999",
+     "descricao": "IMPOSTO DE RENDA",
+     "valor": 1379.42
+    },
+    {
+     "tipo": "P",
+     "codigo": "297",
+     "descricao": "ADICIONAL DE CARGO DE CONFIANÇA 40%",
+     "valor": 2567.28
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 255.12
+    },
+    {
+     "tipo": "P",
+     "codigo": "8133",
+     "descricao": "INDENIZAÇÃO ESPECIAL",
+     "valor": 80.36
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 385.1
+    }
+   ]
+  },
+  {
+   "codigo": "9",
+   "nome": "HEITOR MARIA VALADARES ALBUQUERQUE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.009-22",
+   "vinculo": "Celetista",
+   "cargo": "SEGURANCA",
+   "salario_base": 2693.26,
+   "proventos": 4167.22,
+   "descontos": 653.98,
+   "liquido": 3513.24,
+   "inss": 384.65,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2693.26
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 384.65
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 66.11
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 107.73
+    },
+    {
+     "tipo": "P",
+     "codigo": "297",
+     "descricao": "ADICIONAL DE CARGO DE CONFIANÇA 40%",
+     "valor": 1077.31
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 161.6
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 330.54
+    }
+   ]
+  },
+  {
+   "codigo": "10",
+   "nome": "FELIPE CRISTINA ZANETTI GOUVEIA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.010-66",
+   "vinculo": "Celetista",
+   "cargo": "COORDENADORA",
+   "salario_base": 3499.35,
+   "proventos": 4899.09,
+   "descontos": 856.77,
+   "liquido": 4042.32,
+   "inss": 492.92,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3499.35
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 492.92
+    },
+    {
+     "tipo": "P",
+     "codigo": "297",
+     "descricao": "ADICIONAL DE CARGO DE CONFIANÇA 40%",
+     "valor": 1399.74
+    },
+    {
+     "tipo": "D",
+     "codigo": "999",
+     "descricao": "IMPOSTO DE RENDA",
+     "valor": 13.92
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 139.97
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 209.96
+    }
+   ]
+  },
+  {
+   "codigo": "11",
+   "nome": "TATIANA REGINA DORNELAS RESENDE",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.011-47",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2958.34,
+   "proventos": 2958.34,
+   "descontos": 526.11,
+   "liquido": 2432.23,
+   "inss": 230.28,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2958.34
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 230.28
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 118.33
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 177.5
+    }
+   ]
+  },
+  {
+   "codigo": "12",
+   "nome": "CAIO MARIA RESENDE FALCAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.012-28",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2275.23,
+   "proventos": 2573.08,
+   "descontos": 340.42,
+   "liquido": 2232.66,
+   "inss": 203.91,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2275.23
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 203.91
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 49.65
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 136.51
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 248.2
+    }
+   ]
+  },
+  {
+   "codigo": "13",
+   "nome": "ELAINE FALCAO ESTEVES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.013-09",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 3014.65,
+   "proventos": 4220.5,
+   "descontos": 591.78,
+   "liquido": 3628.72,
+   "inss": 338.55,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 3014.65
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 338.55
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 502.44
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 253.23
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 703.41
+    }
+   ]
+  },
+  {
+   "codigo": "14",
+   "nome": "OLIVIA GUSMAO ESTEVES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.014-90",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 3389.22,
+   "proventos": 3888.35,
+   "descontos": 647.64,
+   "liquido": 3240.71,
+   "inss": 308.72,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3389.22
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 308.72
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 83.19
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 135.57
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 415.94
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 203.35
+    }
+   ]
+  },
+  {
+   "codigo": "15",
+   "nome": "NATALIA HENRIQUE GOUVEIA SALDANHA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.015-70",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSORA ENSINO 0 A 3 ANOS",
+   "salario_base": 2862.83,
+   "proventos": 4007.95,
+   "descontos": 561.98,
+   "liquido": 3445.97,
+   "inss": 321.5,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 2862.83
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 321.5
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 477.13
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 240.48
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 667.99
+    }
+   ]
+  },
+  {
+   "codigo": "16",
+   "nome": "RAQUEL GOUVEIA GUSMAO",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.016-51",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2239.05,
+   "proventos": 2239.05,
+   "descontos": 444.46,
+   "liquido": 1794.59,
+   "inss": 160.84,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2239.05
+    },
+    {
+     "tipo": "D",
+     "codigo": "8794",
+     "descricao": "DSR",
+     "valor": 74.64
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 160.84
+    },
+    {
+     "tipo": "D",
+     "codigo": "8792",
+     "descricao": "DIAS FALTAS.",
+     "valor": 74.64
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 134.34
+    }
+   ]
+  },
+  {
+   "codigo": "17",
+   "nome": "ELAINE LACERDA VALADARES",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.017-32",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 1813.48,
+   "proventos": 2006.36,
+   "descontos": 339.87,
+   "liquido": 1666.49,
+   "inss": 158.52,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 1813.48
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 158.52
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 32.14
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 72.54
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 160.74
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 108.81
+    }
+   ]
+  },
+  {
+   "codigo": "18",
+   "nome": "DIEGO REGINA SALDANHA LACERDA",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.018-13",
+   "vinculo": "Celetista",
+   "cargo": "AUXILIAR DE SALA",
+   "salario_base": 2791.33,
+   "proventos": 3407.97,
+   "descontos": 440.25,
+   "liquido": 2967.72,
+   "inss": 272.77,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 2791.33
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 272.77
+    },
+    {
+     "tipo": "P",
+     "codigo": "250",
+     "descricao": "REFLEXO EXTRAS DSR",
+     "valor": 102.78
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 167.48
+    },
+    {
+     "tipo": "P",
+     "codigo": "150",
+     "descricao": "HORAS EXTRAS 50%",
+     "valor": 513.86
+    }
+   ]
+  },
+  {
+   "codigo": "19",
+   "nome": "OLIVIA PEDROSA DE DORNELAS",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.019-02",
+   "vinculo": "Celetista",
+   "cargo": "COZINHEIRO(A)",
+   "salario_base": 3530.89,
+   "proventos": 3641.42,
+   "descontos": 638.84,
+   "liquido": 3002.58,
+   "inss": 286.64,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "8781",
+     "descricao": "SALDO DE SALARIO",
+     "valor": 3530.89
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 286.64
+    },
+    {
+     "tipo": "P",
+     "codigo": "19",
+     "descricao": "DIFERENCA DE SALARIOS CCT",
+     "valor": 66.32
+    },
+    {
+     "tipo": "D",
+     "codigo": "994",
+     "descricao": "CONTRIBUICAO NEGOCIAL",
+     "valor": 140.35
+    },
+    {
+     "tipo": "P",
+     "codigo": "8133",
+     "descricao": "INDENIZAÇÃO ESPECIAL",
+     "valor": 44.21
+    },
+    {
+     "tipo": "D",
+     "codigo": "232",
+     "descricao": "VALE TRANSPORTE - 6%",
+     "valor": 211.85
+    }
+   ]
+  },
+  {
+   "codigo": "20",
+   "nome": "IVONE PEDROSA DOS ZANETTI",
+   "tipo": "empregado",
+   "situacao": "Trabalhando",
+   "cpf": "900.000.020-38",
+   "vinculo": "Celetista",
+   "cargo": "PROFESSOR (A) EDUCAÇÃO INFANTIL 0 A 3 ANOS",
+   "salario_base": 445.71,
+   "proventos": 722.31,
+   "descontos": 125.46,
+   "liquido": 596.85,
+   "inss": 43.45,
+   "rubricas": [
+    {
+     "tipo": "P",
+     "codigo": "229",
+     "descricao": "HORAS AULAS 3",
+     "valor": 445.71
+    },
+    {
+     "tipo": "D",
+     "codigo": "8794",
+     "descricao": "DSR",
+     "valor": 29.71
+    },
+    {
+     "tipo": "P",
+     "codigo": "8066",
+     "descricao": "DSR PROFESSOR AULISTA",
+     "valor": 74.28
+    },
+    {
+     "tipo": "D",
+     "codigo": "998",
+     "descricao": "INSS",
+     "valor": 43.45
+    },
+    {
+     "tipo": "P",
+     "codigo": "230",
+     "descricao": "EXTRA CLASSE 20%",
+     "valor": 104.0
+    },
+    {
+     "tipo": "D",
+     "codigo": "8792",
+     "descricao": "DIAS FALTAS.",
+     "valor": 14.86
+    },
+    {
+     "tipo": "P",
+     "codigo": "995",
+     "descricao": "SALARIO FAMILIA",
+     "valor": 98.32
+    },
+    {
+     "tipo": "D",
+     "codigo": "48",
+     "descricao": "VALE TRANSPORTE",
+     "valor": 37.44
+    }
+   ]
+  }
+ ]
+}

@@ -10,12 +10,15 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import {
   CALCULO_ACEITO,
+  codigoRepetido,
   conferirIntegridade,
   paraCentavos,
+  somaCentavos,
   somenteDigitos,
   type ColaboradorExtrato,
 } from "@/lib/extrato-mensal";
 import {
+  agruparPorPessoa,
   casarPorCpf,
   chaveColaborador,
   divergenciasDoColaborador,
@@ -23,6 +26,7 @@ import {
   inssDoMes,
   pendentesParaFechar,
   planejarReimportacao,
+  salariosDaFolha,
   totaisAjustados,
   type ColaboradorComparavel,
   type Divergencia,
@@ -408,6 +412,7 @@ async function colaboradoresDa(importacaoId: string): Promise<ColaboradorFolhaGr
 /** Retrato do PDF gravado (antes de qualquer ajuste manual). */
 function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
   return {
+    tipo: c.tipo,
     codigo: c.codigo,
     nome: c.nome,
     cpf: c.cpf,
@@ -430,6 +435,7 @@ function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
 /** Folha vigente (com ajustes), usada na comparação com o mês seguinte. */
 function vigente(c: ColaboradorFolhaGravado): ColaboradorComparavel {
   return {
+    tipo: c.tipo,
     codigo: c.codigo,
     nome: c.nome,
     cpf: c.cpf,
@@ -501,25 +507,27 @@ async function registrarEvento(
   if (error) throw new Error(error.message);
 }
 
-/** Confirmado e vinculado ao RH: bruto = proventos e líquido em funcionarios_salarios. */
+/**
+ * funcionarios_salarios de TODAS as pessoas da importação: bruto e líquido somados
+ * dos registros (contratos) de cada funcionário, só com todos Confirmados
+ * (regra em salariosDaFolha). Chamado após importar, confirmar, reabrir, ajustar e vincular.
+ */
 async function sincronizarSalarios(
+  importacaoId: string,
   competencia: string,
-  colaboradores: readonly { funcionarioId: string | null; proventos: number; liquido: number }[],
   userId: string,
   nome: string,
 ): Promise<void> {
-  const linhas = colaboradores
-    .filter((c) => c.funcionarioId)
-    .map((c) => ({
-      funcionario_id: c.funcionarioId,
-      competencia,
-      valor: c.proventos,
-      valor_liquido: c.liquido,
-      observacao: "Extrato Mensal (folha confirmada)",
-      created_by: userId,
-      created_by_nome: nome,
-      updated_at: new Date().toISOString(),
-    }));
+  const linhas = salariosDaFolha(await colaboradoresDa(importacaoId)).map((s) => ({
+    funcionario_id: s.funcionarioId,
+    competencia,
+    valor: s.valor,
+    valor_liquido: s.valorLiquido,
+    observacao: "Extrato Mensal (folha confirmada)",
+    created_by: userId,
+    created_by_nome: nome,
+    updated_at: new Date().toISOString(),
+  }));
   if (!linhas.length) return;
   const { error } = await supabaseAdmin
     .from("funcionarios_salarios" as never)
@@ -587,11 +595,8 @@ function revalidarFolha(folha: FolhaRecebida): void {
     throw new Error(`Só é aceito "Cálculo: ${CALCULO_ACEITO}" (veio "${folha.calculo}").`);
   }
   if (!competenciaValida(folha.competencia)) throw new Error("Competência inválida (AAAA-MM).");
-  const codigos = new Set<string>();
-  for (const c of folha.colaboradores) {
-    if (codigos.has(c.codigo)) throw new Error(`Código ${c.codigo} repetido na folha.`);
-    codigos.add(c.codigo);
-  }
+  const erroCodigo = codigoRepetido(folha.colaboradores);
+  if (erroCodigo) throw new Error(erroCodigo);
   const erros = conferirIntegridade(
     folha as { colaboradores: ColaboradorExtrato[] } & FolhaRecebida,
   );
@@ -677,7 +682,8 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
     schoolInput
       .extend({
         folha: folhaSchema,
-        selecionados: z.array(z.string().max(20)).max(2000),
+        /** chaveColaborador (tipo:código) dos que entram Confirmados. */
+        selecionados: z.array(z.string().max(40)).max(2000),
         confirmarCnpj: z.boolean(),
       })
       .parse(input),
@@ -709,11 +715,8 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       const selecionados = new Set(data.selecionados);
 
       const aGravar = [...plano.novos, ...plano.substituidos.map((s) => s.colaborador)];
+      // Mesma chave (tipo + código) = mesmo código: só sai quem não está no PDF novo.
       const retirar = new Set(plano.retirados.map((r) => r.codigo));
-      for (const c of plano.substituidos.map((s) => s.colaborador)) {
-        const g = gravadoPorChave.get(chaveColaborador(c));
-        if (g && g.codigo !== c.codigo) retirar.add(g.codigo);
-      }
 
       const gravar = aGravar.map((c) => {
         const g = gravadoPorChave.get(chaveColaborador(c));
@@ -745,7 +748,7 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
           proventos: c.proventos,
           descontos: c.descontos,
           liquido: c.liquido,
-          status: selecionados.has(c.codigo) ? "confirmado" : "em_conferencia",
+          status: selecionados.has(chaveColaborador(c)) ? "confirmado" : "em_conferencia",
           divergencias: anterior
             ? divergenciasDoColaborador(anteriorPorChave.get(chaveColaborador(c)) ?? null, c)
             : [],
@@ -784,18 +787,8 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       );
       if (error) throw new Error(error.message);
 
-      await sincronizarSalarios(
-        folha.competencia,
-        gravar
-          .filter((g) => g.status === "confirmado")
-          .map((g) => ({
-            funcionarioId: g.funcionario_id,
-            proventos: g.proventos,
-            liquido: g.liquido,
-          })),
-        context.userId,
-        nome,
-      );
+      const gravada = await importacaoDa(data.schoolId, folha.competencia);
+      if (gravada) await sincronizarSalarios(gravada.id, folha.competencia, context.userId, nome);
       return { gravados: gravar.length, iguais: plano.iguais.length, retirados: retirar.size };
     },
   );
@@ -843,7 +836,7 @@ export const confirmarColaboradoresFolha = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     for (const c of alvo)
       await registrarEvento(imp.id, c.id, "confirmacao", {}, context.userId, nome);
-    await sincronizarSalarios(data.competencia, alvo, context.userId, nome);
+    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
     return { confirmados: alvo.length };
   });
 
@@ -875,6 +868,7 @@ export const reabrirConferenciaFolha = createServerFn({ method: "POST" })
       context.userId,
       nome,
     );
+    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -940,6 +934,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
       })),
     ];
     const t = totaisAjustados(rubricas);
+    const nome = await nomeDoUsuario(context.userId);
     const { error } = await supabaseAdmin.rpc(
       "rh_folha_ajustar_colaborador" as never,
       {
@@ -947,7 +942,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
           colaborador_id: c.id,
           observacao: data.observacao,
           por: context.userId,
-          por_nome: await nomeDoUsuario(context.userId),
+          por_nome: nome,
           proventos: t.proventos,
           descontos: t.descontos,
           liquido: t.liquido,
@@ -966,6 +961,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
       } as never,
     );
     if (error) throw new Error(error.message);
+    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -987,9 +983,6 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
       if (!funcionarios.some((f) => f.id === data.funcionarioId)) {
         throw new Error("Funcionário não pertence a esta unidade.");
       }
-      if (todos.some((x) => x.id !== c.id && x.funcionarioId === data.funcionarioId)) {
-        throw new Error("Este funcionário já está vinculado a outro colaborador da folha.");
-      }
     }
     const nome = await nomeDoUsuario(context.userId);
     const { error } = await supabaseAdmin
@@ -1009,14 +1002,7 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
       context.userId,
       nome,
     );
-    if (c.status === "confirmado" && data.funcionarioId) {
-      await sincronizarSalarios(
-        data.competencia,
-        [{ funcionarioId: data.funcionarioId, proventos: c.proventos, liquido: c.liquido }],
-        context.userId,
-        nome,
-      );
-    }
+    await sincronizarSalarios(imp.id, data.competencia, context.userId, nome);
     return { ok: true };
   });
 
@@ -1197,16 +1183,20 @@ export async function conferirLoteComFolha(
   const imp = await importacaoDa(schoolId, competencia);
   if (!imp) return;
   const porFuncionario = new Map(
-    (await colaboradoresDa(imp.id)).filter((c) => c.funcionarioId).map((c) => [c.funcionarioId, c]),
+    agruparPorPessoa(await colaboradoresDa(imp.id))
+      .filter((g) => g.funcionarioId)
+      .map((g) => [g.funcionarioId, g.registros]),
   );
   for (const i of itens) {
-    const c = porFuncionario.get(i.employee_id);
-    if (!c) continue;
-    if (c.status !== "confirmado") {
-      throw new Error(`${c.nome} está Em conferência e não pode entrar no lote.`);
+    const registros = porFuncionario.get(i.employee_id);
+    if (!registros) continue;
+    const nome = registros[0].nome;
+    if (registros.some((c) => c.status !== "confirmado")) {
+      throw new Error(`${nome} está Em conferência e não pode entrar no lote.`);
     }
-    if (paraCentavos(c.liquido) !== paraCentavos(i.total_amount)) {
-      throw new Error(`O valor de ${c.nome} no lote difere do líquido confirmado na folha.`);
+    const liquido = somaCentavos(registros.map((c) => c.liquido));
+    if (liquido !== paraCentavos(i.total_amount)) {
+      throw new Error(`O valor de ${nome} no lote difere do líquido confirmado na folha.`);
     }
   }
 }

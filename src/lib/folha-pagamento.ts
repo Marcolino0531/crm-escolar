@@ -11,6 +11,7 @@ import {
   somenteDigitos,
   subtraiReais,
   totaisDasRubricas,
+  type TipoColaborador,
   type TipoRubrica,
 } from "@/lib/extrato-mensal";
 
@@ -32,6 +33,7 @@ export type RubricaComparavel = {
 };
 
 export type ColaboradorComparavel = {
+  tipo: TipoColaborador;
   codigo: string;
   nome: string;
   cpf: string;
@@ -71,10 +73,12 @@ export const ROTULO_DIVERGENCIA: Record<TipoDivergencia, string> = {
   rubrica_valor: "Rubrica com valor diferente",
 };
 
-/** Mesma pessoa em duas folhas: CPF (só dígitos) ou, sem CPF, o código na folha. */
-export function chaveColaborador(c: { cpf: string; codigo: string }): string {
-  const cpf = somenteDigitos(c.cpf);
-  return cpf ? `cpf:${cpf}` : `cod:${c.codigo}`;
+/**
+ * Mesmo registro em duas folhas: tipo + código ("empregado:22"). A mesma pessoa
+ * pode ter mais de um registro (contratos) com o mesmo CPF; o CPF só vincula ao RH.
+ */
+export function chaveColaborador(c: { tipo: TipoColaborador; codigo: string }): string {
+  return `${c.tipo}:${c.codigo}`;
 }
 
 type SomaRubrica = { rotulo: string; centavos: number };
@@ -186,11 +190,13 @@ export function compararFolhas<T extends ColaboradorComparavel>(
   };
 }
 
-/** Pré-seleção: sem divergência vem marcado; com divergência vem desmarcado. */
+/** Pré-seleção (por chaveColaborador): sem divergência vem marcado; com divergência, desmarcado. */
 export function preSelecao<T extends ColaboradorComparavel>(cmp: ComparacaoFolhas<T>): Set<string> {
   if (cmp.primeiraImportacao) return new Set();
   return new Set(
-    cmp.porColaborador.filter((p) => p.divergencias.length === 0).map((p) => p.colaborador.codigo),
+    cmp.porColaborador
+      .filter((p) => p.divergencias.length === 0)
+      .map((p) => chaveColaborador(p.colaborador)),
   );
 }
 
@@ -349,6 +355,94 @@ export function restituicoesDaCompetencia(
   return { linhas, total: deCentavos(somaCentavos(linhas.map((l) => l.restituicao))) };
 }
 
+// ---------- Pessoa com mais de um registro (contratos) ----------
+
+export type GrupoPessoa<T> = { chave: string; funcionarioId: string | null; registros: T[] };
+
+/**
+ * Registros da folha por pessoa: os vinculados ao mesmo funcionário do RH ficam
+ * juntos; registro sem vínculo fica sozinho. Mantém a ordem da primeira aparição.
+ */
+export function agruparPorPessoa<T extends { id: string; funcionarioId: string | null }>(
+  registros: readonly T[],
+): GrupoPessoa<T>[] {
+  const grupos = new Map<string, GrupoPessoa<T>>();
+  for (const r of registros) {
+    const chave = r.funcionarioId ? `func:${r.funcionarioId}` : `reg:${r.id}`;
+    const g = grupos.get(chave);
+    if (g) g.registros.push(r);
+    else grupos.set(chave, { chave, funcionarioId: r.funcionarioId, registros: [r] });
+  }
+  return [...grupos.values()];
+}
+
+/** Quantos registros cada CPF tem na competência (para o indicador "2 contratos"). */
+export function registrosPorCpf(registros: readonly { cpf: string }[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of registros) {
+    const cpf = somenteDigitos(r.cpf);
+    if (cpf) m.set(cpf, (m.get(cpf) ?? 0) + 1);
+  }
+  return m;
+}
+
+type RegistroValores = {
+  id: string;
+  funcionarioId: string | null;
+  status: StatusColaboradorFolha;
+  proventos: number;
+  liquido: number;
+};
+
+export type SalarioDaFolha = { funcionarioId: string; valor: number; valorLiquido: number };
+
+/**
+ * funcionarios_salarios: uma linha por funcionário, com a soma dos proventos e
+ * dos líquidos de TODOS os registros dele, só quando todos estão Confirmados.
+ * Quem tem algum registro Em conferência não entra (a linha dele não muda).
+ */
+export function salariosDaFolha(registros: readonly RegistroValores[]): SalarioDaFolha[] {
+  return agruparPorPessoa(registros).flatMap((g) =>
+    g.funcionarioId && g.registros.every((r) => r.status === "confirmado")
+      ? [
+          {
+            funcionarioId: g.funcionarioId,
+            valor: somaReais(g.registros.map((r) => r.proventos)),
+            valorLiquido: somaReais(g.registros.map((r) => r.liquido)),
+          },
+        ]
+      : [],
+  );
+}
+
+export type LinhaRestituicaoPessoa = {
+  chave: string;
+  funcionarioId: string | null;
+  nome: string;
+  contratos: number;
+  inss: number;
+  restituicao: number;
+};
+
+/** Aba Restituição por pessoa: INSS 998 e restituição somados de todos os registros dela. */
+export function restituicoesPorPessoa(
+  registros: readonly { id: string; funcionarioId: string | null; nome: string }[],
+  linhas: readonly LinhaRestituicao[],
+): LinhaRestituicaoPessoa[] {
+  const porId = new Map(linhas.map((l) => [l.id, l]));
+  return agruparPorPessoa(registros).map((g) => {
+    const ls = g.registros.map((r) => porId.get(r.id));
+    return {
+      chave: g.chave,
+      funcionarioId: g.funcionarioId,
+      nome: g.registros[0].nome,
+      contratos: g.registros.length,
+      inss: somaReais(ls.map((l) => l?.inss ?? 0)),
+      restituicao: somaReais(ls.map((l) => l?.restituicao ?? 0)),
+    };
+  });
+}
+
 // ---------- Resumo e lote de pagamento ----------
 
 export type LinhaResumo = {
@@ -359,7 +453,29 @@ export type LinhaResumo = {
   bruto: number;
   liquido: number;
   restituicao: number;
+  /** Registros da pessoa na folha (mais de 1 = mais de um contrato). */
+  contratos?: number;
 };
+
+/**
+ * Aba Resumo: uma linha por pessoa vinculada ao RH (Bruto, Líquido e Restituição
+ * somados; Confirmado só com todos os registros confirmados). Sem vínculo: linha própria.
+ */
+export function resumoDaFolha(
+  registros: readonly (RegistroValores & { nome: string })[],
+  restituicaoPorId: ReadonlyMap<string, number>,
+): LinhaResumo[] {
+  return agruparPorPessoa(registros).map((g) => ({
+    chave: g.chave,
+    funcionarioId: g.funcionarioId,
+    nome: g.registros[0].nome,
+    status: g.registros.every((r) => r.status === "confirmado") ? "confirmado" : "em_conferencia",
+    bruto: somaReais(g.registros.map((r) => r.proventos)),
+    liquido: somaReais(g.registros.map((r) => r.liquido)),
+    restituicao: somaReais(g.registros.map((r) => restituicaoPorId.get(r.id) ?? 0)),
+    contratos: g.registros.length,
+  }));
+}
 
 export function totaisResumo(linhas: readonly LinhaResumo[]) {
   return {
