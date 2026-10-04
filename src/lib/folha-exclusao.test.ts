@@ -41,7 +41,16 @@ type Reg = {
 };
 
 const inss = (valor: number): RubricaFolha[] => [
-  { tipo: "D", codigo: "998", descricao: "INSS", valor },
+  {
+    tipo: "D",
+    codigo: "998",
+    descricao: "INSS",
+    referencia: "",
+    valor,
+    origem: "pdf",
+    valorOriginal: valor,
+    removida: false,
+  },
 ];
 
 const reg = (over: Partial<Reg> & Pick<Reg, "id" | "codigo">): Reg => ({
