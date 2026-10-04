@@ -1,8 +1,16 @@
 // PDF da ficha de matrícula (A4 retrato) a partir das seções já montadas pela
 // lógica pura, para a secretaria imprimir e arquivar. Os anexos entram como
-// nome do arquivo: o link do documento é assinado e expira em minutos.
+// nome do arquivo: o link do documento é assinado e expira em minutos. A
+// primeira página leva o timbre do colégio quando ele está cadastrado.
 
-import { MARGEM, CONTEUDO, LARGURA } from "@/lib/documento-pdf";
+import {
+  MARGEM,
+  CONTEUDO,
+  LARGURA,
+  cabecalhoTimbrado,
+  type LogoRecibo,
+  type Timbre,
+} from "@/lib/documento-pdf";
 import type { SecaoDetalhe } from "@/lib/matricula-detalhe";
 
 type Doc = import("jspdf").jsPDF;
@@ -32,17 +40,28 @@ export async function gerarPdfFichaMatricula(
   subtitulo: string,
   secoes: SecaoDetalhe[],
   nomeArquivo: string,
+  cabecalho: { timbre: Timbre; logo: LogoRecibo | null } | null = null,
 ): Promise<void> {
   const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  let doc = new jsPDF({ unit: "mm", format: "a4" });
+
+  // Logo ilegível para o jsPDF não trava o download: a ficha sai sem timbre.
+  let topo = MARGEM;
+  if (cabecalho) {
+    try {
+      topo = cabecalhoTimbrado(doc, cabecalho.timbre, cabecalho.logo) - 4;
+    } catch {
+      doc = new jsPDF({ unit: "mm", format: "a4" });
+    }
+  }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text(titulo, MARGEM, MARGEM + 4);
+  doc.text(titulo, MARGEM, topo + 4);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
-  doc.text(subtitulo, MARGEM, MARGEM + 10, { maxWidth: CONTEUDO });
-  let y = MARGEM + 18;
+  doc.text(subtitulo, MARGEM, topo + 10, { maxWidth: CONTEUDO });
+  let y = topo + 18;
 
   for (const secao of secoes) {
     y = novaPaginaSePreciso(doc, y, 16);
