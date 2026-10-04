@@ -68,6 +68,7 @@ import {
   resolverPendenciaMatricula,
   resumoExclusaoMatricula,
   salvarConferenciaManual,
+  timbreFichaMatricula,
 } from "@/lib/matriculas.functions";
 import { lerConferenciaManual } from "@/lib/matricula-conferencia";
 import { STATUS_ERRO } from "@/lib/matriculas.audit";
@@ -1040,6 +1041,8 @@ function DetalheSubmissao({
 // que falharam no Sponte: o cadastro é gravado antes da integração.
 function FichaSubmissao({ submissao }: { submissao: Submissao }) {
   const carregar = useServerFn(detalheMatricula);
+  const carregarTimbre = useServerFn(timbreFichaMatricula);
+  const unidadeSelecionada = useUnidadeAtiva();
   const submissionId = submissao.submission_id;
   const { data, isFetching, isError } = useQuery({
     queryKey: ["matricula-detalhe", submissionId],
@@ -1089,6 +1092,19 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
     },
   });
 
+  // Timbre do colégio do seletor do topo; em "Todas as Unidades", o da própria
+  // matrícula. Sem cadastro ou com falha, a ficha sai como antes, sem timbre.
+  async function timbreDaFicha() {
+    const unidadeTimbre = unidadeSelecionada ?? submissao.unidade;
+    if (!unidadeTimbre) return null;
+    try {
+      const r = await carregarTimbre({ data: { unidade: unidadeTimbre } });
+      return r.timbre ? { timbre: r.timbre, logo: r.logo } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function baixarPdf() {
     try {
       await gerarPdfFichaMatricula(
@@ -1096,6 +1112,7 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
         `${submissao.aluno_nome ?? "Aluno sem nome"} · ${submissao.unidade ?? "Unidade não informada"} · ${formatDataHora(submissao.created_at)}`,
         secoes,
         nomeArquivoFichaMatricula(submissao.aluno_nome, submissao.submission_id),
+        await timbreDaFicha(),
       );
     } catch {
       toast.error("Não foi possível gerar o PDF da ficha.");
