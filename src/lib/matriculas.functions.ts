@@ -11,7 +11,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
-import { UNIDADES_SPONTE } from "@/lib/sponte.functions";
+import { UNIDADES_SPONTE, allowedSponteUnidades } from "@/lib/sponte.functions";
+import { DOCUMENTOS_BUCKET, paraColegioRecibo, type ColegioRow } from "@/lib/colegios";
+import { dimensoesImagem } from "@/lib/contrato-matricula.functions";
+import type { LogoRecibo, Timbre } from "@/lib/documento-pdf";
+import { enderecoLinha } from "@/lib/recibos";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import { BUCKET_DOCUMENTOS_MATRICULA, DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
@@ -813,6 +817,60 @@ async function assertCanAnexarDocumento(userId: string) {
     "Você não tem permissão para anexar documentos à matrícula.",
   );
 }
+
+// ─── Timbre da ficha da matrícula ────────────────────────────────────────────
+// Quem tem só o e-Formulário não lê documentos_colegios nem o bucket
+// "documentos" pelo navegador (policies de documentos.*): o timbre vem daqui.
+// Sem cadastro, timbre nulo; sem logo ou logo fora de PNG/JPEG, logo nula.
+
+export interface TimbreFichaMatricula {
+  timbre: Timbre | null;
+  logo: LogoRecibo | null;
+}
+
+const TimbreFichaSchema = z.object({ unidade: z.string().min(1).max(100) });
+
+async function logoOpcionalServidor(logoPath: string | null): Promise<LogoRecibo | null> {
+  if (!logoPath) return null;
+  const { data, error } = await supabaseAdmin.storage.from(DOCUMENTOS_BUCKET).download(logoPath);
+  if (error || !data) return null;
+  const bytes = new Uint8Array(await data.arrayBuffer());
+  const dim = dimensoesImagem(bytes);
+  if (!dim) return null;
+  const mime = bytes[0] === 0x89 ? "image/png" : "image/jpeg";
+  return {
+    dataUrl: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+    ...dim,
+  };
+}
+
+export const timbreFichaMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => TimbreFichaSchema.parse(input))
+  .handler(async ({ data, context }): Promise<TimbreFichaMatricula> => {
+    await assertCanViewAdmissoes(context.userId);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    if (permitidas !== null && !permitidas.includes(data.unidade))
+      throw new Error("Você não tem acesso a esta unidade.");
+
+    const { data: row, error } = await supabaseAdmin
+      .from("documentos_colegios" as never)
+      .select("*")
+      .eq("unidade", data.unidade)
+      .maybeSingle<ColegioRow>();
+    if (error) throw new Error(error.message);
+    if (!row) return { timbre: null, logo: null };
+
+    const colegio = paraColegioRecibo(row);
+    return {
+      timbre: {
+        colegio,
+        enderecoColegio: enderecoLinha(colegio),
+        contatoColegio: [row.telefone, row.email, row.site].filter(Boolean).join(" · "),
+      },
+      logo: await logoOpcionalServidor(row.logo_path),
+    };
+  });
 
 const MENSAGEM_SUBSTITUIR_SEM_EDITAR =
   "Este documento já foi enviado. Só quem tem permissão de edição pode substituir.";
