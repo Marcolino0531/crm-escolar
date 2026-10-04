@@ -71,6 +71,17 @@ O id de uma aba é o último segmento da chave (`matricula.contratos` → `contr
 - **Editor**: `src/components/configuracoes/ArvorePermissoes.tsx` deriva as linhas
   da árvore — nada a fazer ao adicionar nós.
 
+## Exceções à regra "gravar exige Editar" (decididas pelo Sérgio)
+
+- **Anexar documento na ficha da matrícula** (`DocumentosFicha.tsx`,
+  `urlUploadDocumentoSecretaria` / `registrarDocumentoSecretaria` em
+  `src/lib/matriculas.functions.ts`): basta **Visualizar** no `eformulario` para
+  "Anexar" um documento pendente da lista e para "Anexar outro documento" (nome
+  livre). **Substituir** um documento que já tem arquivo continua exigindo Editar
+  (o servidor recusa e remove o arquivo recém-enviado do bucket); **Excluir**
+  continua só admin. A exceção vale só para anexar: nenhuma outra ação da tela
+  Matrículas é liberada com Visualizar. Travado em `permissoes-arvore.test.ts`.
+
 ## Regras especiais que continuam fora da árvore
 
 - Esportes por modalidade (`can_view_modalidade_esporte`), escopo escolar do

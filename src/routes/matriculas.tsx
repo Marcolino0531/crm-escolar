@@ -1051,7 +1051,7 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
   });
   const queryClient = useQueryClient();
   const { isAdmin } = useRole();
-  const { canEdit } = usePermissions();
+  const { canEdit, canView } = usePermissions();
   const resolverFn = useServerFn(resolverPendenciaMatricula);
   const resolver = useMutation({
     mutationFn: async () => resolverFn({ data: { id: submissao.id } }),
@@ -1146,7 +1146,8 @@ function FichaSubmissao({ submissao }: { submissao: Submissao }) {
             submissionId={submissionId}
             documentos={data.documentos ?? []}
             historico={data.historicoDocumentos ?? []}
-            podeAnexar={canEdit("eformulario")}
+            podeAnexar={canView("eformulario")}
+            podeSubstituir={canEdit("eformulario")}
             podeExcluir={isAdmin}
           />
         ) : (
