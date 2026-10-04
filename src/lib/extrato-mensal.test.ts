@@ -9,10 +9,23 @@ import itensComplemento from "./__fixtures__/extrato-mensal-complemento-ficticio
 import esperadoComplemento from "./__fixtures__/extrato-mensal-complemento-ficticio.esperado.json";
 import {
   agruparPorPessoa,
+  chaveColaborador,
+  cnpjAceito,
+  cnpjValido,
+  compararFolhas,
+  competenciaFechada,
+  conflitoVinculoCpf,
+  empresasNaoImportadas,
+  importacaoAnteriorDoCnpj,
+  importacaoDoCnpj,
+  mensagemCnpjNaoCadastrado,
+  planejarReimportacao,
+  preSelecao,
   registrosPorCpf,
   restituicoesDaCompetencia,
   restituicoesPorPessoa,
   salariosDaFolha,
+  totaisDasEmpresas,
 } from "./folha-pagamento";
 import {
   ErroExtratoMensal,
@@ -352,5 +365,179 @@ describe("fixture fictício de contratos: agregação por pessoa", () => {
       expect(paraCentavos(inss.get(f)?.inss ?? -1), p.cpf).toBe(paraCentavos(p.inss));
       expect(inss.get(f)?.contratos).toBe(p.codigos.length);
     }
+  });
+});
+
+describe("colégio com duas empresas (CNPJ) na mesma competência", () => {
+  type Registro = ReturnType<typeof importarExtratoMensal>["colaboradores"][number] & {
+    id: string;
+    importacaoId: string;
+    ajustadoManualmente: boolean;
+  };
+  type Importacao = {
+    id: string;
+    competencia: string;
+    cnpj: string;
+    empresa: string;
+    status: "aberta" | "fechada";
+    totalProventos: number;
+    totalDescontos: number;
+    liquidoGeral: number;
+    totalColaboradores: number;
+    colaboradores: Registro[];
+  };
+  const folhaA = () => importarExtratoMensal(itensContratos as PaginaItens[]);
+  const folhaB = () => importarExtratoMensal(itensComplemento as PaginaItens[]);
+
+  // Mesmo fluxo do servidor: mesmo CNPJ = reimportação daquela empresa; outro CNPJ = outra importação.
+  const importar = (banco: Importacao[], folha: ReturnType<typeof importarExtratoMensal>) => {
+    const existente = importacaoDoCnpj(
+      banco.filter((i) => i.competencia === folha.competencia),
+      folha.cnpj,
+    );
+    const plano = planejarReimportacao(existente?.colaboradores ?? [], folha.colaboradores);
+    const id = existente?.id ?? `imp-${banco.length + 1}`;
+    const nova: Importacao = {
+      id,
+      competencia: folha.competencia,
+      cnpj: folha.cnpj,
+      empresa: folha.empresa,
+      status: "aberta",
+      totalProventos: folha.totalProventos,
+      totalDescontos: folha.totalDescontos,
+      liquidoGeral: folha.liquidoGeral,
+      totalColaboradores: folha.colaboradores.length,
+      colaboradores: folha.colaboradores.map((c) => ({
+        ...c,
+        id: `${id}:${chaveColaborador(c)}`,
+        importacaoId: id,
+        ajustadoManualmente: false,
+      })),
+    };
+    return {
+      plano,
+      banco: existente ? banco.map((i) => (i.id === id ? nova : i)) : [...banco, nova],
+    };
+  };
+
+  it("(4.1) dois PDFs de CNPJs diferentes geram duas importações e os totais somam", () => {
+    let { banco } = importar([], folhaA());
+    ({ banco } = importar(banco, folhaB()));
+    expect(banco).toHaveLength(2);
+    expect(new Set(banco.map((i) => somenteDigitos(i.cnpj)))).toEqual(
+      new Set(["11222333000181", "11444777000161"]),
+    );
+    const totais = totaisDasEmpresas(banco);
+    expect(totais.colaboradores).toBe(43);
+    expect(totais.proventos).toBe(130320.3);
+    expect(totais.descontos).toBe(31264.73);
+    expect(totais.liquido).toBe(99055.57);
+    const todos = banco.flatMap((i) => i.colaboradores);
+    expect(todos).toHaveLength(43);
+    expect(somaReais(todos.map(inssDoColaborador))).toBe(9755.29);
+  });
+
+  it("(4.2) reimportar uma empresa não altera a outra", () => {
+    let { banco } = importar([], folhaA());
+    ({ banco } = importar(banco, folhaB()));
+    const antesB = banco.find((i) => i.cnpj === folhaB().cnpj)!;
+    const { banco: depois, plano } = importar(banco, folhaA());
+    expect(depois).toHaveLength(2);
+    expect(plano.retirados).toEqual([]);
+    expect(plano.iguais).toHaveLength(42);
+    expect(depois.find((i) => i.id === antesB.id)).toBe(antesB);
+  });
+
+  it("(4.3) o mesmo tipo + código nas duas empresas não conflita", () => {
+    const a = folhaA();
+    const b = folhaB();
+    const repetido = a.colaboradores[0];
+    b.colaboradores[0] = { ...b.colaboradores[0], tipo: repetido.tipo, codigo: repetido.codigo };
+    let { banco } = importar([], a);
+    const r = importar(banco, b);
+    banco = r.banco;
+    expect(r.plano.novos).toHaveLength(1);
+    expect(r.plano.substituidos).toEqual([]);
+    expect(banco).toHaveLength(2);
+    const mesmos = banco
+      .flatMap((i) => i.colaboradores)
+      .filter((c) => chaveColaborador(c) === chaveColaborador(repetido));
+    expect(mesmos).toHaveLength(2);
+    expect(new Set(mesmos.map((c) => c.importacaoId)).size).toBe(2);
+    expect(new Set(mesmos.map((c) => c.id)).size).toBe(2);
+  });
+
+  it("(4.4) comparação mensal sempre contra a importação anterior do MESMO CNPJ", () => {
+    const a = folhaA();
+    const b = folhaB();
+    const imps = [
+      { id: "a-07", competencia: "2026-07", cnpj: somenteDigitos(a.cnpj), empresa: a.empresa },
+      { id: "b-07", competencia: "2026-07", cnpj: b.cnpj, empresa: b.empresa },
+      { id: "a-08", competencia: "2026-08", cnpj: a.cnpj, empresa: a.empresa },
+    ];
+    expect(importacaoAnteriorDoCnpj(imps, "2026-09", b.cnpj)?.id).toBe("b-07");
+    expect(importacaoAnteriorDoCnpj(imps, "2026-09", a.cnpj)?.id).toBe("a-08");
+    // Primeira importação deste CNPJ: sem comparação, com "Selecionar todos".
+    expect(importacaoAnteriorDoCnpj(imps.slice(2), "2026-09", b.cnpj)).toBeNull();
+    const cmp = compararFolhas(null, b.colaboradores);
+    expect(cmp.primeiraImportacao).toBe(true);
+    expect(preSelecao(cmp).size).toBe(0);
+  });
+
+  it("(4.5) CNPJ fora da lista do colégio é recusado com a mensagem do cadastro", () => {
+    const a = folhaA();
+    const b = folhaB();
+    expect(cnpjAceito(a.cnpj, ["11222333000181"])).toBe(true);
+    expect(cnpjAceito(b.cnpj, ["11222333000181"])).toBe(false);
+    expect(cnpjAceito("", [""])).toBe(false);
+    expect(mensagemCnpjNaoCadastrado(b.cnpj, b.empresa, "Colégio Exemplo")).toBe(
+      "O CNPJ 11.444.777/0001-61 (998 - COLEGIO EXEMPLO DOIS LTDA) não está cadastrado para Colégio Exemplo. Cadastre em Configurações > Cadastros Gerais > CNPJs Folha de Pagamento.",
+    );
+    expect(cnpjValido(a.cnpj)).toBe(true);
+    expect(cnpjValido(b.cnpj)).toBe(true);
+    expect(cnpjValido("11.222.333/0001-82")).toBe(false);
+    expect(cnpjValido("11.111.111/1111-11")).toBe(false);
+    expect(cnpjValido("1122233300018")).toBe(false);
+  });
+
+  it("fechar: aviso das empresas da competência anterior que faltam; fechada recusa qualquer PDF", () => {
+    const a = folhaA();
+    const b = folhaB();
+    const anteriores = [
+      { competencia: "2026-08", cnpj: a.cnpj, empresa: a.empresa },
+      { competencia: "2026-08", cnpj: b.cnpj, empresa: b.empresa },
+      { competencia: "2026-07", cnpj: "00.000.000/0001-91", empresa: "ANTIGA" },
+    ];
+    const atual = [{ competencia: "2026-09", cnpj: somenteDigitos(a.cnpj), empresa: a.empresa }];
+    expect(
+      empresasNaoImportadas([...anteriores, ...atual], "2026-09").map((e) => e.empresa),
+    ).toEqual([b.empresa]);
+    expect(empresasNaoImportadas(atual, "2026-09")).toEqual([]);
+    expect(competenciaFechada([{ status: "aberta" }, { status: "fechada" }])).toBe(true);
+    expect(competenciaFechada([{ status: "aberta" }, { status: "aberta" }])).toBe(false);
+  });
+
+  it("(4.6) vínculo ao RH: CPFs diferentes não vão para o mesmo funcionário; iguais vão", () => {
+    const a = folhaA();
+    const esp = esperadoContratos as unknown as { pessoas: { cpf: string; codigos: string[] }[] };
+    const comDois = esp.pessoas.find((p) => p.codigos.length > 1)!;
+    const registros = [...a.colaboradores, ...folhaB().colaboradores].map((c, i) => ({
+      id: `r${i}`,
+      nome: c.nome,
+      cpf: c.cpf,
+      funcionarioId: null as string | null,
+    }));
+    const daPessoa = registros.filter((r) => somenteDigitos(r.cpf) === somenteDigitos(comDois.cpf));
+    const outro = registros.find((r) => somenteDigitos(r.cpf) !== somenteDigitos(comDois.cpf))!;
+    // Funcionário do RH sem CPF: o primeiro contrato liga; o segundo, de mesmo CPF, também.
+    daPessoa[0].funcionarioId = "func-1";
+    expect(conflitoVinculoCpf(registros, daPessoa[1].id, "func-1")).toBeNull();
+    daPessoa[1].funcionarioId = "func-1";
+    // Outra pessoa (outro CPF) não pode ir para o mesmo funcionário.
+    expect(conflitoVinculoCpf(registros, outro.id, "func-1")).toMatch(/outro CPF/);
+    // Funcionário sem nenhum registro ligado: livre.
+    expect(conflitoVinculoCpf(registros, outro.id, "func-2")).toBeNull();
+    // Re-vincular o mesmo registro ao mesmo funcionário não conflita consigo mesmo.
+    expect(conflitoVinculoCpf(registros, daPessoa[0].id, "func-1")).toBeNull();
   });
 });
