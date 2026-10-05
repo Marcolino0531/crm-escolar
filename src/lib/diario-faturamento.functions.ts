@@ -29,6 +29,8 @@ import {
   type PendenciaAluno,
   type StatusFaturamento,
   proximoVencimentoExtrasDiario,
+  type OrigemVencimentoExtras,
+  vencimentoAConferir,
 } from "@/lib/diario-faturamento";
 import { precosExtrasDoAno } from "@/lib/diario-precos.functions";
 import type { TabelaPrecos } from "@/lib/diario-precos";
@@ -357,6 +359,8 @@ export interface ResultadoFaturamento {
   lancadoNoSponte?: boolean;
   sponteContaReceberId?: string;
   sponteVencimento?: string;
+  // Regra usada no vencimento (só na resposta; não é gravada).
+  sponteVencimentoOrigem?: OrigemVencimentoExtras;
   sponteErro?: string;
 }
 
@@ -385,9 +389,9 @@ async function lancarNoSponte(
     return { ok: true, faturamentoId: f.id, lancadoNoSponte: false, sponteErro: erro };
   }
 
-  // Vencimento: sempre no mês seguinte ao do faturamento, no dia habitual do
-  // aluno (o boleto do mês corrente já foi enviado às famílias).
-  const { vencimento } = proximoVencimentoExtrasDiario(titulos.titulos, hojeYMD);
+  // Vencimento: sempre no mês seguinte ao do faturamento, na data da
+  // Mensalidade do aluno (o boleto do mês corrente já foi enviado às famílias).
+  const { vencimento, origem } = proximoVencimentoExtrasDiario(titulos.titulos, hojeYMD);
 
   const inserido = await inserirPlanoSponte({
     unidade: f.unidade,
@@ -436,6 +440,7 @@ async function lancarNoSponte(
     lancadoNoSponte: true,
     sponteContaReceberId: inserido.contaReceberID,
     sponteVencimento: vencimento,
+    sponteVencimentoOrigem: origem,
   };
 }
 
@@ -530,6 +535,8 @@ export const faturarExtrasDiario = createServerFn({ method: "POST" })
 
 export interface ResultadoFaturarTodos {
   lancados: number;
+  // Lançados com vencimento a conferir (origem dia_habitual ou padrao).
+  comAtencao?: number;
   comErro: { aluno: string; erro: string }[];
 }
 
@@ -543,12 +550,14 @@ export const faturarTodosExtrasDiario = createServerFn({ method: "POST" })
     const nome = await nomeDoUsuario(context.userId);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     const { pendencias } = await calcularPendencias(data.unidade, schoolId);
-    const resultado: ResultadoFaturarTodos = { lancados: 0, comErro: [] };
+    const resultado: ResultadoFaturarTodos = { lancados: 0, comAtencao: 0, comErro: [] };
     for (const p of pendencias) {
       if (!podeFaturar(p) || !p.sponteAlunoId) continue;
       const r = await faturarAluno(data.unidade, schoolId, p.studentId, nome, context.userId);
-      if (r.ok && r.lancadoNoSponte) resultado.lancados += 1;
-      else resultado.comErro.push({ aluno: p.aluno, erro: r.erro ?? r.sponteErro ?? "Falha" });
+      if (r.ok && r.lancadoNoSponte) {
+        resultado.lancados += 1;
+        if (vencimentoAConferir(r.sponteVencimentoOrigem)) resultado.comAtencao! += 1;
+      } else resultado.comErro.push({ aluno: p.aluno, erro: r.erro ?? r.sponteErro ?? "Falha" });
     }
     return resultado;
   });

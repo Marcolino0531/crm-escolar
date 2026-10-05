@@ -405,6 +405,20 @@ function ehMensalidade(p: ParcelaAberta): boolean {
   return p.vencimento !== "" && semAcento(p.categoria).includes("mensalidade");
 }
 
+// Origens sem Mensalidade de referência: quem fatura deve conferir no Sponte.
+export function vencimentoAConferir(origem: OrigemVencimentoExtras | undefined): boolean {
+  return origem === "dia_habitual" || origem === "padrao";
+}
+
+export const AVISO_ORIGEM_VENCIMENTO: Record<OrigemVencimentoExtras, string> = {
+  mensalidade: " Mesma data da mensalidade.",
+  dia_mensalidade: " Sem mensalidade no mês seguinte: usado o dia da mensalidade do aluno.",
+  dia_habitual:
+    " Atenção: aluno sem parcela de Mensalidade no Sponte. Usado o dia mais frequente das outras parcelas. Confira o vencimento no Sponte.",
+  padrao:
+    " Atenção: nenhuma parcela encontrada no Sponte para este aluno. Usado o dia 5. Confira o vencimento no Sponte.",
+};
+
 const CATEGORIA_EXTRAS_NORMALIZADA = semAcento(CATEGORIA_EXTRAS_DIARIO_SPONTE);
 
 // Vencimento do título dos Extras: sempre no mês seguinte ao do faturamento
