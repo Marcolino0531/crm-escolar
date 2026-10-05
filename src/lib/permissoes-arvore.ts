@@ -395,7 +395,7 @@ export const ARVORE_PERMISSOES = [
         tipo: "modulo",
         rota: "/rh",
         // Menu antigo: canView("rh") — quem só tem Salário (rh_salario) não vê o módulo.
-        menu: { qualquer: PAGINAS_RH_SEM_SALARIO },
+        menu: { qualquer: [...PAGINAS_RH_SEM_SALARIO, "rh.pessoal.extras"] },
         filhos: [
           {
             chave: "rh.pessoal",
@@ -409,6 +409,8 @@ export const ARVORE_PERMISSOES = [
                 tipo: "pagina",
                 legado: um("rh"),
               },
+              // Sem legado: página nova, começa só com admin.
+              { chave: "rh.pessoal.extras", nome: "Extras", tipo: "pagina" },
             ],
           },
           {

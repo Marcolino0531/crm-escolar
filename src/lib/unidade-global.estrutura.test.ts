@@ -23,6 +23,7 @@ const TELAS = [
   "src/routes/upload.tsx",
   "src/routes/fundos.tsx",
   "src/routes/agenda.tsx",
+  "src/components/crm/ExtrasRH.tsx",
 ];
 
 const DIR_COBRANCA = "src/components/cobranca";
@@ -51,6 +52,7 @@ const ACOES_UNIDADE_UNICA = [
   "src/routes/fundos.tsx",
   "src/routes/cobranca.tsx",
   "src/routes/agenda.tsx",
+  "src/components/crm/ExtrasRH.tsx",
 ];
 
 function fonte(caminho: string): string {
