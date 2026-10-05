@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   agruparPorPessoa,
@@ -5,11 +6,13 @@ import {
   casarPorCpf,
   chaveColaborador,
   compararFolhas,
+  conferirValorNoLote,
   divergenciasDoColaborador,
   emOrdemAlfabetica,
   exigirCompetenciaAberta,
   foiAjustada,
   inssDoMes,
+  liquidoManualDoAjuste,
   montarLoteFolha,
   pendentesParaFechar,
   planejarReimportacao,
@@ -19,6 +22,7 @@ import {
   restituicoesPorPessoa,
   resumoDaFolha,
   salariosDaFolha,
+  totaisDasEmpresas,
   totaisAjustados,
   totaisResumo,
   type ColaboradorComparavel,
@@ -574,5 +578,131 @@ describe("Resumo em ordem alfabética (folha + salário manual)", () => {
     expect(lote.total).toBe(6811.39);
     expect(lote.itens.map((i) => i.employee_name)).toEqual(ordenadas.map((l) => l.nome));
     expect(loteAntes.itens.map((i) => i.employee_name)[0]).toBe("Maria da Silva Teste");
+  });
+});
+
+describe("líquido a pagar manual (Ajustar)", () => {
+  const reg = (
+    id: string,
+    funcionarioId: string | null,
+    proventos: number,
+    descontos: number,
+    liquido: number,
+    liquidoManual: number | null = null,
+    nome = "FULANA DE TESTE",
+  ) => ({
+    id,
+    funcionarioId,
+    status: "confirmado" as const,
+    proventos,
+    descontos,
+    liquido,
+    liquidoManual,
+    nome,
+  });
+  const semManual = [
+    reg("a", "f1", 3000, 330, 2670),
+    reg("b", "f2", 1000, 100, 900, null, "OUTRA"),
+  ];
+  const comManual = [reg("a", "f1", 3000, 330, 2670, 2500.5), semManual[1]];
+
+  it("salário, Resumo e lote usam o valor pago; proventos, descontos e líquido da folha não mudam", () => {
+    expect(salariosDaFolha(comManual)).toEqual([
+      { funcionarioId: "f1", valor: 3000, valorLiquido: 2500.5 },
+      { funcionarioId: "f2", valor: 1000, valorLiquido: 900 },
+    ]);
+    const resumo = resumoDaFolha(comManual, new Map());
+    expect(resumo.map((l) => [l.bruto, l.liquido, l.liquidoManual])).toEqual([
+      [3000, 2500.5, true],
+      [1000, 900, false],
+    ]);
+    const lote = montarLoteFolha(resumo);
+    expect(lote.itens.map((i) => i.total_amount)).toEqual([2500.5, 900]);
+    expect(comManual[0]).toMatchObject({ proventos: 3000, descontos: 330, liquido: 2670 });
+  });
+
+  it("totais da aba Folha iguais com e sem líquido manual; Resumo e lote somam o pago", () => {
+    expect(totaisDasEmpresas(comManual)).toEqual(totaisDasEmpresas(semManual));
+    expect(totaisDasEmpresas(comManual).liquido).toBe(3570);
+    const resumo = resumoDaFolha(comManual, new Map());
+    expect(totaisResumo(resumo).liquido).toBe(3400.5);
+    expect(montarLoteFolha(resumo).total).toBe(3400.5);
+  });
+
+  it("pessoa com dois registros: manual de um + calculado do outro", () => {
+    const registros = [
+      reg("a", "f1", 3000, 330, 2670, 2500.5),
+      reg("b", "f1", 1500.1, 200.05, 1300.05),
+    ];
+    expect(salariosDaFolha(registros)).toEqual([
+      { funcionarioId: "f1", valor: 4500.1, valorLiquido: 3800.55 },
+    ]);
+    const [linha] = resumoDaFolha(registros, new Map());
+    expect([linha.liquido, linha.liquidoManual, linha.contratos]).toEqual([3800.55, true, 2]);
+    expect(montarLoteFolha([linha]).total).toBe(3800.55);
+  });
+
+  it("conferência do lote aceita o valor pago e recusa o líquido da folha", () => {
+    const registros = [
+      reg("a", "f1", 3000, 330, 2670, 2500.5),
+      reg("b", "f1", 1500.1, 200.05, 1300.05),
+    ];
+    expect(() => conferirValorNoLote(registros, 3800.55)).not.toThrow();
+    expect(() => conferirValorNoLote(registros, 3970.05)).toThrow(/difere do líquido/);
+    expect(() =>
+      conferirValorNoLote([{ ...registros[0], status: "em_conferencia" }], 2500.5),
+    ).toThrow(/Em conferência/);
+  });
+
+  it("restituição do INSS e comparação com o mês anterior ignoram o líquido manual", () => {
+    const rub = [{ tipo: "D" as const, codigo: "998", valor: 300.05 }];
+    const cols = [{ id: "a", funcionarioId: "f1", rubricas: rub, restituicaoGravada: null }];
+    const manual = cols.map((c) => Object.assign({}, c, { liquidoManual: 1 }));
+    expect(restituicoesDaCompetencia(manual, new Set(["f1"]), false)).toEqual(
+      restituicoesDaCompetencia(cols, new Set(["f1"]), false),
+    );
+    const anterior = colab();
+    const atual = Object.assign(colab(), { liquidoManual: 1 });
+    expect(divergenciasDoColaborador(anterior, atual)).toEqual([]);
+    expect(compararFolhas([anterior], [atual]).porColaborador[0].divergencias).toEqual([]);
+  });
+
+  it("reimportação: igual não é tocado (mantém); substituído perde o líquido manual", () => {
+    const gravados = [
+      { ...colab(), ajustadoManualmente: true },
+      { ...colab({ codigo: "2" }), ajustadoManualmente: true },
+    ];
+    const plano = planejarReimportacao(gravados, [colab(), colab({ codigo: "2", liquido: 2600 })]);
+    expect(plano.iguais.map((c) => c.codigo)).toEqual(["1"]);
+    expect(plano.substituidos.map((x) => [x.colaborador.codigo, x.perdeAjusteManual])).toEqual([
+      ["2", true],
+    ]);
+    const sql = readFileSync(
+      "supabase/migrations/20261129090000_rh_folha_liquido_manual.sql",
+      "utf8",
+    );
+    const gravar = sql.slice(
+      sql.indexOf("FUNCTION public.rh_folha_gravar_importacao"),
+      sql.indexOf("FUNCTION public.rh_folha_ajustar_colaborador"),
+    );
+    expect(gravar).toMatch(/ajuste_observacao = NULL,\s*liquido_manual = NULL,/);
+    expect(sql).toMatch(/liquido_manual >= 0/);
+    const fonte = readFileSync("src/lib/rh-folha.functions.ts", "utf8");
+    expect(fonte).not.toMatch(/liquido_manual: g\b|g\?\.liquidoManual/);
+    const retrato = readFileSync(
+      "supabase/migrations/20261128090000_rh_folha_exclusao_retrato.sql",
+      "utf8",
+    );
+    expect(retrato).toMatch(/'colaborador', to_jsonb\(c\.\*\)/);
+    expect(retrato).toMatch(/jsonb_populate_record\(NULL::public\.rh_folha_colaboradores/);
+  });
+
+  it("igual ao calculado grava nulo; diferente grava; negativo é recusado", () => {
+    expect(liquidoManualDoAjuste(2670, 2670)).toBeNull();
+    expect(liquidoManualDoAjuste(2670.004, 2670)).toBeNull();
+    expect(liquidoManualDoAjuste(2500.5, 2670)).toBe(2500.5);
+    expect(liquidoManualDoAjuste(2800, 2670)).toBe(2800);
+    expect(liquidoManualDoAjuste(0, 2670)).toBe(0);
+    expect(() => liquidoManualDoAjuste(-0.01, 2670)).toThrow(/negativo/);
   });
 });
