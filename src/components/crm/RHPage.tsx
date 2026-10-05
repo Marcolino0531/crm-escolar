@@ -17,6 +17,7 @@ import {
 import FechamentoVT from "./FechamentoVT";
 import FolhasSalvas from "./FolhasSalvas";
 import Terceirizados from "./Terceirizados";
+import ExtrasRH from "./ExtrasRH";
 import Contracheques from "./Contracheques";
 import FolhaPonto from "./FolhaPonto";
 import FolhaPagamentoRH from "./FolhaPagamentoRH";
@@ -185,7 +186,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [abaRh, setAbaRh] = useState<
     "funcionarios" | "folhas" | "contracheques" | "ponto" | "estatistica" | "aniversarios"
   >("funcionarios");
-  const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados">("efetivos");
+  const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados" | "extras">("efetivos");
+  const podeVerExtras = canView("rh.pessoal.extras");
   const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
   const [folhasRefresh, setFolhasRefresh] = useState(0);
   // ?sub=salario na URL só abre Salário com permissão; senão cai em Vale Transporte.
@@ -403,6 +405,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             [
               { id: "efetivos", label: "Efetivos" },
               { id: "terceirizados", label: "Terceirizados" },
+              ...(podeVerExtras ? [{ id: "extras", label: "Extras" } as const] : []),
             ] as const
           ).map((sub) => (
             <button
@@ -488,6 +491,8 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
             <RankingPonto funcionarios={funcionarios.filter(isAtivo)} periodo={periodoPonto} />
           </div>
         </div>
+      ) : subPessoal === "extras" && podeVerExtras ? (
+        <ExtrasRH podeEditar={canEdit("rh.pessoal.extras")} />
       ) : subPessoal === "terceirizados" ? (
         <Terceirizados unidadeSelecionada={unidadeSelecionada} isAdmin={isAdmin} />
       ) : funcionarios.length === 0 ? (

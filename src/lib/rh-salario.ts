@@ -37,27 +37,106 @@ export function rotuloCompetencia(c: string): string {
   return `${mes}/${ano}`;
 }
 
-// Histórico de um funcionário, competência mais recente primeiro. Não muta a entrada.
+// Regra de vigência, comum a efetivos (por funcionário) e a Terceirizados e
+// Extras (por tipo + pessoa): `daPessoa` diz quais registros são da pessoa.
+
+// Histórico de uma pessoa, competência mais recente primeiro. Não muta a entrada.
+export function historicoDaPessoa<T extends { competencia: string }>(
+  registros: readonly T[],
+  daPessoa: (r: T) => boolean,
+): T[] {
+  return registros
+    .filter(daPessoa)
+    .sort((a, b) => (a.competencia < b.competencia ? 1 : a.competencia > b.competencia ? -1 : 0));
+}
+
+// Registro em vigor numa competência: o de maior competência <= a pedida.
+// Competência anterior ao primeiro registro → null.
+export function vigenteDaPessoa<T extends { competencia: string }>(
+  registros: readonly T[],
+  daPessoa: (r: T) => boolean,
+  competencia: string,
+): T | null {
+  return historicoDaPessoa(registros, daPessoa).find((r) => r.competencia <= competencia) ?? null;
+}
+
 export function historicoDoFuncionario(
   registros: readonly SalarioRegistro[],
   funcionarioId: string,
 ): SalarioRegistro[] {
-  return registros
-    .filter((r) => r.funcionarioId === funcionarioId)
-    .sort((a, b) => (a.competencia < b.competencia ? 1 : a.competencia > b.competencia ? -1 : 0));
+  return historicoDaPessoa(registros, (r) => r.funcionarioId === funcionarioId);
 }
 
-// Salário em vigor numa competência: a linha de maior competência <= a pedida.
-// Competência anterior ao primeiro registro → null (sem salário cadastrado ainda).
+// Salário em vigor numa competência (null = sem salário cadastrado ainda).
 export function salarioVigente(
   registros: readonly SalarioRegistro[],
   funcionarioId: string,
   competencia: string,
 ): SalarioRegistro | null {
-  return (
-    historicoDoFuncionario(registros, funcionarioId).find((r) => r.competencia <= competencia) ??
-    null
-  );
+  return vigenteDaPessoa(registros, (r) => r.funcionarioId === funcionarioId, competencia);
+}
+
+// ── Terceirizados e Extras: valor mensal (sem descontos: bruto = líquido = valor) ──
+export type TipoPessoaPagamento = "terceirizado" | "extra";
+
+export type ValorMensalRegistro = {
+  id: string;
+  tipo: TipoPessoaPagamento;
+  pessoaId: string;
+  competencia: string; // YYYY-MM
+  valor: number;
+  observacao: string;
+  criadoEm: string;
+  criadoPor: string;
+};
+
+const daPessoaTipo = (tipo: TipoPessoaPagamento, pessoaId: string) => (r: ValorMensalRegistro) =>
+  r.tipo === tipo && r.pessoaId === pessoaId;
+
+export function historicoValorMensal(
+  registros: readonly ValorMensalRegistro[],
+  tipo: TipoPessoaPagamento,
+  pessoaId: string,
+): ValorMensalRegistro[] {
+  return historicoDaPessoa(registros, daPessoaTipo(tipo, pessoaId));
+}
+
+// Registro em vigor na competência; valor 0 = encerrado a partir dali.
+export function valorMensalVigente(
+  registros: readonly ValorMensalRegistro[],
+  tipo: TipoPessoaPagamento,
+  pessoaId: string,
+  competencia: string,
+): ValorMensalRegistro | null {
+  return vigenteDaPessoa(registros, daPessoaTipo(tipo, pessoaId), competencia);
+}
+
+// Valor a pagar na competência: null antes do primeiro registro ou depois de um valor 0.
+export function valorAPagar(
+  registros: readonly ValorMensalRegistro[],
+  tipo: TipoPessoaPagamento,
+  pessoaId: string,
+  competencia: string,
+): number | null {
+  const v = valorMensalVigente(registros, tipo, pessoaId, competencia);
+  return v && v.valor > 0 ? v.valor : null;
+}
+
+// Total do bloco (Terceirizados ou Extras) na competência: soma dos valores
+// vigentes das pessoas ATIVAS (somado em centavos).
+export function totalDoBloco(
+  pessoas: readonly { id: string; ativo: boolean }[],
+  registros: readonly ValorMensalRegistro[],
+  tipo: TipoPessoaPagamento,
+  competencia: string,
+): number {
+  const centavos = pessoas
+    .filter((p) => p.ativo)
+    .reduce(
+      (acc, p) => acc + Math.round((valorAPagar(registros, tipo, p.id, competencia) ?? 0) * 100),
+      0,
+    );
+  return centavos / 100;
 }
 
 // Valores iniciais do cadastro numa competência. Se já existe registro próprio,

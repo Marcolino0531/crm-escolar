@@ -168,3 +168,108 @@ describe("validarSalario", () => {
     expect(validarSalario({ competencia: "2026-09", valor: NaN }).valor).toBeDefined();
   });
 });
+
+// ── Terceirizados e Extras: valor mensal ────────────────────────────────────
+import {
+  historicoValorMensal,
+  totalDoBloco,
+  valorAPagar,
+  valorMensalVigente,
+  type TipoPessoaPagamento,
+  type ValorMensalRegistro,
+} from "./rh-salario";
+
+const vm = (
+  tipo: TipoPessoaPagamento,
+  pessoaId: string,
+  competencia: string,
+  valor: number,
+): ValorMensalRegistro => ({
+  id: `${tipo}-${pessoaId}-${competencia}`,
+  tipo,
+  pessoaId,
+  competencia,
+  valor,
+  observacao: "",
+  criadoEm: "2026-01-01T00:00:00Z",
+  criadoPor: "Teste",
+});
+
+describe("valor mensal de Terceirizados e Extras", () => {
+  const valores = [
+    vm("terceirizado", "t1", "2026-03", 800),
+    vm("terceirizado", "t1", "2026-06", 950.5),
+    vm("extra", "e1", "2026-02", 300),
+    vm("extra", "e1", "2026-05", 0),
+    vm("extra", "e2", "2026-04", 120.1),
+  ];
+
+  it("5.1 vale no mês lançado e nos seguintes; outro lançamento troca a partir da nova competência", () => {
+    expect(valorAPagar(valores, "terceirizado", "t1", "2026-03")).toBe(800);
+    expect(valorAPagar(valores, "terceirizado", "t1", "2026-05")).toBe(800);
+    expect(valorAPagar(valores, "terceirizado", "t1", "2026-06")).toBe(950.5);
+    expect(valorAPagar(valores, "terceirizado", "t1", "2027-01")).toBe(950.5);
+  });
+
+  it("5.1 competência anterior ao primeiro lançamento fica sem valor", () => {
+    expect(valorAPagar(valores, "terceirizado", "t1", "2026-02")).toBeNull();
+    expect(valorMensalVigente(valores, "terceirizado", "t1", "2026-02")).toBeNull();
+  });
+
+  it("5.2 valor zero encerra a partir daquela competência", () => {
+    expect(valorAPagar(valores, "extra", "e1", "2026-04")).toBe(300);
+    expect(valorAPagar(valores, "extra", "e1", "2026-05")).toBeNull();
+    expect(valorAPagar(valores, "extra", "e1", "2026-12")).toBeNull();
+    expect(valorMensalVigente(valores, "extra", "e1", "2026-07")?.valor).toBe(0);
+  });
+
+  it("não mistura tipos: mesmo id como terceirizado e como Extra são pessoas diferentes", () => {
+    const mistos = [vm("terceirizado", "x", "2026-01", 500), vm("extra", "x", "2026-01", 70)];
+    expect(valorAPagar(mistos, "terceirizado", "x", "2026-02")).toBe(500);
+    expect(valorAPagar(mistos, "extra", "x", "2026-02")).toBe(70);
+    expect(historicoValorMensal(mistos, "extra", "x").map((r) => r.valor)).toEqual([70]);
+  });
+
+  it("histórico da pessoa, mais recente primeiro, sem mutar a entrada", () => {
+    const antes = JSON.stringify(valores);
+    expect(historicoValorMensal(valores, "terceirizado", "t1").map((r) => r.competencia)).toEqual([
+      "2026-06",
+      "2026-03",
+    ]);
+    expect(JSON.stringify(valores)).toBe(antes);
+  });
+
+  it("5.3 total do bloco = soma dos vigentes das pessoas ativas; inativada não entra", () => {
+    const extras = [
+      { id: "e1", ativo: true },
+      { id: "e2", ativo: true },
+      { id: "e3", ativo: false },
+    ];
+    const comInativo = [...valores, vm("extra", "e3", "2026-01", 999)];
+    expect(totalDoBloco(extras, comInativo, "extra", "2026-04")).toBe(420.1);
+    // e1 encerrado em 05: só e2.
+    expect(totalDoBloco(extras, comInativo, "extra", "2026-05")).toBe(120.1);
+    expect(totalDoBloco(extras, comInativo, "extra", "2026-01")).toBe(0);
+    expect(totalDoBloco([{ id: "t1", ativo: true }], valores, "terceirizado", "2026-07")).toBe(
+      950.5,
+    );
+  });
+
+  it("total soma em centavos (sem erro de ponto flutuante)", () => {
+    const regs = [vm("extra", "a", "2026-01", 0.1), vm("extra", "b", "2026-01", 0.2)];
+    const pessoas = [
+      { id: "a", ativo: true },
+      { id: "b", ativo: true },
+    ];
+    expect(totalDoBloco(pessoas, regs, "extra", "2026-01")).toBe(0.3);
+  });
+});
+
+describe("5.4 vigência dos efetivos continua igual", () => {
+  it("mesmos resultados de salarioVigente/historicoDoFuncionario", () => {
+    expect(salarioVigente(base, "a", "2026-03")?.id).toBe("a-2026-01");
+    expect(salarioVigente(base, "a", "2025-01")).toBeNull();
+    expect(salarioVigente(base, "b", "2026-02")).toBeNull();
+    expect(historicoDoFuncionario(base, "b").map((r) => r.id)).toEqual(["b-2026-03"]);
+  });
+});
