@@ -45,6 +45,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS rh_folha_exclusoes_fixa_codigo_key
   ON public.rh_folha_exclusoes (school_id, (regexp_replace(cnpj, '\D', '', 'g')), tipo, codigo)
   WHERE fixa AND cpf = '';
 
+-- ── Eventos: tipos 'exclusao' e 'exclusao_desfeita' ─────────────────────────
+-- Remove o CHECK atual de rh_folha_eventos.tipo (localizado pela definição, só
+-- na coluna tipo) e recria com a lista anterior + os dois tipos novos.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT c.conname
+      FROM pg_constraint c
+     WHERE c.conrelid = 'public.rh_folha_eventos'::regclass
+       AND c.contype = 'c'
+       AND (SELECT array_agg(a.attname::text)
+              FROM unnest(c.conkey) AS k(attnum)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum)
+           = ARRAY['tipo']
+  LOOP
+    EXECUTE format('ALTER TABLE public.rh_folha_eventos DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+END;
+$$;
+
+ALTER TABLE public.rh_folha_eventos
+  ADD CONSTRAINT rh_folha_eventos_tipo_check CHECK (tipo IN (
+    'importacao', 'reimportacao', 'substituicao', 'retirada', 'confirmacao',
+    'reabertura_conferencia', 'ajuste', 'vinculo', 'fechamento', 'reabertura',
+    'exclusao', 'exclusao_desfeita'));
+
 ALTER TABLE public.rh_folha_exclusoes ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.rh_folha_exclusoes FROM anon, authenticated;
 GRANT ALL ON public.rh_folha_exclusoes TO service_role;

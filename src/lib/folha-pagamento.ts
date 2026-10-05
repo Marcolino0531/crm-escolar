@@ -685,17 +685,25 @@ export type ExclusaoFolha = {
 
 type IdentidadeRegistro = { tipo: TipoColaborador; codigo: string; cpf: string };
 
-/** O registro do PDF desta empresa/competência está excluído da folha? */
+/**
+ * O registro do PDF desta empresa/competência está excluído da folha?
+ * A exclusão da competência vale sempre. A fixa só descarta o que NÃO está
+ * gravado na importação atual da empresa (`gravados`, chaves tipo:código):
+ * registro já gravado só sai por exclusão explícita.
+ */
 export function registroExcluido(
   r: IdentidadeRegistro,
   exclusoes: readonly ExclusaoFolha[],
   folha: { competencia: string; cnpj: string },
+  gravados: ReadonlySet<string> = new Set(),
 ): boolean {
   const cpf = somenteDigitos(r.cpf);
+  const jaGravado = gravados.has(chaveColaborador(r));
   return exclusoes.some((e) => {
     const mesmoRegistro =
       mesmoCnpj(e.cnpj, folha.cnpj) && e.tipo === r.tipo && e.codigo === r.codigo;
     if (!e.fixa) return e.competencia === folha.competencia && mesmoRegistro;
+    if (jaGravado) return false;
     const cpfFixo = somenteDigitos(e.cpf);
     return cpfFixo ? cpfFixo === cpf : mesmoRegistro;
   });
@@ -706,9 +714,11 @@ export function chavesExcluidas(
   registros: readonly IdentidadeRegistro[],
   exclusoes: readonly ExclusaoFolha[],
   folha: { competencia: string; cnpj: string },
+  gravados: Iterable<string> = [],
 ): string[] {
+  const jaGravados = new Set(gravados);
   return registros
-    .filter((r) => registroExcluido(r, exclusoes, folha))
+    .filter((r) => registroExcluido(r, exclusoes, folha, jaGravados))
     .map((r) => chaveColaborador(r));
 }
 

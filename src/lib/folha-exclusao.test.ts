@@ -247,6 +247,37 @@ describe("exclusão de colaborador da folha", () => {
   });
 });
 
+describe("exclusão fixa não retira registro que continua gravado", () => {
+  it("dois contratos, um excluído com 'sempre': a reimportação mantém o outro sem retirada", () => {
+    const CPF = "90000000353";
+    const c1 = reg({ id: "c1", codigo: "22", cpf: CPF, funcionarioId: "f9" });
+    const c2 = reg({ id: "c2", codigo: "57", cpf: CPF, funcionarioId: "f9", proventos: 1500.1 });
+    // Excluído c1 com "Excluir sempre": exclusão da competência + fixa por CPF.
+    const exclusoes: ExclusaoFolha[] = [
+      { fixa: false, competencia: COMP, cnpj: CNPJ_A, tipo: "empregado", codigo: "22", cpf: CPF },
+      { fixa: true, competencia: null, cnpj: CNPJ_A, tipo: "empregado", codigo: "22", cpf: CPF },
+    ];
+    const gravados = [{ ...c2, ajustadoManualmente: false }];
+    const pdf = [c1, c2];
+    const descartar = chavesExcluidas(
+      pdf,
+      exclusoes,
+      { competencia: COMP, cnpj: CNPJ_A },
+      gravados.map(chaveColaborador),
+    );
+    expect(descartar).toEqual(["empregado:22"]);
+    const plano = planejarReimportacao(gravados, semDescartados(pdf, descartar));
+    expect(plano.retirados).toEqual([]);
+    expect(plano.novos).toEqual([]);
+    expect(plano.iguais.map(chaveColaborador)).toEqual(["empregado:57"]);
+    // Sem nada gravado (próxima competência), a fixa por CPF descarta os dois.
+    expect(chavesExcluidas(pdf, exclusoes, { competencia: PROX, cnpj: CNPJ_A })).toEqual([
+      "empregado:22",
+      "empregado:57",
+    ]);
+  });
+});
+
 describe("(4.6) usuário que não é admin não recebe registros excluídos", () => {
   const fonte = readFileSync("src/lib/rh-folha.functions.ts", "utf8");
   const blocos = fonte.split(/\nexport const /).slice(1);
@@ -272,11 +303,12 @@ describe("(4.6) usuário que não é admin não recebe registros excluídos", ()
   });
 
   it("preparar devolve só as chaves a descartar e gravar reaplica no servidor", () => {
-    expect(fn("prepararImportacaoFolha")).toContain(
-      "descartar: chavesExcluidas(data.identidades, exclusoes, data)",
+    expect(fn("prepararImportacaoFolha")).toMatch(
+      /descartar: chavesExcluidas\(\s*data\.identidades,\s*exclusoes,\s*data,\s*\(gravada\?\.colaboradores \?\? \[\]\)\.map\(chaveColaborador\)/,
     );
     const gravar = fn("gravarImportacaoFolha");
     expect(gravar.indexOf("revalidarFolha(")).toBeGreaterThan(-1);
+    expect(gravar).toContain("gravados.map(chaveColaborador)");
     expect(gravar.indexOf("chavesExcluidas(folha.colaboradores")).toBeGreaterThan(
       gravar.indexOf("revalidarFolha("),
     );

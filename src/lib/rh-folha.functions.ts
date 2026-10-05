@@ -863,7 +863,12 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
       return {
         anterior: await folhaAnterior(data.schoolId, data.competencia, data.cnpj, exclusoes),
         gravada,
-        descartar: chavesExcluidas(data.identidades, exclusoes, data),
+        descartar: chavesExcluidas(
+          data.identidades,
+          exclusoes,
+          data,
+          (gravada?.colaboradores ?? []).map(chaveColaborador),
+        ),
       };
     },
   );
@@ -900,7 +905,7 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       const exclusoes = (await exclusoesDa(data.schoolId, folha.competencia)).map(paraExclusao);
       const colaboradores = semDescartados(
         folha.colaboradores,
-        chavesExcluidas(folha.colaboradores, exclusoes, folha),
+        chavesExcluidas(folha.colaboradores, exclusoes, folha, gravados.map(chaveColaborador)),
       );
       const plano = planejarReimportacao(gravados.map(original), colaboradores);
 
