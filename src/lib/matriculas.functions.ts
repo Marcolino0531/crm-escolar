@@ -18,7 +18,23 @@ import type { LogoRecibo, Timbre } from "@/lib/documento-pdf";
 import { enderecoLinha } from "@/lib/recibos";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
-import { BUCKET_DOCUMENTOS_MATRICULA, DOCUMENTOS_MATRICULA } from "@/lib/matricula-form";
+import {
+  BUCKET_DOCUMENTOS_MATRICULA,
+  DOCUMENTOS_MATRICULA,
+  colunasSaude,
+  saudeFormDaLinha,
+  type ColunasSaude,
+} from "@/lib/matricula-form";
+import {
+  montarSecoesDetalhe,
+  type PayloadDetalhe,
+  type SecaoDetalhe,
+} from "@/lib/matricula-detalhe";
+import {
+  buscarAlunoPorId,
+  buscarResponsaveisComFinanceiro,
+  submissionIdRematricula,
+} from "@/lib/rematricula.functions";
 import {
   PREFIXO_DOCUMENTO_LIVRE,
   TAMANHO_MAX_NOME_DOCUMENTO,
@@ -283,6 +299,59 @@ async function documentoAssinado(
   };
 }
 
+const COLUNAS_ROTINA_FICHA =
+  "serie, origem, ano_letivo, data_inicio, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, sem_refeicoes, refeicoes";
+
+interface LinhaRotinaFicha {
+  serie: string | null;
+  origem: string;
+  ano_letivo: number | null;
+  data_inicio: string;
+  dias_ativos: number[];
+  horarios: { weekday: number; entrada: string; saida: string }[];
+  periodo_manha: boolean;
+  periodo_tarde: boolean;
+  horario_estendido: boolean;
+  sem_refeicoes: boolean;
+  refeicoes: Record<string, number[]>;
+}
+
+function rotinaDaLinha(linha: LinhaRotinaFicha): RotinaSubmissao {
+  return {
+    serie: linha.serie,
+    origem: linha.origem,
+    anoLetivo: linha.ano_letivo,
+    dataInicio: linha.data_inicio,
+    diasAtivos: linha.dias_ativos ?? [],
+    periodoManha: linha.periodo_manha,
+    periodoTarde: linha.periodo_tarde,
+    horarioEstendido: linha.horario_estendido,
+    horarios: linha.horarios ?? [],
+    semRefeicoes: linha.sem_refeicoes,
+    refeicoes: linha.refeicoes ?? {},
+  };
+}
+
+function saudeDaLinha(linha: ColunasSaude): SaudeSubmissao {
+  return {
+    contatoEmergencia: linha.contato_emergencia,
+    alergia: linha.alergia,
+    alergiaDetalhe: linha.alergia_detalhe,
+    problemaSaude: linha.problema_saude,
+    problemaSaudeDetalhe: linha.problema_saude_detalhe,
+    medicamentoContinuo: linha.medicamento_continuo,
+    medicamentoContinuoDetalhe: linha.medicamento_continuo_detalhe,
+    planoSaude: linha.plano_saude,
+    planoSaudeDetalhe: linha.plano_saude_detalhe,
+    pessoasAutorizadas: linha.pessoas_autorizadas,
+    corRaca: linha.cor_raca,
+    outrasInformacoes: linha.outras_informacoes,
+  };
+}
+
+const COLUNAS_DOCUMENTO_FICHA =
+  "id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes, origem, anexado_por_nome, created_at";
+
 const DetalheInputSchema = z.object({ submissionId: z.string().min(1).max(200) });
 
 export const detalheMatricula = createServerFn({ method: "POST" })
@@ -294,9 +363,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
     const [rotinaRes, saudeRes, docsRes, histRes, lancRes] = await Promise.all([
       supabaseAdmin
         .from("student_routine" as never)
-        .select(
-          "serie, origem, ano_letivo, data_inicio, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, sem_refeicoes, refeicoes",
-        )
+        .select(COLUNAS_ROTINA_FICHA)
         .eq("submission_id", data.submissionId)
         .maybeSingle(),
       supabaseAdmin
@@ -306,9 +373,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         .maybeSingle(),
       supabaseAdmin
         .from("matricula_documentos" as never)
-        .select(
-          "id, documento, nome_documento, storage_path, nome_arquivo, tipo_arquivo, tamanho_bytes, origem, anexado_por_nome, created_at",
-        )
+        .select(COLUNAS_DOCUMENTO_FICHA)
         .eq("submission_id", data.submissionId)
         .order("created_at"),
       supabaseAdmin
@@ -327,21 +392,9 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         .order("created_at"),
     ]);
 
-    const linhaRotina = rotinaRes.data as unknown as {
-      serie: string | null;
-      origem: string;
-      ano_letivo: number | null;
-      data_inicio: string;
-      dias_ativos: number[];
-      horarios: { weekday: number; entrada: string; saida: string }[];
-      periodo_manha: boolean;
-      periodo_tarde: boolean;
-      horario_estendido: boolean;
-      sem_refeicoes: boolean;
-      refeicoes: Record<string, number[]>;
-    } | null;
+    const linhaRotina = rotinaRes.data as unknown as LinhaRotinaFicha | null;
 
-    const linhaSaude = saudeRes.data as unknown as Record<string, string> | null;
+    const linhaSaude = saudeRes.data as unknown as ColunasSaude | null;
 
     if (docsRes.error) throw new Error(docsRes.error.message);
     if (histRes.error) throw new Error(histRes.error.message);
@@ -369,37 +422,8 @@ export const detalheMatricula = createServerFn({ method: "POST" })
 
     return {
       ok: true,
-      rotina: linhaRotina
-        ? {
-            serie: linhaRotina.serie,
-            origem: linhaRotina.origem,
-            anoLetivo: linhaRotina.ano_letivo,
-            dataInicio: linhaRotina.data_inicio,
-            diasAtivos: linhaRotina.dias_ativos ?? [],
-            periodoManha: linhaRotina.periodo_manha,
-            periodoTarde: linhaRotina.periodo_tarde,
-            horarioEstendido: linhaRotina.horario_estendido,
-            horarios: linhaRotina.horarios ?? [],
-            semRefeicoes: linhaRotina.sem_refeicoes,
-            refeicoes: linhaRotina.refeicoes ?? {},
-          }
-        : null,
-      saude: linhaSaude
-        ? {
-            contatoEmergencia: linhaSaude.contato_emergencia,
-            alergia: linhaSaude.alergia,
-            alergiaDetalhe: linhaSaude.alergia_detalhe,
-            problemaSaude: linhaSaude.problema_saude,
-            problemaSaudeDetalhe: linhaSaude.problema_saude_detalhe,
-            medicamentoContinuo: linhaSaude.medicamento_continuo,
-            medicamentoContinuoDetalhe: linhaSaude.medicamento_continuo_detalhe,
-            planoSaude: linhaSaude.plano_saude,
-            planoSaudeDetalhe: linhaSaude.plano_saude_detalhe,
-            pessoasAutorizadas: linhaSaude.pessoas_autorizadas,
-            corRaca: linhaSaude.cor_raca,
-            outrasInformacoes: linhaSaude.outras_informacoes,
-          }
-        : null,
+      rotina: linhaRotina ? rotinaDaLinha(linhaRotina) : null,
+      saude: linhaSaude ? saudeDaLinha(linhaSaude) : null,
       documentos,
       historicoDocumentos,
       lancamentos: (lancRes.data ?? []) as unknown as LancamentoFicha[],
@@ -870,6 +894,196 @@ export const timbreFichaMatricula = createServerFn({ method: "POST" })
       },
       logo: await logoOpcionalServidor(row.logo_path),
     };
+  });
+
+// ─── Ficha do aluno (rematrícula ou cadastro manual no Sponte) ──────────────
+//
+// Somente leitura: aluno e responsáveis lidos do Sponte na hora; rotina, saúde
+// e escolhas da rematrícula daquele ano; documentos que existirem do aluno. Se
+// o aluno tem ficha do formulário de matrícula no ano, a tela abre essa.
+
+const FichaAlunoSchema = z.object({
+  unidade: z.string().min(1).max(100),
+  alunoId: z.string().regex(/^\d{1,12}$/),
+  anoLetivo: z.number().int().min(2000).max(2100),
+});
+
+export interface FichaAlunoResult {
+  ok: boolean;
+  erro?: string;
+  /** id em enrollment_submissions quando há ficha do formulário naquele ano. */
+  submissaoId?: string;
+  alunoNome?: string;
+  origem?: string;
+  secoes?: SecaoDetalhe[];
+}
+
+export const fichaAlunoMatricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => FichaAlunoSchema.parse(input))
+  .handler(async ({ data, context }): Promise<FichaAlunoResult> => {
+    await assertCanViewAdmissoes(context.userId);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    if (permitidas !== null && !permitidas.includes(data.unidade))
+      throw new Error("Você não tem acesso a esta unidade.");
+
+    const { unidade, alunoId, anoLetivo } = data;
+    const sponteAlunoId = Number(alunoId);
+
+    const formulario = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .select("id")
+      .eq("unidade", unidade)
+      .eq("sponte_aluno_id", sponteAlunoId)
+      .eq("ano_letivo", anoLetivo)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (formulario.error) throw new Error(formulario.error.message);
+    if (formulario.data) return { ok: true, submissaoId: formulario.data.id };
+
+    const idRematricula = submissionIdRematricula(unidade, alunoId, anoLetivo);
+    const [aluno, responsaveis, rotina, saude, docs, matricula, material, extras, envio] =
+      await Promise.all([
+        buscarAlunoPorId(unidade, alunoId),
+        buscarResponsaveisComFinanceiro(unidade, alunoId, anoLetivo),
+        supabaseAdmin
+          .from("student_routine" as never)
+          .select(COLUNAS_ROTINA_FICHA)
+          .eq("submission_id", idRematricula)
+          .maybeSingle<LinhaRotinaFicha>(),
+        supabaseAdmin
+          .from("matricula_saude" as never)
+          .select("*")
+          .eq("submission_id", idRematricula)
+          .maybeSingle<ColunasSaude>(),
+        supabaseAdmin
+          .from("matricula_documentos" as never)
+          .select(COLUNAS_DOCUMENTO_FICHA)
+          .eq("unidade", unidade)
+          .eq("sponte_aluno_id", sponteAlunoId)
+          .order("created_at"),
+        supabaseAdmin
+          .from("rematricula_matricula_escolhas" as never)
+          .select("valor, parcelas, primeiro_vencimento")
+          .eq("unidade", unidade)
+          .eq("aluno_id", alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{ valor: number; parcelas: number; primeiro_vencimento: string | null }>(),
+        supabaseAdmin
+          .from("rematricula_escolhas" as never)
+          .select("valor_anual, parcelas")
+          .eq("unidade", unidade)
+          .eq("aluno_id", alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{ valor_anual: number; parcelas: number }>(),
+        supabaseAdmin
+          .from("rematricula_extras_escolhas" as never)
+          .select("selecionadas, finalizada_em")
+          .eq("unidade", unidade)
+          .eq("aluno_id", alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{ selecionadas: string[] | null; finalizada_em: string | null }>(),
+        supabaseAdmin
+          .from("rematricula_envios" as never)
+          .select("enviada_em")
+          .eq("unidade", unidade)
+          .eq("aluno_id", alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{
+            enviada_em: string;
+          }>(),
+      ]);
+    for (const r of [rotina, saude, docs, matricula, material, extras, envio])
+      if (r.error) throw new Error(r.error.message);
+    if (!aluno) return { ok: false, erro: "Não foi possível ler o aluno no Sponte." };
+
+    const extrasEscolhidos =
+      extras.data && (extras.data.finalizada_em || (extras.data.selecionadas ?? []).length > 0)
+        ? (extras.data.selecionadas ?? [])
+        : null;
+    const fezRematricula =
+      [rotina.data, saude.data, matricula.data, material.data, envio.data].some(Boolean) ||
+      extrasEscolhidos !== null;
+    const origem = fezRematricula ? `Rematrícula ${anoLetivo}` : "Cadastro manual no Sponte";
+
+    const linhasDoc = (docs.data ?? []) as unknown as (LinhaDocumento & { created_at: string })[];
+    const documentos = await Promise.all(
+      [...linhasDoc]
+        .sort((a, b) => ordemDocumento(a.documento) - ordemDocumento(b.documento))
+        .map((doc) => documentoAssinado(doc, doc.created_at)),
+    );
+
+    const payload: PayloadDetalhe = {
+      unidade,
+      aluno: {
+        nome: aluno.nome,
+        dataNascimento: aluno.dataNascimento,
+        cpf: aluno.cpf,
+        email: aluno.email,
+        telefone: aluno.telefone,
+      },
+      endereco: {
+        cep: aluno.cep,
+        logradouro: aluno.endereco,
+        numero: aluno.numero,
+        complemento: aluno.complemento,
+        bairro: aluno.bairro,
+        cidade: aluno.cidade,
+      },
+      responsaveis: responsaveis.map((r) => ({
+        nome: r.nome,
+        parentesco: r.parentesco,
+        dataNascimento: r.dataNascimento,
+        cpf: r.cpf,
+        email: r.email,
+        telefone: r.telefone,
+        responsavelFinanceiro: r.financeiro,
+        responsavelDidatico:
+          !!aluno.responsavelDidaticoId && r.responsavelId === aluno.responsavelDidaticoId,
+        endereco: {
+          cep: r.cep,
+          logradouro: r.endereco,
+          numero: r.numero,
+          complemento: r.complemento,
+          bairro: r.bairro,
+          cidade: r.cidade,
+        },
+      })),
+    };
+
+    const m = matricula.data;
+    const mat = material.data;
+    const secoes = montarSecoesDetalhe({
+      submissao: {
+        submissionId: null,
+        unidade,
+        alunoNome: aluno.nome,
+        alunoCpf: aluno.cpf || null,
+        status: origem,
+        criadoEm: "",
+        sponteAlunoId,
+        erro: null,
+        payload,
+      },
+      rotina: rotina.data ? rotinaDaLinha(rotina.data) : null,
+      saude: saude.data ? saudeDaLinha(colunasSaude(saudeFormDaLinha(saude.data))) : null,
+      documentos,
+      fichaAluno: {
+        origem,
+        anoLetivo,
+        snapshot: {
+          matricula_valor: m ? Number(m.valor) : null,
+          matricula_parcelas: m?.parcelas ?? null,
+          matricula_primeiro_vencimento: m?.primeiro_vencimento ?? null,
+          material_valor_anual: mat ? Number(mat.valor_anual) : null,
+          material_parcelas: mat?.parcelas ?? null,
+        },
+        extras: extrasEscolhidos,
+      },
+    });
+
+    return { ok: true, alunoNome: aluno.nome, origem, secoes };
   });
 
 const MENSAGEM_SUBSTITUIR_SEM_EDITAR =

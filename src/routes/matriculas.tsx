@@ -16,10 +16,13 @@ import {
   Copy,
   CopyCheck,
   ExternalLink,
+  FileText,
   Inbox,
+  Loader2,
   Printer,
   RefreshCw,
   RotateCw,
+  Search,
   Trash2,
   Undo2,
   Users,
@@ -37,7 +40,7 @@ import {
 import { AVISO_SPONTE, rotuloCobrancas } from "@/lib/matricula-exclusao";
 import { AccessDenied } from "@/components/AccessDenied";
 import { DocumentosFicha } from "@/components/matricula/DocumentosFicha";
-import { useUnidadeAtiva } from "@/components/SelecioneUnidade";
+import { SelecioneUnidade, useUnidadeAtiva } from "@/components/SelecioneUnidade";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -64,6 +67,7 @@ import {
   desfazerConferenciaMatricula,
   detalheMatricula,
   excluirMatricula,
+  fichaAlunoMatricula,
   reprocessarMatricula,
   resolverPendenciaMatricula,
   resumoExclusaoMatricula,
@@ -80,7 +84,12 @@ import {
   temPendencia,
   type Selo,
 } from "@/lib/matricula-integracao";
-import { gerarPdfFichaMatricula, nomeArquivoFichaMatricula } from "@/lib/matricula-detalhe-pdf";
+import {
+  gerarPdfFichaMatricula,
+  nomeArquivoFichaAluno,
+  nomeArquivoFichaMatricula,
+} from "@/lib/matricula-detalhe-pdf";
+import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
 
 export interface MatriculasSearch {
   /** Submissão a abrir na ficha (deep link do aviso do sino). */
@@ -290,6 +299,7 @@ function MatriculasPage() {
   const [buscaDebounced, setBuscaDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [detalhe, setDetalhe] = useState<Submissao | null>(null);
+  const [fichaAlunoAberta, setFichaAlunoAberta] = useState(false);
   const { id: idDoAviso } = Route.useSearch();
 
   // Deep link do sino: abre a ficha da submissão indicada assim que ela carrega.
@@ -448,9 +458,14 @@ function MatriculasPage() {
             Submissões do formulário de matrícula e o resultado da criação no Sponte.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Atualizar
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setFichaAlunoAberta(true)}>
+            <FileText className="mr-2 h-4 w-4" /> Ficha do aluno
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Atualizar
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -692,6 +707,12 @@ function MatriculasPage() {
           </div>
         </div>
       )}
+
+      <FichaAlunoDialog
+        aberto={fichaAlunoAberta}
+        onClose={() => setFichaAlunoAberta(false)}
+        onAbrirSubmissao={setDetalhe}
+      />
 
       <DetalheSubmissao
         submissao={detalhe}
@@ -1210,6 +1231,233 @@ function BlocoSecao({ secao }: { secao: SecaoDetalhe }) {
         </div>
       ))}
     </section>
+  );
+}
+
+const ANO_ATUAL = new Date().getFullYear();
+const ANOS_LETIVOS = [ANO_ATUAL, ANO_ATUAL + 1];
+
+type FichaAlunoMontada = { alunoNome: string; origem: string; secoes: SecaoDetalhe[] };
+
+// Ficha de quem não tem formulário de matrícula no ano (rematrícula ou cadastro
+// manual no Sponte). Se houver ficha do formulário, abre a existente.
+function FichaAlunoDialog({
+  aberto,
+  onClose,
+  onAbrirSubmissao,
+}: {
+  aberto: boolean;
+  onClose: () => void;
+  onAbrirSubmissao: (s: Submissao) => void;
+}) {
+  const unidade = useUnidadeAtiva();
+  const buscar = useServerFn(buscarAlunosSponte);
+  const montar = useServerFn(fichaAlunoMatricula);
+  const carregarTimbre = useServerFn(timbreFichaMatricula);
+  const [termo, setTermo] = useState("");
+  const [anoLetivo, setAnoLetivo] = useState<number>(ANO_ATUAL + 1);
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [ficha, setFicha] = useState<FichaAlunoMontada | null>(null);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
+
+  useEffect(() => {
+    setResultados(null);
+    setFicha(null);
+  }, [unidade]);
+
+  function fechar() {
+    setTermo("");
+    setResultados(null);
+    setFicha(null);
+    onClose();
+  }
+
+  const busca = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade: unidade ?? "" } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => {
+      setResultados(alunos);
+      setFicha(null);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha na busca."),
+  });
+
+  const abrir = useMutation({
+    mutationFn: async (aluno: AlunoBuscaSponte) => {
+      const r = await montar({
+        data: { unidade: unidade ?? "", alunoId: aluno.alunoId, anoLetivo },
+      });
+      if (!r.ok) throw new Error(r.erro ?? "Não foi possível montar a ficha do aluno.");
+      if (r.submissaoId) {
+        const { data: row, error } = await supabase
+          .from("enrollment_submissions" as never)
+          .select("*")
+          .eq("id", r.submissaoId)
+          .maybeSingle();
+        if (error || !row) throw new Error("Não foi possível abrir a ficha do formulário.");
+        return { submissao: row as unknown as Submissao };
+      }
+      return {
+        ficha: {
+          alunoNome: r.alunoNome ?? aluno.nome,
+          origem: r.origem ?? "",
+          secoes: r.secoes ?? [],
+        },
+      };
+    },
+    onSuccess: (r) => {
+      if ("submissao" in r && r.submissao) {
+        onAbrirSubmissao(r.submissao);
+        fechar();
+        return;
+      }
+      if ("ficha" in r && r.ficha) setFicha(r.ficha);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao montar a ficha."),
+  });
+
+  async function baixarPdf() {
+    if (!ficha || !unidade) return;
+    setGerandoPdf(true);
+    try {
+      let cabecalho: Parameters<typeof gerarPdfFichaMatricula>[4] = null;
+      try {
+        const t = await carregarTimbre({ data: { unidade } });
+        cabecalho = t.timbre ? { timbre: t.timbre, logo: t.logo } : null;
+      } catch {
+        cabecalho = null;
+      }
+      await gerarPdfFichaMatricula(
+        "Ficha do aluno",
+        `${ficha.alunoNome} · ${unidade} · ${ficha.origem}`,
+        ficha.secoes,
+        nomeArquivoFichaAluno(ficha.alunoNome),
+        cabecalho,
+      );
+    } catch {
+      toast.error("Não foi possível gerar o PDF da ficha.");
+    } finally {
+      setGerandoPdf(false);
+    }
+  }
+
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => !o && fechar()}>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Ficha do aluno</DialogTitle>
+          <DialogDescription>
+            Para quem fez rematrícula ou foi cadastrado direto no Sponte. Se houver ficha do
+            formulário de matrícula no ano, ela é aberta.
+          </DialogDescription>
+        </DialogHeader>
+        {!unidade ? (
+          <SelecioneUnidade acao="A ficha do aluno" />
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[200px] flex-1 space-y-1">
+                <label className="text-xs text-muted-foreground" htmlFor="ficha-aluno-busca">
+                  Nome ou AlunoID
+                </label>
+                <input
+                  id="ficha-aluno-busca"
+                  value={termo}
+                  onChange={(e) => setTermo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && termo.trim()) busca.mutate();
+                  }}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Ano letivo</label>
+                <Select
+                  value={String(anoLetivo)}
+                  onValueChange={(v) => {
+                    setAnoLetivo(Number(v));
+                    setFicha(null);
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ANOS_LETIVOS.map((a) => (
+                      <SelectItem key={a} value={String(a)}>
+                        {a}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => busca.mutate()}
+                disabled={!termo.trim() || busca.isPending}
+              >
+                {busca.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="mr-2 h-4 w-4" />
+                )}
+                Buscar no Sponte
+              </Button>
+            </div>
+
+            {resultados !== null && !ficha && (
+              <div className="space-y-1">
+                {resultados.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhum aluno encontrado.</p>
+                ) : (
+                  resultados.map((a) => (
+                    <button
+                      key={a.alunoId}
+                      type="button"
+                      onClick={() => abrir.mutate(a)}
+                      disabled={abrir.isPending}
+                      className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
+                    >
+                      <span className="min-w-0 truncate font-medium">{a.nome}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        AlunoID {a.alunoId}
+                        {a.turma ? ` · ${a.turma}` : ""}
+                      </span>
+                    </button>
+                  ))
+                )}
+                {abrir.isPending && (
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Montando a ficha…
+                  </p>
+                )}
+              </div>
+            )}
+
+            {ficha && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">{ficha.alunoNome}</p>
+                    <p className="text-xs text-muted-foreground">{ficha.origem}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={baixarPdf} disabled={gerandoPdf}>
+                    <Printer className="mr-2 h-4 w-4" /> Baixar PDF
+                  </Button>
+                </div>
+                {ficha.secoes.map((secao) => (
+                  <BlocoSecao key={secao.titulo} secao={secao} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

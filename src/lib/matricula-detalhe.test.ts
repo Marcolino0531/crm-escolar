@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { montarSecoesDetalhe, type EntradaDetalhe } from "@/lib/matricula-detalhe";
+import { nomeArquivoFichaAluno } from "@/lib/matricula-detalhe-pdf";
+import { DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
 
 function entradaCompleta(): EntradaDetalhe {
   return {
@@ -217,5 +219,123 @@ describe("montarSecoesDetalhe", () => {
 
     expect(texto).toContain("Nome=Aluno De Teste");
     expect(texto).toContain("CPF=111.222.333-96");
+  });
+});
+
+describe("montarSecoesDetalhe — ficha do aluno (rematrícula ou cadastro manual)", () => {
+  function entradaFichaAluno(origem: string): EntradaDetalhe {
+    const base = entradaCompleta();
+    return {
+      submissao: {
+        ...base.submissao,
+        submissionId: null,
+        status: origem,
+        criadoEm: "",
+        erro: null,
+      },
+      rotina: null,
+      saude: null,
+      documentos: [],
+      fichaAluno: {
+        origem,
+        anoLetivo: 2027,
+        snapshot: {
+          matricula_valor: null,
+          matricula_parcelas: null,
+          matricula_primeiro_vencimento: null,
+          material_valor_anual: null,
+          material_parcelas: null,
+        },
+        extras: null,
+      },
+    };
+  }
+
+  it("mostra a origem no topo, sem os campos da submissão", () => {
+    for (const origem of ["Rematrícula 2027", "Cadastro manual no Sponte"]) {
+      const topo = montarSecoesDetalhe(entradaFichaAluno(origem))[0].grupos[0];
+      expect(topo.titulo).toBe("Ficha do aluno");
+      expect(topo.campos.find((c) => c.rotulo === "Origem")?.valor).toBe(origem);
+      expect(topo.campos.find((c) => c.rotulo === "Ano letivo")?.valor).toBe("2027");
+      expect(topo.campos.some((c) => c.rotulo === "Protocolo")).toBe(false);
+    }
+  });
+
+  it("sem rotina, saúde e documentos, as seções saem em branco para preencher à mão", () => {
+    const secoes = montarSecoesDetalhe(entradaFichaAluno("Cadastro manual no Sponte"));
+    expect(secoes.map((s) => s.titulo)).toEqual([
+      "Dados do Aluno e Responsáveis",
+      "Rotina Escolar",
+      "Questionário de Saúde",
+      "Documentos",
+    ]);
+    const texto = valores(secoes);
+    expect(texto).not.toContain("Não enviad");
+    expect(texto).not.toContain("Nenhum documento anexado");
+
+    const rotina = secoes[1].grupos.flatMap((g) => g.campos);
+    expect(rotina.find((c) => c.rotulo === "Série")?.valor).toMatch(/^_+$/);
+    expect(rotina.find((c) => c.rotulo === "Períodos")?.valor).toContain("( ) Manhã");
+
+    const saude = secoes[2].grupos.flatMap((g) => g.campos);
+    for (const p of PERGUNTAS_SAUDE) {
+      const v = saude.find((c) => c.rotulo === p.pergunta)?.valor ?? "";
+      expect(v).toContain("( ) Sim  ( ) Não");
+      expect(v).toMatch(/Qual\? _+/);
+    }
+    expect(saude.find((c) => c.rotulo === "Cor/raça")?.valor).toContain("( ) ");
+
+    const docs = secoes[3].grupos.flatMap((g) => g.campos);
+    expect(docs.map((c) => c.rotulo)).toEqual(DOCUMENTOS_MATRICULA.map((d) => d.rotulo));
+    expect(docs.every((c) => c.valor === "( ) Entregue")).toBe(true);
+  });
+
+  it("usa a rotina, a saúde e os documentos que existirem", () => {
+    const completa = entradaCompleta();
+    const secoes = montarSecoesDetalhe({
+      ...entradaFichaAluno("Rematrícula 2027"),
+      rotina: completa.rotina,
+      saude: completa.saude,
+      documentos: completa.documentos,
+    });
+    const texto = valores(secoes);
+    expect(texto).toContain("Série=Infantil 3");
+    expect(texto).toContain("Bombinha para asma");
+    expect(texto).toContain("certidao.pdf");
+    expect(texto).not.toContain("( ) Entregue");
+  });
+
+  it("financeiro só aparece com as escolhas da rematrícula que existirem", () => {
+    const entrada = entradaFichaAluno("Rematrícula 2027");
+    entrada.fichaAluno!.snapshot = {
+      matricula_valor: 500,
+      matricula_parcelas: 2,
+      matricula_primeiro_vencimento: "2026-11-10",
+      material_valor_anual: null,
+      material_parcelas: null,
+    };
+    entrada.fichaAluno!.extras = ["Almoço"];
+    const titulos = montarSecoesDetalhe(entrada).map((s) => s.titulo);
+    expect(titulos).toContain("Matrícula");
+    expect(titulos).toContain("Extras");
+    expect(titulos).not.toContain("Material pedagógico");
+    expect(titulos).not.toContain("Mensalidades");
+    expect(titulos).not.toContain("Integração");
+  });
+
+  it("a ficha do formulário continua como antes", () => {
+    const completa = entradaCompleta();
+    const texto = valores(
+      montarSecoesDetalhe({ ...completa, rotina: null, saude: null, documentos: [] }),
+    );
+    expect(texto).toContain("Rotina escolar=Não enviada");
+    expect(texto).toContain("Documentos=Nenhum documento anexado");
+  });
+});
+
+describe("nomeArquivoFichaAluno", () => {
+  it("gera ficha-aluno-<nome>.pdf sem acentos", () => {
+    expect(nomeArquivoFichaAluno("Aluno Ção De Teste")).toBe("ficha-aluno-aluno-cao-de-teste.pdf");
+    expect(nomeArquivoFichaAluno("")).toBe("ficha-aluno-aluno.pdf");
   });
 });

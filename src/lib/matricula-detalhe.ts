@@ -7,10 +7,11 @@
 import { z } from "zod";
 import { MEALS, WEEKDAYS } from "@/lib/diario";
 import { origemDocumentoTexto, rotuloDocumento } from "@/lib/matricula-documentos";
-import { PERGUNTAS_SAUDE } from "@/lib/matricula-form";
+import { CORES_RACAS, DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
 import { nomeInformadoDiferente } from "@/lib/matriculas-nome";
 import {
   dataBR,
+  montarSecoesEscolhasRematricula,
   montarSecoesFinanceiras,
   type LancamentoFicha,
   type SituacaoSubmissao,
@@ -58,6 +59,17 @@ export interface EntradaDetalhe {
     situacao: SituacaoSubmissao;
     snapshot: SnapshotFinanceiro;
     lancamentos: LancamentoFicha[];
+  };
+  /**
+   * Ficha do aluno montada fora do formulário (rematrícula ou cadastro manual
+   * no Sponte): seções sem dado saem em branco para preencher à mão e as
+   * financeiras só com as escolhas da rematrícula que existirem.
+   */
+  fichaAluno?: {
+    origem: string;
+    anoLetivo: number;
+    snapshot: SnapshotFinanceiro;
+    extras: string[] | null;
   };
 }
 
@@ -190,18 +202,29 @@ function secaoCadastro(entrada: EntradaDetalhe): SecaoDetalhe {
     submissao.alunoNomeFormulario ?? aluno.nome,
   );
 
+  const { fichaAluno } = entrada;
   const grupos: SecaoDetalhe["grupos"] = [
-    {
-      titulo: "Submissão",
-      campos: [
-        campo("Status", submissao.status),
-        campo("Recebida em", submissao.criadoEm),
-        campo("Unidade", submissao.unidade ?? payload.unidade),
-        campo("Protocolo", submissao.submissionId),
-        campo("AlunoID no Sponte", submissao.sponteAlunoId),
-        campo("Erro", submissao.erro),
-      ],
-    },
+    fichaAluno
+      ? {
+          titulo: "Ficha do aluno",
+          campos: [
+            campo("Origem", fichaAluno.origem),
+            campo("Ano letivo", fichaAluno.anoLetivo),
+            campo("Unidade", submissao.unidade ?? payload.unidade),
+            campo("AlunoID no Sponte", submissao.sponteAlunoId),
+          ],
+        }
+      : {
+          titulo: "Submissão",
+          campos: [
+            campo("Status", submissao.status),
+            campo("Recebida em", submissao.criadoEm),
+            campo("Unidade", submissao.unidade ?? payload.unidade),
+            campo("Protocolo", submissao.submissionId),
+            campo("AlunoID no Sponte", submissao.sponteAlunoId),
+            campo("Erro", submissao.erro),
+          ],
+        },
     {
       titulo: "Aluno",
       campos: [
@@ -303,6 +326,74 @@ function secaoRotina(rotina: RotinaSubmissao | null): SecaoDetalhe {
   };
 }
 
+// ─── Seções em branco (ficha do aluno impressa e preenchida à mão) ──────────
+
+const LINHA = "________________________________________";
+
+function marcar(opcoes: readonly string[]): string {
+  return opcoes.map((o) => `( ) ${o}`).join("  ");
+}
+
+function secaoRotinaEmBranco(): SecaoDetalhe {
+  const dias = WEEKDAYS.map((d) => d.short);
+  return {
+    titulo: "Rotina Escolar",
+    grupos: [
+      {
+        titulo: null,
+        campos: [
+          campo("Série", LINHA),
+          campo("Ano letivo", LINHA),
+          campo("Início", "____/____/________"),
+          campo("Origem", LINHA),
+          campo("Períodos", marcar(["Manhã", "Tarde", "Horário estendido"])),
+          campo("Dias da semana", marcar(dias)),
+        ],
+      },
+      {
+        titulo: "Horários",
+        campos: WEEKDAYS.map((d) => campo(d.long, "____:____ às ____:____")),
+      },
+      {
+        titulo: "Refeições",
+        campos: MEALS.map((m) => campo(m.label, marcar(dias))),
+      },
+    ],
+  };
+}
+
+function secaoSaudeEmBranco(): SecaoDetalhe {
+  return {
+    titulo: "Questionário de Saúde",
+    grupos: [
+      {
+        titulo: null,
+        campos: [
+          campo("Contatos de emergência", `${LINHA}\n${LINHA}`),
+          ...PERGUNTAS_SAUDE.map((p) =>
+            campo(p.pergunta, `${marcar(["Sim", "Não"])}\nQual? ${LINHA}`),
+          ),
+          campo("Pessoas autorizadas a buscar", `${LINHA}\n${LINHA}`),
+          campo("Cor/raça", marcar(CORES_RACAS)),
+          campo("Outras informações", LINHA),
+        ],
+      },
+    ],
+  };
+}
+
+function secaoDocumentosEmBranco(): SecaoDetalhe {
+  return {
+    titulo: "Documentos",
+    grupos: [
+      {
+        titulo: null,
+        campos: DOCUMENTOS_MATRICULA.map((d) => campo(d.rotulo, marcar(["Entregue"]))),
+      },
+    ],
+  };
+}
+
 function respostaSaude(opcao: string, detalhe: string): string {
   return detalhe.trim() === "" ? opcao : `${opcao} — ${detalhe}`;
 }
@@ -371,17 +462,23 @@ function secaoDocumentos(documentos: DocumentoSubmissao[]): SecaoDetalhe {
 
 /** As quatro seções do formulário, na mesma ordem das etapas do /matricula. */
 export function montarSecoesDetalhe(entrada: EntradaDetalhe): SecaoDetalhe[] {
+  const { fichaAluno } = entrada;
+  const emBranco = fichaAluno !== undefined;
   return [
     secaoCadastro(entrada),
-    secaoRotina(entrada.rotina),
-    secaoSaude(entrada.saude),
-    secaoDocumentos(entrada.documentos),
-    ...(entrada.financeiro
-      ? montarSecoesFinanceiras(
-          entrada.financeiro.situacao,
-          entrada.financeiro.snapshot,
-          entrada.financeiro.lancamentos,
-        )
-      : []),
+    emBranco && entrada.rotina === null ? secaoRotinaEmBranco() : secaoRotina(entrada.rotina),
+    emBranco && entrada.saude === null ? secaoSaudeEmBranco() : secaoSaude(entrada.saude),
+    emBranco && entrada.documentos.length === 0
+      ? secaoDocumentosEmBranco()
+      : secaoDocumentos(entrada.documentos),
+    ...(fichaAluno
+      ? montarSecoesEscolhasRematricula(fichaAluno.snapshot, fichaAluno.extras)
+      : entrada.financeiro
+        ? montarSecoesFinanceiras(
+            entrada.financeiro.situacao,
+            entrada.financeiro.snapshot,
+            entrada.financeiro.lancamentos,
+          )
+        : []),
   ];
 }
