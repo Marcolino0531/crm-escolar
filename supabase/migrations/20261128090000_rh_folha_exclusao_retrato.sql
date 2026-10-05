@@ -115,8 +115,10 @@ GRANT EXECUTE ON FUNCTION public.rh_folha_excluir_colaborador(jsonb) TO service_
 -- p: { school_id, exclusao_id, por, por_nome }
 -- Fixa: só apaga a exclusão (vale para as próximas importações).
 -- Da competência (só aberta): recoloca o registro do retrato na importação da
--- empresa, com o mesmo status de conferência, e apaga a exclusão.
--- Devolve { restaurado: boolean }.
+-- empresa, com o mesmo status de conferência, e apaga a exclusão. Exclusão
+-- sem retrato (anterior a esta migration): só apaga a exclusão; o registro
+-- volta na próxima reimportação do PDF.
+-- Devolve { restaurado: boolean, sem_copia: boolean }.
 CREATE OR REPLACE FUNCTION public.rh_folha_desfazer_exclusao(p jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -133,6 +135,7 @@ DECLARE
   v_col      jsonb;
   v_col_id   uuid;
   v_rest     jsonb;
+  v_sem_copia boolean := false;
 BEGIN
   SELECT * INTO v_exc FROM public.rh_folha_exclusoes WHERE id = v_id AND school_id = v_school;
   IF NOT FOUND THEN
@@ -141,7 +144,7 @@ BEGIN
 
   IF v_exc.fixa THEN
     DELETE FROM public.rh_folha_exclusoes WHERE id = v_exc.id;
-    RETURN jsonb_build_object('restaurado', false);
+    RETURN jsonb_build_object('restaurado', false, 'sem_copia', false);
   END IF;
 
   PERFORM pg_advisory_xact_lock(
@@ -170,11 +173,9 @@ BEGIN
     FROM public.rh_folha_colaboradores c
    WHERE c.importacao_id = v_imp_id AND c.tipo = v_exc.tipo AND c.codigo = v_exc.codigo;
 
-  IF v_col_id IS NULL THEN
-    IF v_exc.retrato IS NULL OR jsonb_typeof(v_exc.retrato->'colaborador') <> 'object' THEN
-      RAISE EXCEPTION 'Esta exclusão não guardou os valores do registro: não é possível devolvê-lo à folha automaticamente.';
-    END IF;
-
+  IF v_col_id IS NULL AND jsonb_typeof(v_exc.retrato->'colaborador') IS DISTINCT FROM 'object' THEN
+    v_sem_copia := true;
+  ELSIF v_col_id IS NULL THEN
     v_col := v_exc.retrato->'colaborador';
     -- Referências que podem ter sumido desde a exclusão viram nulas.
     v_col := v_col || jsonb_build_object(
@@ -222,10 +223,11 @@ BEGIN
   INSERT INTO public.rh_folha_eventos (importacao_id, colaborador_id, tipo, dados, por, por_nome)
   VALUES (v_imp_id, v_col_id, 'exclusao_desfeita',
           jsonb_build_object('cnpj', v_exc.cnpj, 'tipo', v_exc.tipo, 'codigo', v_exc.codigo,
-                             'cpf', v_exc.cpf, 'nome', v_exc.nome, 'restaurado', true),
+                             'cpf', v_exc.cpf, 'nome', v_exc.nome,
+                             'restaurado', NOT v_sem_copia),
           v_por, v_por_nome);
 
-  RETURN jsonb_build_object('restaurado', true);
+  RETURN jsonb_build_object('restaurado', NOT v_sem_copia, 'sem_copia', v_sem_copia);
 END;
 $$;
 

@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { chaveColaborador, semDescartados, totaisDasEmpresas } from "./folha-pagamento";
+import {
+  avisoDesfazerExclusao,
+  chaveColaborador,
+  semDescartados,
+  totaisDasEmpresas,
+} from "./folha-pagamento";
 
 // Dados fictícios.
 type Reg = {
@@ -80,5 +86,46 @@ describe("Belvedere 09/2026: totais após devolver o registro excluído por enga
       liquido: 80119.47,
       colaboradores: 2,
     });
+  });
+});
+
+describe("desfazer exclusão sem cópia guardada (anterior ao retrato)", () => {
+  const sql = readFileSync(
+    "supabase/migrations/20261128090000_rh_folha_exclusao_retrato.sql",
+    "utf8",
+  );
+  const desfazer = sql.slice(sql.indexOf("FUNCTION public.rh_folha_desfazer_exclusao"));
+
+  it("não recusa: apaga a exclusão e devolve restaurado false", () => {
+    expect(desfazer).not.toMatch(/RAISE EXCEPTION '[^']*não guardou/);
+    expect(desfazer).toMatch(
+      /IF v_col_id IS NULL AND jsonb_typeof\(v_exc\.retrato->'colaborador'\) IS DISTINCT FROM 'object' THEN\s+v_sem_copia := true;/,
+    );
+    expect(desfazer).toContain("DELETE FROM public.rh_folha_exclusoes WHERE id = v_exc.id;");
+    expect(desfazer).toContain("'restaurado', NOT v_sem_copia");
+    expect(desfazer).toContain(
+      "RETURN jsonb_build_object('restaurado', NOT v_sem_copia, 'sem_copia', v_sem_copia);",
+    );
+  });
+
+  it("os totais não mudam até a reimportação do PDF", () => {
+    const alvo = FOLHA[1];
+    const excluida = totaisDasEmpresas(semDescartados(FOLHA, [chaveColaborador(alvo)]));
+    const aposDesfazer = totaisDasEmpresas(semDescartados(FOLHA, [chaveColaborador(alvo)]));
+    expect(aposDesfazer).toEqual(excluida);
+    const reimportada = totaisDasEmpresas(FOLHA);
+    expect(centavos(reimportada).liquido - centavos(aposDesfazer).liquido).toBe(215494);
+  });
+
+  it("aviso da tela", () => {
+    expect(avisoDesfazerExclusao({ restaurado: false, semCopia: true })).toBe(
+      "Exclusão desfeita. Este registro não tinha cópia guardada: importe de novo o PDF deste mês para ele voltar à folha.",
+    );
+    expect(avisoDesfazerExclusao({ restaurado: true, semCopia: false })).toBe(
+      "Exclusão desfeita: o registro voltou para a folha.",
+    );
+    expect(avisoDesfazerExclusao({ restaurado: false, semCopia: false })).toBe(
+      "Exclusão desfeita.",
+    );
   });
 });

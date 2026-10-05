@@ -37,6 +37,7 @@ import {
   type LinhaResumo,
   type PlanoReimportacao,
   type RubricaFolha,
+  avisoDesfazerExclusao,
 } from "@/lib/folha-pagamento";
 import {
   ajustarColaboradorFolha,
@@ -644,9 +645,7 @@ const ModalExcluidos: React.FC<{
   const desfazer = useMutation({
     mutationFn: async (id: string) => fnDesfazer({ data: { schoolId, id } }),
     onSuccess: (r) => {
-      toast.success(
-        r.restaurado ? "Exclusão desfeita: o registro voltou para a folha." : "Exclusão desfeita.",
-      );
+      toast.success(avisoDesfazerExclusao(r));
       void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
       void qc.invalidateQueries({ queryKey: ["rh-folha", schoolId] });
       void qc.invalidateQueries({ queryKey: ["rh-folha-competencias", schoolId] });

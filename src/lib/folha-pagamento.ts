@@ -745,3 +745,12 @@ export function salarioAposExclusao(
   const s = salariosDaFolha(restantes.filter((r) => r.funcionarioId === funcionarioId))[0];
   return s ? { acao: "gravar", valor: s.valor, valorLiquido: s.valorLiquido } : { acao: "remover" };
 }
+
+/** Aviso da tela depois de "Desfazer" uma exclusão da folha. */
+export function avisoDesfazerExclusao(r: { restaurado: boolean; semCopia: boolean }): string {
+  if (r.restaurado) return "Exclusão desfeita: o registro voltou para a folha.";
+  if (r.semCopia) {
+    return "Exclusão desfeita. Este registro não tinha cópia guardada: importe de novo o PDF deste mês para ele voltar à folha.";
+  }
+  return "Exclusão desfeita.";
+}
