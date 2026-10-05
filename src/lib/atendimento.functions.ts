@@ -212,7 +212,11 @@ export const enviarMidiaChat = createServerFn({ method: "POST" })
         filename: validacao.filename,
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const bruto = e instanceof Error ? e.message : String(e);
+      // A Meta não reconheceu o conteúdo como áudio (ex.: MP4 fragmentado).
+      const msg = bruto.includes("on processing it is of type")
+        ? "O WhatsApp não reconheceu este arquivo de áudio. Envie um arquivo MP3, ou grave pelo microfone do Atendimento."
+        : bruto;
       await registrarFalha(msg);
       return { ok: false, error: msg };
     }
