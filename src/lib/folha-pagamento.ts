@@ -393,7 +393,40 @@ type RegistroValores = {
   status: StatusColaboradorFolha;
   proventos: number;
   liquido: number;
+  /** Líquido a pagar digitado no Ajustar (nulo = paga o líquido da folha). */
+  liquidoManual?: number | null;
 };
+
+/** Valor realmente pago ao registro: o líquido manual, se houver, senão o da folha. */
+export function valorPago(r: { liquido: number; liquidoManual?: number | null }): number {
+  return r.liquidoManual ?? r.liquido;
+}
+
+/**
+ * Líquido manual a gravar no Ajustar: nulo quando igual (em centavos) ao líquido
+ * calculado das rubricas; nunca negativo.
+ */
+export function liquidoManualDoAjuste(digitado: number, calculado: number): number | null {
+  if (!Number.isFinite(digitado) || digitado < 0) {
+    throw new Error("O líquido a pagar não pode ser negativo.");
+  }
+  const c = paraCentavos(digitado);
+  return c === paraCentavos(calculado) ? null : deCentavos(c);
+}
+
+/** Lote x folha: o valor da pessoa no lote tem de ser a soma do valor pago de cada registro. */
+export function conferirValorNoLote(
+  registros: readonly (RegistroValores & { nome: string })[],
+  totalAmount: number,
+): void {
+  const nome = registros[0]?.nome ?? "";
+  if (registros.some((c) => c.status !== "confirmado")) {
+    throw new Error(`${nome} está Em conferência e não pode entrar no lote.`);
+  }
+  if (somaCentavos(registros.map(valorPago)) !== paraCentavos(totalAmount)) {
+    throw new Error(`O valor de ${nome} no lote difere do líquido confirmado na folha.`);
+  }
+}
 
 export type SalarioDaFolha = { funcionarioId: string; valor: number; valorLiquido: number };
 
@@ -409,7 +442,7 @@ export function salariosDaFolha(registros: readonly RegistroValores[]): SalarioD
           {
             funcionarioId: g.funcionarioId,
             valor: somaReais(g.registros.map((r) => r.proventos)),
-            valorLiquido: somaReais(g.registros.map((r) => r.liquido)),
+            valorLiquido: somaReais(g.registros.map(valorPago)),
           },
         ]
       : [],
@@ -452,7 +485,10 @@ export type LinhaResumo = {
   nome: string;
   status: StatusResumo;
   bruto: number;
+  /** Valor pago (líquido manual, quando houver, senão o líquido da folha). */
   liquido: number;
+  /** Algum registro da pessoa tem líquido manual. */
+  liquidoManual?: boolean;
   restituicao: number;
   /** Registros da pessoa na folha (mais de 1 = mais de um contrato). */
   contratos?: number;
@@ -472,7 +508,8 @@ export function resumoDaFolha(
     nome: g.registros[0].nome,
     status: g.registros.every((r) => r.status === "confirmado") ? "confirmado" : "em_conferencia",
     bruto: somaReais(g.registros.map((r) => r.proventos)),
-    liquido: somaReais(g.registros.map((r) => r.liquido)),
+    liquido: somaReais(g.registros.map(valorPago)),
+    liquidoManual: g.registros.some((r) => r.liquidoManual != null),
     restituicao: somaReais(g.registros.map((r) => restituicaoPorId.get(r.id) ?? 0)),
     contratos: g.registros.length,
   }));

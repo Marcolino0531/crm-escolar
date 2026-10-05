@@ -12,8 +12,6 @@ import {
   CALCULO_ACEITO,
   codigoRepetido,
   conferirIntegridade,
-  paraCentavos,
-  somaCentavos,
   somenteDigitos,
   type ColaboradorExtrato,
 } from "@/lib/extrato-mensal";
@@ -24,6 +22,7 @@ import {
   chavesExcluidas,
   cnpjAceito,
   competenciaFechada,
+  conferirValorNoLote,
   conflitoVinculoCpf,
   divergenciasDoColaborador,
   empresasNaoImportadas,
@@ -31,6 +30,7 @@ import {
   importacaoAnteriorDoCnpj,
   importacaoDoCnpj,
   inssDoMes,
+  liquidoManualDoAjuste,
   mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
@@ -98,6 +98,8 @@ export type ColaboradorFolhaGravado = Omit<ColaboradorComparavel, "rubricas"> & 
   proventosPdf: number;
   descontosPdf: number;
   liquidoPdf: number;
+  /** Líquido a pagar digitado no Ajustar; nulo = paga o líquido da folha. */
+  liquidoManual: number | null;
   status: StatusColaboradorFolha;
   divergencias: Divergencia[];
   confirmadoEm: string | null;
@@ -188,6 +190,7 @@ type ColaboradorRow = {
   proventos: Num;
   descontos: Num;
   liquido: Num;
+  liquido_manual: Num | null;
   status: StatusColaboradorFolha;
   divergencias: Divergencia[] | null;
   confirmado_em: string | null;
@@ -222,7 +225,7 @@ const IMPORTACAO_COLS =
   "id, school_id, competencia, status, empresa, cnpj, calculo, cnpj_colegio, cnpj_divergente, importado_em, importado_por_nome, reimportado_em, reimportado_por_nome, fechado_em, fechado_por_nome, reaberto_em, reaberto_por_nome";
 
 const COLABORADOR_COLS =
-  "id, importacao_id, funcionario_id, vinculo_manual, tipo, codigo, nome, cpf, situacao, vinculo, admissao, cargo, cbo, horas_mes, salario_base, informativa, informativa_dedutora, base_inss, excedente_inss, base_fgts, valor_fgts, base_irrf, observacoes, proventos_pdf, descontos_pdf, liquido_pdf, proventos, descontos, liquido, status, divergencias, confirmado_em, confirmado_por_nome, ajustado_em, ajustado_por_nome, ajuste_observacao";
+  "id, importacao_id, funcionario_id, vinculo_manual, tipo, codigo, nome, cpf, situacao, vinculo, admissao, cargo, cbo, horas_mes, salario_base, informativa, informativa_dedutora, base_inss, excedente_inss, base_fgts, valor_fgts, base_irrf, observacoes, proventos_pdf, descontos_pdf, liquido_pdf, proventos, descontos, liquido, liquido_manual, status, divergencias, confirmado_em, confirmado_por_nome, ajustado_em, ajustado_por_nome, ajuste_observacao";
 
 const n = (v: Num | null | undefined): number => (v == null ? 0 : Number(v));
 
@@ -297,6 +300,7 @@ function paraColaborador(
     proventos: n(r.proventos),
     descontos: n(r.descontos),
     liquido: n(r.liquido),
+    liquidoManual: r.liquido_manual == null ? null : n(r.liquido_manual),
     status: r.status,
     divergencias: r.divergencias ?? [],
     confirmadoEm: r.confirmado_em,
@@ -551,7 +555,7 @@ function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
         descricao: r.descricao,
         valor: r.valorOriginal ?? r.valor,
       })),
-    ajustadoManualmente: c.ajustadoEm != null,
+    ajustadoManualmente: c.ajustadoEm != null || c.liquidoManual != null,
   };
 }
 
@@ -1103,6 +1107,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
             }),
           )
           .max(100),
+        liquidoAPagar: numero.nonnegative("O líquido a pagar não pode ser negativo."),
       })
       .parse(input),
   )
@@ -1147,6 +1152,7 @@ export const ajustarColaboradorFolha = createServerFn({ method: "POST" })
           proventos: t.proventos,
           descontos: t.descontos,
           liquido: t.liquido,
+          liquido_manual: liquidoManualDoAjuste(data.liquidoAPagar, t.liquido),
           rubricas: rubricas.map((r) => ({
             tipo: r.tipo,
             codigo: r.codigo,
@@ -1545,15 +1551,7 @@ export async function conferirLoteComFolha(
   );
   for (const i of itens) {
     const registros = porFuncionario.get(i.employee_id);
-    if (!registros) continue;
-    const nome = registros[0].nome;
-    if (registros.some((c) => c.status !== "confirmado")) {
-      throw new Error(`${nome} está Em conferência e não pode entrar no lote.`);
-    }
-    const liquido = somaCentavos(registros.map((c) => c.liquido));
-    if (liquido !== paraCentavos(i.total_amount)) {
-      throw new Error(`O valor de ${nome} no lote difere do líquido confirmado na folha.`);
-    }
+    if (registros) conferirValorNoLote(registros, i.total_amount);
   }
 }
 

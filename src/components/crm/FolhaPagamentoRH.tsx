@@ -122,6 +122,12 @@ const SeloContratos: React.FC<{ contratos?: number }> = ({ contratos }) =>
     </span>
   ) : null;
 
+const SeloLiquidoManual: React.FC = () => (
+  <span className="ml-2 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+    Líquido manual
+  </span>
+);
+
 const SeloStatus: React.FC<{ status: LinhaResumo["status"] }> = ({ status }) => {
   const cls =
     status === "confirmado"
@@ -333,6 +339,7 @@ type DadosAjuste = {
   observacao: string;
   pdf: { ordem: number; valor: number; removida: boolean }[];
   manuais: { tipo: TipoRubrica; codigo: string; descricao: string; valor: number }[];
+  liquidoAPagar: number;
 };
 
 const ModalAjuste: React.FC<{
@@ -356,6 +363,10 @@ const ModalAjuste: React.FC<{
       })),
   );
   const [observacao, setObservacao] = useState("");
+  // null = acompanha o líquido calculado das rubricas.
+  const [liquidoDigitado, setLiquidoDigitado] = useState<string | null>(() =>
+    colaborador.liquidoManual != null ? paraInput(colaborador.liquidoManual) : null,
+  );
 
   const rubricasEditadas: RubricaFolha[] = [
     ...doPdf.map((r, i) => ({
@@ -375,10 +386,19 @@ const ModalAjuste: React.FC<{
     })),
   ];
   const t = totaisAjustados(rubricasEditadas);
+  const liquidoAPagar = liquidoDigitado == null ? t.liquido : parseBRLNumber(liquidoDigitado);
 
   const salvar = () => {
     if (!observacao.trim()) {
       toast.error("A observação do ajuste é obrigatória.");
+      return;
+    }
+    if (!Number.isFinite(liquidoAPagar)) {
+      toast.error("Informe o líquido a pagar.");
+      return;
+    }
+    if (liquidoAPagar < 0) {
+      toast.error("O líquido a pagar não pode ser negativo.");
       return;
     }
     if (manuais.some((m) => !m.descricao.trim())) {
@@ -398,6 +418,7 @@ const ModalAjuste: React.FC<{
         descricao: m.descricao.trim(),
         valor: parseBRLNumber(m.valor) || 0,
       })),
+      liquidoAPagar,
     });
   };
 
@@ -520,7 +541,7 @@ const ModalAjuste: React.FC<{
               Incluir rubrica
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-50 p-2 text-xs tabular-nums">
+          <div className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-2 text-xs tabular-nums">
             <span>
               Proventos: <b>{brl(t.proventos)}</b>{" "}
               <span className="text-gray-500">(PDF {brl(colaborador.proventosPdf)})</span>
@@ -529,10 +550,31 @@ const ModalAjuste: React.FC<{
               Descontos: <b>{brl(t.descontos)}</b>{" "}
               <span className="text-gray-500">(PDF {brl(colaborador.descontosPdf)})</span>
             </span>
-            <span>
-              Líquido: <b>{brl(t.liquido)}</b>{" "}
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-2 text-xs tabular-nums">
+            <div>
+              <span className="block text-gray-600">Líquido da folha</span>
+              <b className="mt-1 block text-sm">{brl(t.liquido)}</b>
               <span className="text-gray-500">(PDF {brl(colaborador.liquidoPdf)})</span>
-            </span>
+            </div>
+            <label className="block text-gray-600">
+              Líquido a pagar
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  value={liquidoDigitado ?? paraInput(t.liquido)}
+                  onChange={(e) => setLiquidoDigitado(e.target.value)}
+                  inputMode="decimal"
+                  className={`${cls} text-right`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setLiquidoDigitado(null)}
+                  className="whitespace-nowrap rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-white"
+                >
+                  Usar o líquido da folha
+                </button>
+              </div>
+            </label>
           </div>
           <label className="block text-xs text-gray-600">
             Observação (obrigatória)
@@ -1396,6 +1438,12 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                       PDF {brl(c.liquidoPdf)}
                                     </span>
                                   )}
+                                  {c.liquidoManual != null && (
+                                    <span className="block text-xs text-sky-800">
+                                      Pago: {brl(c.liquidoManual)}
+                                      <SeloLiquidoManual />
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-2 py-2">
                                   <SeloStatus status={c.status} />
@@ -1646,6 +1694,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                     <td className="px-4 py-2">
                       {toTitleCase(l.nome)}
                       <SeloContratos contratos={l.contratos} />
+                      {l.liquidoManual && <SeloLiquidoManual />}
                     </td>
                     <td className="px-4 py-2">
                       <SeloStatus status={l.status} />
