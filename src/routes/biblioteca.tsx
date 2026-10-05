@@ -455,11 +455,12 @@ function AcervoTab({ ctx }: { ctx: Ctx }) {
   });
 
   const etiquetas = (lista: Exemplar[], nomeArquivo: string) => {
-    const mapa = new Map(titulos.map((t) => [t.id, t.titulo]));
+    const mapa = new Map(titulos.map((t) => [t.id, t]));
     void gerarEtiquetasPdf(
       lista.map((e) => ({
         codigo: e.codigo,
-        titulo: mapa.get(e.titulo_id) ?? "",
+        titulo: mapa.get(e.titulo_id)?.titulo ?? "",
+        autor: mapa.get(e.titulo_id)?.autor ?? "",
         unidade: unidadeNome,
       })),
       nomeArquivo,
