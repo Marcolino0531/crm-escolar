@@ -33,8 +33,8 @@ const MIMES_AUDIO = new Set([
   "audio/amr",
   "audio/ogg",
   "audio/opus",
-  // Gravação do navegador: o Chrome produz "audio/webm;codecs=opus", que a Meta
-  // não aceita — a conversão para ogg/opus acontece antes de chegar aqui.
+  // Gravação do microfone: o Atendimento converte para MP3 (audio/mpeg) no
+  // navegador antes de chegar aqui (src/lib/audio-mp3.ts).
 ]);
 
 export const MIMES_ACEITOS_LABEL = "JPG, PNG, PDF ou áudio (MP3, AAC, M4A, OGG/Opus, AMR)";
