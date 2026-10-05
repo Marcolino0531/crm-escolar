@@ -34,10 +34,9 @@ import {
   montarPayloadMatricula,
   montarRotinaPersistida,
   padronizarMatriculaForm,
+  colunasSaude,
   padronizarSaudeForm,
   serieCalculada,
-  textoContatosEmergencia,
-  textoPessoasAutorizadas,
   validarDocumentosForm,
   validarMaterialForm,
   validarMatriculaCobrancaForm,
@@ -53,6 +52,7 @@ import {
   type RotinaForm,
   type SaudeForm,
 } from "@/lib/matricula-form";
+import { SaudeInput } from "@/lib/matricula-saude-input";
 import {
   faturarMatricula,
   materialAnualDaSerie,
@@ -353,30 +353,6 @@ const RotinaInput = z.object({
   }),
 });
 
-const RespostaSaudeInput = z.object({
-  opcao: z.enum(["Sim", "Não", ""]),
-  detalhe: z.string(),
-});
-
-const ContatoEmergenciaInput = z.object({
-  nome: z.string().max(120),
-  telefone: z.string().max(20),
-  parentesco: z.string().max(60),
-});
-
-const PessoaAutorizadaInput = ContatoEmergenciaInput.extend({ cpf: z.string().max(14) });
-
-const SaudeInput = z.object({
-  contatosEmergencia: z.array(ContatoEmergenciaInput).max(10),
-  alergia: RespostaSaudeInput,
-  problemaSaude: RespostaSaudeInput,
-  medicamentoContinuo: RespostaSaudeInput,
-  planoSaude: RespostaSaudeInput,
-  pessoasAutorizadas: z.array(PessoaAutorizadaInput).max(10),
-  corRaca: z.string(),
-  outrasInformacoes: z.string(),
-});
-
 const CHAVES_DOCUMENTO = DOCUMENTOS_MATRICULA.map((d) => d.chave);
 
 const DocumentoChaveInput = z.enum(CHAVES_DOCUMENTO as [DocumentoChave, ...DocumentoChave[]]);
@@ -529,18 +505,7 @@ async function salvarSaude(
       sponte_aluno_id: alunoId,
       aluno_nome: form.aluno.nome.trim(),
       serie,
-      contato_emergencia: textoContatosEmergencia(saude.contatosEmergencia),
-      alergia: saude.alergia.opcao,
-      alergia_detalhe: saude.alergia.detalhe.trim(),
-      problema_saude: saude.problemaSaude.opcao,
-      problema_saude_detalhe: saude.problemaSaude.detalhe.trim(),
-      medicamento_continuo: saude.medicamentoContinuo.opcao,
-      medicamento_continuo_detalhe: saude.medicamentoContinuo.detalhe.trim(),
-      plano_saude: saude.planoSaude.opcao,
-      plano_saude_detalhe: saude.planoSaude.detalhe.trim(),
-      pessoas_autorizadas: textoPessoasAutorizadas(saude.pessoasAutorizadas),
-      cor_raca: saude.corRaca,
-      outras_informacoes: saude.outrasInformacoes.trim(),
+      ...colunasSaude(saude),
     } as never,
     { onConflict: "submission_id" } as never,
   );

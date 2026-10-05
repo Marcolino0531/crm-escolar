@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   OPCOES_SAUDE,
   PERGUNTAS_SAUDE,
   SAUDE_FORM_VAZIO,
+  colunasSaude,
   padronizarSaudeForm,
+  saudeFormDaLinha,
   textoContatosEmergencia,
   textoPessoasAutorizadas,
   validarSaudeForm,
@@ -135,5 +139,70 @@ describe("padronizarSaudeForm", () => {
       parentesco: "Avô",
       cpf: "123.456.789-09",
     });
+  });
+});
+
+describe("saudeFormDaLinha — reabrir o questionário gravado (rematrícula)", () => {
+  const completa = saudeCompleta({
+    contatosEmergencia: [
+      { nome: "Pessoa Ficticia Um", telefone: "(11) 90000-0001", parentesco: "Tia" },
+      { nome: "Pessoa Ficticia Dois", telefone: "(11) 90000-0002", parentesco: "" },
+    ],
+    alergia: { opcao: "Sim", detalhe: "Amendoim" },
+    pessoasAutorizadas: [
+      {
+        nome: "Pessoa Ficticia Tres",
+        telefone: "(11) 90000-0003",
+        parentesco: "Avó",
+        cpf: "000.000.001-91",
+      },
+      { nome: "Pessoa Ficticia Quatro", telefone: "", parentesco: "Vizinho", cpf: "" },
+    ],
+    outrasInformacoes: "Usa óculos",
+  });
+
+  it("devolve o mesmo formulário que foi gravado por colunasSaude", () => {
+    expect(saudeFormDaLinha(colunasSaude(completa))).toEqual(completa);
+  });
+
+  it("a resposta reaberta continua válida", () => {
+    expect(validarSaudeForm(saudeFormDaLinha(colunasSaude(completa)))).toEqual({});
+  });
+
+  it("linha incompleta ou com opção desconhecida reabre em branco e é recusada", () => {
+    const form = saudeFormDaLinha({ alergia: "Talvez", cor_raca: "" });
+    expect(form.alergia.opcao).toBe("");
+    expect(form.contatosEmergencia).toEqual([]);
+    expect(validarSaudeForm(form)["saude.alergia"]).toBeDefined();
+    expect(validarSaudeForm(form)["saude.corRaca"]).toBeDefined();
+  });
+});
+
+describe("rematrícula — Questionário de Saúde obrigatório e por ano letivo", () => {
+  const fonte = readFileSync(resolve(__dirname, "rematricula.functions.ts"), "utf8");
+  const finalizar = fonte.slice(fonte.indexOf("export const finalizarRematricula"));
+  const salvar = fonte.slice(
+    fonte.indexOf("export const salvarSaudeRematricula"),
+    fonte.indexOf("export const finalizarRematricula"),
+  );
+
+  it("finalizarRematricula recusa sem o questionário do ano salvo e válido", () => {
+    expect(finalizar).toMatch(/erros\["saude"\] = "Salve o Questionário de Saúde/);
+    expect(finalizar).toMatch(/validarSaudeForm\(saudeFormDaLinha\(saudeSalva\.data\)\)/);
+  });
+
+  it("grava com origem rematricula, ano letivo e submission_id próprio, após padronizar e validar", () => {
+    expect(salvar).toMatch(/padronizarSaudeForm\(/);
+    expect(salvar).toMatch(/validarSaudeForm\(saude\)/);
+    expect(salvar).toMatch(/origem: "rematricula"/);
+    expect(salvar).toMatch(/ano_letivo: anoLetivo/);
+    expect(salvar).toMatch(/submission_id: submissionIdRematricula\(/);
+    expect(salvar).toMatch(/onConflict: "submission_id"/);
+  });
+
+  it("não registra em log dado de saúde nem pessoal", () => {
+    for (const linha of salvar.split("\n").filter((l) => /console\./.test(l))) {
+      expect(linha).not.toMatch(/saude\.|aluno\.|data\./);
+    }
   });
 });

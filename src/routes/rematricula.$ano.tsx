@@ -39,14 +39,18 @@ import {
   type CategoriaExtra,
 } from "@/lib/rematricula-extras";
 import { RotinaEscolar } from "@/components/matricula/RotinaEscolar";
+import { QuestionarioSaude } from "@/components/matricula/QuestionarioSaude";
 import {
   ROTINA_FORM_VAZIA,
+  SAUDE_FORM_VAZIO,
   dataBrParaIso,
   formValido,
   formatarDataBr,
   validarRotinaForm,
+  validarSaudeForm,
   type ErrosForm,
   type RotinaForm,
+  type SaudeForm,
 } from "@/lib/matricula-form";
 import {
   dadosRematricula,
@@ -56,6 +60,8 @@ import {
   rotinaRematricula,
   salvarEscolhaMaterialRematricula,
   salvarRotinaRematricula,
+  salvarSaudeRematricula,
+  saudeRematricula,
   sincronizarCadastroRematricula,
   solicitarLinkRematricula,
   type DadosRematricula,
@@ -383,6 +389,8 @@ function RematriculaPage() {
   const sincronizar = useServerFn(sincronizarCadastroRematricula);
   const carregarRotina = useServerFn(rotinaRematricula);
   const guardarRotina = useServerFn(salvarRotinaRematricula);
+  const carregarSaude = useServerFn(saudeRematricula);
+  const guardarSaude = useServerFn(salvarSaudeRematricula);
   const finalizar = useServerFn(finalizarRematricula);
   const definirFinanceiro = useServerFn(definirResponsavelFinanceiroRematricula);
 
@@ -455,6 +463,14 @@ function RematriculaPage() {
   // salva, então o envio final fica bloqueado até salvar de novo.
   const [rotinaAlterada, setRotinaAlterada] = useState(false);
   const [rotinaSugerida, setRotinaSugerida] = useState(false);
+  const [saude, setSaude] = useState<SaudeForm>({ ...SAUDE_FORM_VAZIO });
+  const [errosSaude, setErrosSaude] = useState<ErrosForm>({});
+  const [saudeSalvaMsg, setSaudeSalvaMsg] = useState("");
+  // Salva no ano letivo da rematrícula e sem edição pendente: só assim o envio
+  // final é liberado (o servidor confere de novo).
+  const [saudeSalvaNoAno, setSaudeSalvaNoAno] = useState(false);
+  const [saudeAlterada, setSaudeAlterada] = useState(false);
+  const [saudeSugerida, setSaudeSugerida] = useState(false);
   const [turnos, setTurnos] = useState<TurnosDisponiveis>(TODOS_OS_TURNOS);
   const [matParcelas, setMatParcelas] = useState<number>(1);
   const [matVencimento, setMatVencimento] = useState("");
@@ -578,6 +594,27 @@ function RematriculaPage() {
     };
   }, [token, carregarRotina]);
 
+  // Questionário de Saúde: abre com a resposta deste ano ou, na falta dela, com a
+  // mais recente do aluno; a família revisa e salva.
+  useEffect(() => {
+    if (token === "") return;
+    let ativo = true;
+    void (async () => {
+      try {
+        const res = await carregarSaude({ data: { token } });
+        if (!ativo || !res.ok || !res.saude) return;
+        setSaude(res.saude);
+        setSaudeSalvaNoAno(res.origem === "rematricula");
+        setSaudeSugerida(res.origem !== "");
+      } catch {
+        /* etapa segue em branco; o responsável preenche à mão */
+      }
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [token, carregarSaude]);
+
   const enviarRotina = useMutation({
     mutationFn: async () => guardarRotina({ data: { token, rotina } }),
     onSuccess: (res) => {
@@ -593,6 +630,29 @@ function RematriculaPage() {
       setRotinaSalva("Rotina do próximo ano letivo registrada.");
     },
     onError: () => setErro("Não foi possível salvar a rotina agora. Tente novamente."),
+  });
+
+  const enviarSaude = useMutation({
+    mutationFn: async () => guardarSaude({ data: { token, saude } }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        setErrosSaude(res.erros ?? {});
+        setSaudeSalvaMsg("");
+        setErro(res.erro ?? "Não foi possível salvar o Questionário de Saúde.");
+        return;
+      }
+      setErro("");
+      setErrosSaude({});
+      setSaudeAlterada(false);
+      setSaudeSalvaNoAno(true);
+      setErrosEnvio((atual) => {
+        const { saude: _s, ...resto } = atual;
+        return resto;
+      });
+      setSaudeSalvaMsg("Questionário de Saúde do próximo ano letivo registrado.");
+    },
+    onError: () =>
+      setErro("Não foi possível salvar o Questionário de Saúde agora. Tente novamente."),
   });
 
   const confirmar = useMutation({
@@ -1231,6 +1291,52 @@ function RematriculaPage() {
               )}
             </div>
 
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {saudeSugerida
+                  ? "Confira as respostas já informadas e corrija o que mudou para o próximo ano letivo."
+                  : "Responda ao Questionário de Saúde do aluno para o próximo ano letivo."}
+              </p>
+              <QuestionarioSaude
+                saude={saude}
+                erros={errosSaude}
+                onChange={(nova) => {
+                  setSaude(nova);
+                  setSaudeSalvaMsg("");
+                  setSaudeAlterada(true);
+                }}
+              />
+              <Button
+                className="w-full"
+                variant="secondary"
+                disabled={enviarSaude.isPending}
+                onClick={() => {
+                  const encontrados = validarSaudeForm(saude);
+                  setErrosSaude(encontrados);
+                  if (!formValido(encontrados)) {
+                    setErro("Confira os campos destacados do Questionário de Saúde.");
+                    rolarParaPrimeiroErro();
+                    return;
+                  }
+                  enviarSaude.mutate();
+                }}
+              >
+                {enviarSaude.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Salvar questionário de saúde
+              </Button>
+              {saudeSalvaMsg && (
+                <p className="flex items-center gap-2 text-sm text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {saudeSalvaMsg}
+                </p>
+              )}
+              {errosEnvio["saude"] && (
+                <p data-erro className="text-xs text-destructive">
+                  {errosEnvio["saude"]}
+                </p>
+              )}
+            </div>
+
             <div className="rounded-lg border p-4">
               {enviadaEm ? (
                 <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
@@ -1249,7 +1355,8 @@ function RematriculaPage() {
               ) : (
                 <>
                   <p className="mb-3 text-sm text-muted-foreground">
-                    Confira as seções acima (rotina e material já salvos) e finalize a matrícula.
+                    Confira as seções acima (rotina, questionário de saúde e material já salvos) e
+                    finalize a matrícula.
                   </p>
                   <Button
                     className="w-full"
@@ -1284,6 +1391,16 @@ function RematriculaPage() {
                             'Você alterou a Rotina Escolar e ainda não salvou. Clique em "Salvar rotina escolar" antes de finalizar.',
                         });
                         setErro("Salve a Atualização da Rotina Escolar antes de finalizar.");
+                        rolarParaPrimeiroErro();
+                        return;
+                      }
+                      if (saudeAlterada || !saudeSalvaNoAno) {
+                        setErrosEnvio({
+                          saude: saudeAlterada
+                            ? 'Você alterou o Questionário de Saúde e ainda não salvou. Clique em "Salvar questionário de saúde" antes de finalizar.'
+                            : 'Revise o Questionário de Saúde e clique em "Salvar questionário de saúde" antes de finalizar.',
+                        });
+                        setErro("Salve o Questionário de Saúde antes de finalizar.");
                         rolarParaPrimeiroErro();
                         return;
                       }
