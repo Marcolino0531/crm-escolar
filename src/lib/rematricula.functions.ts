@@ -87,7 +87,15 @@ import {
   type PlanoRotinaExistente,
   type RotinaPersistida,
   type RotinaForm,
+  SAUDE_FORM_VAZIO,
+  colunasSaude,
+  padronizarSaudeForm,
+  saudeFormDaLinha,
+  validarSaudeForm,
+  type ColunasSaude,
+  type SaudeForm,
 } from "@/lib/matricula-form";
+import { SaudeInput } from "@/lib/matricula-saude-input";
 import type { MealKey, Weekday } from "@/lib/diario";
 import {
   TODOS_OS_TURNOS,
@@ -1358,12 +1366,9 @@ async function espelharRotinaNoDiario(
   }
 }
 
-// Uma linha de rotina por aluno/ano letivo na rematrícula (reenvio atualiza).
-function submissionIdRotinaRematricula(
-  unidade: string,
-  alunoId: string,
-  ano: number | null,
-): string {
+// Uma linha por aluno/ano letivo na rematrícula (reenvio atualiza), em
+// student_routine e em matricula_saude.
+function submissionIdRematricula(unidade: string, alunoId: string, ano: number | null): string {
   return `rematricula:${unidade}:${alunoId}:${ano ?? "sem-ano"}`;
 }
 
@@ -1462,7 +1467,7 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
     const dados = montarRotinaPersistida(rotina, aluno.serie);
     const { error } = await supabaseAdmin.from("student_routine" as never).upsert(
       {
-        submission_id: submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
+        submission_id: submissionIdRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
         unidade: sessao.unidade,
         sponte_aluno_id: Number(sessao.alunoId),
         aluno_nome: aluno.nome,
@@ -1491,6 +1496,114 @@ export const salvarRotinaRematricula = createServerFn({ method: "POST" })
         console.error(`${LOG_TAG} falha ao espelhar a rotina no Diário: ${String(e)}`);
         return { ok: false, erro: "Não foi possível salvar a rotina. Tente novamente." };
       }
+    }
+    return { ok: true };
+  });
+
+// ─── Questionário de Saúde (portal público) ─────────────────────────────────
+//
+// Dado LOCAL (não vai ao Sponte). Abre com a resposta da rematrícula do ano, se
+// já salva; senão, com a mais recente do aluno no colégio da sessão (formulário
+// de matrícula ou rematrícula de ano anterior). Cada ano grava a sua linha.
+
+const COLUNAS_SAUDE_SELECT =
+  "origem, ano_letivo, contato_emergencia, alergia, alergia_detalhe, problema_saude, problema_saude_detalhe, medicamento_continuo, medicamento_continuo_detalhe, plano_saude, plano_saude_detalhe, pessoas_autorizadas, cor_raca, outras_informacoes";
+
+interface LinhaSaudeSalva extends ColunasSaude {
+  origem: string;
+  ano_letivo: number | null;
+}
+
+export interface SaudeRematriculaResult {
+  ok: boolean;
+  erro?: string;
+  // "rematricula" (já salva neste ano), "matricula"/"anterior" (sugestão de
+  // outro envio) ou "" (em branco).
+  origem?: string;
+  saude?: SaudeForm;
+}
+
+export const saudeRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => TokenSchema.parse(input))
+  .handler(async ({ data }): Promise<SaudeRematriculaResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const { data: doAno, error } = await supabaseAdmin
+      .from("matricula_saude" as never)
+      .select(COLUNAS_SAUDE_SELECT)
+      .eq(
+        "submission_id",
+        submissionIdRematricula(sessao.unidade, sessao.alunoId, sessao.anoLetivo),
+      )
+      .maybeSingle<LinhaSaudeSalva>();
+    if (error) {
+      console.error(`${LOG_TAG} falha ao ler o questionário de saúde: ${error.message}`);
+      return { ok: false, erro: "Não conseguimos carregar o Questionário de Saúde agora." };
+    }
+    if (doAno) return { ok: true, origem: "rematricula", saude: saudeFormDaLinha(doAno) };
+
+    const { data: recente } = await supabaseAdmin
+      .from("matricula_saude" as never)
+      .select(COLUNAS_SAUDE_SELECT)
+      .eq("unidade", sessao.unidade)
+      .eq("sponte_aluno_id", Number(sessao.alunoId))
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<LinhaSaudeSalva>();
+    if (recente) {
+      return {
+        ok: true,
+        origem: recente.origem === "matricula" ? "matricula" : "anterior",
+        saude: saudeFormDaLinha(recente),
+      };
+    }
+    return { ok: true, origem: "", saude: { ...SAUDE_FORM_VAZIO } };
+  });
+
+const SalvarSaudeSchema = z.object({ token: z.string().min(16), saude: SaudeInput });
+
+export interface SalvarSaudeRematriculaResult {
+  ok: boolean;
+  erro?: string;
+  erros?: Record<string, string>;
+}
+
+export const salvarSaudeRematricula = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => SalvarSaudeSchema.parse(input))
+  .handler(async ({ data }): Promise<SalvarSaudeRematriculaResult> => {
+    const sessao = await resolverSessao(data.token);
+    if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
+
+    const aluno = await buscarAlunoPorId(sessao.unidade, sessao.alunoId);
+    if (!aluno) return { ok: false, erro: "Não conseguimos confirmar os dados do aluno." };
+
+    const saude = padronizarSaudeForm(data.saude as SaudeForm);
+    const erros = validarSaudeForm(saude);
+    if (Object.keys(erros).length > 0) {
+      return { ok: false, erros, erro: "Confira os campos destacados." };
+    }
+
+    const anoLetivo = sessao.anoLetivo;
+    const { error } = await supabaseAdmin.from("matricula_saude" as never).upsert(
+      {
+        submission_id: submissionIdRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
+        unidade: sessao.unidade,
+        sponte_aluno_id: Number(sessao.alunoId),
+        aluno_nome: aluno.nome,
+        serie: aluno.serie,
+        origem: "rematricula",
+        ano_letivo: anoLetivo,
+        ...colunasSaude(saude),
+      } as never,
+      { onConflict: "submission_id" },
+    );
+    if (error) {
+      console.error(`${LOG_TAG} falha ao salvar o questionário de saúde: ${error.message}`);
+      return {
+        ok: false,
+        erro: "Não foi possível salvar o Questionário de Saúde. Tente novamente.",
+      };
     }
     return { ok: true };
   });
@@ -1548,32 +1661,35 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
     }
 
     // As demais seções precisam ter sido salvas antes do envio final.
-    const [rotina, material, escolhaMaterial, existente, valoresMatricula] = await Promise.all([
-      supabaseAdmin
-        .from("student_routine" as never)
-        .select("id, dias_ativos, horario_estendido, sem_refeicoes, refeicoes")
-        .eq(
-          "submission_id",
-          submissionIdRotinaRematricula(sessao.unidade, sessao.alunoId, anoLetivo),
-        )
-        .maybeSingle<LinhaRotinaFinalizacao>(),
-      materialDaSerie(sessao.unidade, serieAlvo, anoLetivo),
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select("id")
-        .eq("unidade", sessao.unidade)
-        .eq("aluno_id", sessao.alunoId)
-        .eq("ano_letivo", anoLetivo)
-        .maybeSingle<{ id: string }>(),
-      supabaseAdmin
-        .from("rematricula_matricula_escolhas" as never)
-        .select("status")
-        .eq("unidade", sessao.unidade)
-        .eq("aluno_id", sessao.alunoId)
-        .eq("ano_letivo", anoLetivo)
-        .maybeSingle<{ status: StatusEscolhaRematricula }>(),
-      valoresMatriculaDoAno(sessao.unidade, anoLetivo),
-    ]);
+    const [rotina, saudeSalva, material, escolhaMaterial, existente, valoresMatricula] =
+      await Promise.all([
+        supabaseAdmin
+          .from("student_routine" as never)
+          .select("id, dias_ativos, horario_estendido, sem_refeicoes, refeicoes")
+          .eq("submission_id", submissionIdRematricula(sessao.unidade, sessao.alunoId, anoLetivo))
+          .maybeSingle<LinhaRotinaFinalizacao>(),
+        supabaseAdmin
+          .from("matricula_saude" as never)
+          .select(COLUNAS_SAUDE_SELECT)
+          .eq("submission_id", submissionIdRematricula(sessao.unidade, sessao.alunoId, anoLetivo))
+          .maybeSingle<LinhaSaudeSalva>(),
+        materialDaSerie(sessao.unidade, serieAlvo, anoLetivo),
+        supabaseAdmin
+          .from("rematricula_escolhas" as never)
+          .select("id")
+          .eq("unidade", sessao.unidade)
+          .eq("aluno_id", sessao.alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{ id: string }>(),
+        supabaseAdmin
+          .from("rematricula_matricula_escolhas" as never)
+          .select("status")
+          .eq("unidade", sessao.unidade)
+          .eq("aluno_id", sessao.alunoId)
+          .eq("ano_letivo", anoLetivo)
+          .maybeSingle<{ status: StatusEscolhaRematricula }>(),
+        valoresMatriculaDoAno(sessao.unidade, anoLetivo),
+      ]);
     if (!rotina.data) {
       erros["rotina"] = "Salve a Atualização da Rotina Escolar antes de finalizar.";
     } else {
@@ -1594,6 +1710,12 @@ export const finalizarRematricula = createServerFn({ method: "POST" })
         erros["rotina"] =
           "A Rotina Escolar salva não está de acordo com os Extras. Salve a rotina novamente antes de finalizar.";
       }
+    }
+    if (!saudeSalva.data) {
+      erros["saude"] = "Salve o Questionário de Saúde antes de finalizar.";
+    } else if (Object.keys(validarSaudeForm(saudeFormDaLinha(saudeSalva.data))).length > 0) {
+      erros["saude"] =
+        "O Questionário de Saúde salvo está incompleto. Revise e salve novamente antes de finalizar.";
     }
     const erroFinanceiro = await erroCadastroFinanceiro(
       sessao.unidade,

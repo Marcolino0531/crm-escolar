@@ -834,6 +834,103 @@ export function textoPessoasAutorizadas(pessoas: readonly PessoaAutorizada[]): s
     .join("\n");
 }
 
+// Colunas de `matricula_saude` preenchidas pelo questionário (formulário de
+// matrícula e rematrícula gravam exatamente as mesmas).
+export interface ColunasSaude {
+  contato_emergencia: string;
+  alergia: string;
+  alergia_detalhe: string;
+  problema_saude: string;
+  problema_saude_detalhe: string;
+  medicamento_continuo: string;
+  medicamento_continuo_detalhe: string;
+  plano_saude: string;
+  plano_saude_detalhe: string;
+  pessoas_autorizadas: string;
+  cor_raca: string;
+  outras_informacoes: string;
+}
+
+export function colunasSaude(saude: SaudeForm): ColunasSaude {
+  return {
+    contato_emergencia: textoContatosEmergencia(saude.contatosEmergencia),
+    alergia: saude.alergia.opcao,
+    alergia_detalhe: saude.alergia.detalhe.trim(),
+    problema_saude: saude.problemaSaude.opcao,
+    problema_saude_detalhe: saude.problemaSaude.detalhe.trim(),
+    medicamento_continuo: saude.medicamentoContinuo.opcao,
+    medicamento_continuo_detalhe: saude.medicamentoContinuo.detalhe.trim(),
+    plano_saude: saude.planoSaude.opcao,
+    plano_saude_detalhe: saude.planoSaude.detalhe.trim(),
+    pessoas_autorizadas: textoPessoasAutorizadas(saude.pessoasAutorizadas),
+    cor_raca: saude.corRaca,
+    outras_informacoes: saude.outrasInformacoes.trim(),
+  };
+}
+
+const RE_CPF_TEXTO = /^\d{3}\.?\d{3}\.?\d{3}-?\d{2}$/;
+const RE_TELEFONE_TEXTO = /^[\d()\s+-]+$/;
+
+// Inverso de textoContatosEmergencia/textoPessoasAutorizadas: as partes vazias
+// foram descartadas na gravação, então cada parte é reconhecida pelo formato
+// (CPF, telefone) e as demais seguem a ordem nome, parentesco.
+function partesDaLinha(linha: string): PessoaAutorizada {
+  const pessoa: PessoaAutorizada = { ...PESSOA_AUTORIZADA_VAZIA };
+  const textos: string[] = [];
+  for (const parte of linha.split(" — ").map((p) => p.trim())) {
+    if (!parte) continue;
+    if (!pessoa.cpf && RE_CPF_TEXTO.test(parte)) pessoa.cpf = parte;
+    else if (!pessoa.telefone && RE_TELEFONE_TEXTO.test(parte)) pessoa.telefone = parte;
+    else textos.push(parte);
+  }
+  pessoa.nome = textos[0] ?? "";
+  pessoa.parentesco = textos.slice(1).join(" — ");
+  return pessoa;
+}
+
+function linhasDoTexto(texto: string | null | undefined): string[] {
+  return (texto ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+export function contatosDoTexto(texto: string | null | undefined): ContatoEmergencia[] {
+  return linhasDoTexto(texto).map((linha) => {
+    const { nome, telefone, parentesco } = partesDaLinha(linha);
+    return { nome, telefone, parentesco };
+  });
+}
+
+export function pessoasDoTexto(texto: string | null | undefined): PessoaAutorizada[] {
+  return linhasDoTexto(texto).map(partesDaLinha);
+}
+
+function respostaDaColuna(opcao: string | null | undefined, detalhe: string | null | undefined) {
+  const valida = (OPCOES_SAUDE as readonly string[]).includes(opcao ?? "");
+  return {
+    opcao: (valida ? opcao : "") as OpcaoSaude | "",
+    detalhe: detalhe ?? "",
+  };
+}
+
+/** Linha gravada em `matricula_saude` → formulário (para abrir preenchido). */
+export function saudeFormDaLinha(linha: Partial<ColunasSaude>): SaudeForm {
+  return {
+    contatosEmergencia: contatosDoTexto(linha.contato_emergencia),
+    alergia: respostaDaColuna(linha.alergia, linha.alergia_detalhe),
+    problemaSaude: respostaDaColuna(linha.problema_saude, linha.problema_saude_detalhe),
+    medicamentoContinuo: respostaDaColuna(
+      linha.medicamento_continuo,
+      linha.medicamento_continuo_detalhe,
+    ),
+    planoSaude: respostaDaColuna(linha.plano_saude, linha.plano_saude_detalhe),
+    pessoasAutorizadas: pessoasDoTexto(linha.pessoas_autorizadas),
+    corRaca: linha.cor_raca ?? "",
+    outrasInformacoes: linha.outras_informacoes ?? "",
+  };
+}
+
 export const PERGUNTAS_SAUDE: readonly {
   campo: "alergia" | "problemaSaude" | "medicamentoContinuo" | "planoSaude";
   pergunta: string;
