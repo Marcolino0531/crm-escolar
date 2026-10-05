@@ -11,8 +11,10 @@ import {
   emOrdemAlfabetica,
   exigirCompetenciaAberta,
   foiAjustada,
+  importacaoAnteriorDoCnpj,
   inssDoMes,
   liquidoManualDoAjuste,
+  liquidosManuaisDaImportacao,
   montarLoteFolha,
   pendentesParaFechar,
   planejarReimportacao,
@@ -667,28 +669,7 @@ describe("líquido a pagar manual (Ajustar)", () => {
     expect(compararFolhas([anterior], [atual]).porColaborador[0].divergencias).toEqual([]);
   });
 
-  it("reimportação: igual não é tocado (mantém); substituído perde o líquido manual", () => {
-    const gravados = [
-      { ...colab(), ajustadoManualmente: true },
-      { ...colab({ codigo: "2" }), ajustadoManualmente: true },
-    ];
-    const plano = planejarReimportacao(gravados, [colab(), colab({ codigo: "2", liquido: 2600 })]);
-    expect(plano.iguais.map((c) => c.codigo)).toEqual(["1"]);
-    expect(plano.substituidos.map((x) => [x.colaborador.codigo, x.perdeAjusteManual])).toEqual([
-      ["2", true],
-    ]);
-    const sql = readFileSync(
-      "supabase/migrations/20261129090000_rh_folha_liquido_manual.sql",
-      "utf8",
-    );
-    const gravar = sql.slice(
-      sql.indexOf("FUNCTION public.rh_folha_gravar_importacao"),
-      sql.indexOf("FUNCTION public.rh_folha_ajustar_colaborador"),
-    );
-    expect(gravar).toMatch(/ajuste_observacao = NULL,\s*liquido_manual = NULL,/);
-    expect(sql).toMatch(/liquido_manual >= 0/);
-    const fonte = readFileSync("src/lib/rh-folha.functions.ts", "utf8");
-    expect(fonte).not.toMatch(/liquido_manual: g\b|g\?\.liquidoManual/);
+  it("exclusão e Desfazer levam a linha inteira (inclui o líquido manual)", () => {
     const retrato = readFileSync(
       "supabase/migrations/20261128090000_rh_folha_exclusao_retrato.sql",
       "utf8",
@@ -704,5 +685,118 @@ describe("líquido a pagar manual (Ajustar)", () => {
     expect(liquidoManualDoAjuste(2800, 2670)).toBe(2800);
     expect(liquidoManualDoAjuste(0, 2670)).toBe(0);
     expect(() => liquidoManualDoAjuste(-0.01, 2670)).toThrow(/negativo/);
+  });
+});
+
+describe("líquido manual nos meses seguintes", () => {
+  const comManual = (c: ColaboradorComparavel, liquidoManual: number | null) =>
+    Object.assign(c, { liquidoManual });
+  const paraRegistro = (
+    c: ColaboradorComparavel,
+    liquidoManual: number | null,
+    funcionarioId = "f1",
+  ) => ({
+    id: chaveColaborador(c),
+    funcionarioId,
+    status: "confirmado" as const,
+    nome: c.nome,
+    proventos: c.proventos,
+    descontos: c.descontos,
+    liquido: c.liquido,
+    liquidoManual,
+  });
+
+  it("mês seguinte herda o valor; salário, Resumo e lote usam o pago; totais da Folha não", () => {
+    const anteriores = [comManual(colab(), 2500.5)];
+    const novo = [colab({ proventos: 3100, liquido: 2770 })];
+    const plano = planejarReimportacao([], novo);
+    const liquidos = liquidosManuaisDaImportacao(anteriores, [], plano);
+    expect(liquidos.get("empregado:1")).toEqual({ valor: 2500.5, herdado: true });
+    const registros = novo.map((c) =>
+      paraRegistro(c, liquidos.get(chaveColaborador(c))?.valor ?? null),
+    );
+    expect(salariosDaFolha(registros)).toEqual([
+      { funcionarioId: "f1", valor: 3100, valorLiquido: 2500.5 },
+    ]);
+    const resumo = resumoDaFolha(registros, new Map());
+    expect(totaisResumo(resumo).liquido).toBe(2500.5);
+    expect(montarLoteFolha(resumo).total).toBe(2500.5);
+    expect(totaisDasEmpresas(registros).liquido).toBe(2770);
+  });
+
+  it("sem líquido manual no anterior, registro novo na empresa e outro CNPJ: entram sem", () => {
+    const imps = [
+      { id: "a", cnpj: "00.000.000/0001-91", empresa: "A", competencia: "2030-01" },
+      { id: "b", cnpj: "11.111.111/0001-11", empresa: "B", competencia: "2030-01" },
+    ];
+    expect(importacaoAnteriorDoCnpj(imps, "2030-02", "00.000.000/0001-91")?.id).toBe("a");
+    const daEmpresaA = [comManual(colab({ codigo: "2" }), null)];
+    const novo = [colab({ codigo: "2" }), colab({ codigo: "3" }), colab({ codigo: "5" })];
+    const liquidos = liquidosManuaisDaImportacao(daEmpresaA, [], planejarReimportacao([], novo));
+    expect(liquidos.size).toBe(0);
+  });
+
+  it("reimportação: substituído mantém o líquido manual; igual não é tocado", () => {
+    const gravados = [
+      comManual(colab(), 100),
+      comManual(colab({ codigo: "2", cpf: "900.000.002-56" }), 200),
+    ];
+    const novo = [colab(), colab({ codigo: "2", cpf: "900.000.002-56", liquido: 2600 })];
+    const plano = planejarReimportacao(
+      gravados.map((g) => ({ ...g, ajustadoManualmente: false })),
+      novo,
+    );
+    expect(plano.iguais.map((c) => c.codigo)).toEqual(["1"]);
+    const liquidos = liquidosManuaisDaImportacao([], gravados, plano);
+    const aGravar = [...plano.novos, ...plano.substituidos.map((x) => x.colaborador)];
+    expect(aGravar.map((c) => [c.codigo, liquidos.get(chaveColaborador(c))?.valor])).toEqual([
+      ["2", 200],
+    ]);
+    const sql = readFileSync(
+      "supabase/migrations/20261130090000_rh_folha_liquido_manual_herdado.sql",
+      "utf8",
+    );
+    expect(sql.match(/nullif\(v_col->>'liquido_manual', ''\)::numeric/g)).toHaveLength(3);
+    expect(sql).toMatch(/liquido_manual = nullif/);
+    expect(sql).not.toMatch(/liquido_manual = NULL/);
+  });
+
+  it('depois de "Usar o líquido da folha" o mês seguinte entra sem líquido manual', () => {
+    const gravado = liquidoManualDoAjuste(2670, 2670);
+    expect(gravado).toBeNull();
+    const liquidos = liquidosManuaisDaImportacao(
+      [comManual(colab(), gravado)],
+      [],
+      planejarReimportacao([], [colab()]),
+    );
+    expect(liquidos.size).toBe(0);
+  });
+
+  it("pessoa com dois registros: herda só no que tinha e a soma fica correta", () => {
+    const CPF = "900.000.001-75";
+    const c22 = colab({ codigo: "22", cpf: CPF, proventos: 3000, liquido: 2670 });
+    const c57 = colab({ codigo: "57", cpf: CPF, proventos: 1500.1, liquido: 1300.05 });
+    const liquidos = liquidosManuaisDaImportacao(
+      [comManual({ ...c22 }, 2500.5), comManual({ ...c57 }, null)],
+      [],
+      planejarReimportacao([], [c22, c57]),
+    );
+    expect([...liquidos.keys()]).toEqual(["empregado:22"]);
+    const registros = [c22, c57].map((c) =>
+      paraRegistro(c, liquidos.get(chaveColaborador(c))?.valor ?? null),
+    );
+    expect(salariosDaFolha(registros)).toEqual([
+      { funcionarioId: "f1", valor: 4500.1, valorLiquido: 3800.55 },
+    ]);
+    expect(resumoDaFolha(registros, new Map())[0].liquido).toBe(3800.55);
+  });
+
+  it("herdar não cria divergência nem muda a pré-seleção", () => {
+    const anterior = [comManual(colab(), 2500.5), colab({ codigo: "2" })];
+    const atual = [colab(), colab({ codigo: "2" })];
+    const cmp = compararFolhas(anterior, atual);
+    expect(cmp.porColaborador.every((p) => p.divergencias.length === 0)).toBe(true);
+    expect([...preSelecao(cmp)]).toEqual(["empregado:1", "empregado:2"]);
+    expect(cmp).toEqual(compararFolhas([colab(), colab({ codigo: "2" })], atual));
   });
 });
