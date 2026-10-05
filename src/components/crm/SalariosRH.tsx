@@ -19,9 +19,16 @@ import { MESES_PT } from "@/lib/rh-periodo";
 import {
   excluirSalario,
   listarSalarios,
+  listarValoresMensais,
   salvarFolhaSalario,
   salvarSalario,
 } from "@/lib/rh-salario.functions";
+import {
+  BlocoValores,
+  chaveValoresMensais,
+  PainelValorMensal,
+  type PessoaSelecionada,
+} from "@/components/crm/ValoresMensaisRH";
 import { montarFolhaSalario } from "@/lib/rh-folhas";
 import type { ItemLote } from "@/lib/folha-pagamento";
 
@@ -122,6 +129,23 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
   const [novoValor, setNovoValor] = useState("");
   const [novoLiquido, setNovoLiquido] = useState("");
   const [novaObs, setNovaObs] = useState("");
+
+  const listarValores = useServerFn(listarValoresMensais);
+  const [pessoaSel, setPessoaSel] = useState<PessoaSelecionada | null>(null);
+  const valoresMensais = useQuery({
+    queryKey: chaveValoresMensais(schoolId),
+    enabled: !!schoolId,
+    queryFn: async () => listarValores({ data: { schoolId: schoolId as string } }),
+  });
+  const pessoasDoTipo = valoresMensais.data
+    ? { terceirizado: valoresMensais.data.terceirizados, extra: valoresMensais.data.extras }
+    : null;
+  const pessoaSelecionada =
+    (pessoaSel && pessoasDoTipo?.[pessoaSel.tipo].find((p) => p.id === pessoaSel.id)) || null;
+  const selecionarPessoa = (p: PessoaSelecionada) => {
+    setSelecionadoId(null);
+    setPessoaSel(p);
+  };
 
   const salarios = useQuery({
     queryKey: ["rh-salarios", schoolId],
@@ -233,207 +257,260 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-700">Salário base vigente</h3>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              Competência
-              <SeletorCompetencia value={competenciaRef} onChange={setCompetenciaRef} compacto />
-            </label>
-            {podeEditar && (
-              <button
-                type="button"
-                onClick={abrirModalFolha}
-                disabled={salarios.isLoading}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                Salvar Folha de Pagamento
-              </button>
-            )}
+      <div className="lg:col-span-2 space-y-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+            <h3 className="text-sm font-semibold text-gray-700">Salário base vigente</h3>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                Competência
+                <SeletorCompetencia value={competenciaRef} onChange={setCompetenciaRef} compacto />
+              </label>
+              {podeEditar && (
+                <button
+                  type="button"
+                  onClick={abrirModalFolha}
+                  disabled={salarios.isLoading}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  Salvar Folha de Pagamento
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-        {salarios.isLoading ? (
-          <p className="px-4 py-6 text-sm text-gray-400">Carregando…</p>
-        ) : salarios.isError ? (
-          <p className="px-4 py-6 text-sm text-red-600">
-            {salarios.error instanceof Error ? salarios.error.message : "Erro ao carregar."}
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-              <tr>
-                <th className="text-left px-4 py-2">Funcionário</th>
-                <th className="text-left px-4 py-2">Cargo</th>
-                <th className="text-right px-4 py-2">Bruto</th>
-                <th className="text-right px-4 py-2">Líquido</th>
-                <th className="text-left px-4 py-2">Desde</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ativos.map((f) => {
-                const v = salarioVigente(registros, f.id, competenciaRef);
-                return (
-                  <tr
-                    key={f.id}
-                    onClick={() => setSelecionadoId(f.id)}
-                    className={`border-t border-gray-100 cursor-pointer hover:bg-emerald-50 ${
-                      f.id === selecionadoId ? "bg-emerald-50" : ""
-                    }`}
-                  >
-                    <td className="px-4 py-2 font-medium text-gray-800">{f.nomeCompleto}</td>
-                    <td className="px-4 py-2 text-gray-500">{f.cargo ?? "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">
-                      {v ? brl(v.valor) : <span className="text-gray-400">—</span>}
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">
-                      {v?.valorLiquido != null ? (
-                        brl(v.valorLiquido)
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-gray-500">
-                      {v ? rotuloCompetencia(v.competencia) : "—"}
+          {salarios.isLoading ? (
+            <p className="px-4 py-6 text-sm text-gray-400">Carregando…</p>
+          ) : salarios.isError ? (
+            <p className="px-4 py-6 text-sm text-red-600">
+              {salarios.error instanceof Error ? salarios.error.message : "Erro ao carregar."}
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="text-left px-4 py-2">Funcionário</th>
+                  <th className="text-left px-4 py-2">Cargo</th>
+                  <th className="text-right px-4 py-2">Bruto</th>
+                  <th className="text-right px-4 py-2">Líquido</th>
+                  <th className="text-left px-4 py-2">Desde</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ativos.map((f) => {
+                  const v = salarioVigente(registros, f.id, competenciaRef);
+                  return (
+                    <tr
+                      key={f.id}
+                      onClick={() => {
+                        setPessoaSel(null);
+                        setSelecionadoId(f.id);
+                      }}
+                      className={`border-t border-gray-100 cursor-pointer hover:bg-emerald-50 ${
+                        f.id === selecionadoId ? "bg-emerald-50" : ""
+                      }`}
+                    >
+                      <td className="px-4 py-2 font-medium text-gray-800">{f.nomeCompleto}</td>
+                      <td className="px-4 py-2 text-gray-500">{f.cargo ?? "—"}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {v ? brl(v.valor) : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {v?.valorLiquido != null ? (
+                          brl(v.valorLiquido)
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-gray-500">
+                        {v ? rotuloCompetencia(v.competencia) : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {ativos.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                      Nenhum funcionário ativo.
                     </td>
                   </tr>
-                );
-              })}
-              {ativos.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
-                    Nenhum funcionário ativo.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {valoresMensais.isError ? (
+          <p className="text-sm text-red-600">
+            {valoresMensais.error instanceof Error
+              ? valoresMensais.error.message
+              : "Erro ao carregar Terceirizados e Extras."}
+          </p>
+        ) : (
+          valoresMensais.data && (
+            <>
+              <BlocoValores
+                titulo="Terceirizados"
+                tipo="terceirizado"
+                pessoas={valoresMensais.data.terceirizados}
+                registros={valoresMensais.data.valores}
+                competencia={competenciaRef}
+                selecionada={pessoaSel}
+                onSelecionar={selecionarPessoa}
+              />
+              <BlocoValores
+                titulo="Extras"
+                tipo="extra"
+                pessoas={valoresMensais.data.extras}
+                registros={valoresMensais.data.valores}
+                competencia={competenciaRef}
+                selecionada={pessoaSel}
+                onSelecionar={selecionarPessoa}
+              />
+            </>
+          )
         )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-700">
-          {selecionado ? selecionado.nomeCompleto : "Selecione um funcionário"}
-        </h3>
-        {selecionado && (
+        {pessoaSel && pessoaSelecionada && valoresMensais.data ? (
+          <PainelValorMensal
+            key={`${pessoaSel.tipo}:${pessoaSel.id}`}
+            schoolId={schoolId}
+            tipo={pessoaSel.tipo}
+            pessoa={pessoaSelecionada}
+            registros={valoresMensais.data.valores}
+            podeEditar={podeEditar}
+          />
+        ) : (
           <>
-            {naFolha?.has(selecionado.id) && (
-              <p className="text-xs text-emerald-700">
-                Na folha importada (Extrato Mensal) de {rotuloCompetencia(competenciaRef)}: bruto e
-                líquido vêm da aba Folha.
-              </p>
-            )}
-            {podeEditar && !naFolha?.has(selecionado.id) && (
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  gravar.mutate();
-                }}
-              >
-                <div className="block text-xs text-gray-500">
-                  Competência
-                  <div className="mt-1">
-                    <SeletorCompetencia value={novaCompetencia} onChange={setNovaCompetencia} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block text-xs text-gray-500">
-                    Bruto (R$)
-                    <input
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={novoValor}
-                      onChange={(e) => setNovoValor(e.target.value)}
-                      className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
-                    />
-                  </label>
-                  <label className="block text-xs text-gray-500">
-                    Líquido (R$)
-                    <input
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={novoLiquido}
-                      onChange={(e) => setNovoLiquido(e.target.value)}
-                      className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
-                    />
-                  </label>
-                </div>
-                {preenchimento && !preenchimento.proprio && preenchimento.origem && (
-                  <p className="text-[11px] text-amber-700">
-                    Sem registro em {rotuloCompetencia(novaCompetencia)}: valores herdados de{" "}
-                    {rotuloCompetencia(preenchimento.origem)}. Ajuste e salve para criar esta
-                    competência.
+            <h3 className="text-sm font-semibold text-gray-700">
+              {selecionado ? selecionado.nomeCompleto : "Selecione um funcionário"}
+            </h3>
+            {selecionado && (
+              <>
+                {naFolha?.has(selecionado.id) && (
+                  <p className="text-xs text-emerald-700">
+                    Na folha importada (Extrato Mensal) de {rotuloCompetencia(competenciaRef)}:
+                    bruto e líquido vêm da aba Folha.
                   </p>
                 )}
-                <label className="block text-xs text-gray-500">
-                  Observação (opcional)
-                  <input
-                    value={novaObs}
-                    onChange={(e) => setNovaObs(e.target.value)}
-                    className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={gravar.isPending}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium rounded-md py-1.5"
-                >
-                  {gravar.isPending
-                    ? "Salvando…"
-                    : preenchimento?.proprio
-                      ? `Atualizar ${rotuloCompetencia(novaCompetencia)}`
-                      : `Salvar ${rotuloCompetencia(novaCompetencia)}`}
-                </button>
-                <p className="text-[11px] text-gray-400">
-                  Cada competência é um registro próprio; as anteriores ficam no histórico.
-                </p>
-              </form>
-            )}
-            <div>
-              <h4 className="text-xs uppercase text-gray-500 mb-1">Histórico</h4>
-              {historico.length === 0 ? (
-                <p className="text-sm text-gray-400">Nenhum salário cadastrado.</p>
-              ) : (
-                <ul className="divide-y divide-gray-100 text-sm">
-                  {historico.map((r) => (
-                    <li key={r.id} className="flex items-start justify-between gap-2 py-1.5">
-                      <div>
-                        <span className="font-medium text-gray-700">
-                          {rotuloCompetencia(r.competencia)}
-                        </span>
-                        <span className="ml-2 tabular-nums">{brl(r.valor)}</span>
-                        {r.valorLiquido != null && (
-                          <span className="ml-2 tabular-nums text-gray-500">
-                            · líq. {brl(r.valorLiquido)}
-                          </span>
-                        )}
-                        {r.observacao && <p className="text-xs text-gray-500">{r.observacao}</p>}
-                        <p className="text-[11px] text-gray-400">
-                          {r.criadoPor}
-                          {r.criadoEm && ` · ${new Date(r.criadoEm).toLocaleDateString("pt-BR")}`}
-                        </p>
+                {podeEditar && !naFolha?.has(selecionado.id) && (
+                  <form
+                    className="space-y-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      gravar.mutate();
+                    }}
+                  >
+                    <div className="block text-xs text-gray-500">
+                      Competência
+                      <div className="mt-1">
+                        <SeletorCompetencia value={novaCompetencia} onChange={setNovaCompetencia} />
                       </div>
-                      {podeEditar && (
-                        <button
-                          type="button"
-                          title="Excluir registro"
-                          onClick={() => {
-                            if (
-                              confirm(`Excluir o salário de ${rotuloCompetencia(r.competencia)}?`)
-                            )
-                              remover.mutate(r.id);
-                          }}
-                          className="text-gray-400 hover:text-red-600"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block text-xs text-gray-500">
+                        Bruto (R$)
+                        <input
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={novoValor}
+                          onChange={(e) => setNovoValor(e.target.value)}
+                          className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="block text-xs text-gray-500">
+                        Líquido (R$)
+                        <input
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={novoLiquido}
+                          onChange={(e) => setNovoLiquido(e.target.value)}
+                          className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        />
+                      </label>
+                    </div>
+                    {preenchimento && !preenchimento.proprio && preenchimento.origem && (
+                      <p className="text-[11px] text-amber-700">
+                        Sem registro em {rotuloCompetencia(novaCompetencia)}: valores herdados de{" "}
+                        {rotuloCompetencia(preenchimento.origem)}. Ajuste e salve para criar esta
+                        competência.
+                      </p>
+                    )}
+                    <label className="block text-xs text-gray-500">
+                      Observação (opcional)
+                      <input
+                        value={novaObs}
+                        onChange={(e) => setNovaObs(e.target.value)}
+                        className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={gravar.isPending}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium rounded-md py-1.5"
+                    >
+                      {gravar.isPending
+                        ? "Salvando…"
+                        : preenchimento?.proprio
+                          ? `Atualizar ${rotuloCompetencia(novaCompetencia)}`
+                          : `Salvar ${rotuloCompetencia(novaCompetencia)}`}
+                    </button>
+                    <p className="text-[11px] text-gray-400">
+                      Cada competência é um registro próprio; as anteriores ficam no histórico.
+                    </p>
+                  </form>
+                )}
+                <div>
+                  <h4 className="text-xs uppercase text-gray-500 mb-1">Histórico</h4>
+                  {historico.length === 0 ? (
+                    <p className="text-sm text-gray-400">Nenhum salário cadastrado.</p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100 text-sm">
+                      {historico.map((r) => (
+                        <li key={r.id} className="flex items-start justify-between gap-2 py-1.5">
+                          <div>
+                            <span className="font-medium text-gray-700">
+                              {rotuloCompetencia(r.competencia)}
+                            </span>
+                            <span className="ml-2 tabular-nums">{brl(r.valor)}</span>
+                            {r.valorLiquido != null && (
+                              <span className="ml-2 tabular-nums text-gray-500">
+                                · líq. {brl(r.valorLiquido)}
+                              </span>
+                            )}
+                            {r.observacao && (
+                              <p className="text-xs text-gray-500">{r.observacao}</p>
+                            )}
+                            <p className="text-[11px] text-gray-400">
+                              {r.criadoPor}
+                              {r.criadoEm &&
+                                ` · ${new Date(r.criadoEm).toLocaleDateString("pt-BR")}`}
+                            </p>
+                          </div>
+                          {podeEditar && (
+                            <button
+                              type="button"
+                              title="Excluir registro"
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    `Excluir o salário de ${rotuloCompetencia(r.competencia)}?`,
+                                  )
+                                )
+                                  remover.mutate(r.id);
+                              }}
+                              className="text-gray-400 hover:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

@@ -6,12 +6,7 @@ import { toast } from "sonner";
 import { useSchool } from "@/lib/app-context";
 import { escolaAtivaId } from "@/lib/unidade-global";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
-import {
-  criarExtra,
-  editarExtra,
-  listarExtras,
-  removerExtra,
-} from "@/lib/rh-extras.functions";
+import { criarExtra, editarExtra, listarExtras, removerExtra } from "@/lib/rh-extras.functions";
 import { MENSAGEM_EXTRA_DUPLICADO, nomeExtraDuplicado, type Extra } from "@/lib/rh-extras";
 
 interface ExtrasRHProps {

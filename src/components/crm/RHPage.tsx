@@ -186,9 +186,7 @@ const RHPage: React.FC<RHPageProps> = ({ rhHook, unidadeSelecionada }) => {
   const [abaRh, setAbaRh] = useState<
     "funcionarios" | "folhas" | "contracheques" | "ponto" | "estatistica" | "aniversarios"
   >("funcionarios");
-  const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados" | "extras">(
-    "efetivos",
-  );
+  const [subPessoal, setSubPessoal] = useState<"efetivos" | "terceirizados" | "extras">("efetivos");
   const podeVerExtras = canView("rh.pessoal.extras");
   const mostraEfetivos = abaRh === "funcionarios" && subPessoal === "efetivos";
   const [folhasRefresh, setFolhasRefresh] = useState(0);
