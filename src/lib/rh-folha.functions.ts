@@ -1213,7 +1213,8 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
 
 /**
  * Apaga o registro da folha gravada (com rubricas, restituição e eventos
- * anteriores) e grava a exclusão da competência; com "fixa", também a do colégio.
+ * anteriores) e grava a exclusão da competência, com o retrato do registro para
+ * o "Desfazer"; com "fixa", também a do colégio.
  * funcionarios_salarios da pessoa é recalculada sem ele ou removida.
  */
 export const excluirColaboradorFolha = createServerFn({ method: "POST" })
@@ -1286,45 +1287,46 @@ export const listarExclusoesFolha = createServerFn({ method: "POST" })
 
 /**
  * Desfaz uma exclusão. Fixa: vale para as próximas importações. Da competência
- * (só aberta): o registro volta na próxima reimportação do PDF.
+ * (só aberta): o registro volta à folha gravada com os valores do extrato e o
+ * status de conferência guardados no retrato da exclusão (rh_folha_desfazer_exclusao).
+ * Sem retrato (exclusão antiga): volta na próxima reimportação do PDF.
  */
 export const desfazerExclusaoFolha = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => schoolInput.extend({ id: z.string().uuid() }).parse(input))
-  .handler(async ({ data, context }): Promise<{ ok: true }> => {
-    await contexto(context.userId, data.schoolId, false);
-    await exigirAdminFolha(context.userId);
-    const { data: row, error } = await supabaseAdmin
-      .from("rh_folha_exclusoes" as never)
-      .select(EXCLUSAO_COLS)
-      .eq("id", data.id)
-      .eq("school_id", data.schoolId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    const e = row as ExclusaoRow | null;
-    if (!e) throw new Error("Exclusão não encontrada nesta unidade.");
-    const imps = e.competencia ? await importacoesDa(data.schoolId, e.competencia) : [];
-    if (!e.fixa && competenciaFechada(imps)) {
-      throw new Error("Competência fechada: reabra para desfazer a exclusão.");
-    }
-    const { error: dErr } = await supabaseAdmin
-      .from("rh_folha_exclusoes" as never)
-      .delete()
-      .eq("id", e.id);
-    if (dErr) throw new Error(dErr.message);
-    const imp = e.fixa ? null : importacaoDoCnpj(imps, e.cnpj);
-    if (imp) {
-      await registrarEvento(
-        imp.id,
-        null,
-        "exclusao_desfeita",
-        { cnpj: e.cnpj, tipo: e.tipo, codigo: e.codigo, cpf: e.cpf, nome: e.nome },
-        context.userId,
-        await nomeDoUsuario(context.userId),
+  .handler(
+    async ({ data, context }): Promise<{ ok: true; restaurado: boolean; semCopia: boolean }> => {
+      await contexto(context.userId, data.schoolId, false);
+      await exigirAdminFolha(context.userId);
+      const { data: row, error } = await supabaseAdmin
+        .from("rh_folha_exclusoes" as never)
+        .select(EXCLUSAO_COLS)
+        .eq("id", data.id)
+        .eq("school_id", data.schoolId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      const e = row as ExclusaoRow | null;
+      if (!e) throw new Error("Exclusão não encontrada nesta unidade.");
+      const imps = e.competencia ? await importacoesDa(data.schoolId, e.competencia) : [];
+      if (!e.fixa && competenciaFechada(imps)) {
+        throw new Error("Competência fechada: reabra para desfazer a exclusão.");
+      }
+      const nome = await nomeDoUsuario(context.userId);
+      const { data: res, error: dErr } = await supabaseAdmin.rpc(
+        "rh_folha_desfazer_exclusao" as never,
+        {
+          p: { school_id: data.schoolId, exclusao_id: e.id, por: context.userId, por_nome: nome },
+        } as never,
       );
-    }
-    return { ok: true };
-  });
+      if (dErr) throw new Error(dErr.message);
+      const r = res as { restaurado?: boolean; sem_copia?: boolean } | null;
+      const restaurado = Boolean(r?.restaurado);
+      if (restaurado && e.competencia) {
+        await sincronizarSalarios(data.schoolId, e.competencia, context.userId, nome);
+      }
+      return { ok: true, restaurado, semCopia: Boolean(r?.sem_copia) };
+    },
+  );
 
 // ---------- Fechamento ----------
 

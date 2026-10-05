@@ -667,8 +667,9 @@ export function conflitoVinculoCpf(
 }
 
 // ---------- Exclusão de colaborador da folha (só admin) ----------
-// O registro excluído é apagado da folha gravada. Da exclusão fica só a
-// identidade (empresa, tipo, código, CPF e nome), o motivo, quem e quando.
+// O registro excluído é apagado da folha gravada. A exclusão guarda a
+// identidade (empresa, tipo, código, CPF e nome), o motivo, quem e quando e,
+// só no servidor, o retrato do registro, que o "Desfazer" devolve à folha.
 
 /**
  * Exclusão de uma competência (empresa + tipo + código) ou fixa do colégio:
@@ -743,4 +744,13 @@ export function salarioAposExclusao(
 ): { acao: "gravar"; valor: number; valorLiquido: number } | { acao: "remover" } {
   const s = salariosDaFolha(restantes.filter((r) => r.funcionarioId === funcionarioId))[0];
   return s ? { acao: "gravar", valor: s.valor, valorLiquido: s.valorLiquido } : { acao: "remover" };
+}
+
+/** Aviso da tela depois de "Desfazer" uma exclusão da folha. */
+export function avisoDesfazerExclusao(r: { restaurado: boolean; semCopia: boolean }): string {
+  if (r.restaurado) return "Exclusão desfeita: o registro voltou para a folha.";
+  if (r.semCopia) {
+    return "Exclusão desfeita. Este registro não tinha cópia guardada: importe de novo o PDF deste mês para ele voltar à folha.";
+  }
+  return "Exclusão desfeita.";
 }

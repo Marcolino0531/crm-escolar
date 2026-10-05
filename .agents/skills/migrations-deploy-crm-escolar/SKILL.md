@@ -62,6 +62,17 @@ antes, aplicar o SQL, repetir a verificação depois (existência da tabela, RLS
 policies, `has_table_privilege` para anon/authenticated/service_role, contagem
 de linhas, `storage.buckets.public`).
 
+## Nada de DDL ou escrita em produção sem autorização (nem com ROLLBACK)
+
+Regra do Sérgio: **qualquer DDL ou escrita no banco de produção exige
+autorização escrita prévia**, mesmo dentro de transação que termina em
+`ROLLBACK` ou é abortada por `RAISE` ("dry run"). Isso inclui rodar a
+migration para testar e chamar RPCs que gravam (excluir, desfazer, importar)
+com registros reais. Sem autorização, só `SELECT`.
+
+Testes de migration e de fluxo usam **dados fictícios** (testes do repositório,
+banco local ou fixtures), nunca registros reais de produção.
+
 ## Padrão de acesso das tabelas novas
 
 - Tabelas lidas só por server functions (`supabaseAdmin`, service_role):

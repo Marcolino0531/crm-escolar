@@ -37,6 +37,7 @@ import {
   type LinhaResumo,
   type PlanoReimportacao,
   type RubricaFolha,
+  avisoDesfazerExclusao,
 } from "@/lib/folha-pagamento";
 import {
   ajustarColaboradorFolha,
@@ -643,9 +644,12 @@ const ModalExcluidos: React.FC<{
   });
   const desfazer = useMutation({
     mutationFn: async (id: string) => fnDesfazer({ data: { schoolId, id } }),
-    onSuccess: () => {
-      toast.success("Exclusão desfeita.");
+    onSuccess: (r) => {
+      toast.success(avisoDesfazerExclusao(r));
       void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
+      void qc.invalidateQueries({ queryKey: ["rh-folha", schoolId] });
+      void qc.invalidateQueries({ queryKey: ["rh-folha-competencias", schoolId] });
+      void qc.invalidateQueries({ queryKey: ["rh-salarios", schoolId] });
     },
     onError: (e) => toast.error(msgErro(e, "Não foi possível desfazer a exclusão.")),
   });
@@ -702,7 +706,7 @@ const ModalExcluidos: React.FC<{
               {lista(
                 `Nesta competência (${rotuloCompetencia(competencia)})`,
                 q.data?.daCompetencia ?? [],
-                "O registro volta na próxima reimportação do PDF desta empresa.",
+                "O registro volta para a folha com os valores do extrato e o status de conferência que tinha.",
                 fechada,
               )}
               {lista(
