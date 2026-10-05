@@ -14,6 +14,7 @@ import {
   type TipoColaborador,
   type TipoRubrica,
 } from "@/lib/extrato-mensal";
+import { toTitleCase } from "@/lib/name-format";
 
 export type StatusColaboradorFolha = "confirmado" | "em_conferencia";
 export type StatusResumo = "confirmado" | "em_conferencia" | "manual";
@@ -477,6 +478,19 @@ export function resumoDaFolha(
   }));
 }
 
+/**
+ * Resumo e Restituição: uma única lista em ordem alfabética pelo nome padronizado
+ * (toTitleCase), misturando linhas da folha e de salário manual. Só apresentação.
+ */
+export function emOrdemAlfabetica<T extends { nome: string }>(
+  linhas: readonly T[],
+  comparar: (a: string, b: string) => number,
+): T[] {
+  return linhas
+    .map((l) => ({ ...l, nome: toTitleCase(l.nome) }))
+    .sort((a, b) => comparar(a.nome, b.nome));
+}
+
 export function totaisResumo(linhas: readonly LinhaResumo[]) {
   return {
     bruto: somaReais(linhas.map((l) => l.bruto)),
@@ -511,7 +525,11 @@ export function montarLoteFolha(linhas: readonly LinhaResumo[]): {
       continue;
     }
     if (paraCentavos(l.liquido) <= 0) continue;
-    itens.push({ employee_id: l.funcionarioId, employee_name: l.nome, total_amount: l.liquido });
+    itens.push({
+      employee_id: l.funcionarioId,
+      employee_name: toTitleCase(l.nome),
+      total_amount: l.liquido,
+    });
   }
   return { itens, total: somaReais(itens.map((i) => i.total_amount)), emConferencia, semCadastro };
 }

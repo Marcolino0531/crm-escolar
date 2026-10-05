@@ -6,6 +6,7 @@ import {
   chaveColaborador,
   compararFolhas,
   divergenciasDoColaborador,
+  emOrdemAlfabetica,
   exigirCompetenciaAberta,
   foiAjustada,
   inssDoMes,
@@ -487,5 +488,91 @@ describe("pessoa com mais de um contrato (mesmo CPF)", () => {
       ["b", 120.05],
       ["c", 0],
     ]);
+  });
+});
+
+describe("Resumo em ordem alfabética (folha + salário manual)", () => {
+  const comparar = new Intl.Collator("pt-BR", { sensitivity: "base" }).compare;
+  const linha = (over: Partial<LinhaResumo> & { chave: string; nome: string }): LinhaResumo => ({
+    funcionarioId: `f${over.chave}`,
+    status: "confirmado",
+    bruto: 0,
+    liquido: 0,
+    restituicao: 0,
+    ...over,
+  });
+  const daFolha: LinhaResumo[] = [
+    linha({
+      chave: "1",
+      nome: "MARIA DA SILVA TESTE",
+      bruto: 3200.45,
+      liquido: 2810.33,
+      restituicao: 120.1,
+    }),
+    linha({
+      chave: "2",
+      nome: "BRUNO DOS SANTOS FICTICIO",
+      bruto: 1999.99,
+      liquido: 1700.01,
+      restituicao: 0.07,
+    }),
+    linha({ chave: "3", nome: "ÁGATA DE TESTE", bruto: 0.1, liquido: 0.2, restituicao: 0 }),
+  ];
+  const manuais: LinhaResumo[] = [
+    linha({
+      chave: "4",
+      nome: "Carla Exemplo dos Anjos",
+      status: "manual",
+      bruto: 1500,
+      liquido: 1320.55,
+    }),
+    linha({
+      chave: "5",
+      nome: "alberto e souza exemplo",
+      status: "manual",
+      bruto: 980.3,
+      liquido: 980.3,
+    }),
+  ];
+  const antes = [...daFolha, ...manuais];
+  const ordenadas = emOrdemAlfabetica(antes, comparar);
+
+  it("folha e manuais numa única lista, em ordem alfabética pelo nome padronizado", () => {
+    expect(ordenadas.map((l) => l.nome)).toEqual([
+      "Ágata de Teste",
+      "Alberto e Souza Exemplo",
+      "Bruno dos Santos Ficticio",
+      "Carla Exemplo dos Anjos",
+      "Maria da Silva Teste",
+    ]);
+    expect(ordenadas.map((l) => l.status)).toEqual([
+      "confirmado",
+      "manual",
+      "confirmado",
+      "manual",
+      "confirmado",
+    ]);
+  });
+
+  it("não altera os registros de origem (nome do banco continua como no PDF)", () => {
+    expect(daFolha[0].nome).toBe("MARIA DA SILVA TESTE");
+  });
+
+  it("totais de Bruto, Líquido e Restituição iguais aos de antes da ordenação", () => {
+    expect(totaisResumo(ordenadas)).toEqual(totaisResumo(antes));
+    expect(totaisResumo(ordenadas)).toEqual({
+      bruto: 7680.84,
+      liquido: 6811.39,
+      restituicao: 120.17,
+    });
+  });
+
+  it("total do lote não muda com a ordenação; lote segue a ordem do Resumo com nome padronizado", () => {
+    const loteAntes = montarLoteFolha(antes);
+    const lote = montarLoteFolha(ordenadas);
+    expect(lote.total).toBe(loteAntes.total);
+    expect(lote.total).toBe(6811.39);
+    expect(lote.itens.map((i) => i.employee_name)).toEqual(ordenadas.map((l) => l.nome));
+    expect(loteAntes.itens.map((i) => i.employee_name)[0]).toBe("Maria da Silva Teste");
   });
 });

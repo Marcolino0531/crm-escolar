@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { Funcionario } from "@/lib/crm/types";
 import { useRole } from "@/lib/app-context";
 import { parseBRLNumber } from "@/lib/currency";
+import { toTitleCase } from "@/lib/name-format";
 import { competenciaAtual, rotuloCompetencia, salarioVigente } from "@/lib/rh-salario";
 import { listarSalarios } from "@/lib/rh-salario.functions";
 import {
@@ -21,6 +22,7 @@ import {
   compararFolhas,
   competenciaFechada,
   conflitoVinculoCpf,
+  emOrdemAlfabetica,
   montarLoteFolha,
   planejarReimportacao,
   preSelecao,
@@ -175,7 +177,9 @@ const ModalImportacao: React.FC<{
         })),
         ...plano.novos.map((c) => ({
           c,
-          divergencias: [{ tipo: "novo" as const, antes: null, depois: c.nome, diferenca: null }],
+          divergencias: [
+            { tipo: "novo" as const, antes: null, depois: toTitleCase(c.nome), diferenca: null },
+          ],
         })),
       ]
     : (comparacao?.porColaborador ?? []).map((p) => ({
@@ -212,7 +216,7 @@ const ModalImportacao: React.FC<{
                 Os substituídos e novos voltam para "Em conferência", salvo os selecionados abaixo.
               </p>
               {plano.retirados.length > 0 && (
-                <p>Saem da folha: {plano.retirados.map((r) => r.nome).join(", ")}</p>
+                <p>Saem da folha: {plano.retirados.map((r) => toTitleCase(r.nome)).join(", ")}</p>
               )}
             </div>
           ) : comparacao?.primeiraImportacao ? (
@@ -264,7 +268,7 @@ const ModalImportacao: React.FC<{
                       />
                     </td>
                     <td className="px-2 py-2">
-                      <span className="font-medium text-gray-800">{c.nome}</span>
+                      <span className="font-medium text-gray-800">{toTitleCase(c.nome)}</span>
                       <span className="block text-xs text-gray-500">
                         {c.codigo} · {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
                         {c.situacao}
@@ -287,7 +291,9 @@ const ModalImportacao: React.FC<{
                 Estavam na folha de {rotuloCompetencia(preparo.anteriorCompetencia ?? "")} e não
                 estão nesta ({comparacao.ausentes.length}):
               </p>
-              <p className="text-gray-600">{comparacao.ausentes.map((a) => a.nome).join(", ")}</p>
+              <p className="text-gray-600">
+                {comparacao.ausentes.map((a) => toTitleCase(a.nome)).join(", ")}
+              </p>
             </div>
           )}
         </div>
@@ -400,7 +406,9 @@ const ModalAjuste: React.FC<{
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-lg">
         <div className="border-b border-gray-100 px-4 py-3">
-          <h4 className="text-sm font-bold text-gray-800">Ajustar — {colaborador.nome}</h4>
+          <h4 className="text-sm font-bold text-gray-800">
+            Ajustar — {toTitleCase(colaborador.nome)}
+          </h4>
           <p className="text-xs text-gray-500">
             Os valores originais do PDF ficam guardados e aparecem ao lado.
           </p>
@@ -580,7 +588,9 @@ const ModalExclusao: React.FC<{
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
         <div className="border-b border-gray-100 px-4 py-3">
-          <h4 className="text-sm font-bold text-gray-800">Excluir da folha — {colaborador.nome}</h4>
+          <h4 className="text-sm font-bold text-gray-800">
+            Excluir da folha — {toTitleCase(colaborador.nome)}
+          </h4>
           <p className="text-xs text-gray-500">
             {colaborador.codigo} ·{" "}
             {colaborador.tipo === "contribuinte" ? "Contribuinte" : "Empregado"}. O registro e as
@@ -663,7 +673,7 @@ const ModalExcluidos: React.FC<{
           {itens.map((e) => (
             <li key={e.id} className="flex items-start justify-between gap-3 px-3 py-2">
               <div>
-                <span className="font-medium text-gray-800">{e.nome}</span>
+                <span className="font-medium text-gray-800">{toTitleCase(e.nome)}</span>
                 <span className="block text-xs text-gray-500">
                   CNPJ {e.cnpj} · {e.codigo} ·{" "}
                   {e.tipo === "contribuinte" ? "Contribuinte" : "Empregado"}
@@ -678,7 +688,8 @@ const ModalExcluidos: React.FC<{
                 disabled={bloqueado || desfazer.isPending}
                 title={bloqueado ? "Competência fechada: reabra para desfazer." : undefined}
                 onClick={() => {
-                  if (confirm(`Desfazer a exclusão de ${e.nome}? ${aviso}`)) desfazer.mutate(e.id);
+                  if (confirm(`Desfazer a exclusão de ${toTitleCase(e.nome)}? ${aviso}`))
+                    desfazer.mutate(e.id);
                 }}
                 className="shrink-0 text-xs text-blue-700 hover:underline disabled:opacity-50"
               >
@@ -844,7 +855,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
 
   const contratosPorCpf = useMemo(() => registrosPorCpf(colaboradores), [colaboradores]);
   const restituicaoPorPessoa = useMemo(
-    () => restituicoesPorPessoa(colaboradores, restituicao.linhas),
+    () =>
+      emOrdemAlfabetica(restituicoesPorPessoa(colaboradores, restituicao.linhas), collator.compare),
     [colaboradores, restituicao],
   );
 
@@ -867,7 +879,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
         },
       ];
     });
-    return [...daFolha, ...manuais];
+    return emOrdemAlfabetica([...daFolha, ...manuais], collator.compare);
   }, [colaboradores, restituicao, salariosQ.data, ativosForaDaFolha, competencia]);
   const totais = totaisResumo(linhasResumo);
   const lote = useMemo(
@@ -1317,7 +1329,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                     onClick={() => setAberto(aberto === c.id ? null : c.id)}
                                     className="text-left font-medium text-gray-800 hover:underline"
                                   >
-                                    {c.nome}
+                                    {toTitleCase(c.nome)}
                                   </button>
                                   <SeloContratos
                                     contratos={contratosPorCpf.get(somenteDigitos(c.cpf))}
@@ -1354,13 +1366,14 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                       <option value="">Sem cadastro no RH</option>
                                       {funcionariosLivres(c).map((f) => (
                                         <option key={f.id} value={f.id}>
-                                          {f.nomeCompleto}
+                                          {toTitleCase(f.nomeCompleto)}
                                           {f.dataRescisao ? " (desligado)" : ""}
                                         </option>
                                       ))}
                                     </select>
                                   ) : c.funcionarioId ? (
-                                    (porId.get(c.funcionarioId)?.nomeCompleto ?? "Vinculado")
+                                    toTitleCase(porId.get(c.funcionarioId)?.nomeCompleto) ||
+                                    "Vinculado"
                                   ) : (
                                     <span className="font-medium text-red-700">
                                       Sem cadastro no RH
@@ -1521,7 +1534,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 Funcionários ativos do RH que não estão nesta folha ({ativosForaDaFolha.length}) —
                 só informação; o salário deles continua manual (aba Resumo):
               </p>
-              <p>{ativosForaDaFolha.map((f) => f.nomeCompleto).join(", ")}</p>
+              <p>{ativosForaDaFolha.map((f) => toTitleCase(f.nomeCompleto)).join(", ")}</p>
             </div>
           )}
         </div>
@@ -1548,7 +1561,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                         }
                       />
                       <span className={f.dataRescisao ? "text-gray-400" : "text-gray-800"}>
-                        {f.nomeCompleto}
+                        {toTitleCase(f.nomeCompleto)}
                         {f.dataRescisao ? " (desligado)" : ""}
                       </span>
                     </label>
@@ -1589,7 +1602,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   {restituicaoPorPessoa.map((l) => (
                     <tr key={l.chave} className="border-t border-gray-100">
                       <td className="px-4 py-2">
-                        {l.nome}
+                        {toTitleCase(l.nome)}
                         <SeloContratos contratos={l.contratos} />
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums">{brl(l.inss)}</td>
@@ -1631,7 +1644,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 {linhasResumo.map((l) => (
                   <tr key={l.chave} className="border-t border-gray-100">
                     <td className="px-4 py-2">
-                      {l.nome}
+                      {toTitleCase(l.nome)}
                       <SeloContratos contratos={l.contratos} />
                     </td>
                     <td className="px-4 py-2">
