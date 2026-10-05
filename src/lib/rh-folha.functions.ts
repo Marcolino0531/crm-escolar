@@ -1,7 +1,7 @@
 // RH > Pagamentos > Salário: Folha de Pagamento importada do "Extrato Mensal".
 // O PDF é lido no navegador; aqui chegam só os dados estruturados. Toda função
 // checa rh.pagamentos.salario (Visualizar para ler, Editar para gravar, admin
-// para reabrir competência) e a unidade do seletor global. Nada de nomes, CPFs
+// para reabrir competência e excluir colaborador da folha) e a unidade do seletor global. Nada de nomes, CPFs
 // ou valores da folha vai para log.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -21,6 +21,7 @@ import {
   agruparPorPessoa,
   casarPorCpf,
   chaveColaborador,
+  chavesExcluidas,
   cnpjAceito,
   competenciaFechada,
   conflitoVinculoCpf,
@@ -33,10 +34,14 @@ import {
   mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
+  registroExcluido,
+  salarioAposExclusao,
   salariosDaFolha,
+  semDescartados,
   totaisAjustados,
   type ColaboradorComparavel,
   type Divergencia,
+  type ExclusaoFolha,
   type OrigemRubrica,
   type RubricaFolha,
   type StatusColaboradorFolha,
@@ -57,10 +62,6 @@ export type ImportacaoFolha = {
   calculo: string;
   cnpjColegio: string;
   cnpjDivergente: boolean;
-  totalProventos: number;
-  totalDescontos: number;
-  liquidoGeral: number;
-  totalColaboradores: number;
   importadoEm: string;
   importadoPorNome: string;
   reimportadoEm: string | null;
@@ -111,6 +112,21 @@ export type ColaboradorFolhaGravado = Omit<ColaboradorComparavel, "rubricas"> & 
 /** Colaborador gravado como estava no PDF (sem ajustes), para a reimportação. */
 export type ColaboradorOriginal = ColaboradorComparavel & { ajustadoManualmente: boolean };
 
+/** Exclusão listada em "Excluídos da folha" (só admin). */
+export type ExclusaoListada = {
+  id: string;
+  fixa: boolean;
+  competencia: string | null;
+  cnpj: string;
+  tipo: "empregado" | "contribuinte";
+  codigo: string;
+  cpf: string;
+  nome: string;
+  motivo: string;
+  excluidoEm: string;
+  excluidoPorNome: string;
+};
+
 export type MarcacaoRestituicao = {
   funcionarioId: string;
   recebe: boolean;
@@ -132,10 +148,6 @@ type ImportacaoRow = {
   calculo: string;
   cnpj_colegio: string;
   cnpj_divergente: boolean;
-  total_proventos: Num;
-  total_descontos: Num;
-  liquido_geral: Num;
-  total_colaboradores: number;
   importado_em: string;
   importado_por_nome: string;
   reimportado_em: string | null;
@@ -207,7 +219,7 @@ type FuncionarioRow = {
 };
 
 const IMPORTACAO_COLS =
-  "id, school_id, competencia, status, empresa, cnpj, calculo, cnpj_colegio, cnpj_divergente, total_proventos, total_descontos, liquido_geral, total_colaboradores, importado_em, importado_por_nome, reimportado_em, reimportado_por_nome, fechado_em, fechado_por_nome, reaberto_em, reaberto_por_nome";
+  "id, school_id, competencia, status, empresa, cnpj, calculo, cnpj_colegio, cnpj_divergente, importado_em, importado_por_nome, reimportado_em, reimportado_por_nome, fechado_em, fechado_por_nome, reaberto_em, reaberto_por_nome";
 
 const COLABORADOR_COLS =
   "id, importacao_id, funcionario_id, vinculo_manual, tipo, codigo, nome, cpf, situacao, vinculo, admissao, cargo, cbo, horas_mes, salario_base, informativa, informativa_dedutora, base_inss, excedente_inss, base_fgts, valor_fgts, base_irrf, observacoes, proventos_pdf, descontos_pdf, liquido_pdf, proventos, descontos, liquido, status, divergencias, confirmado_em, confirmado_por_nome, ajustado_em, ajustado_por_nome, ajuste_observacao";
@@ -224,10 +236,6 @@ function paraImportacao(r: ImportacaoRow): ImportacaoFolha {
     calculo: r.calculo,
     cnpjColegio: r.cnpj_colegio,
     cnpjDivergente: r.cnpj_divergente,
-    totalProventos: n(r.total_proventos),
-    totalDescontos: n(r.total_descontos),
-    liquidoGeral: n(r.liquido_geral),
-    totalColaboradores: r.total_colaboradores,
     importadoEm: r.importado_em,
     importadoPorNome: r.importado_por_nome,
     reimportadoEm: r.reimportado_em,
@@ -323,6 +331,12 @@ async function ehAdmin(userId: string): Promise<boolean> {
     .eq("user_id", userId);
   if (error) throw new Error(error.message);
   return ((data ?? []) as { role: string }[]).some((r) => r.role === "admin");
+}
+
+async function exigirAdminFolha(userId: string): Promise<void> {
+  if (!(await ehAdmin(userId))) {
+    throw new Error("Apenas administradores podem excluir colaboradores da folha.");
+  }
 }
 
 /** Unidade específica do seletor global e liberada para o usuário. Devolve o nome. */
@@ -451,6 +465,73 @@ async function colaboradoresDa(importacaoId: string): Promise<ColaboradorFolhaGr
     .sort((a, b) => Number(a.codigo) - Number(b.codigo) || a.codigo.localeCompare(b.codigo));
 }
 
+type ExclusaoRow = {
+  id: string;
+  school_id: string;
+  competencia: string | null;
+  fixa: boolean;
+  cnpj: string;
+  tipo: "empregado" | "contribuinte";
+  codigo: string;
+  cpf: string;
+  nome: string;
+  motivo: string;
+  excluido_em: string;
+  excluido_por_nome: string;
+};
+
+const EXCLUSAO_COLS =
+  "id, school_id, competencia, fixa, cnpj, tipo, codigo, cpf, nome, motivo, excluido_em, excluido_por_nome";
+
+/** Exclusões que valem na competência: as dela e as fixas do colégio. Nunca vão ao cliente. */
+async function exclusoesDa(schoolId: string, competencia: string): Promise<ExclusaoRow[]> {
+  const [daCompetencia, fixas] = await Promise.all([
+    selectAll<ExclusaoRow>(() =>
+      supabaseAdmin
+        .from("rh_folha_exclusoes" as never)
+        .select(EXCLUSAO_COLS)
+        .eq("school_id", schoolId)
+        .eq("fixa", false)
+        .eq("competencia", competencia)
+        .order("excluido_em")
+        .order("id"),
+    ),
+    selectAll<ExclusaoRow>(() =>
+      supabaseAdmin
+        .from("rh_folha_exclusoes" as never)
+        .select(EXCLUSAO_COLS)
+        .eq("school_id", schoolId)
+        .eq("fixa", true)
+        .order("excluido_em")
+        .order("id"),
+    ),
+  ]);
+  return [...daCompetencia, ...fixas];
+}
+
+const paraExclusao = (e: ExclusaoRow): ExclusaoFolha => ({
+  fixa: e.fixa,
+  competencia: e.competencia,
+  cnpj: e.cnpj,
+  tipo: e.tipo,
+  codigo: e.codigo,
+  cpf: e.cpf,
+});
+
+const paraExclusaoListada = (e: ExclusaoRow): ExclusaoListada => ({
+  id: e.id,
+  fixa: e.fixa,
+  competencia: e.competencia,
+  cnpj: e.cnpj,
+  tipo: e.tipo,
+  codigo: e.codigo,
+  cpf: e.cpf,
+  nome: e.nome,
+  motivo: e.motivo,
+  excluidoEm: e.excluido_em,
+  excluidoPorNome: e.excluido_por_nome,
+});
+
 /** Retrato do PDF gravado (antes de qualquer ajuste manual). */
 function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
   return {
@@ -489,11 +570,15 @@ function vigente(c: ColaboradorFolhaGravado): ColaboradorComparavel {
   };
 }
 
-/** Folha anterior mais recente do MESMO CNPJ no colégio (null = primeira desta empresa). */
+/**
+ * Folha anterior mais recente do MESMO CNPJ no colégio (null = primeira desta
+ * empresa), sem quem está excluído desta competência (não aparece na comparação).
+ */
 async function folhaAnterior(
   schoolId: string,
   competencia: string,
   cnpj: string,
+  exclusoes: readonly ExclusaoFolha[],
 ): Promise<{ competencia: string; colaboradores: ColaboradorComparavel[] } | null> {
   const imp = importacaoAnteriorDoCnpj(
     await importacoesAnterioresDa(schoolId, competencia),
@@ -503,7 +588,9 @@ async function folhaAnterior(
   if (!imp) return null;
   return {
     competencia: imp.competencia,
-    colaboradores: (await colaboradoresDa(imp.id)).map(vigente),
+    colaboradores: (await colaboradoresDa(imp.id))
+      .filter((c) => !registroExcluido(c, exclusoes, { competencia, cnpj }))
+      .map(vigente),
   };
 }
 
@@ -580,6 +667,8 @@ async function registrarEvento(
   if (error) throw new Error(error.message);
 }
 
+const OBS_SALARIO_FOLHA = "Extrato Mensal (folha confirmada)";
+
 /**
  * funcionarios_salarios de TODAS as pessoas da competência: bruto e líquido somados
  * dos registros (contratos, de todas as empresas) de cada funcionário, só com todos
@@ -598,7 +687,7 @@ async function sincronizarSalarios(
     competencia,
     valor: s.valor,
     valor_liquido: s.valorLiquido,
-    observacao: "Extrato Mensal (folha confirmada)",
+    observacao: OBS_SALARIO_FOLHA,
     created_by: userId,
     created_by_nome: nome,
     updated_at: new Date().toISOString(),
@@ -733,7 +822,22 @@ export const obterFolhaCompetencia = createServerFn({ method: "POST" })
 export const prepararImportacaoFolha = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    compInput.extend({ cnpj: texto(30), empresa: texto(300) }).parse(input),
+    compInput
+      .extend({
+        cnpj: texto(30),
+        empresa: texto(300),
+        /** Identidade dos registros do PDF, para saber quais descartar. */
+        identidades: z
+          .array(
+            z.object({
+              tipo: z.enum(["empregado", "contribuinte"]),
+              codigo: texto(20),
+              cpf: texto(20),
+            }),
+          )
+          .max(2000),
+      })
+      .parse(input),
   )
   .handler(
     async ({
@@ -743,6 +847,8 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
       anterior: { competencia: string; colaboradores: ColaboradorComparavel[] } | null;
       /** Importação já gravada DESTA empresa na competência (reimportação). */
       gravada: { status: StatusCompetencia; colaboradores: ColaboradorOriginal[] } | null;
+      /** Chaves tipo:código do PDF excluídas da folha: não aparecem nem são gravadas. */
+      descartar: string[];
     }> => {
       const unidade = await contexto(context.userId, data.schoolId, true);
       if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
@@ -753,9 +859,16 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
       const gravada = imp
         ? { status: imp.status, colaboradores: (await colaboradoresDa(imp.id)).map(original) }
         : null;
+      const exclusoes = (await exclusoesDa(data.schoolId, data.competencia)).map(paraExclusao);
       return {
-        anterior: await folhaAnterior(data.schoolId, data.competencia, data.cnpj),
+        anterior: await folhaAnterior(data.schoolId, data.competencia, data.cnpj, exclusoes),
         gravada,
+        descartar: chavesExcluidas(
+          data.identidades,
+          exclusoes,
+          data,
+          (gravada?.colaboradores ?? []).map(chaveColaborador),
+        ),
       };
     },
   );
@@ -788,9 +901,15 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       const imp = importacaoDoCnpj(imps, folha.cnpj);
       const gravados = imp ? await colaboradoresDa(imp.id) : [];
       const gravadoPorChave = new Map(gravados.map((g) => [chaveColaborador(g), g]));
-      const plano = planejarReimportacao(gravados.map(original), folha.colaboradores);
+      // Integridade já conferida com TODOS os registros do PDF; agora saem os excluídos.
+      const exclusoes = (await exclusoesDa(data.schoolId, folha.competencia)).map(paraExclusao);
+      const colaboradores = semDescartados(
+        folha.colaboradores,
+        chavesExcluidas(folha.colaboradores, exclusoes, folha, gravados.map(chaveColaborador)),
+      );
+      const plano = planejarReimportacao(gravados.map(original), colaboradores);
 
-      const anterior = await folhaAnterior(data.schoolId, folha.competencia, folha.cnpj);
+      const anterior = await folhaAnterior(data.schoolId, folha.competencia, folha.cnpj, exclusoes);
       const anteriorPorChave = new Map(
         (anterior?.colaboradores ?? []).map((c) => [chaveColaborador(c), c]),
       );
@@ -1087,6 +1206,123 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
       nome,
     );
     await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
+    return { ok: true };
+  });
+
+// ---------- Exclusão de colaborador da folha (só admin) ----------
+
+/**
+ * Apaga o registro da folha gravada (com rubricas, restituição e eventos
+ * anteriores) e grava a exclusão da competência; com "fixa", também a do colégio.
+ * funcionarios_salarios da pessoa é recalculada sem ele ou removida.
+ */
+export const excluirColaboradorFolha = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    compInput
+      .extend({
+        id: z.string().uuid(),
+        motivo: z.string().trim().min(1, "O motivo da exclusão é obrigatório.").max(1000),
+        fixa: z.boolean(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await contexto(context.userId, data.schoolId, false);
+    await exigirAdminFolha(context.userId);
+    const imps = await exigirCompetenciaAbertaDa(data.schoolId, data.competencia);
+    const [c] = await colaboradoresDaFolha(imps, [data.id]);
+    const nome = await nomeDoUsuario(context.userId);
+    const { error } = await supabaseAdmin.rpc(
+      "rh_folha_excluir_colaborador" as never,
+      {
+        p: {
+          school_id: data.schoolId,
+          competencia: data.competencia,
+          colaborador_id: c.id,
+          motivo: data.motivo,
+          fixa: data.fixa,
+          por: context.userId,
+          por_nome: nome,
+        },
+      } as never,
+    );
+    if (error) throw new Error(error.message);
+    await sincronizarSalarios(data.schoolId, data.competencia, context.userId, nome);
+    if (c.funcionarioId) {
+      const restantes = await colaboradoresDaCompetencia(imps);
+      if (salarioAposExclusao(restantes, c.funcionarioId).acao === "remover") {
+        const { error: sErr } = await supabaseAdmin
+          .from("funcionarios_salarios" as never)
+          .delete()
+          .eq("funcionario_id", c.funcionarioId)
+          .eq("competencia", data.competencia)
+          .eq("observacao", OBS_SALARIO_FOLHA);
+        if (sErr) throw new Error(sErr.message);
+      }
+    }
+    return { ok: true };
+  });
+
+/** "Excluídos da folha": exclusões da competência e fixas do colégio. */
+export const listarExclusoesFolha = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => compInput.parse(input))
+  .handler(
+    async ({
+      data,
+      context,
+    }): Promise<{ daCompetencia: ExclusaoListada[]; fixas: ExclusaoListada[] }> => {
+      await contexto(context.userId, data.schoolId, false);
+      await exigirAdminFolha(context.userId);
+      if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
+      const rows = await exclusoesDa(data.schoolId, data.competencia);
+      return {
+        daCompetencia: rows.filter((r) => !r.fixa).map(paraExclusaoListada),
+        fixas: rows.filter((r) => r.fixa).map(paraExclusaoListada),
+      };
+    },
+  );
+
+/**
+ * Desfaz uma exclusão. Fixa: vale para as próximas importações. Da competência
+ * (só aberta): o registro volta na próxima reimportação do PDF.
+ */
+export const desfazerExclusaoFolha = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => schoolInput.extend({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await contexto(context.userId, data.schoolId, false);
+    await exigirAdminFolha(context.userId);
+    const { data: row, error } = await supabaseAdmin
+      .from("rh_folha_exclusoes" as never)
+      .select(EXCLUSAO_COLS)
+      .eq("id", data.id)
+      .eq("school_id", data.schoolId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const e = row as ExclusaoRow | null;
+    if (!e) throw new Error("Exclusão não encontrada nesta unidade.");
+    const imps = e.competencia ? await importacoesDa(data.schoolId, e.competencia) : [];
+    if (!e.fixa && competenciaFechada(imps)) {
+      throw new Error("Competência fechada: reabra para desfazer a exclusão.");
+    }
+    const { error: dErr } = await supabaseAdmin
+      .from("rh_folha_exclusoes" as never)
+      .delete()
+      .eq("id", e.id);
+    if (dErr) throw new Error(dErr.message);
+    const imp = e.fixa ? null : importacaoDoCnpj(imps, e.cnpj);
+    if (imp) {
+      await registrarEvento(
+        imp.id,
+        null,
+        "exclusao_desfeita",
+        { cnpj: e.cnpj, tipo: e.tipo, codigo: e.codigo, cpf: e.cpf, nome: e.nome },
+        context.userId,
+        await nomeDoUsuario(context.userId),
+      );
+    }
     return { ok: true };
   });
 

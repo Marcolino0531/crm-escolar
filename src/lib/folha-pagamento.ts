@@ -628,20 +628,18 @@ export function competenciaFechada(importacoes: readonly { status: StatusCompete
   return importacoes.some((i) => i.status === "fechada");
 }
 
-/** Totais do colégio na competência = soma das empresas. */
+/**
+ * Totais exibidos (de uma empresa ou do colégio) = soma dos registros gravados.
+ * Os totais do PDF guardados na importação servem só à conferência de integridade.
+ */
 export function totaisDasEmpresas(
-  importacoes: readonly {
-    totalProventos: number;
-    totalDescontos: number;
-    liquidoGeral: number;
-    totalColaboradores: number;
-  }[],
+  registros: readonly { proventos: number; descontos: number; liquido: number }[],
 ) {
   return {
-    proventos: somaReais(importacoes.map((i) => i.totalProventos)),
-    descontos: somaReais(importacoes.map((i) => i.totalDescontos)),
-    liquido: somaReais(importacoes.map((i) => i.liquidoGeral)),
-    colaboradores: importacoes.reduce((s, i) => s + i.totalColaboradores, 0),
+    proventos: somaReais(registros.map((r) => r.proventos)),
+    descontos: somaReais(registros.map((r) => r.descontos)),
+    liquido: somaReais(registros.map((r) => r.liquido)),
+    colaboradores: registros.length,
   };
 }
 
@@ -666,4 +664,83 @@ export function conflitoVinculoCpf(
   return outro
     ? `Este funcionário já está ligado a ${outro.nome}, com outro CPF, nesta folha. Só registros com o mesmo CPF podem ir para o mesmo cadastro do RH.`
     : null;
+}
+
+// ---------- Exclusão de colaborador da folha (só admin) ----------
+// O registro excluído é apagado da folha gravada. Da exclusão fica só a
+// identidade (empresa, tipo, código, CPF e nome), o motivo, quem e quando.
+
+/**
+ * Exclusão de uma competência (empresa + tipo + código) ou fixa do colégio:
+ * por CPF; sem CPF, por empresa + tipo + código.
+ */
+export type ExclusaoFolha = {
+  fixa: boolean;
+  competencia: string | null;
+  cnpj: string;
+  tipo: TipoColaborador;
+  codigo: string;
+  cpf: string;
+};
+
+type IdentidadeRegistro = { tipo: TipoColaborador; codigo: string; cpf: string };
+
+/**
+ * O registro do PDF desta empresa/competência está excluído da folha?
+ * A exclusão da competência vale sempre. A fixa só descarta o que NÃO está
+ * gravado na importação atual da empresa (`gravados`, chaves tipo:código):
+ * registro já gravado só sai por exclusão explícita.
+ */
+export function registroExcluido(
+  r: IdentidadeRegistro,
+  exclusoes: readonly ExclusaoFolha[],
+  folha: { competencia: string; cnpj: string },
+  gravados: ReadonlySet<string> = new Set(),
+): boolean {
+  const cpf = somenteDigitos(r.cpf);
+  const jaGravado = gravados.has(chaveColaborador(r));
+  return exclusoes.some((e) => {
+    const mesmoRegistro =
+      mesmoCnpj(e.cnpj, folha.cnpj) && e.tipo === r.tipo && e.codigo === r.codigo;
+    if (!e.fixa) return e.competencia === folha.competencia && mesmoRegistro;
+    if (jaGravado) return false;
+    const cpfFixo = somenteDigitos(e.cpf);
+    return cpfFixo ? cpfFixo === cpf : mesmoRegistro;
+  });
+}
+
+/** Chaves tipo:código dos registros do PDF a descartar antes de gravar. */
+export function chavesExcluidas(
+  registros: readonly IdentidadeRegistro[],
+  exclusoes: readonly ExclusaoFolha[],
+  folha: { competencia: string; cnpj: string },
+  gravados: Iterable<string> = [],
+): string[] {
+  const jaGravados = new Set(gravados);
+  return registros
+    .filter((r) => registroExcluido(r, exclusoes, folha, jaGravados))
+    .map((r) => chaveColaborador(r));
+}
+
+/** Registros sem os descartados (pelas chaves tipo:código). */
+export function semDescartados<T extends { tipo: TipoColaborador; codigo: string }>(
+  registros: readonly T[],
+  descartar: Iterable<string>,
+): T[] {
+  const fora = new Set(descartar);
+  return registros.filter((r) => !fora.has(chaveColaborador(r)));
+}
+
+/**
+ * funcionarios_salarios do funcionário depois de excluir um registro dele:
+ * recalculada com os que ficaram quando todos estão Confirmados; removida
+ * quando não sobra registro ou algum dos que ficaram está Em conferência
+ * (volta a ser gravada ao confirmar).
+ */
+export function salarioAposExclusao(
+  restantes: readonly RegistroValores[],
+  funcionarioId: string,
+): { acao: "gravar"; valor: number; valorLiquido: number } | { acao: "remover" } {
+  const s = salariosDaFolha(restantes.filter((r) => r.funcionarioId === funcionarioId))[0];
+  return s ? { acao: "gravar", valor: s.valor, valorLiquido: s.valorLiquido } : { acao: "remover" };
 }
