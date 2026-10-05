@@ -31,6 +31,7 @@ import {
   importacaoDoCnpj,
   inssDoMes,
   liquidoManualDoAjuste,
+  liquidosManuaisDaImportacao,
   mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
@@ -555,7 +556,7 @@ function original(c: ColaboradorFolhaGravado): ColaboradorOriginal {
         descricao: r.descricao,
         valor: r.valorOriginal ?? r.valor,
       })),
-    ajustadoManualmente: c.ajustadoEm != null || c.liquidoManual != null,
+    ajustadoManualmente: c.ajustadoEm != null,
   };
 }
 
@@ -578,12 +579,12 @@ function vigente(c: ColaboradorFolhaGravado): ColaboradorComparavel {
  * Folha anterior mais recente do MESMO CNPJ no colégio (null = primeira desta
  * empresa), sem quem está excluído desta competência (não aparece na comparação).
  */
-async function folhaAnterior(
+async function registrosAnteriores(
   schoolId: string,
   competencia: string,
   cnpj: string,
   exclusoes: readonly ExclusaoFolha[],
-): Promise<{ competencia: string; colaboradores: ColaboradorComparavel[] } | null> {
+): Promise<{ competencia: string; registros: ColaboradorFolhaGravado[] } | null> {
   const imp = importacaoAnteriorDoCnpj(
     await importacoesAnterioresDa(schoolId, competencia),
     competencia,
@@ -592,10 +593,17 @@ async function folhaAnterior(
   if (!imp) return null;
   return {
     competencia: imp.competencia,
-    colaboradores: (await colaboradoresDa(imp.id))
-      .filter((c) => !registroExcluido(c, exclusoes, { competencia, cnpj }))
-      .map(vigente),
+    registros: (await colaboradoresDa(imp.id)).filter(
+      (c) => !registroExcluido(c, exclusoes, { competencia, cnpj }),
+    ),
   };
+}
+
+/** Comparação mensal: sempre folha contra folha (sem o líquido manual). */
+function comoFolhaAnterior(
+  a: { competencia: string; registros: ColaboradorFolhaGravado[] } | null,
+): { competencia: string; colaboradores: ColaboradorComparavel[] } | null {
+  return a && { competencia: a.competencia, colaboradores: a.registros.map(vigente) };
 }
 
 async function funcionariosDa(schoolId: string): Promise<FuncionarioRow[]> {
@@ -853,6 +861,8 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
       gravada: { status: StatusCompetencia; colaboradores: ColaboradorOriginal[] } | null;
       /** Chaves tipo:código do PDF excluídas da folha: não aparecem nem são gravadas. */
       descartar: string[];
+      /** Líquido manual que será aplicado, por chave (herdado do mês anterior ou mantido). */
+      liquidosManuais: { chave: string; valor: number; herdado: boolean }[];
     }> => {
       const unidade = await contexto(context.userId, data.schoolId, true);
       if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
@@ -860,12 +870,17 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
       const imps = await importacoesDa(data.schoolId, data.competencia);
       if (competenciaFechada(imps)) throw new Error(MENSAGEM_COMPETENCIA_FECHADA);
       const imp = importacaoDoCnpj(imps, data.cnpj);
-      const gravada = imp
-        ? { status: imp.status, colaboradores: (await colaboradoresDa(imp.id)).map(original) }
-        : null;
+      const gravados = imp ? await colaboradoresDa(imp.id) : [];
+      const gravada = imp ? { status: imp.status, colaboradores: gravados.map(original) } : null;
       const exclusoes = (await exclusoesDa(data.schoolId, data.competencia)).map(paraExclusao);
-      return {
-        anterior: await folhaAnterior(data.schoolId, data.competencia, data.cnpj, exclusoes),
+      const anterior = await registrosAnteriores(
+        data.schoolId,
+        data.competencia,
+        data.cnpj,
+        exclusoes,
+      );
+      const resposta = {
+        anterior: comoFolhaAnterior(anterior),
         gravada,
         descartar: chavesExcluidas(
           data.identidades,
@@ -873,6 +888,18 @@ export const prepararImportacaoFolha = createServerFn({ method: "POST" })
           data,
           (gravada?.colaboradores ?? []).map(chaveColaborador),
         ),
+      };
+      // Para o líquido manual basta saber se o registro já está gravado (mantém) ou não (herda).
+      const doPdf = semDescartados(data.identidades, resposta.descartar);
+      const jaGravado = new Set(gravados.map(chaveColaborador));
+      const liquidos = liquidosManuaisDaImportacao(anterior?.registros ?? [], gravados, {
+        novos: doPdf.filter((c) => !jaGravado.has(chaveColaborador(c))),
+        substituidos: [],
+        iguais: doPdf.filter((c) => jaGravado.has(chaveColaborador(c))),
+      });
+      return {
+        ...resposta,
+        liquidosManuais: [...liquidos].map(([chave, l]) => ({ chave, ...l })),
       };
     },
   );
@@ -913,7 +940,14 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
       );
       const plano = planejarReimportacao(gravados.map(original), colaboradores);
 
-      const anterior = await folhaAnterior(data.schoolId, folha.competencia, folha.cnpj, exclusoes);
+      const registrosAnt = await registrosAnteriores(
+        data.schoolId,
+        folha.competencia,
+        folha.cnpj,
+        exclusoes,
+      );
+      const anterior = comoFolhaAnterior(registrosAnt);
+      const liquidos = liquidosManuaisDaImportacao(registrosAnt?.registros ?? [], gravados, plano);
       const anteriorPorChave = new Map(
         (anterior?.colaboradores ?? []).map((c) => [chaveColaborador(c), c]),
       );
@@ -954,6 +988,7 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
           proventos: c.proventos,
           descontos: c.descontos,
           liquido: c.liquido,
+          liquido_manual: liquidos.get(chaveColaborador(c))?.valor ?? null,
           status: selecionados.has(chaveColaborador(c)) ? "confirmado" : "em_conferencia",
           divergencias: anterior
             ? divergenciasDoColaborador(anteriorPorChave.get(chaveColaborador(c)) ?? null, c)
