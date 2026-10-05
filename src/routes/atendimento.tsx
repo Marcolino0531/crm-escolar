@@ -51,6 +51,7 @@ import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimen
 import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.functions";
 import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
+import { carregarCodificadorMp3, gravacaoParaMp3 } from "@/lib/audio-mp3";
 import { AcaoPausarCobranca } from "@/components/cobranca/PausaComprovante";
 import {
   PAGINA_CONVERSAS,
@@ -66,7 +67,6 @@ import {
   caminhoMidiaSaida,
   estadoJanela24h,
   MIMES_ACEITOS_LABEL,
-  nomePadrao,
   validarArquivoEnvio,
   type EstadoJanela,
 } from "@/lib/whatsapp-send-media";
@@ -913,15 +913,19 @@ function AvisoJanela24h({ janela }: { janela: EstadoJanela }) {
   );
 }
 
-// Formatos de gravação que a Cloud API aceita, em ordem de preferência. O
-// navegador escolhe o primeiro que sabe produzir; o webm/opus do Chrome fica
-// fora de propósito, porque a Meta o recusa (nesse caso o botão sai do ar e o
-// operador anexa um arquivo de áudio pelo clipe).
-const MIMES_GRAVACAO = ["audio/mp4", "audio/ogg;codecs=opus", "audio/ogg", "audio/mpeg"];
+// Formatos de gravação em ordem de preferência. Qualquer um serve: ao encerrar,
+// a gravação é convertida para MP3 no navegador (src/lib/audio-mp3.ts), porque
+// a Meta recusa o webm/opus e o MP4 fragmentado do MediaRecorder. Sem nenhum
+// reconhecido, o MediaRecorder grava no formato padrão do navegador.
+const MIMES_GRAVACAO = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"];
 
-function mimeDeGravacao(): string | null {
-  if (typeof window === "undefined" || typeof MediaRecorder === "undefined") return null;
-  return MIMES_GRAVACAO.find((m) => MediaRecorder.isTypeSupported(m)) ?? null;
+function podeGravar(): boolean {
+  return typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
+}
+
+function mimeDeGravacao(): string | undefined {
+  if (!podeGravar()) return undefined;
+  return MIMES_GRAVACAO.find((m) => MediaRecorder.isTypeSupported(m));
 }
 
 function duracaoCurta(segundos: number): string {
@@ -931,7 +935,7 @@ function duracaoCurta(segundos: number): string {
 }
 
 // Gravação de áudio pelo navegador, no estilo do WhatsApp: um toque começa,
-// outro encerra e envia. O microfone só é aberto ao clicar (nunca antes), e a
+// outro encerra, converte para MP3 e envia. O microfone só é aberto ao clicar (nunca antes), e a
 // trilha é encerrada assim que a gravação termina.
 function GravadorAudio({
   desabilitado,
@@ -942,10 +946,12 @@ function GravadorAudio({
 }) {
   const [gravando, setGravando] = useState(false);
   const [segundos, setSegundos] = useState(0);
+  const [convertendo, setConvertendo] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const cancelarRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const disponivel = useMemo(() => podeGravar(), []);
   const mime = useMemo(() => mimeDeGravacao(), []);
 
   const pararTimer = () => {
@@ -958,10 +964,11 @@ function GravadorAudio({
   useEffect(() => pararTimer, []);
 
   const iniciar = async () => {
-    if (!mime) return;
+    if (!disponivel) return;
+    void carregarCodificadorMp3().catch(() => undefined);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream, { mimeType: mime });
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
       cancelarRef.current = false;
       rec.ondataavailable = (e) => {
@@ -973,13 +980,20 @@ function GravadorAudio({
         setGravando(false);
         setSegundos(0);
         if (cancelarRef.current) return;
-        const tipo = mime.split(";")[0];
-        const blob = new Blob(chunksRef.current, { type: tipo });
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || mime || "" });
         if (blob.size === 0) {
           toast.error("Nada foi gravado.");
           return;
         }
-        onGravado(new File([blob], nomePadrao("audio", tipo), { type: tipo }));
+        setConvertendo(true);
+        gravacaoParaMp3(blob)
+          .then(onGravado)
+          .catch(() =>
+            toast.error(
+              "Não foi possível preparar o áudio gravado. Anexe um arquivo de áudio (MP3) pelo clipe.",
+            ),
+          )
+          .finally(() => setConvertendo(false));
       };
       recorderRef.current = rec;
       rec.start();
@@ -1000,14 +1014,14 @@ function GravadorAudio({
     recorderRef.current = null;
   };
 
-  if (!mime) {
+  if (!disponivel) {
     return (
       <Button
         variant="outline"
         size="icon"
         className="h-10 w-10 shrink-0"
         disabled
-        title="Este navegador só grava em um formato que o WhatsApp não aceita. Anexe um arquivo de áudio pelo clipe."
+        title="Este navegador não permite gravar áudio. Anexe um arquivo de áudio (MP3) pelo clipe."
       >
         <MicOff className="h-4 w-4" />
       </Button>
@@ -1047,11 +1061,11 @@ function GravadorAudio({
       variant="outline"
       size="icon"
       className="h-10 w-10 shrink-0"
-      disabled={desabilitado}
+      disabled={desabilitado || convertendo}
       onClick={() => void iniciar()}
-      title="Gravar áudio"
+      title={convertendo ? "Preparando o áudio…" : "Gravar áudio"}
     >
-      <Mic className="h-4 w-4" />
+      {convertendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
     </Button>
   );
 }

@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@cloudflare/vite-plugin": "^1.25.5",
     "@hello-pangea/dnd": "^18.0.1",
     "@hookform/resolvers": "^5.2.2",
