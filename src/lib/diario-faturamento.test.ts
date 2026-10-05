@@ -397,7 +397,8 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
       [parcela("2026-08-10", true), parcela("2026-09-10"), parcela("2026-10-10")],
       "2026-09-08",
     );
-    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" }); // 10/10/2026 é sábado
+    // Mensalidade de outubro em 10/10 (sábado): data do Sponte usada como está.
+    expect(r).toEqual({ vencimento: "2026-10-10", origem: "mensalidade" });
   });
 
   it("mensalidade do mês corrente já quitada: cai no mês seguinte (Tom, não regride)", () => {
@@ -405,7 +406,7 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
       [parcela("2026-08-05", true), parcela("2026-09-05", true), parcela("2026-10-05")],
       "2026-09-08",
     );
-    expect(r).toEqual({ vencimento: "2026-10-05", origem: "dia_habitual" });
+    expect(r).toEqual({ vencimento: "2026-10-05", origem: "mensalidade" });
   });
 
   it("ignora a mensalidade futura mais próxima como referência (só o dia habitual conta)", () => {
@@ -448,7 +449,7 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
       }
     }
     const r = proximoVencimentoExtrasDiario(parcelas, "2026-09-09");
-    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" }); // 10/10/2026 é sábado
+    expect(r).toEqual({ vencimento: "2026-10-10", origem: "mensalidade" });
     expect(r.vencimento).not.toBe("2026-10-05");
   });
 
@@ -457,7 +458,7 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
       [parcela("2026-07-10", true), parcela("2026-08-10", true)],
       "2026-09-09",
     );
-    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_habitual" });
+    expect(r).toEqual({ vencimento: "2026-10-13", origem: "dia_mensalidade" });
   });
 
   it("sem mensalidade de referência usa o dia padrão no mês seguinte", () => {
@@ -468,6 +469,95 @@ describe("vencimento do título dos Extras — sempre mês vigente + 1", () => {
     expect(
       proximoVencimentoExtrasDiario([parcela("2026-09-22", false, "Cantina")], "2026-09-08").origem,
     ).toBe("padrao");
+  });
+});
+
+describe("vencimento dos Extras na data da Mensalidade do mês seguinte", () => {
+  const parcela = (vencimento: string, categoria: string, saldo = 500, quitada = false) => ({
+    contaReceberID: `c-${categoria}-${vencimento}`,
+    numeroBoleto: "1",
+    numeroParcela: "1",
+    vencimento,
+    categoria,
+    saldo,
+    quitada,
+  });
+  const CATEGORIAS = ["Mensalidade", "Hora Extra", "Almoço", "Jantar"];
+  const alunoDia15 = () => {
+    const ps = [];
+    for (const mes of ["10", "11", "12"])
+      for (const cat of CATEGORIAS) ps.push(parcela(`2026-${mes}-15`, cat));
+    for (let m = 1; m <= 12; m++)
+      ps.push(parcela(`2027-${String(m).padStart(2, "0")}-05`, "Mensalidade"));
+    ps.push(parcela("2027-01-05", "Matrícula"));
+    return ps;
+  };
+
+  it("4.1 mensalidade no dia 15 vence a maioria de parcelas futuras no dia 5", () => {
+    expect(proximoVencimentoExtrasDiario(alunoDia15(), "2026-09-30")).toEqual({
+      vencimento: "2026-10-15",
+      origem: "mensalidade",
+    });
+  });
+
+  it("4.2 título anterior de Extras no dia 5 não muda o vencimento", () => {
+    const ps = [...alunoDia15(), parcela("2026-10-05", "Alimentação e Integral Extras")];
+    expect(proximoVencimentoExtrasDiario(ps, "2026-09-30").vencimento).toBe("2026-10-15");
+  });
+
+  it("4.3 mensalidade do mês seguinte num sábado é usada sem rolar", () => {
+    const r = proximoVencimentoExtrasDiario([parcela("2026-10-10", "Mensalidade")], "2026-09-30");
+    expect(r).toEqual({ vencimento: "2026-10-10", origem: "mensalidade" });
+  });
+
+  it("mais de uma mensalidade no mês: maior saldo; empate, a mais cedo", () => {
+    const maiorSaldo = [
+      parcela("2026-10-05", "Mensalidade", 100),
+      parcela("2026-10-20", "Mensalidade", 900),
+    ];
+    expect(proximoVencimentoExtrasDiario(maiorSaldo, "2026-09-30").vencimento).toBe("2026-10-20");
+    const empate = [parcela("2026-10-20", "Mensalidade"), parcela("2026-10-05", "mensalidade")];
+    expect(proximoVencimentoExtrasDiario(empate, "2026-09-30").vencimento).toBe("2026-10-05");
+  });
+
+  it("4.4 sem mensalidade em janeiro: dia da última mensalidade anterior", () => {
+    const ps = [
+      parcela("2026-11-15", "Mensalidade", 500, true),
+      parcela("2026-12-15", "Mensalidade"),
+    ];
+    for (let m = 2; m <= 12; m++)
+      ps.push(parcela(`2027-${String(m).padStart(2, "0")}-05`, "Mensalidade"));
+    expect(proximoVencimentoExtrasDiario(ps, "2026-12-15")).toEqual({
+      vencimento: "2027-01-15",
+      origem: "dia_mensalidade",
+    });
+  });
+
+  it("sem mensalidade anterior ao mês alvo: dia da primeira posterior", () => {
+    const ps = [parcela("2026-12-08", "Mensalidade"), parcela("2027-01-20", "Mensalidade")];
+    expect(proximoVencimentoExtrasDiario(ps, "2026-09-30")).toEqual({
+      vencimento: "2026-10-08",
+      origem: "dia_mensalidade",
+    });
+  });
+
+  it("4.5 sem mensalidade: dia habitual sem os títulos de Extras", () => {
+    const ps = [
+      ...["10", "11", "12"].map((m) => parcela(`2026-${m}-10`, "Hora Extra")),
+      ...["10", "11", "12"].map((m) => parcela(`2026-${m}-05`, "Alimentação e Integral Extras")),
+      parcela("2027-01-05", "Alimentação e Integral Extras"),
+    ];
+    expect(proximoVencimentoExtrasDiario(ps, "2026-09-30")).toEqual({
+      vencimento: "2026-10-13", // 10/10/2026 é sábado
+      origem: "dia_habitual",
+    });
+  });
+
+  it("4.6 nenhuma parcela: dia 5 do mês seguinte", () => {
+    expect(proximoVencimentoExtrasDiario([], "2026-09-30")).toEqual({
+      vencimento: "2026-10-05",
+      origem: "padrao",
+    });
   });
 });
 
