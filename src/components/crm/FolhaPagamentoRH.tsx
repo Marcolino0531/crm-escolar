@@ -152,6 +152,8 @@ type Preparo = {
   anteriorCompetencia: string | null;
   comparacao: ComparacaoFolhas<ColaboradorExtrato> | null;
   plano: PlanoReimportacao<ColaboradorExtrato> | null;
+  /** Líquido manual que será aplicado, por chaveColaborador. */
+  liquidosManuais: Map<string, { valor: number; herdado: boolean }>;
 };
 
 const ModalImportacao: React.FC<{
@@ -163,6 +165,7 @@ const ModalImportacao: React.FC<{
   const { comparacao, plano } = preparo;
   const folha = preparo.folhaTela;
   const totaisTela = totaisDasEmpresas(folha.colaboradores);
+  const herdados = [...preparo.liquidosManuais.values()].filter((l) => l.herdado).length;
   const [selecionados, setSelecionados] = useState<Set<string>>(() =>
     comparacao ? preSelecao(comparacao) : new Set(),
   );
@@ -245,6 +248,11 @@ const ModalImportacao: React.FC<{
               divergência vem selecionado.
             </p>
           )}
+          {herdados > 0 && (
+            <p className="rounded-lg border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">
+              {herdados} colaborador(es) com líquido manual repetido do mês anterior.
+            </p>
+          )}
           {linhas.length === 0 ? (
             <p className="text-sm text-gray-500">Nenhum colaborador mudou em relação ao gravado.</p>
           ) : (
@@ -259,35 +267,49 @@ const ModalImportacao: React.FC<{
                 </tr>
               </thead>
               <tbody>
-                {linhas.map(({ c, divergencias, aviso }) => (
-                  <tr
-                    key={chaveColaborador(c)}
-                    className={`border-t border-gray-100 align-top ${
-                      divergencias.length ? "bg-amber-50" : ""
-                    }`}
-                  >
-                    <td className="px-2 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selecionados.has(chaveColaborador(c))}
-                        onChange={() => alternar(chaveColaborador(c))}
-                      />
-                    </td>
-                    <td className="px-2 py-2">
-                      <span className="font-medium text-gray-800">{toTitleCase(c.nome)}</span>
-                      <span className="block text-xs text-gray-500">
-                        {c.codigo} · {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
-                        {c.situacao}
-                      </span>
-                      {aviso && <span className="block text-xs text-red-700">{aviso}</span>}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums">{brl(c.proventos)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{brl(c.liquido)}</td>
-                    <td className="px-2 py-2">
-                      <ListaDivergencias divergencias={divergencias} />
-                    </td>
-                  </tr>
-                ))}
+                {linhas.map(({ c, divergencias, aviso }) => {
+                  const manual = preparo.liquidosManuais.get(chaveColaborador(c));
+                  return (
+                    <tr
+                      key={chaveColaborador(c)}
+                      className={`border-t border-gray-100 align-top ${
+                        divergencias.length ? "bg-amber-50" : ""
+                      }`}
+                    >
+                      <td className="px-2 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selecionados.has(chaveColaborador(c))}
+                          onChange={() => alternar(chaveColaborador(c))}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <span className="font-medium text-gray-800">{toTitleCase(c.nome)}</span>
+                        <span className="block text-xs text-gray-500">
+                          {c.codigo} · {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
+                          {c.situacao}
+                        </span>
+                        {aviso && <span className="block text-xs text-red-700">{aviso}</span>}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">{brl(c.proventos)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {brl(c.liquido)}
+                        {manual && (
+                          <span className="block text-xs text-sky-800">
+                            Pago: {brl(manual.valor)}
+                            <SeloLiquidoManual />
+                            {manual.herdado && (
+                              <span className="block text-gray-500">repetido do mês anterior</span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2">
+                        <ListaDivergencias divergencias={divergencias} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -966,6 +988,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
         plano: prep.gravada
           ? planejarReimportacao(prep.gravada.colaboradores, folhaTela.colaboradores)
           : null,
+        liquidosManuais: new Map(prep.liquidosManuais.map((l) => [l.chave, l])),
       });
     } catch (e) {
       toast.error(msgErro(e, "Não foi possível ler o PDF."), { duration: 15000 });
