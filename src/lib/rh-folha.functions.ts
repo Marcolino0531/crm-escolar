@@ -1213,7 +1213,8 @@ export const vincularFuncionarioFolha = createServerFn({ method: "POST" })
 
 /**
  * Apaga o registro da folha gravada (com rubricas, restituição e eventos
- * anteriores) e grava a exclusão da competência; com "fixa", também a do colégio.
+ * anteriores) e grava a exclusão da competência, com o retrato do registro para
+ * o "Desfazer"; com "fixa", também a do colégio.
  * funcionarios_salarios da pessoa é recalculada sem ele ou removida.
  */
 export const excluirColaboradorFolha = createServerFn({ method: "POST" })
@@ -1286,12 +1287,13 @@ export const listarExclusoesFolha = createServerFn({ method: "POST" })
 
 /**
  * Desfaz uma exclusão. Fixa: vale para as próximas importações. Da competência
- * (só aberta): o registro volta na próxima reimportação do PDF.
+ * (só aberta): o registro volta à folha gravada com os valores do extrato e o
+ * status de conferência guardados no retrato da exclusão (rh_folha_desfazer_exclusao).
  */
 export const desfazerExclusaoFolha = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => schoolInput.extend({ id: z.string().uuid() }).parse(input))
-  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+  .handler(async ({ data, context }): Promise<{ ok: true; restaurado: boolean }> => {
     await contexto(context.userId, data.schoolId, false);
     await exigirAdminFolha(context.userId);
     const { data: row, error } = await supabaseAdmin
@@ -1307,23 +1309,19 @@ export const desfazerExclusaoFolha = createServerFn({ method: "POST" })
     if (!e.fixa && competenciaFechada(imps)) {
       throw new Error("Competência fechada: reabra para desfazer a exclusão.");
     }
-    const { error: dErr } = await supabaseAdmin
-      .from("rh_folha_exclusoes" as never)
-      .delete()
-      .eq("id", e.id);
+    const nome = await nomeDoUsuario(context.userId);
+    const { data: res, error: dErr } = await supabaseAdmin.rpc(
+      "rh_folha_desfazer_exclusao" as never,
+      {
+        p: { school_id: data.schoolId, exclusao_id: e.id, por: context.userId, por_nome: nome },
+      } as never,
+    );
     if (dErr) throw new Error(dErr.message);
-    const imp = e.fixa ? null : importacaoDoCnpj(imps, e.cnpj);
-    if (imp) {
-      await registrarEvento(
-        imp.id,
-        null,
-        "exclusao_desfeita",
-        { cnpj: e.cnpj, tipo: e.tipo, codigo: e.codigo, cpf: e.cpf, nome: e.nome },
-        context.userId,
-        await nomeDoUsuario(context.userId),
-      );
+    const restaurado = Boolean((res as { restaurado?: boolean } | null)?.restaurado);
+    if (restaurado && e.competencia) {
+      await sincronizarSalarios(data.schoolId, e.competencia, context.userId, nome);
     }
-    return { ok: true };
+    return { ok: true, restaurado };
   });
 
 // ---------- Fechamento ----------

@@ -667,8 +667,9 @@ export function conflitoVinculoCpf(
 }
 
 // ---------- Exclusão de colaborador da folha (só admin) ----------
-// O registro excluído é apagado da folha gravada. Da exclusão fica só a
-// identidade (empresa, tipo, código, CPF e nome), o motivo, quem e quando.
+// O registro excluído é apagado da folha gravada. A exclusão guarda a
+// identidade (empresa, tipo, código, CPF e nome), o motivo, quem e quando e,
+// só no servidor, o retrato do registro, que o "Desfazer" devolve à folha.
 
 /**
  * Exclusão de uma competência (empresa + tipo + código) ou fixa do colégio:
