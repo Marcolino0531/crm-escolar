@@ -244,6 +244,51 @@ export function planejarReimportacao<T extends ColaboradorComparavel>(
   return plano;
 }
 
+type ComLiquidoManual = {
+  tipo: TipoColaborador;
+  codigo: string;
+  liquidoManual?: number | null;
+};
+
+type Chaveavel = { tipo: TipoColaborador; codigo: string };
+
+export type LiquidoManualAplicado = { valor: number; herdado: boolean };
+
+/**
+ * Líquido manual de cada registro do PDF (por chaveColaborador). O líquido manual
+ * é um valor fixo do colaborador: o registro novo herda o da importação anterior
+ * do mesmo CNPJ (mesma chave), e o já gravado (substituído ou igual) mantém o
+ * que tinha. Sem valor = fica fora do mapa (grava nulo).
+ */
+export function liquidosManuaisDaImportacao(
+  anteriores: readonly ComLiquidoManual[],
+  gravados: readonly ComLiquidoManual[],
+  plano: {
+    novos: readonly Chaveavel[];
+    substituidos: readonly { colaborador: Chaveavel }[];
+    iguais?: readonly Chaveavel[];
+  },
+): Map<string, LiquidoManualAplicado> {
+  const valorPorChave = (rs: readonly ComLiquidoManual[]) =>
+    new Map(
+      rs.flatMap((r) => (r.liquidoManual != null ? [[chaveColaborador(r), r.liquidoManual]] : [])),
+    );
+  const doAnterior = valorPorChave(anteriores);
+  const doGravado = valorPorChave(gravados);
+  const out = new Map<string, LiquidoManualAplicado>();
+  for (const c of plano.novos) {
+    const k = chaveColaborador(c);
+    const v = doAnterior.get(k);
+    if (v != null) out.set(k, { valor: v, herdado: true });
+  }
+  for (const c of [...plano.substituidos.map((s) => s.colaborador), ...(plano.iguais ?? [])]) {
+    const k = chaveColaborador(c);
+    const v = doGravado.get(k);
+    if (v != null) out.set(k, { valor: v, herdado: false });
+  }
+  return out;
+}
+
 // ---------- Ajuste manual ----------
 
 export type RubricaFolha = RubricaComparavel & {
