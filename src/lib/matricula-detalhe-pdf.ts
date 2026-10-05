@@ -19,14 +19,22 @@ const ALTURA_PAGINA = 297;
 const RODAPE = 285;
 const LARGURA_ROTULO = 58;
 
-export function nomeArquivoFichaMatricula(alunoNome: string | null, protocolo: string | null) {
-  const base = (alunoNome ?? protocolo ?? "matricula")
+function trechoDoArquivo(texto: string): string {
+  return texto
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
+}
+
+export function nomeArquivoFichaMatricula(alunoNome: string | null, protocolo: string | null) {
+  const base = trechoDoArquivo(alunoNome ?? protocolo ?? "matricula");
   return `ficha-matricula-${base || "submissao"}.pdf`;
+}
+
+export function nomeArquivoFichaAluno(alunoNome: string) {
+  return `ficha-aluno-${trechoDoArquivo(alunoNome) || "aluno"}.pdf`;
 }
 
 function novaPaginaSePreciso(doc: Doc, y: number, altura: number): number {

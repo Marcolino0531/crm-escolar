@@ -373,3 +373,34 @@ export function montarSecoesFinanceiras(
     secaoIntegracao(situacao, lancamentos),
   ];
 }
+
+/**
+ * Ficha do aluno sem formulário de matrícula: só as escolhas da rematrícula que
+ * existirem (Matrícula, Material pedagógico, Extras), sem lançamento no Sponte.
+ */
+export function montarSecoesEscolhasRematricula(
+  snapshot: SnapshotFinanceiro,
+  extras: string[] | null,
+): SecaoFicha[] {
+  const secoes: SecaoFicha[] = [];
+  if (snapshot.matricula_valor !== null && snapshot.matricula_parcelas !== null)
+    secoes.push(secaoMatricula(snapshot, undefined));
+  if (snapshot.material_valor_anual !== null && snapshot.material_parcelas !== null)
+    secoes.push(secaoMaterial(snapshot, undefined));
+  if (extras !== null)
+    secoes.push({
+      titulo: "Extras",
+      grupos: [
+        {
+          titulo: null,
+          campos: [
+            {
+              rotulo: "Extras escolhidos",
+              valor: extras.length > 0 ? extras.join(", ") : "Nenhum extra escolhido",
+            },
+          ],
+        },
+      ],
+    });
+  return secoes;
+}

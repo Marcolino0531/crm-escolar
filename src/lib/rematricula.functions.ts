@@ -248,6 +248,8 @@ export interface AlunoSponteRematricula {
   bairro: string;
   cidade: string;
   uf: string;
+  /** Responsável didático no cadastro do Sponte (ficha do aluno). */
+  responsavelDidaticoId?: string;
 }
 
 // O GetAlunos do Sponte não devolve a UF do aluno (a tag existe no WSDL, mas
@@ -272,6 +274,7 @@ function lerAluno(node: string, unidade: string): AlunoSponteRematricula {
     bairro: parseXmlValue(node, "Bairro"),
     cidade: parseXmlValue(node, "Cidade"),
     uf: parseXmlValue(node, "Estado") || parseXmlValue(node, "UF"),
+    responsavelDidaticoId: parseXmlValue(node, "ResponsavelDidaticoID"),
   };
 }
 
@@ -1368,7 +1371,11 @@ async function espelharRotinaNoDiario(
 
 // Uma linha por aluno/ano letivo na rematrícula (reenvio atualiza), em
 // student_routine e em matricula_saude.
-function submissionIdRematricula(unidade: string, alunoId: string, ano: number | null): string {
+export function submissionIdRematricula(
+  unidade: string,
+  alunoId: string,
+  ano: number | null,
+): string {
   return `rematricula:${unidade}:${alunoId}:${ano ?? "sem-ano"}`;
 }
 
