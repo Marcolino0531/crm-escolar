@@ -478,6 +478,19 @@ export function resumoDaFolha(
   }));
 }
 
+/**
+ * Resumo e Restituição: uma única lista em ordem alfabética pelo nome padronizado
+ * (toTitleCase), misturando linhas da folha e de salário manual. Só apresentação.
+ */
+export function emOrdemAlfabetica<T extends { nome: string }>(
+  linhas: readonly T[],
+  comparar: (a: string, b: string) => number,
+): T[] {
+  return linhas
+    .map((l) => ({ ...l, nome: toTitleCase(l.nome) }))
+    .sort((a, b) => comparar(a.nome, b.nome));
+}
+
 export function totaisResumo(linhas: readonly LinhaResumo[]) {
   return {
     bruto: somaReais(linhas.map((l) => l.bruto)),

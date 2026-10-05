@@ -22,6 +22,7 @@ import {
   compararFolhas,
   competenciaFechada,
   conflitoVinculoCpf,
+  emOrdemAlfabetica,
   montarLoteFolha,
   planejarReimportacao,
   preSelecao,
@@ -850,7 +851,8 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
 
   const contratosPorCpf = useMemo(() => registrosPorCpf(colaboradores), [colaboradores]);
   const restituicaoPorPessoa = useMemo(
-    () => restituicoesPorPessoa(colaboradores, restituicao.linhas),
+    () =>
+      emOrdemAlfabetica(restituicoesPorPessoa(colaboradores, restituicao.linhas), collator.compare),
     [colaboradores, restituicao],
   );
 
@@ -873,7 +875,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
         },
       ];
     });
-    return [...daFolha, ...manuais];
+    return emOrdemAlfabetica([...daFolha, ...manuais], collator.compare);
   }, [colaboradores, restituicao, salariosQ.data, ativosForaDaFolha, competencia]);
   const totais = totaisResumo(linhasResumo);
   const lote = useMemo(
