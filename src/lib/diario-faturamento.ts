@@ -386,27 +386,80 @@ export function podeIsentar(c: ConsumoFaturavel): TransicaoFaturamento {
   return { ok: true };
 }
 
+export type OrigemVencimentoExtras = "mensalidade" | "dia_mensalidade" | "dia_habitual" | "padrao";
+
 export interface VencimentoExtrasDiario {
   vencimento: string; // YYYY-MM-DD
-  origem: "dia_habitual" | "padrao";
+  origem: OrigemVencimentoExtras;
 }
 
-// Vencimento do título dos Extras: sempre no mês seguinte ao do faturamento,
-// no dia habitual de cobrança do aluno (próximo dia útil). Os boletos do mês
-// corrente já foram enviados às famílias, então a mensalidade em aberto mais
-// próxima NÃO serve de referência aqui — quitada ou não, o mês vigente é pulado.
-// O dia habitual é o das parcelas que ainda vão vencer (dia de cobrança atual
-// do aluno), não o do histórico inteiro.
+function semAcento(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function ehMensalidade(p: ParcelaAberta): boolean {
+  return p.vencimento !== "" && semAcento(p.categoria).includes("mensalidade");
+}
+
+// Origens sem Mensalidade de referência: quem fatura deve conferir no Sponte.
+export function vencimentoAConferir(origem: OrigemVencimentoExtras | undefined): boolean {
+  return origem === "dia_habitual" || origem === "padrao";
+}
+
+export const AVISO_ORIGEM_VENCIMENTO: Record<OrigemVencimentoExtras, string> = {
+  mensalidade: " Mesma data da mensalidade.",
+  dia_mensalidade: " Sem mensalidade no mês seguinte: usado o dia da mensalidade do aluno.",
+  dia_habitual:
+    " Atenção: aluno sem parcela de Mensalidade no Sponte. Usado o dia mais frequente das outras parcelas. Confira o vencimento no Sponte.",
+  padrao:
+    " Atenção: nenhuma parcela encontrada no Sponte para este aluno. Usado o dia 5. Confira o vencimento no Sponte.",
+};
+
+const CATEGORIA_EXTRAS_NORMALIZADA = semAcento(CATEGORIA_EXTRAS_DIARIO_SPONTE);
+
+// Vencimento do título dos Extras: sempre no mês seguinte ao do faturamento
+// (os boletos do mês corrente já foram enviados às famílias), na data da
+// MENSALIDADE do aluno nesse mês. Quitadas contam (o que interessa é a data).
+//  a) Mensalidade no mês alvo: a data exata dela (maior saldo; empate, a mais cedo).
+//  b) Sem Mensalidade no mês alvo: o dia da Mensalidade mais próxima (a última
+//     antes do mês alvo; sem nenhuma antes, a primeira depois), em dia útil.
+//  c) Sem Mensalidade: dia mais frequente das parcelas futuras, sem os
+//     próprios títulos de Extras (um título anterior não puxa o seguinte).
+//  d) Sem referência: dia 5 do mês seguinte, em dia útil.
 export function proximoVencimentoExtrasDiario<T extends ParcelaAberta>(
   parcelas: readonly T[],
   hojeYMD: string,
 ): VencimentoExtrasDiario {
-  const dia = diaVencimentoHabitual(parcelas, hojeYMD);
-  if (dia !== null) {
+  const mesAlvo = mesSeguinte(hojeYMD);
+  const mensalidades = parcelas.filter(ehMensalidade);
+
+  const doMesAlvo = mensalidades.filter((p) => p.vencimento.slice(0, 7) === mesAlvo);
+  if (doMesAlvo.length > 0) {
+    const escolhida = [...doMesAlvo].sort(
+      (a, b) => b.saldo - a.saldo || a.vencimento.localeCompare(b.vencimento),
+    )[0];
+    return { vencimento: escolhida.vencimento, origem: "mensalidade" };
+  }
+
+  if (mensalidades.length > 0) {
+    const porData = [...mensalidades].sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+    const anteriores = porData.filter((p) => p.vencimento.slice(0, 7) < mesAlvo);
+    const referencia = anteriores[anteriores.length - 1] ?? porData[0];
+    const dia = parseInt(referencia.vencimento.slice(8, 10), 10);
     return {
-      vencimento: proximoDiaUtil(dataNoMes(mesSeguinte(hojeYMD), dia)),
-      origem: "dia_habitual",
+      vencimento: proximoDiaUtil(dataNoMes(mesAlvo, dia)),
+      origem: "dia_mensalidade",
     };
+  }
+
+  const semExtras = parcelas.filter((p) => semAcento(p.categoria) !== CATEGORIA_EXTRAS_NORMALIZADA);
+  const dia = diaVencimentoHabitual(semExtras, hojeYMD);
+  if (dia !== null) {
+    return { vencimento: proximoDiaUtil(dataNoMes(mesAlvo, dia)), origem: "dia_habitual" };
   }
   return { vencimento: proximoDiaUtil(vencimentoPadraoRecarga(hojeYMD)), origem: "padrao" };
 }

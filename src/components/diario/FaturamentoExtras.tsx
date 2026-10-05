@@ -34,7 +34,9 @@ import {
 } from "@/components/ui/table";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
 import {
+  AVISO_ORIGEM_VENCIMENTO,
   descreverItem,
+  vencimentoAConferir,
   type EventoPendente,
   type StatusFaturamento,
 } from "@/lib/diario-faturamento";
@@ -87,9 +89,9 @@ function mensagemResultado(r: ResultadoFaturamento): void {
   if (!r.ok) {
     toast.error(r.erro ?? "Não foi possível faturar.");
   } else if (r.lancadoNoSponte) {
-    toast.success(
-      `Cobrança criada no Sponte${r.sponteContaReceberId ? ` (conta ${r.sponteContaReceberId})` : ""}, vencimento ${r.sponteVencimento ? data(r.sponteVencimento) : "—"}.`,
-    );
+    const texto = `Cobrança criada no Sponte${r.sponteContaReceberId ? ` (conta ${r.sponteContaReceberId})` : ""}, vencimento ${r.sponteVencimento ? data(r.sponteVencimento) : "—"}.${r.sponteVencimentoOrigem ? AVISO_ORIGEM_VENCIMENTO[r.sponteVencimentoOrigem] : ""}`;
+    if (vencimentoAConferir(r.sponteVencimentoOrigem)) toast.warning(texto);
+    else toast.success(texto);
   } else {
     toast.error(r.sponteErro ?? "O Sponte não confirmou a cobrança.");
   }
@@ -143,6 +145,10 @@ export function FaturamentoExtras({ unidade, podeEditar }: Props) {
     mutationFn: async () => faturarTodos({ data: { unidade: unidade as string } }),
     onSuccess: (r) => {
       if (r.lancados > 0) toast.success(`${r.lancados} cobrança(s) criada(s) no Sponte.`);
+      if (r.comAtencao)
+        toast.warning(
+          `Atenção: ${r.comAtencao} aluno(s) sem parcela de Mensalidade no Sponte. Confira o vencimento no Sponte.`,
+        );
       for (const e of r.comErro) toast.error(`${e.aluno}: ${e.erro}`);
       if (r.lancados === 0 && r.comErro.length === 0) toast.info("Nenhum aluno faturável.");
       recarregar();
