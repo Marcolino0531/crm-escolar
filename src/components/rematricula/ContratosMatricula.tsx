@@ -4,7 +4,15 @@ import { useServerFn } from "@tanstack/react-start";
 import { abrirPdfBase64 } from "@/lib/abrir-pdf";
 import { toast } from "sonner";
 import { avisarExtrasContrato } from "@/lib/contrato-avisos-toast";
-import { AlertTriangle, Ban, Eye, ExternalLink, FileSignature, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  Eye,
+  ExternalLink,
+  FileSignature,
+  Loader2,
+  MessageCircle,
+} from "lucide-react";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { BaixarAssinadoButton } from "@/components/documentos/BaixarAssinadoButton";
 import { SeloSignatario } from "@/components/zapsign/SeloSignatario";
@@ -41,6 +49,7 @@ import {
 import { useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { formatarBRL } from "@/lib/rematricula";
+import { linkWhatsAppContrato, type MensagemContratoInput } from "@/lib/contrato-whatsapp";
 import {
   filtrarContratos,
   STATUS_CONTRATO_LABEL,
@@ -206,6 +215,40 @@ export function Signatarios({ signatarios }: { signatarios: SignatarioContratoSt
         );
       })}
     </div>
+  );
+}
+
+// Abre o WhatsApp do computador com a mensagem do link do CONTRATANTE; não envia
+// nada pelo servidor. Só enquanto o contratante não assinou.
+function WhatsAppContratante({ item }: { item: ContratoPendente }) {
+  const c = item.contrato;
+  const z = c?.zapsign;
+  if (!c || !z || c.status !== "enviado" || !z.signUrl) return null;
+  const contratante = z.signatarios.find((s) => s.papel === "CONTRATANTE") ?? z.signatarios[0];
+  if (contratante?.status === "signed") return null;
+  if (!z.telefoneContratante) {
+    return <span className="text-xs text-muted-foreground">Sem telefone</span>;
+  }
+  const dados = (): MensagemContratoInput => ({
+    responsavelNome: c.responsavelNome,
+    alunoNome: item.alunoNome,
+    anoLetivo: item.anoLetivo,
+    unidade: item.unidade,
+    signUrl: z.signUrl,
+    agora: new Date(),
+  });
+  return (
+    <a
+      href={linkWhatsAppContrato(z.telefoneContratante, dados())}
+      onClick={(e) => {
+        e.currentTarget.href = linkWhatsAppContrato(z.telefoneContratante, dados());
+      }}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-700"
+    >
+      <MessageCircle size={14} /> WhatsApp
+    </a>
   );
 }
 
@@ -642,6 +685,7 @@ export function ContratosMatricula({
                           {item.contrato?.zapsign && (
                             <Signatarios signatarios={item.contrato.zapsign.signatarios} />
                           )}
+                          <WhatsAppContratante item={item} />
                           {podeEditar && cancelavel && (
                             <Button
                               size="sm"
