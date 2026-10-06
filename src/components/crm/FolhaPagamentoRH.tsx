@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { ChevronDown, ChevronRight, MoreVertical, Pencil } from "lucide-react";
 import type { Funcionario } from "@/lib/crm/types";
 import { useRole } from "@/lib/app-context";
 import { parseBRLNumber } from "@/lib/currency";
@@ -34,6 +35,7 @@ import {
   totaisAjustados,
   totaisDasEmpresas,
   totaisResumo,
+  valorPago,
   type ComparacaoFolhas,
   type Divergencia,
   type LinhaResumo,
@@ -62,6 +64,12 @@ import {
   type ImportacaoFolha,
 } from "@/lib/rh-folha.functions";
 import SalariosRH, { SeletorCompetencia } from "@/components/crm/SalariosRH";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface FolhaPagamentoRHProps {
   schoolId: string | null;
@@ -75,6 +83,13 @@ const SECOES: { id: Secao; label: string }[] = [
   { id: "folha", label: "Folha" },
   { id: "restituicao", label: "Restituição" },
   { id: "resumo", label: "Resumo" },
+];
+
+type FiltroFolha = "conferencia" | "confirmados" | "todos";
+const FILTROS_FOLHA: { id: FiltroFolha; label: string }[] = [
+  { id: "conferencia", label: "Em conferência" },
+  { id: "confirmados", label: "Confirmados" },
+  { id: "todos", label: "Todos" },
 ];
 
 const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -1016,12 +1031,13 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
 
   // ----- Ações da folha -----
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const [soConferencia, setSoConferencia] = useState(false);
+  const [filtro, setFiltro] = useState<FiltroFolha | null>(null);
   const [aberto, setAberto] = useState<string | null>(null);
   const [ajustando, setAjustando] = useState<ColaboradorFolhaGravado | null>(null);
   const [excluindo, setExcluindo] = useState<ColaboradorFolhaGravado | null>(null);
   const [verExcluidos, setVerExcluidos] = useState(false);
   useEffect(() => setSelecionados(new Set()), [competencia, schoolId]);
+  useEffect(() => setFiltro(null), [competencia, schoolId, secao]);
 
   const base = { schoolId: schoolId as string, competencia };
   const confirmar = useAcao(
@@ -1086,7 +1102,20 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     );
   }
 
-  const visiveis = soConferencia ? pendentes : colaboradores;
+  // Sem escolha: "Em conferência" se houver alguém pendente, senão "Todos".
+  const confirmados = colaboradores.filter((c) => c.status === "confirmado");
+  const filtroAtivo: FiltroFolha = filtro ?? (pendentes.length > 0 ? "conferencia" : "todos");
+  const contagemFiltro: Record<FiltroFolha, number> = {
+    conferencia: pendentes.length,
+    confirmados: confirmados.length,
+    todos: colaboradores.length,
+  };
+  const visiveis =
+    filtroAtivo === "conferencia"
+      ? pendentes
+      : filtroAtivo === "confirmados"
+        ? confirmados
+        : colaboradores;
   // Livres + os já ligados só a registros com o mesmo CPF deste (contratos da mesma
   // pessoa, em qualquer empresa, vão para o mesmo cadastro). Mesma regra do servidor.
   const funcionariosLivres = (c: ColaboradorFolhaGravado) =>
@@ -1311,14 +1340,22 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           {temFolha && (
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-2 text-xs">
-                <label className="flex items-center gap-2 text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={soConferencia}
-                    onChange={(e) => setSoConferencia(e.target.checked)}
-                  />
-                  Só em conferência
-                </label>
+                <div className="flex flex-wrap gap-1">
+                  {FILTROS_FOLHA.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setFiltro(f.id)}
+                      className={`rounded-full border px-3 py-1 font-medium ${
+                        filtroAtivo === f.id
+                          ? "border-gray-800 bg-gray-800 text-white"
+                          : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      {f.label} · {contagemFiltro[f.id]}
+                    </button>
+                  ))}
+                </div>
                 <span className="tabular-nums text-gray-600">
                   {colaboradores.length} colaborador(es) · proventos {brl(totaisFolha.proventos)} ·
                   descontos {brl(totaisFolha.descontos)} · líquido {brl(totaisFolha.liquido)}
@@ -1328,7 +1365,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
                     <th className="w-8 px-2 py-2">
-                      {editavel && pendentes.length > 0 && (
+                      {editavel && pendentes.length > 0 && filtroAtivo !== "confirmados" && (
                         <input
                           type="checkbox"
                           checked={selecionados.size === pendentes.length}
@@ -1341,12 +1378,10 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                       )}
                     </th>
                     <th className="px-2 py-2 text-left">Colaborador</th>
-                    <th className="px-2 py-2 text-left">Cadastro no RH</th>
-                    <th className="px-2 py-2 text-right">Proventos</th>
-                    <th className="px-2 py-2 text-right">Descontos</th>
-                    <th className="px-2 py-2 text-right">Líquido</th>
+                    <th className="px-2 py-2 text-right">Líquido a pagar</th>
                     <th className="px-2 py-2 text-left">Status</th>
                     <th className="px-2 py-2" />
+                    <th className="w-8 px-1 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1355,25 +1390,32 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                     if (!doGrupo.length) return null;
                     return (
                       <React.Fragment key={imp.id}>
-                        <tr className="border-t border-gray-200 bg-gray-100">
-                          <td
-                            colSpan={8}
-                            className="px-2 py-1.5 text-xs font-semibold text-gray-700"
-                          >
-                            {imp.empresa} · CNPJ {imp.cnpj} · {doGrupo.length} registro(s)
-                          </td>
-                        </tr>
+                        {importacoes.length > 1 && (
+                          <tr className="border-t border-gray-200 bg-gray-100">
+                            <td
+                              colSpan={6}
+                              className="px-2 py-1.5 text-xs font-semibold text-gray-700"
+                            >
+                              {imp.empresa} · CNPJ {imp.cnpj} · {doGrupo.length} registro(s)
+                            </td>
+                          </tr>
+                        )}
                         {doGrupo.map((c) => {
                           const ajustado = c.ajustadoEm != null;
+                          const detalhe = aberto === c.id;
+                          const emConferencia = c.status === "em_conferencia";
+                          const podeAjustar = editavel && emConferencia;
+                          const podeReabrir = editavel && c.status === "confirmado";
+                          const podeExcluir = isAdmin && !fechada;
                           return (
                             <React.Fragment key={c.id}>
                               <tr
                                 className={`border-t border-gray-100 align-top ${
-                                  c.status === "em_conferencia" ? "bg-amber-50" : ""
+                                  emConferencia ? "bg-amber-50" : ""
                                 }`}
                               >
                                 <td className="px-2 py-2">
-                                  {editavel && c.status === "em_conferencia" && (
+                                  {podeAjustar && (
                                     <input
                                       type="checkbox"
                                       checked={selecionados.has(c.id)}
@@ -1391,191 +1433,263 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                                 <td className="px-2 py-2">
                                   <button
                                     type="button"
-                                    onClick={() => setAberto(aberto === c.id ? null : c.id)}
-                                    className="text-left font-medium text-gray-800 hover:underline"
+                                    onClick={() => setAberto(detalhe ? null : c.id)}
+                                    aria-expanded={detalhe}
+                                    className="inline-flex items-center gap-1 text-left font-medium text-gray-800 hover:underline"
                                   >
+                                    {detalhe ? (
+                                      <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
+                                    )}
                                     {toTitleCase(c.nome)}
                                   </button>
                                   <SeloContratos
                                     contratos={contratosPorCpf.get(somenteDigitos(c.cpf))}
                                   />
-                                  <span className="block text-xs text-gray-500">
-                                    {c.codigo} ·{" "}
-                                    {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"} ·{" "}
-                                    {c.situacao}
-                                    {c.cargo && ` · ${c.cargo}`}
-                                  </span>
-                                  {ajustado && (
-                                    <span className="block text-xs text-blue-700">
-                                      Ajustado manualmente por {c.ajustadoPorNome} em{" "}
-                                      {dataHora(c.ajustadoEm)}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-2 py-2 text-xs">
-                                  {editavel ? (
-                                    <select
-                                      value={c.funcionarioId ?? ""}
-                                      onChange={(e) =>
-                                        vincular.mutate({
-                                          id: c.id,
-                                          funcionarioId: e.target.value || null,
-                                        })
-                                      }
-                                      className={`max-w-[14rem] rounded-md border px-1 py-0.5 ${
-                                        c.funcionarioId
-                                          ? "border-gray-300"
-                                          : "border-red-400 text-red-700"
-                                      }`}
+                                  {!c.funcionarioId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setAberto(c.id)}
+                                      className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 hover:bg-red-200"
                                     >
-                                      <option value="">Sem cadastro no RH</option>
-                                      {funcionariosLivres(c).map((f) => (
-                                        <option key={f.id} value={f.id}>
-                                          {toTitleCase(f.nomeCompleto)}
-                                          {f.dataRescisao ? " (desligado)" : ""}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  ) : c.funcionarioId ? (
-                                    toTitleCase(porId.get(c.funcionarioId)?.nomeCompleto) ||
-                                    "Vinculado"
-                                  ) : (
-                                    <span className="font-medium text-red-700">
                                       Sem cadastro no RH
-                                    </span>
-                                  )}
-                                  {c.vinculoManual && (
-                                    <span className="block text-gray-400">vínculo manual</span>
+                                    </button>
                                   )}
                                 </td>
                                 <td className="px-2 py-2 text-right tabular-nums">
-                                  {brl(c.proventos)}
-                                </td>
-                                <td className="px-2 py-2 text-right tabular-nums">
-                                  {brl(c.descontos)}
-                                </td>
-                                <td className="px-2 py-2 text-right tabular-nums">
-                                  {brl(c.liquido)}
-                                  {ajustado && (
-                                    <span className="block text-xs text-gray-400">
-                                      PDF {brl(c.liquidoPdf)}
-                                    </span>
-                                  )}
-                                  {c.liquidoManual != null && (
-                                    <span className="block text-xs text-sky-800">
-                                      Pago: {brl(c.liquidoManual)}
-                                      <SeloLiquidoManual />
-                                    </span>
-                                  )}
+                                  <span className="inline-flex items-center justify-end gap-1">
+                                    {c.liquidoManual != null && (
+                                      <span
+                                        title={`Líquido manual. Líquido da folha: ${brl(c.liquido)}`}
+                                        className="text-sky-700"
+                                      >
+                                        <Pencil
+                                          className="h-3.5 w-3.5"
+                                          aria-label="Líquido manual"
+                                        />
+                                      </span>
+                                    )}
+                                    {brl(valorPago(c))}
+                                  </span>
                                 </td>
                                 <td className="px-2 py-2">
                                   <SeloStatus status={c.status} />
-                                  {c.confirmadoEm && (
-                                    <span className="block text-xs text-gray-400">
-                                      {c.confirmadoPorNome} · {dataHora(c.confirmadoEm)}
-                                    </span>
+                                </td>
+                                <td className="px-2 py-2 text-right text-xs">
+                                  {podeAjustar && (
+                                    <button
+                                      type="button"
+                                      onClick={() => confirmar.mutate([c.id])}
+                                      className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 font-medium text-emerald-700 hover:bg-emerald-50"
+                                    >
+                                      Confirmar
+                                    </button>
                                   )}
                                 </td>
-                                <td className="space-y-1 px-2 py-2 text-right text-xs">
-                                  {editavel && c.status === "em_conferencia" && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => confirmar.mutate([c.id])}
-                                        className="block w-full text-emerald-700 hover:underline"
-                                      >
-                                        Confirmar
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => setAjustando(c)}
-                                        className="block w-full text-blue-700 hover:underline"
-                                      >
-                                        Ajustar
-                                      </button>
-                                    </>
-                                  )}
-                                  {editavel && c.status === "confirmado" && (
-                                    <button
-                                      type="button"
-                                      onClick={() => reabrirConferencia.mutate(c.id)}
-                                      className="block w-full text-amber-700 hover:underline"
-                                    >
-                                      Reabrir conferência
-                                    </button>
-                                  )}
-                                  {isAdmin && !fechada && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setExcluindo(c)}
-                                      className="block w-full text-red-700 hover:underline"
-                                    >
-                                      Excluir da folha
-                                    </button>
+                                <td className="px-1 py-2 text-right">
+                                  {(podeAjustar || podeReabrir || podeExcluir) && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <button
+                                          type="button"
+                                          title="Ações"
+                                          aria-label="Ações"
+                                          className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                                        >
+                                          <MoreVertical className="h-4 w-4" />
+                                        </button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        {podeAjustar && (
+                                          <DropdownMenuItem onSelect={() => setAjustando(c)}>
+                                            Ajustar
+                                          </DropdownMenuItem>
+                                        )}
+                                        {podeReabrir && (
+                                          <DropdownMenuItem
+                                            onSelect={() => reabrirConferencia.mutate(c.id)}
+                                          >
+                                            Reabrir conferência
+                                          </DropdownMenuItem>
+                                        )}
+                                        {isAdmin && !fechada && (
+                                          <DropdownMenuItem
+                                            onSelect={() => setExcluindo(c)}
+                                            className="text-red-700 focus:text-red-700"
+                                          >
+                                            Excluir da folha
+                                          </DropdownMenuItem>
+                                        )}
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
                                   )}
                                 </td>
                               </tr>
-                              {(aberto === c.id || c.status === "em_conferencia") && (
+                              {(detalhe || (emConferencia && c.divergencias.length > 0)) && (
                                 <tr className="border-t border-gray-50 bg-gray-50/60">
                                   <td />
-                                  <td colSpan={7} className="px-2 py-2">
-                                    {c.status === "em_conferencia" && c.divergencias.length > 0 && (
+                                  <td colSpan={5} className="px-2 py-2">
+                                    {emConferencia && c.divergencias.length > 0 && (
                                       <div className="mb-2">
                                         <ListaDivergencias divergencias={c.divergencias} />
                                       </div>
                                     )}
-                                    {aberto === c.id && (
-                                      <div className="grid gap-3 md:grid-cols-2">
-                                        {(["P", "D"] as const).map((tipo) => (
-                                          <table key={tipo} className="w-full text-xs">
-                                            <thead className="text-gray-500">
-                                              <tr>
-                                                <th className="text-left">
-                                                  {tipo === "P" ? "Proventos" : "Descontos"}
-                                                </th>
-                                                <th className="text-right">Ref.</th>
-                                                <th className="text-right">Valor</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody>
-                                              {c.rubricas
-                                                .filter((r) => r.tipo === tipo)
-                                                .map((r) => (
-                                                  <tr
-                                                    key={r.ordem}
-                                                    className={
-                                                      r.removida ? "text-gray-400 line-through" : ""
-                                                    }
-                                                  >
-                                                    <td>
-                                                      {r.codigo} {r.descricao}
-                                                      {r.origem === "manual" && (
-                                                        <span className="ml-1 text-blue-700">
-                                                          (manual)
-                                                        </span>
-                                                      )}
-                                                    </td>
-                                                    <td className="text-right">{r.referencia}</td>
-                                                    <td className="text-right tabular-nums">
-                                                      {brl(r.valor)}
-                                                      {r.valorOriginal != null &&
-                                                        Math.round(r.valorOriginal * 100) !==
-                                                          Math.round(r.valor * 100) && (
-                                                          <span className="ml-1 text-gray-400">
-                                                            (PDF {brl(r.valorOriginal)})
+                                    {detalhe && (
+                                      <div className="space-y-3 text-xs">
+                                        <p className="text-gray-500">
+                                          Cód. {c.codigo} ·{" "}
+                                          {c.tipo === "contribuinte" ? "Contribuinte" : "Empregado"}{" "}
+                                          · {c.situacao}
+                                          {c.cargo && ` · ${c.cargo}`}
+                                        </p>
+                                        <div className="flex flex-wrap gap-x-6 gap-y-2">
+                                          <div>
+                                            <span className="block text-gray-500">Proventos</span>
+                                            <span className="tabular-nums text-gray-800">
+                                              {brl(c.proventos)}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="block text-gray-500">Descontos</span>
+                                            <span className="tabular-nums text-gray-800">
+                                              {brl(c.descontos)}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="block text-gray-500">
+                                              Líquido da folha
+                                            </span>
+                                            <span className="tabular-nums text-gray-800">
+                                              {brl(c.liquido)}
+                                            </span>
+                                            {ajustado && (
+                                              <span className="ml-1 text-gray-400">
+                                                PDF {brl(c.liquidoPdf)}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {c.liquidoManual != null && (
+                                            <div>
+                                              <span className="block text-sky-800">
+                                                Líquido a pagar (manual)
+                                              </span>
+                                              <span className="font-medium tabular-nums text-sky-800">
+                                                {brl(c.liquidoManual)}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-gray-500">Cadastro no RH:</span>
+                                          {editavel ? (
+                                            <select
+                                              value={c.funcionarioId ?? ""}
+                                              onChange={(e) =>
+                                                vincular.mutate({
+                                                  id: c.id,
+                                                  funcionarioId: e.target.value || null,
+                                                })
+                                              }
+                                              className={`max-w-[14rem] rounded-md border bg-white px-1 py-0.5 ${
+                                                c.funcionarioId
+                                                  ? "border-gray-300"
+                                                  : "border-red-400 text-red-700"
+                                              }`}
+                                            >
+                                              <option value="">Sem cadastro no RH</option>
+                                              {funcionariosLivres(c).map((f) => (
+                                                <option key={f.id} value={f.id}>
+                                                  {toTitleCase(f.nomeCompleto)}
+                                                  {f.dataRescisao ? " (desligado)" : ""}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          ) : c.funcionarioId ? (
+                                            <span className="text-gray-800">
+                                              {toTitleCase(
+                                                porId.get(c.funcionarioId)?.nomeCompleto,
+                                              ) || "Vinculado"}
+                                            </span>
+                                          ) : (
+                                            <span className="font-medium text-red-700">
+                                              Sem cadastro no RH
+                                            </span>
+                                          )}
+                                          {c.vinculoManual && (
+                                            <span className="text-gray-400">vínculo manual</span>
+                                          )}
+                                        </div>
+                                        {(ajustado || c.confirmadoEm) && (
+                                          <div className="space-y-0.5">
+                                            {ajustado && (
+                                              <p className="text-blue-700">
+                                                Ajustado manualmente por {c.ajustadoPorNome} em{" "}
+                                                {dataHora(c.ajustadoEm)}
+                                              </p>
+                                            )}
+                                            {c.confirmadoEm && (
+                                              <p className="text-gray-500">
+                                                Confirmado por {c.confirmadoPorNome} em{" "}
+                                                {dataHora(c.confirmadoEm)}
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
+                                        <div className="grid gap-3 md:grid-cols-2">
+                                          {(["P", "D"] as const).map((tipo) => (
+                                            <table key={tipo} className="w-full text-xs">
+                                              <thead className="text-gray-500">
+                                                <tr>
+                                                  <th className="text-left">
+                                                    {tipo === "P" ? "Proventos" : "Descontos"}
+                                                  </th>
+                                                  <th className="text-right">Ref.</th>
+                                                  <th className="text-right">Valor</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {c.rubricas
+                                                  .filter((r) => r.tipo === tipo)
+                                                  .map((r) => (
+                                                    <tr
+                                                      key={r.ordem}
+                                                      className={
+                                                        r.removida
+                                                          ? "text-gray-400 line-through"
+                                                          : ""
+                                                      }
+                                                    >
+                                                      <td>
+                                                        {r.codigo} {r.descricao}
+                                                        {r.origem === "manual" && (
+                                                          <span className="ml-1 text-blue-700">
+                                                            (manual)
                                                           </span>
                                                         )}
-                                                    </td>
-                                                  </tr>
-                                                ))}
-                                            </tbody>
-                                          </table>
-                                        ))}
-                                        {c.ajusteObservacao && (
-                                          <p className="text-xs text-gray-600 md:col-span-2">
-                                            Observação do ajuste: {c.ajusteObservacao}
-                                          </p>
-                                        )}
+                                                      </td>
+                                                      <td className="text-right">{r.referencia}</td>
+                                                      <td className="text-right tabular-nums">
+                                                        {brl(r.valor)}
+                                                        {r.valorOriginal != null &&
+                                                          Math.round(r.valorOriginal * 100) !==
+                                                            Math.round(r.valor * 100) && (
+                                                            <span className="ml-1 text-gray-400">
+                                                              (PDF {brl(r.valorOriginal)})
+                                                            </span>
+                                                          )}
+                                                      </td>
+                                                    </tr>
+                                                  ))}
+                                              </tbody>
+                                            </table>
+                                          ))}
+                                          {c.ajusteObservacao && (
+                                            <p className="text-xs text-gray-600 md:col-span-2">
+                                              Observação do ajuste: {c.ajusteObservacao}
+                                            </p>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
                                   </td>
@@ -1589,8 +1703,25 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                   })}
                   {visiveis.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-6 text-center text-gray-400">
-                        {soConferencia ? "Ninguém em conferência." : "Nenhum colaborador."}
+                      <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                        {filtroAtivo === "conferencia"
+                          ? "Ninguém em conferência."
+                          : filtroAtivo === "confirmados"
+                            ? "Ninguém confirmado."
+                            : "Nenhum colaborador."}
+                      </td>
+                    </tr>
+                  )}
+                  {filtroAtivo === "conferencia" && confirmados.length > 0 && (
+                    <tr className="border-t border-gray-100">
+                      <td colSpan={6} className="p-0">
+                        <button
+                          type="button"
+                          onClick={() => setFiltro("confirmados")}
+                          className="w-full px-4 py-2 text-left text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+                        >
+                          {confirmados.length} confirmados · ver
+                        </button>
                       </td>
                     </tr>
                   )}
