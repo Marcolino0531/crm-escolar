@@ -154,6 +154,8 @@ export interface ContratoPendente {
       status: string;
       /** Link do CONTRATANTE (responsável financeiro). */
       signUrl: string;
+      /** Telefone do CONTRATANTE gravado no signatário ("" quando não houver). */
+      telefoneContratante: string;
       assinadoEm: string;
       signatarios: SignatarioContratoStatus[];
       /** Preenchido quando a captura do PDF assinado falhou e ainda não há cópia. */
@@ -235,9 +237,15 @@ export function signatariosDoDocumento(
   }));
 }
 
-function linkContratante(signatarios: SignatarioPersistido[] | null | undefined): string {
+function contratante(
+  signatarios: SignatarioPersistido[] | null | undefined,
+): SignatarioPersistido | undefined {
   const lista = signatarios ?? [];
-  return (lista.find((s) => s.papel === "CONTRATANTE") ?? lista[0])?.sign_url ?? "";
+  return lista.find((s) => s.papel === "CONTRATANTE") ?? lista[0];
+}
+
+function linkContratante(signatarios: SignatarioPersistido[] | null | undefined): string {
+  return contratante(signatarios)?.sign_url ?? "";
 }
 
 const UnidadeSchema = z.object({ unidade: z.string().min(1) });
@@ -421,6 +429,7 @@ export const listarContratosMatricula = createServerFn({ method: "POST" })
                     documentoId: doc.id,
                     status: doc.status,
                     signUrl: linkContratante(doc.signatarios),
+                    telefoneContratante: contratante(doc.signatarios)?.telefone ?? "",
                     assinadoEm: doc.assinado_em ?? "",
                     signatarios: signatariosDoDocumento(doc.signatarios),
                     arquivoErro: doc.arquivo_assinado_path ? null : doc.arquivo_assinado_erro,
