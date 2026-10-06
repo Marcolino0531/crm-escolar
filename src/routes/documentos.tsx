@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -48,7 +49,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AbasArvore, useAbaAtiva, useAbasArvore } from "@/components/AbasArvore";
-import { useAuth, usePermissions } from "@/lib/app-context";
+import { useAuth, usePermissions, useRole } from "@/lib/app-context";
 import { supabase } from "@/integrations/supabase/client";
 import {
   buscarAlunosSponte,
@@ -61,6 +62,15 @@ import { parseBRLNumber } from "@/lib/currency";
 import { carregarLogoDoColegio, paraColegioRecibo, useColegios } from "@/lib/colegios";
 import { baixarPdfRecibo, type LogoRecibo } from "@/lib/recibo-pdf";
 import { baixarPdfDeclaracao } from "@/lib/declaracao-pdf";
+import { baixarPdfDocumentoLivre } from "@/lib/documento-livre-pdf";
+import {
+  montarDocumentoLivre,
+  TEXTO_MAX,
+  TITULO_MAX,
+  TITULO_MIN,
+  validarDocumentoLivre,
+  type DocumentoLivreSnapshot,
+} from "@/lib/documento-livre";
 import { baixarPdfDeclaracaoIR } from "@/lib/declaracao-ir-pdf";
 import { baixarPdfTermoConfissao } from "@/lib/confissao-divida-pdf";
 import { montarTermoDoSnapshot, type TermoConfissaoSnapshot } from "@/lib/confissao-divida";
@@ -161,7 +171,8 @@ type DocumentoRow = {
     | DeclaracaoSnapshot
     | DeclaracaoIRSnapshot
     | TermoConfissaoSnapshot
-    | NotificacaoSnapshot;
+    | NotificacaoSnapshot
+    | DocumentoLivreSnapshot;
 };
 
 function hojeYMD(): string {
@@ -214,7 +225,12 @@ function DocumentosPage() {
 // um case aqui, sem mexer no resto.
 function GerarDocumento() {
   const search = Route.useSearch();
-  const [tipo, setTipo] = useState<TipoDocumento | "">(search.tipo ?? "");
+  const { isAdmin } = useRole();
+  const [tipoEscolhido, setTipo] = useState<TipoDocumento | "">(search.tipo ?? "");
+  // "Documento livre" é só de admin: para os demais a opção não existe, nem
+  // quando chega por estado salvo ou pela URL.
+  const tipos = TIPOS_DOCUMENTO.filter((t) => t.id !== "documento_livre" || isAdmin);
+  const tipo = tipoEscolhido === "documento_livre" && !isAdmin ? "" : tipoEscolhido;
 
   return (
     <div className="space-y-4">
@@ -226,7 +242,7 @@ function GerarDocumento() {
               <SelectValue placeholder="Selecione" />
             </SelectTrigger>
             <SelectContent>
-              {TIPOS_DOCUMENTO.map((t) => (
+              {tipos.map((t) => (
                 <SelectItem key={t.id} value={t.id}>
                   {t.label}
                 </SelectItem>
@@ -250,6 +266,7 @@ function GerarDocumento() {
       {tipo === "declaracao_ir" && <DeclaracaoIRComLote />}
       {tipo === "termo_confissao_divida" && <GerarTermoConfissao />}
       {tipo === "contrato_matricula" && <GerarContratoMatricula />}
+      {tipo === "documento_livre" && <GerarDocumentoLivre />}
       {tipo === "notificacao_extrajudicial" && (
         <GerarNotificacaoExtrajudicial casoIdInicial={search.caso} />
       )}
@@ -1052,6 +1069,364 @@ function GerarDeclaracaoDebitos() {
   );
 }
 
+// ─── Documento livre (só admin) ─────────────────────────────────────────────
+// Título e texto digitados na hora, sem modelo. O aluno é opcional e só vincula
+// o documento ao aluno no Histórico; não altera o texto.
+function GerarDocumentoLivre() {
+  const { canEdit } = usePermissions();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const podeEditar = canEdit("documentos.gerar.individual");
+
+  const { data: colegios = [] } = useColegios();
+  const buscar = useServerFn(buscarAlunosSponte);
+
+  // Unidade do seletor global do topo: a aba não tem seletor próprio.
+  const unidade = useUnidadeAtiva() ?? "";
+  const [titulo, setTitulo] = useState("");
+  const [texto, setTexto] = useState("");
+  const [dataDocumento, setDataDocumento] = useState<string>(hojeYMD());
+  const [termo, setTermo] = useState("");
+  const [resultados, setResultados] = useState<AlunoBuscaSponte[] | null>(null);
+  const [aluno, setAluno] = useState<AlunoRecibo | null>(null);
+  const [assinanteNome, setAssinanteNome] = useState("");
+  const [assinanteCargo, setAssinanteCargo] = useState("");
+
+  const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
+  const colegioDocumento = colegio ? paraColegioRecibo(colegio) : null;
+  const assinantePadrao = colegio?.assinante_nome ?? "";
+  const cargoPadrao = colegio?.assinante_cargo ?? "";
+
+  // Trocar a unidade no topo invalida a busca e o aluno da unidade anterior.
+  useEffect(() => {
+    setResultados(null);
+    setAluno(null);
+  }, [unidade]);
+
+  // Assinante e cargo vêm de Dados dos Colégios; a edição vale só para este documento.
+  useEffect(() => {
+    setAssinanteNome(assinantePadrao);
+    setAssinanteCargo(cargoPadrao);
+  }, [unidade, assinantePadrao, cargoPadrao]);
+
+  const erros = validarDocumentoLivre({
+    colegio: colegioDocumento,
+    titulo,
+    texto,
+    dataDocumento,
+  });
+
+  const buscarAlunos = useMutation({
+    mutationFn: async () => {
+      const r = await buscar({ data: { nome: termo.trim(), unidade } });
+      if (r.error) throw new Error(r.error);
+      if (r.indisponivel) throw new Error(`Integração Sponte indisponível para "${unidade}".`);
+      return r.alunos;
+    },
+    onSuccess: (alunos) => setResultados(alunos),
+    onError: (e) => {
+      setResultados(null);
+      toast.error(e instanceof Error ? e.message : "Falha na busca.");
+    },
+  });
+
+  const snapshotAtual = (): DocumentoLivreSnapshot | null =>
+    colegioDocumento
+      ? {
+          colegio: colegioDocumento,
+          aluno,
+          titulo: titulo.trim(),
+          texto,
+          assinanteNome: assinanteNome.trim(),
+          assinanteCargo: assinanteCargo.trim(),
+        }
+      : null;
+
+  const snapshotPrevia = snapshotAtual();
+  const previa =
+    snapshotPrevia && erros.length === 0
+      ? montarDocumentoLivre({ numero: 0, dataDocumento, snapshot: snapshotPrevia })
+      : null;
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      const snapshot = snapshotAtual();
+      if (!colegio || !snapshot || erros.length > 0) throw new Error("Documento incompleto.");
+      const meta = session?.user?.user_metadata as { full_name?: string } | undefined;
+      const { data, error } = await supabase
+        .from("documentos_recibos" as never)
+        .insert({
+          tipo: "documento_livre",
+          unidade,
+          aluno_id: aluno?.alunoId ?? "",
+          aluno_nome: aluno?.nome ?? "",
+          data_recibo: dataDocumento,
+          valor_total: 0,
+          itens: [],
+          snapshot,
+          created_by: session?.user?.id ?? null,
+          created_by_nome: meta?.full_name || session?.user?.email || "",
+        } as never)
+        .select("numero")
+        .single();
+      if (error) throw new Error(error.message);
+      const numero = Number((data as unknown as { numero: number }).numero);
+      const documento = montarDocumentoLivre({ numero, dataDocumento, snapshot });
+      await baixarPdfDocumentoLivre(documento, await carregarLogoDoColegio(colegio.logo_path));
+      return numero;
+    },
+    onSuccess: (numero) => {
+      toast.success(`Documento nº ${numero} gerado e baixado.`);
+      qc.invalidateQueries({ queryKey: ["documentos_recibos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar o documento."),
+  });
+
+  const t = termo.trim();
+  const termoValido = /^\d+$/.test(t) ? t.length >= 1 : t.length >= 3;
+
+  if (!podeEditar) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        Você tem acesso somente de leitura em Documentos: consulte os documentos já emitidos na aba
+        Histórico.
+      </div>
+    );
+  }
+
+  if (!unidade) return <SelecioneUnidade acao="O documento livre" />;
+
+  return (
+    <div className="space-y-4">
+      {/* Passo 1 — conteúdo */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <PenLine className="h-4 w-4 text-primary" /> 1. Conteúdo
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Linha em branco separa parágrafos; a quebra de linha simples é mantida.
+          </p>
+        </header>
+        <div className="space-y-3 px-4 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-[11px] text-muted-foreground">Colégio</Label>
+              <div className="flex h-9 w-56 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                {unidade}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="livre-data" className="text-[11px] text-muted-foreground">
+                Data do documento
+              </Label>
+              <Input
+                id="livre-data"
+                type="date"
+                value={dataDocumento}
+                className="h-9 w-44"
+                onChange={(e) => setDataDocumento(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="livre-titulo" className="text-[11px] text-muted-foreground">
+              Título ({TITULO_MIN} a {TITULO_MAX} caracteres)
+            </Label>
+            <Input
+              id="livre-titulo"
+              value={titulo}
+              maxLength={TITULO_MAX}
+              onChange={(e) => setTitulo(e.target.value)}
+              className="h-9"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="livre-texto" className="text-[11px] text-muted-foreground">
+              Texto ({texto.length.toLocaleString("pt-BR")} de {TEXTO_MAX.toLocaleString("pt-BR")}{" "}
+              caracteres)
+            </Label>
+            <Textarea
+              id="livre-texto"
+              value={texto}
+              maxLength={TEXTO_MAX}
+              onChange={(e) => setTexto(e.target.value)}
+              className="min-h-[280px] text-sm leading-relaxed"
+            />
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="livre-assinante" className="text-[11px] text-muted-foreground">
+                Assinante
+              </Label>
+              <Input
+                id="livre-assinante"
+                value={assinanteNome}
+                onChange={(e) => setAssinanteNome(e.target.value)}
+                className="h-9 w-64"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="livre-cargo" className="text-[11px] text-muted-foreground">
+                Cargo
+              </Label>
+              <Input
+                id="livre-cargo"
+                value={assinanteCargo}
+                onChange={(e) => setAssinanteCargo(e.target.value)}
+                className="h-9 w-64"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Passo 2 — aluno (opcional) */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Search className="h-4 w-4 text-primary" /> 2. Aluno (opcional)
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Só vincula o documento ao aluno no Histórico; o texto não muda.
+          </p>
+        </header>
+        <div className="space-y-3 px-4 py-3">
+          {aluno ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <div className="font-medium">
+                {aluno.nome} <span className="text-xs text-muted-foreground">#{aluno.alunoId}</span>
+              </div>
+              <Button variant="ghost" className="h-8 text-xs" onClick={() => setAluno(null)}>
+                Remover aluno
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="livre-busca" className="text-[11px] text-muted-foreground">
+                  Aluno (nome ou AlunoID do Sponte)
+                </Label>
+                <Input
+                  id="livre-busca"
+                  value={termo}
+                  onChange={(e) => setTermo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && termoValido) buscarAlunos.mutate();
+                  }}
+                  className="h-9 w-64"
+                />
+              </div>
+              <Button
+                variant="outline"
+                className="h-9 gap-1"
+                disabled={!termoValido || buscarAlunos.isPending}
+                onClick={() => buscarAlunos.mutate()}
+              >
+                {buscarAlunos.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+                Buscar no Sponte
+              </Button>
+            </div>
+          )}
+
+          {!aluno && resultados && resultados.length === 0 && (
+            <div className="text-xs text-muted-foreground">
+              Nenhum aluno encontrado para “{t}” em {unidade}.
+            </div>
+          )}
+
+          {!aluno && resultados && resultados.length > 0 && (
+            <div className="max-h-48 divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {resultados.map((a) => (
+                <button
+                  key={a.alunoId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                  onClick={() => {
+                    setAluno({
+                      alunoId: a.alunoId,
+                      nome: a.nome,
+                      cpf: "",
+                      turma: a.turma,
+                      matricula: "",
+                    });
+                    setResultados(null);
+                    setTermo("");
+                  }}
+                >
+                  <span>
+                    <span className="font-medium">{a.nome}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      #{a.alunoId} · {a.turma || "sem turma"} · {a.situacao}
+                    </span>
+                  </span>
+                  <User className="h-4 w-4 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Passo 3 — prévia e emissão */}
+      <section className="rounded-xl border border-border bg-card">
+        <header className="border-b border-border px-4 py-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <FileText className="h-4 w-4 text-primary" /> 3. Prévia
+          </h2>
+        </header>
+        <div className="space-y-4 px-4 py-3">
+          {previa && (
+            <div className="space-y-3 rounded-lg border border-border bg-muted/30 px-4 py-4 text-sm leading-relaxed">
+              <div className="text-center text-base font-semibold">{previa.titulo}</div>
+              {previa.paragrafos.map((p, i) => (
+                <p key={i} className="whitespace-pre-line text-justify">
+                  {p}
+                </p>
+              ))}
+              <div className="pt-2 text-right">{previa.dataExtenso}</div>
+              <div className="flex flex-col items-center pt-8 text-center">
+                <div className="w-64 border-t border-muted-foreground/60" />
+                <div className="mt-1">{previa.assinanteNome || previa.colegio.razaoSocial}</div>
+                {previa.assinanteCargo && (
+                  <div className="text-xs text-muted-foreground">{previa.assinanteCargo}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {erros.length > 0 && (
+            <ul className="list-inside list-disc rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {erros.map((erro) => (
+                <li key={erro}>{erro}</li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              className="gap-1"
+              disabled={erros.length > 0 || gerar.isPending}
+              onClick={() => gerar.mutate()}
+            >
+              {gerar.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Gerar documento (PDF)
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // ─── Declaração de Imposto de Renda ─────────────────────────────────────────
 // Mesmo fluxo de aluno da declaração de débitos; o que muda é o seletor de
 // exercício (IR ano X = pagamentos do ano X-1) e a tabela de pagamentos.
@@ -1504,6 +1879,17 @@ function HistoricoDocumentos() {
         doc.save(`notificacao-extrajudicial-${row.numero}.pdf`);
         return;
       }
+      if (row.tipo === "documento_livre") {
+        await baixarPdfDocumentoLivre(
+          montarDocumentoLivre({
+            numero: row.numero,
+            dataDocumento: data,
+            snapshot: row.snapshot as DocumentoLivreSnapshot,
+          }),
+          logo,
+        );
+        return;
+      }
       if (row.tipo === "termo_confissao_divida") {
         await baixarPdfTermoConfissao(
           montarTermoDoSnapshot(row.numero, data, row.snapshot as TermoConfissaoSnapshot),
@@ -1617,16 +2003,24 @@ function HistoricoDocumentos() {
                 <TableCell className="font-mono text-xs">
                   {String(r.numero).padStart(5, "0")}
                 </TableCell>
-                <TableCell className="text-xs">{rotuloTipoDocumento(r.tipo)}</TableCell>
+                <TableCell className="text-xs">
+                  {r.tipo === "documento_livre"
+                    ? `${rotuloTipoDocumento(r.tipo)} — ${(r.snapshot as DocumentoLivreSnapshot).titulo ?? ""}`
+                    : rotuloTipoDocumento(r.tipo)}
+                </TableCell>
                 <TableCell>{formatarDataBR(r.data_recibo.slice(0, 10))}</TableCell>
                 <TableCell>{r.unidade}</TableCell>
                 <TableCell>
                   {r.aluno_nome}
-                  <span className="ml-1 text-xs text-muted-foreground">#{r.aluno_id}</span>
+                  {r.aluno_id && (
+                    <span className="ml-1 text-xs text-muted-foreground">#{r.aluno_id}</span>
+                  )}
                 </TableCell>
                 <TableCell>{r.responsavel_nome}</TableCell>
                 <TableCell className="text-right font-medium">
-                  {r.tipo === "declaracao_debitos" ? "—" : formatarBRL(Number(r.valor_total))}
+                  {r.tipo === "declaracao_debitos" || r.tipo === "documento_livre"
+                    ? "—"
+                    : formatarBRL(Number(r.valor_total))}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {r.created_by_nome || "—"}
