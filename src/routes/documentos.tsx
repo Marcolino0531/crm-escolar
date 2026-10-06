@@ -96,6 +96,8 @@ import {
   type TipoDocumento,
 } from "@/lib/declaracoes";
 import {
+  aplicarCompetencia,
+  competenciaPorExtenso,
   formatarBRL,
   formatarDataBR,
   itensDoRecibo,
@@ -131,6 +133,8 @@ type ReciboSnapshot = {
   aluno: AlunoRecibo;
   responsavel: ResponsavelRecibo;
   valores: Record<string, number>;
+  /** Competência da Mensalidade ("AAAA-MM"); recibos antigos não têm. */
+  competencia?: string;
 };
 
 type DeclaracaoSnapshot = {
@@ -275,6 +279,16 @@ function GerarDocumento() {
 }
 
 // ─── Passo a passo do recibo ────────────────────────────────────────────────
+// Competências oferecidas no recibo: do ano anterior ao seguinte.
+function opcoesCompetencia(): string[] {
+  const ano = Number(hojeYMD().slice(0, 4));
+  const opcoes: string[] = [];
+  for (let a = ano - 1; a <= ano + 1; a++) {
+    for (let m = 1; m <= 12; m++) opcoes.push(`${a}-${String(m).padStart(2, "0")}`);
+  }
+  return opcoes;
+}
+
 function GerarRecibo() {
   const { canEdit } = usePermissions();
   const { session } = useAuth();
@@ -294,6 +308,8 @@ function GerarRecibo() {
   const [responsavelId, setResponsavelId] = useState<string>("");
   const [valores, setValores] = useState<Record<string, string>>({});
   const [dataRecibo, setDataRecibo] = useState<string>(hojeYMD());
+  const [competencia, setCompetencia] = useState<string>("");
+  const competencias = useMemo(() => opcoesCompetencia(), []);
 
   // Trocar a unidade no topo invalida a busca e o aluno da unidade anterior.
   useEffect(() => {
@@ -302,6 +318,7 @@ function GerarRecibo() {
     setResponsaveis([]);
     setResponsavelId("");
     setValores({});
+    setCompetencia("");
   }, [unidade]);
 
   const colegio = colegios.find((c) => c.unidade === unidade) ?? null;
@@ -320,7 +337,13 @@ function GerarRecibo() {
     return out;
   }, [valores]);
 
-  const itens = useMemo(() => itensDoRecibo(valoresNumericos), [valoresNumericos]);
+  // Com a Mensalidade zerada, a competência fica desabilitada e é ignorada.
+  const temMensalidade = itensDoRecibo(valoresNumericos).some((i) => i.id === "mensalidade");
+  const competenciaRecibo = temMensalidade ? competencia : "";
+  const itens = useMemo(
+    () => aplicarCompetencia(itensDoRecibo(valoresNumericos), competenciaRecibo),
+    [valoresNumericos, competenciaRecibo],
+  );
   const total = useMemo(() => itens.reduce((acc, i) => acc + i.valor, 0), [itens]);
 
   const erros = validarRecibo({
@@ -329,6 +352,7 @@ function GerarRecibo() {
     responsavel,
     itens,
     dataRecibo,
+    competencia: competenciaRecibo,
   });
 
   const limparAluno = () => {
@@ -336,6 +360,7 @@ function GerarRecibo() {
     setResponsaveis([]);
     setResponsavelId("");
     setValores({});
+    setCompetencia("");
   };
 
   const buscarAlunos = useMutation({
@@ -390,6 +415,7 @@ function GerarRecibo() {
         aluno,
         responsavel,
         valores: Object.fromEntries(itens.map((i) => [i.id, i.valor])),
+        ...(competenciaRecibo ? { competencia: competenciaRecibo } : {}),
       };
       // O número impresso vem da sequência do banco: gravamos primeiro e só
       // então montamos o PDF, para que documento e histórico nunca divirjam.
@@ -421,6 +447,7 @@ function GerarRecibo() {
         aluno: snapshot.aluno,
         responsavel: snapshot.responsavel,
         valores: snapshot.valores,
+        competencia: snapshot.competencia,
       });
       await baixarPdfRecibo(documento, await carregarLogoDoColegio(colegio.logo_path));
       return numero;
@@ -429,6 +456,7 @@ function GerarRecibo() {
       toast.success(`Recibo nº ${numero} gerado e baixado.`);
       qc.invalidateQueries({ queryKey: ["documentos_recibos"] });
       setValores({});
+      setCompetencia("");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Falha ao gerar o recibo."),
   });
@@ -620,16 +648,44 @@ function GerarRecibo() {
                   >
                     {topico.descricao}
                   </Label>
-                  <Input
-                    id={`valor-${topico.id}`}
-                    inputMode="decimal"
-                    value={valores[topico.id] ?? ""}
-                    placeholder="0,00"
-                    className="h-9"
-                    onChange={(e) =>
-                      setValores((prev) => ({ ...prev, [topico.id]: e.target.value }))
-                    }
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id={`valor-${topico.id}`}
+                      inputMode="decimal"
+                      value={valores[topico.id] ?? ""}
+                      placeholder="0,00"
+                      className="h-9"
+                      onChange={(e) =>
+                        setValores((prev) => ({ ...prev, [topico.id]: e.target.value }))
+                      }
+                    />
+                    {topico.id === "mensalidade" && (
+                      <Select
+                        value={competenciaRecibo}
+                        onValueChange={setCompetencia}
+                        disabled={!temMensalidade}
+                      >
+                        <SelectTrigger
+                          className="h-9 w-44 shrink-0"
+                          aria-label="Competência da mensalidade"
+                        >
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {competencias.map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {competenciaPorExtenso(c)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                  {topico.id === "mensalidade" && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Competência {temMensalidade ? "(obrigatória)" : "(preencha a mensalidade)"}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -1938,6 +1994,7 @@ function HistoricoDocumentos() {
           aluno: snap.aluno,
           responsavel: snap.responsavel,
           valores: snap.valores,
+          competencia: snap.competencia,
         }),
         logo,
       );
