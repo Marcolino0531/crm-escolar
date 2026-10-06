@@ -25,6 +25,23 @@ const ESPACO_ANTES_ASSINATURA = 10;
 const ALTURA_ASSINATURA = 34;
 const TOPO_CONTINUACAO = MARGEM + 4;
 
+// O jsPDF não justifica uma linha isolada: desenha palavra por palavra e
+// distribui a sobra da largura igualmente entre os espaços.
+function textoJustificado(doc: Doc, texto: string, y: number): void {
+  const palavras = texto.trim().split(/\s+/).filter(Boolean);
+  if (palavras.length < 2) {
+    doc.text(texto, MARGEM, y);
+    return;
+  }
+  const larguras = palavras.map((p) => doc.getTextWidth(p));
+  const espaco = (CONTEUDO - larguras.reduce((s, l) => s + l, 0)) / (palavras.length - 1);
+  let x = MARGEM;
+  palavras.forEach((palavra, i) => {
+    doc.text(palavra, x, y);
+    x += larguras[i] + espaco;
+  });
+}
+
 export async function gerarPdfDocumentoLivre(
   documento: DocumentoLivreDocumento,
   logo: LogoRecibo | null,
@@ -83,7 +100,7 @@ export async function gerarPdfDocumentoLivre(
       y = TOPO_CONTINUACAO;
     }
     if (linha.justificar) {
-      doc.text(linha.texto, MARGEM, y, { align: "justify", maxWidth: CONTEUDO });
+      textoJustificado(doc, linha.texto, y);
     } else if (linha.texto) {
       doc.text(linha.texto, MARGEM, y);
     }
