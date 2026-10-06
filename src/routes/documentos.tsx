@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AbasArvore, useAbaAtiva, useAbasArvore } from "@/components/AbasArvore";
-import { useAuth, usePermissions } from "@/lib/app-context";
+import { useAuth, usePermissions, useRole } from "@/lib/app-context";
 import { supabase } from "@/integrations/supabase/client";
 import {
   buscarAlunosSponte,
@@ -214,7 +214,12 @@ function DocumentosPage() {
 // um case aqui, sem mexer no resto.
 function GerarDocumento() {
   const search = Route.useSearch();
-  const [tipo, setTipo] = useState<TipoDocumento | "">(search.tipo ?? "");
+  const { isAdmin } = useRole();
+  const [tipoEscolhido, setTipo] = useState<TipoDocumento | "">(search.tipo ?? "");
+  // "Documento livre" é só de admin: para os demais a opção não existe, nem
+  // quando chega por estado salvo ou pela URL.
+  const tipos = TIPOS_DOCUMENTO.filter((t) => t.id !== "documento_livre" || isAdmin);
+  const tipo = tipoEscolhido === "documento_livre" && !isAdmin ? "" : tipoEscolhido;
 
   return (
     <div className="space-y-4">
@@ -226,7 +231,7 @@ function GerarDocumento() {
               <SelectValue placeholder="Selecione" />
             </SelectTrigger>
             <SelectContent>
-              {TIPOS_DOCUMENTO.map((t) => (
+              {tipos.map((t) => (
                 <SelectItem key={t.id} value={t.id}>
                   {t.label}
                 </SelectItem>

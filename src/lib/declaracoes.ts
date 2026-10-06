@@ -21,7 +21,8 @@ export type TipoDocumento =
   | "declaracao_ir"
   | "termo_confissao_divida"
   | "contrato_matricula"
-  | "notificacao_extrajudicial";
+  | "notificacao_extrajudicial"
+  | "documento_livre";
 
 export interface TipoDocumentoInfo {
   id: TipoDocumento;
@@ -36,6 +37,7 @@ export const TIPOS_DOCUMENTO: readonly TipoDocumentoInfo[] = [
   { id: "contrato_matricula", label: "Contrato de Matrícula" },
   { id: "declaracao_ir", label: "Declaração de Imposto de Renda" },
   { id: "declaracao_debitos", label: "Declaração de Inexistência de Débitos" },
+  { id: "documento_livre", label: "Documento livre" },
   { id: "notificacao_extrajudicial", label: "Notificação Extrajudicial" },
   { id: "recibo", label: "Recibo" },
   { id: "termo_confissao_divida", label: "Termo de Confissão de Dívida e Outras Avenças" },
