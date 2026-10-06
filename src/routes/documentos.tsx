@@ -171,7 +171,8 @@ type DocumentoRow = {
     | DeclaracaoSnapshot
     | DeclaracaoIRSnapshot
     | TermoConfissaoSnapshot
-    | NotificacaoSnapshot;
+    | NotificacaoSnapshot
+    | DocumentoLivreSnapshot;
 };
 
 function hojeYMD(): string {
@@ -1878,6 +1879,17 @@ function HistoricoDocumentos() {
         doc.save(`notificacao-extrajudicial-${row.numero}.pdf`);
         return;
       }
+      if (row.tipo === "documento_livre") {
+        await baixarPdfDocumentoLivre(
+          montarDocumentoLivre({
+            numero: row.numero,
+            dataDocumento: data,
+            snapshot: row.snapshot as DocumentoLivreSnapshot,
+          }),
+          logo,
+        );
+        return;
+      }
       if (row.tipo === "termo_confissao_divida") {
         await baixarPdfTermoConfissao(
           montarTermoDoSnapshot(row.numero, data, row.snapshot as TermoConfissaoSnapshot),
@@ -1991,16 +2003,24 @@ function HistoricoDocumentos() {
                 <TableCell className="font-mono text-xs">
                   {String(r.numero).padStart(5, "0")}
                 </TableCell>
-                <TableCell className="text-xs">{rotuloTipoDocumento(r.tipo)}</TableCell>
+                <TableCell className="text-xs">
+                  {r.tipo === "documento_livre"
+                    ? `${rotuloTipoDocumento(r.tipo)} — ${(r.snapshot as DocumentoLivreSnapshot).titulo ?? ""}`
+                    : rotuloTipoDocumento(r.tipo)}
+                </TableCell>
                 <TableCell>{formatarDataBR(r.data_recibo.slice(0, 10))}</TableCell>
                 <TableCell>{r.unidade}</TableCell>
                 <TableCell>
                   {r.aluno_nome}
-                  <span className="ml-1 text-xs text-muted-foreground">#{r.aluno_id}</span>
+                  {r.aluno_id && (
+                    <span className="ml-1 text-xs text-muted-foreground">#{r.aluno_id}</span>
+                  )}
                 </TableCell>
                 <TableCell>{r.responsavel_nome}</TableCell>
                 <TableCell className="text-right font-medium">
-                  {r.tipo === "declaracao_debitos" ? "—" : formatarBRL(Number(r.valor_total))}
+                  {r.tipo === "declaracao_debitos" || r.tipo === "documento_livre"
+                    ? "—"
+                    : formatarBRL(Number(r.valor_total))}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {r.created_by_nome || "—"}
