@@ -1365,7 +1365,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
                     <th className="w-8 px-2 py-2">
-                      {editavel && pendentes.length > 0 && (
+                      {editavel && pendentes.length > 0 && filtroAtivo !== "confirmados" && (
                         <input
                           type="checkbox"
                           checked={selecionados.size === pendentes.length}
