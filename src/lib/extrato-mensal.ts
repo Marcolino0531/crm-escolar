@@ -260,6 +260,8 @@ const ROT_CABECALHO = [
   "Cálculo:",
   "Complemento de cálculo:",
   "Competência:",
+  // Filtro de categoria da contabilidade ("Categoria: 1,3-12"): ignorado, não é gravado.
+  "Categoria:",
   "Página:",
   "Emissão:",
   "Horas:",
