@@ -273,3 +273,50 @@ describe("5.4 vigência dos efetivos continua igual", () => {
     expect(historicoDoFuncionario(base, "b").map((r) => r.id)).toEqual(["b-2026-03"]);
   });
 });
+
+// ── Conferência do servidor: itens de Terceirizado e Extra no lote ─────────
+import { conferirItensValorMensal } from "./rh-salario";
+
+describe("conferirItensValorMensal", () => {
+  const registros = [vm("terceirizado", "t1", "2026-03", 800.1), vm("extra", "e1", "2026-03", 300)];
+  const pessoas = new Map([
+    ["terceirizado:t1", { schoolId: "s1", ativo: true }],
+    ["extra:e1", { schoolId: "s1", ativo: true }],
+    ["extra:e2", { schoolId: "s2", ativo: true }],
+    ["terceirizado:t9", { schoolId: "s1", ativo: false }],
+  ]);
+  const item = (tipo: TipoPessoaPagamento, pessoaId: string, valor: number) => ({
+    tipo,
+    pessoaId,
+    nome: "Pessoa Teste",
+    valor,
+  });
+  const conferir = (itens: ReturnType<typeof item>[]) =>
+    conferirItensValorMensal(itens, pessoas, registros, "s1", "2026-06");
+
+  it("aceita valor igual, em centavos, ao valor a pagar", () => {
+    expect(conferir([item("terceirizado", "t1", 800.1), item("extra", "e1", 300)])).toBeNull();
+  });
+
+  it("recusa valor diferente do valor a pagar", () => {
+    expect(conferir([item("terceirizado", "t1", 800.11)])).toMatch(/não confere/);
+  });
+
+  it("recusa pessoa de outro colégio", () => {
+    expect(conferir([item("extra", "e2", 300)])).toMatch(/outro colégio/);
+  });
+
+  it("recusa pessoa inativa", () => {
+    expect(conferir([item("terceirizado", "t9", 800.1)])).toMatch(/inativo/);
+  });
+
+  it("recusa pessoa sem valor a pagar, inexistente ou repetida", () => {
+    expect(
+      conferirItensValorMensal([item("extra", "e1", 300)], pessoas, [], "s1", "2026-06"),
+    ).toMatch(/não confere/);
+    expect(conferir([item("extra", "nada", 1)])).toMatch(/não encontrado/);
+    expect(conferir([item("extra", "e1", 300), item("extra", "e1", 300)])).toMatch(
+      /mais de uma vez/,
+    );
+  });
+});

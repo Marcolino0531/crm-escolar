@@ -115,3 +115,140 @@ describe("contagemQuitados", () => {
     expect(contagemQuitados([]).quitado).toBe(false);
   });
 });
+
+// ── Lote de Salário em três blocos ─────────────────────────────────────────
+import { blocosDaFolhaSalva, loteComValoresMensais, tipoPessoaLote } from "./rh-folhas";
+import { montarLoteFolha, type LinhaResumo } from "./folha-pagamento";
+import { itensValorMensal, type ValorMensalRegistro } from "./rh-salario";
+
+describe("lote com Terceirizados e Extras", () => {
+  const vmReg = (
+    tipo: "terceirizado" | "extra",
+    pessoaId: string,
+    competencia: string,
+    valor: number,
+  ): ValorMensalRegistro => ({
+    id: `${tipo}-${pessoaId}-${competencia}`,
+    tipo,
+    pessoaId,
+    competencia,
+    valor,
+    observacao: "",
+    criadoEm: "2026-01-01T00:00:00Z",
+    criadoPor: "Teste",
+  });
+  const valores = [
+    vmReg("terceirizado", "t1", "2026-01", 700.15),
+    vmReg("terceirizado", "t2", "2026-01", 0),
+    vmReg("extra", "e1", "2026-02", 250.1),
+    vmReg("extra", "e2", "2026-02", 120),
+  ];
+  const outros = [
+    ...itensValorMensal(
+      [
+        { id: "t1", nome: "TERCEIRO TESTE" },
+        { id: "t2", nome: "Zerado" },
+        { id: "t3", nome: "Sem Valor" },
+      ],
+      valores,
+      "terceirizado",
+      "2026-08",
+    ),
+    ...itensValorMensal(
+      [
+        { id: "e2", nome: "extra b" },
+        { id: "e1", nome: "extra a" },
+        { id: "e3", nome: "Inativo", ativo: false },
+      ],
+      [...valores, vmReg("extra", "e3", "2026-01", 99)],
+      "extra",
+      "2026-08",
+    ),
+  ];
+  const somaCentavos = (ns: number[]) => ns.reduce((acc, n) => acc + Math.round(n * 100), 0);
+
+  it("sem Extrato Mensal (salário manual): total = soma dos itens dos três tipos", () => {
+    const efetivos = montarFolhaSalario(funcs, regs, "2026-08");
+    const lote = loteComValoresMensais(efetivos.itens, outros);
+    expect(
+      lote.itens.map((i) => [i.tipo_pessoa, i.employee_id, i.pessoa_id, i.employee_name]),
+    ).toEqual([
+      ["efetivo", "a", null, "Ana"],
+      ["efetivo", "b", null, "Bruna"],
+      ["terceirizado", null, "t1", "Terceiro Teste"],
+      ["extra", null, "e1", "Extra A"],
+      ["extra", null, "e2", "Extra B"],
+    ]);
+    expect(lote.subtotais).toEqual({ efetivo: 4500, terceirizado: 700.15, extra: 370.1 });
+    expect(Math.round(lote.total * 100)).toBe(somaCentavos(lote.itens.map((i) => i.total_amount)));
+    expect(lote.total).toBe(5570.25);
+  });
+
+  it("com Extrato Mensal: total = soma dos itens dos três tipos", () => {
+    const linhas: LinhaResumo[] = [
+      {
+        chave: "1",
+        funcionarioId: "f1",
+        nome: "EFETIVO TESTE",
+        status: "confirmado",
+        bruto: 2000,
+        liquido: 1800.33,
+        restituicao: 10,
+      },
+      {
+        chave: "2",
+        funcionarioId: "f2",
+        nome: "PENDENTE",
+        status: "em_conferencia",
+        bruto: 1000,
+        liquido: 900,
+        restituicao: 0,
+      },
+    ];
+    const lote = loteComValoresMensais(montarLoteFolha(linhas).itens, outros);
+    expect(lote.itens.map((i) => i.tipo_pessoa)).toEqual([
+      "efetivo",
+      "terceirizado",
+      "extra",
+      "extra",
+    ]);
+    expect(lote.subtotais.efetivo).toBe(1800.33);
+    expect(Math.round(lote.total * 100)).toBe(somaCentavos(lote.itens.map((i) => i.total_amount)));
+    expect(lote.total).toBe(2870.58);
+  });
+
+  it("valor zero, sem lançamento ou inativa não entram no lote", () => {
+    const ids = outros.map((o) => o.pessoaId);
+    expect(ids).toEqual(["t1", "e2", "e1"]);
+  });
+});
+
+describe("blocosDaFolhaSalva", () => {
+  it("folha antiga (itens sem tipo): tudo em Efetivos, com o mesmo total", () => {
+    const itens = [
+      { id: "1", total_amount: 1000.1 },
+      { id: "2", total_amount: 2000.2, tipo_pessoa: null },
+      { id: "3", total_amount: 0.3, tipo_pessoa: undefined },
+    ];
+    const r = blocosDaFolhaSalva(itens);
+    expect(r.blocos.map((b) => [b.tipo, b.itens.map((i) => i.id), b.subtotal])).toEqual([
+      ["efetivo", ["1", "2", "3"], 3000.6],
+    ]);
+    expect(r.total).toBe(3000.6);
+  });
+
+  it("folha nova: três blocos na ordem, subtotal por bloco e total", () => {
+    const r = blocosDaFolhaSalva([
+      { id: "x", total_amount: 100.1, tipo_pessoa: "extra" },
+      { id: "e", total_amount: 1000, tipo_pessoa: "efetivo" },
+      { id: "t", total_amount: 50.05, tipo_pessoa: "terceirizado" },
+    ]);
+    expect(r.blocos.map((b) => [b.tipo, b.subtotal])).toEqual([
+      ["efetivo", 1000],
+      ["terceirizado", 50.05],
+      ["extra", 100.1],
+    ]);
+    expect(r.total).toBe(1150.15);
+    expect(tipoPessoaLote("outro")).toBe("efetivo");
+  });
+});
