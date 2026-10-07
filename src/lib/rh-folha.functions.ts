@@ -27,6 +27,7 @@ import {
   divergenciasDoColaborador,
   empresasNaoImportadas,
   exigirCompetenciaAberta,
+  foiAjustada,
   importacaoAnteriorDoCnpj,
   importacaoDoCnpj,
   inssDoMes,
@@ -35,6 +36,7 @@ import {
   mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
+  reaplicarAjusteManual,
   registroExcluido,
   salarioAposExclusao,
   salariosDaFolha,
@@ -962,6 +964,11 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
         const g = gravadoPorChave.get(chaveColaborador(c));
         const manual = g?.vinculoManual ? g.funcionarioId : null;
         const funcionarioId = manual ?? casarPorCpf(funcionarios, c.cpf)?.id ?? null;
+        const liquidoManual = liquidos.get(chaveColaborador(c))?.valor ?? null;
+        // Substituído com ajuste manual nas rubricas: o ajuste é reaplicado sobre o PDF novo.
+        const ajustadas =
+          g && foiAjustada(g.rubricas) ? reaplicarAjusteManual(g.rubricas, c.rubricas) : null;
+        const totais = ajustadas ? totaisAjustados(ajustadas) : c;
         return {
           funcionario_id: funcionarioId,
           vinculo_manual: !!manual,
@@ -985,22 +992,43 @@ export const gravarImportacaoFolha = createServerFn({ method: "POST" })
           valor_fgts: c.valorFgts,
           base_irrf: c.baseIrrf,
           observacoes: c.observacoes,
-          proventos: c.proventos,
-          descontos: c.descontos,
-          liquido: c.liquido,
-          liquido_manual: liquidos.get(chaveColaborador(c))?.valor ?? null,
+          proventos: totais.proventos,
+          descontos: totais.descontos,
+          liquido: totais.liquido,
+          ...(ajustadas
+            ? { proventos_pdf: c.proventos, descontos_pdf: c.descontos, liquido_pdf: c.liquido }
+            : {}),
+          ...(g
+            ? {
+                manter_ajuste:
+                  (ajustadas != null && foiAjustada(ajustadas)) || liquidoManual != null,
+              }
+            : {}),
+          liquido_manual: liquidoManual,
           status: selecionados.has(chaveColaborador(c)) ? "confirmado" : "em_conferencia",
           divergencias: anterior
             ? divergenciasDoColaborador(anteriorPorChave.get(chaveColaborador(c)) ?? null, c)
             : [],
-          rubricas: c.rubricas.map((r) => ({
-            tipo: r.tipo,
-            codigo: r.codigo,
-            descricao: r.descricao,
-            referencia: r.referencia,
-            valor_hora: r.valorHora,
-            valor: r.valor,
-          })),
+          rubricas: ajustadas
+            ? ajustadas.map((r) => ({
+                tipo: r.tipo,
+                codigo: r.codigo,
+                descricao: r.descricao,
+                referencia: r.referencia,
+                valor_hora: r.valorHora ?? "",
+                valor: r.valor,
+                valor_original: r.valorOriginal,
+                origem: r.origem,
+                removida: r.removida,
+              }))
+            : c.rubricas.map((r) => ({
+                tipo: r.tipo,
+                codigo: r.codigo,
+                descricao: r.descricao,
+                referencia: r.referencia,
+                valor_hora: r.valorHora,
+                valor: r.valor,
+              })),
         };
       });
 

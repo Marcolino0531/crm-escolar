@@ -197,7 +197,9 @@ const ModalImportacao: React.FC<{
         ...plano.substituidos.map((s) => ({
           c: s.colaborador,
           divergencias: s.divergencias,
-          aviso: s.perdeAjusteManual ? "O ajuste manual gravado será perdido." : undefined,
+          aviso: s.tinhaAjusteManual
+            ? "O ajuste manual será mantido sobre os valores novos. Confira."
+            : undefined,
         })),
         ...plano.novos.map((c) => ({
           c,

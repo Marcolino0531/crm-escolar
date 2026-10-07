@@ -207,7 +207,7 @@ export type PlanoReimportacao<T extends ColaboradorComparavel> = {
   /** Iguais ao gravado (dados do PDF): nada muda. */
   iguais: T[];
   /** Diferentes do gravado: serão substituídos (e voltam para Em conferência). */
-  substituidos: { colaborador: T; divergencias: Divergencia[]; perdeAjusteManual: boolean }[];
+  substituidos: { colaborador: T; divergencias: Divergencia[]; tinhaAjusteManual: boolean }[];
   /** Não estavam gravados. */
   novos: T[];
   /** Estavam gravados e não vêm no PDF novo: saem da folha. */
@@ -237,7 +237,7 @@ export function planejarReimportacao<T extends ColaboradorComparavel>(
       plano.substituidos.push({
         colaborador: c,
         divergencias: div,
-        perdeAjusteManual: g.ajustadoManualmente,
+        tinhaAjusteManual: g.ajustadoManualmente,
       });
   }
   plano.retirados = gravados.filter((g) => !vistos.has(chaveColaborador(g)));
@@ -354,6 +354,46 @@ export function foiAjustada(rubricas: readonly RubricaFolha[]): boolean {
       r.removida ||
       (r.valorOriginal != null && paraCentavos(r.valorOriginal) !== paraCentavos(r.valor)),
   );
+}
+
+export type RubricaDoPdf = RubricaComparavel & { referencia: string; valorHora?: string };
+
+/**
+ * Reimportação: reaplica o ajuste manual das rubricas gravadas sobre as do PDF
+ * novo. Casa por tipo + código (repetidas, pela ordem de ocorrência). Removida
+ * continua removida; valor editado prevalece (valorOriginal = valor do PDF novo);
+ * rubricas incluídas à mão são mantidas no fim; ajuste de rubrica que saiu do PDF
+ * é descartado.
+ */
+export function reaplicarAjusteManual(
+  gravadas: readonly RubricaFolha[],
+  novas: readonly RubricaDoPdf[],
+): (RubricaFolha & { valorHora?: string })[] {
+  const chave = (r: { tipo: TipoRubrica; codigo: string }) => `${r.tipo}:${r.codigo}`;
+  const fila = new Map<string, RubricaFolha[]>();
+  for (const g of gravadas) {
+    if (g.origem !== "pdf") continue;
+    const k = chave(g);
+    fila.set(k, [...(fila.get(k) ?? []), g]);
+  }
+  const doPdf = novas.map((n) => {
+    const g = fila.get(chave(n))?.shift();
+    const editada =
+      g != null &&
+      g.valorOriginal != null &&
+      paraCentavos(g.valorOriginal) !== paraCentavos(g.valor);
+    return {
+      ...n,
+      valor: editada ? g.valor : n.valor,
+      origem: "pdf" as const,
+      valorOriginal: n.valor,
+      removida: g?.removida ?? false,
+    };
+  });
+  const manuais = gravadas
+    .filter((g) => g.origem === "manual")
+    .map((g) => ({ ...g, valorOriginal: null, removida: false }));
+  return [...doPdf, ...manuais];
 }
 
 // ---------- Restituição do INSS ----------

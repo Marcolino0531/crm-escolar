@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { paraCentavos } from "./extrato-mensal";
 import {
   agruparPorPessoa,
   aplicarAjuste,
@@ -19,6 +20,7 @@ import {
   pendentesParaFechar,
   planejarReimportacao,
   preSelecao,
+  reaplicarAjusteManual,
   registrosPorCpf,
   restituicoesDaCompetencia,
   restituicoesPorPessoa,
@@ -136,7 +138,7 @@ describe("comparação entre competências", () => {
 });
 
 describe("reimportação da mesma competência", () => {
-  it("igual não muda; diferente é substituído e avisa ajuste manual perdido", () => {
+  it("igual não muda; diferente é substituído e avisa que tinha ajuste manual", () => {
     const gravados = [
       { ...colab(), ajustadoManualmente: false },
       { ...colab({ codigo: "2", cpf: "900.000.002-56" }), ajustadoManualmente: true },
@@ -149,7 +151,7 @@ describe("reimportação da mesma competência", () => {
     ];
     const plano = planejarReimportacao(gravados, novo);
     expect(plano.iguais.map((c) => c.codigo)).toEqual(["1"]);
-    expect(plano.substituidos.map((s) => [s.colaborador.codigo, s.perdeAjusteManual])).toEqual([
+    expect(plano.substituidos.map((s) => [s.colaborador.codigo, s.tinhaAjusteManual])).toEqual([
       ["2", true],
     ]);
     expect(plano.novos.map((c) => c.codigo)).toEqual(["3"]);
@@ -228,6 +230,93 @@ describe("ajuste manual", () => {
   it("sem ajuste não fica marcado", () => {
     expect(foiAjustada(base)).toBe(false);
     expect(totaisAjustados(base)).toEqual({ proventos: 3000, descontos: 330, liquido: 2670 });
+  });
+});
+
+describe("reimportação: ajuste manual reaplicado (reaplicarAjusteManual)", () => {
+  const rub = (
+    tipo: "P" | "D",
+    codigo: string,
+    valor: number,
+    over: Partial<RubricaFolha> = {},
+  ): RubricaFolha => ({
+    tipo,
+    codigo,
+    descricao: `RUBRICA ${codigo}`,
+    referencia: "",
+    valor,
+    origem: "pdf",
+    valorOriginal: valor,
+    removida: false,
+    ...over,
+  });
+  const doPdf = (rs: RubricaFolha[]) =>
+    rs.map(({ tipo, codigo, descricao, referencia, valor }) => ({
+      tipo,
+      codigo,
+      descricao,
+      referencia,
+      valor,
+    }));
+  const liquidoEmCentavos = (t: { proventos: number; descontos: number; liquido: number }) =>
+    expect(paraCentavos(t.liquido)).toBe(paraCentavos(t.proventos) - paraCentavos(t.descontos));
+
+  it("desconto removido continua removido mesmo com outro valor no PDF novo", () => {
+    const gravadas = [rub("P", "1", 3000), rub("D", "48", 80, { removida: true })];
+    const novas = doPdf([rub("P", "1", 3000), rub("D", "48", 95.5)]);
+    const r = reaplicarAjusteManual(gravadas, novas);
+    expect(r[1]).toMatchObject({ valor: 95.5, valorOriginal: 95.5, removida: true });
+    const t = totaisAjustados(r);
+    expect(t).toEqual({ proventos: 3000, descontos: 0, liquido: 3000 });
+    liquidoEmCentavos(t);
+    expect(foiAjustada(r)).toBe(true);
+  });
+
+  it("valor editado prevalece; valorOriginal é o do PDF novo", () => {
+    const gravadas = [rub("P", "1", 3100.55, { valorOriginal: 3000 }), rub("D", "998", 250)];
+    const novas = doPdf([rub("P", "1", 3200.1), rub("D", "998", 260.33)]);
+    const r = reaplicarAjusteManual(gravadas, novas);
+    expect(r[0]).toMatchObject({ valor: 3100.55, valorOriginal: 3200.1, removida: false });
+    expect(r[1]).toMatchObject({ valor: 260.33, valorOriginal: 260.33 });
+    const t = totaisAjustados(r);
+    expect(t).toEqual({ proventos: 3100.55, descontos: 260.33, liquido: 2840.22 });
+    liquidoEmCentavos(t);
+  });
+
+  it("rubrica incluída à mão é mantida e somada", () => {
+    const manual = rub("D", "", 500.1, {
+      descricao: "ADIANTAMENTO",
+      origem: "manual",
+      valorOriginal: null,
+    });
+    const gravadas = [rub("P", "1", 3000), manual];
+    const r = reaplicarAjusteManual(gravadas, doPdf([rub("P", "1", 3050.07)]));
+    expect(r).toHaveLength(2);
+    expect(r[1]).toMatchObject({ origem: "manual", valorOriginal: null, valor: 500.1 });
+    const t = totaisAjustados(r);
+    expect(t).toEqual({ proventos: 3050.07, descontos: 500.1, liquido: 2549.97 });
+    liquidoEmCentavos(t);
+  });
+
+  it("ajuste de rubrica que saiu do PDF novo é descartado", () => {
+    const gravadas = [rub("P", "1", 3000), rub("D", "48", 80, { removida: true })];
+    const novas = doPdf([rub("P", "1", 3010.01), rub("D", "998", 250.02)]);
+    const r = reaplicarAjusteManual(gravadas, novas);
+    expect(r.every((x) => x.origem === "pdf" && !x.removida)).toBe(true);
+    expect(foiAjustada(r)).toBe(false);
+    const t = totaisAjustados(r);
+    expect(t).toEqual({ proventos: 3010.01, descontos: 250.02, liquido: 2759.99 });
+    liquidoEmCentavos(t);
+  });
+
+  it("código repetido casa pela ordem de ocorrência", () => {
+    const gravadas = [rub("P", "5", 100), rub("P", "5", 120, { valorOriginal: 200 })];
+    const r = reaplicarAjusteManual(gravadas, doPdf([rub("P", "5", 110), rub("P", "5", 210)]));
+    expect(r.map((x) => [x.valor, x.valorOriginal])).toEqual([
+      [110, 110],
+      [120, 210],
+    ]);
+    liquidoEmCentavos(totaisAjustados(r));
   });
 });
 
