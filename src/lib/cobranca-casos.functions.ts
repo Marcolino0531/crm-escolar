@@ -79,6 +79,8 @@ import {
   parseXmlValue,
   resolverCredenciais,
 } from "@/lib/sponte.functions";
+import { anoCorrenteSaoPaulo, unidadesDoAluno } from "@/lib/aluno-unidades";
+import { vinculosPorSponteId } from "@/lib/aluno-unidades.server";
 import { rotuloDocumento } from "@/lib/matricula-documentos";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { BUCKET_ZAPSIGN_ASSINADOS, guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
@@ -262,9 +264,20 @@ async function lerAluno(unidade: string, alunoId: string): Promise<AlunoSponte |
     parseXmlValue(n, "RetornoOperacao").startsWith("01"),
   );
   if (!node) return null;
-  const turma = parseXmlValue(node, "TurmaAtual");
-  // CEC e CEC Baby compartilham a base: só entra quem é da unidade da aba.
-  if (creds.segmentaPorTurma && (classificarUnidade(turma) ?? "CEC") !== unidade) return null;
+  let turma = parseXmlValue(node, "TurmaAtual");
+  // CEC e CEC Baby compartilham a base: só entra quem é da unidade da aba, pela
+  // TurmaAtual ou pelo vínculo do ano letivo (com a turma daquela unidade).
+  if (creds.segmentaPorTurma) {
+    const vinculos = (await vinculosPorSponteId([alunoId])).get(alunoId) ?? [];
+    const naUnidade = unidadesDoAluno(
+      turma,
+      vinculos,
+      anoCorrenteSaoPaulo(),
+      classificarUnidade,
+    ).get(unidade);
+    if (naUnidade === undefined) return null;
+    turma = naUnidade;
+  }
   return {
     alunoId,
     nome: parseXmlValue(node, "Nome"),
