@@ -8,6 +8,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import {
   competenciaValida,
+  conferirItensValorMensal,
   type SalarioRegistro,
   type TipoPessoaPagamento,
   type ValorMensalRegistro,
@@ -299,9 +300,68 @@ export const excluirValorMensal = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// Terceirizados/Extras do lote: pessoas (colégio e ativo) e valores lançados.
+async function conferirValoresMensaisDoLote(
+  schoolId: string,
+  competencia: string,
+  itens: readonly { tipo: TipoPessoaPagamento; pessoaId: string; nome: string; valor: number }[],
+): Promise<void> {
+  if (!itens.length) return;
+  const pessoas = new Map<string, { schoolId: string | null; ativo: boolean }>();
+  for (const tipo of ["terceirizado", "extra"] as const) {
+    const ids = [...new Set(itens.filter((i) => i.tipo === tipo).map((i) => i.pessoaId))];
+    if (!ids.length) continue;
+    const { data, error } = await supabaseAdmin
+      .from(TABELA_PESSOA[tipo] as never)
+      .select("id, school_id, ativo")
+      .in("id", ids);
+    if (error) throw new Error(error.message);
+    for (const p of (data ?? []) as {
+      id: string;
+      school_id: string | null;
+      ativo: boolean | null;
+    }[]) {
+      pessoas.set(`${tipo}:${p.id}`, { schoolId: p.school_id, ativo: p.ativo !== false });
+    }
+  }
+  const registros = await selectAll<ValorMensalRow>(() =>
+    supabaseAdmin
+      .from("rh_pagamentos_valores" as never)
+      .select("id, tipo, pessoa_id, competencia, valor, observacao, criado_em, criado_por_nome")
+      .eq("school_id", schoolId)
+      .in("pessoa_id", [...new Set(itens.map((i) => i.pessoaId))])
+      .lte("competencia", competencia)
+      .order("id"),
+  );
+  const erro = conferirItensValorMensal(
+    itens,
+    pessoas,
+    registros.map(paraValorMensal),
+    schoolId,
+    competencia,
+  );
+  if (erro) throw new Error(erro);
+}
+
+const itemLoteSchema = z
+  .object({
+    tipo_pessoa: z.enum(["efetivo", "terceirizado", "extra"]).default("efetivo"),
+    employee_id: z.string().uuid().nullable().optional(),
+    pessoa_id: z.string().uuid().nullable().optional(),
+    employee_name: z.string(),
+    total_amount: z.number().positive(),
+  })
+  .refine(
+    (i) => (i.tipo_pessoa === "efetivo" ? !!i.employee_id : !!i.pessoa_id && !i.employee_id),
+    {
+      message: "Item do lote sem identificação da pessoa.",
+    },
+  );
+
 // Salva um lote de pagamento de Salário (hr_transport_batches, tipo='salario')
-// com um item por funcionário. Os itens já vêm montados pela lógica pura
-// (montarFolhaSalario) a partir do salário vigente na competência.
+// com um item por pessoa: efetivos (folha importada ou salário manual),
+// Terceirizados e Extras. Os itens já vêm montados pela lógica pura
+// (montarLoteFolha / montarFolhaSalario + loteComValoresMensais).
 export const salvarFolhaSalario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
@@ -311,15 +371,7 @@ export const salvarFolhaSalario = createServerFn({ method: "POST" })
         titulo: z.string().trim().min(1).max(200),
         competencia: z.string(),
         dataPagamento: z.string().nullable().optional(),
-        itens: z
-          .array(
-            z.object({
-              employee_id: z.string().uuid(),
-              employee_name: z.string(),
-              total_amount: z.number().positive(),
-            }),
-          )
-          .min(1),
+        itens: z.array(itemLoteSchema).min(1),
       })
       .parse(input),
   )
@@ -327,7 +379,28 @@ export const salvarFolhaSalario = createServerFn({ method: "POST" })
     await exigirPermissaoSalario(context.userId, true);
     if (!competenciaValida(data.competencia)) throw new Error("Competência inválida (AAAA-MM).");
     await exigirUnidadeFolha(context.userId, data.schoolId);
-    await conferirLoteComFolha(data.schoolId, data.competencia, data.itens);
+    const efetivos = data.itens.flatMap((i) =>
+      i.tipo_pessoa === "efetivo" && i.employee_id
+        ? [{ employee_id: i.employee_id, total_amount: i.total_amount }]
+        : [],
+    );
+    await conferirLoteComFolha(data.schoolId, data.competencia, efetivos);
+    await conferirValoresMensaisDoLote(
+      data.schoolId,
+      data.competencia,
+      data.itens.flatMap((i) =>
+        i.tipo_pessoa !== "efetivo" && i.pessoa_id
+          ? [
+              {
+                tipo: i.tipo_pessoa,
+                pessoaId: i.pessoa_id,
+                nome: i.employee_name,
+                valor: i.total_amount,
+              },
+            ]
+          : [],
+      ),
+    );
     const total = somaReais(data.itens.map((i) => i.total_amount));
     const { data: batch, error: bErr } = await supabaseAdmin
       .from("hr_transport_batches" as never)
@@ -346,7 +419,9 @@ export const salvarFolhaSalario = createServerFn({ method: "POST" })
     const { error: iErr } = await supabaseAdmin.from("hr_transport_batch_items" as never).insert(
       data.itens.map((i) => ({
         batch_id: batchId,
-        employee_id: i.employee_id,
+        tipo_pessoa: i.tipo_pessoa,
+        employee_id: i.tipo_pessoa === "efetivo" ? i.employee_id : null,
+        pessoa_id: i.tipo_pessoa === "efetivo" ? null : i.pessoa_id,
         employee_name: i.employee_name,
         total_amount: Math.round(i.total_amount * 100) / 100,
       })) as never,
