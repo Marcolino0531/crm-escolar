@@ -90,6 +90,19 @@ describe("leitura do Extrato Mensal (fixture fictício)", () => {
     expect(esperado.total_inss_998).toBe(14960.11);
   });
 
+  it('linha "Categoria:" no cabeçalho de todas as páginas é ignorada', () => {
+    const comCategoria = clonar().map((p) => ({
+      ...p,
+      itens: [
+        ...p.itens,
+        { str: "Categoria: 1,3-12", x: 0, y: 773.76, w: 61.04, h: 7.92, eol: false },
+      ],
+    }));
+    const lida = importarExtratoMensal(comCategoria);
+    expect(lida).toEqual(folha);
+    expect(lida.colaboradores).toHaveLength(esperado.colaboradores.length);
+  });
+
   it("números brasileiros com/sem milhar e negativos", () => {
     expect(centavosBR("1.081,13")).toBe(108113);
     expect(centavosBR("1081,13")).toBe(108113);
