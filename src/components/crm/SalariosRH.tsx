@@ -9,6 +9,7 @@ import {
   competenciaAtual,
   competenciaDe,
   historicoDoFuncionario,
+  itensValorMensal,
   partesCompetencia,
   preenchimentoSalario,
   rotuloCompetencia,
@@ -29,7 +30,12 @@ import {
   PainelValorMensal,
   type PessoaSelecionada,
 } from "@/components/crm/ValoresMensaisRH";
-import { montarFolhaSalario } from "@/lib/rh-folhas";
+import {
+  ROTULO_BLOCO,
+  TIPOS_PESSOA_LOTE,
+  loteComValoresMensais,
+  montarFolhaSalario,
+} from "@/lib/rh-folhas";
 import type { ItemLote } from "@/lib/folha-pagamento";
 
 interface SalariosRHProps {
@@ -192,24 +198,38 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
   );
   const registros = useMemo(() => salarios.data ?? [], [salarios.data]);
   const folha = useMemo(() => {
-    if (loteFolha) {
-      return {
-        itens: loteFolha.itens,
-        total: loteFolha.total,
-        semSalario: loteFolha.semCadastro,
-        emConferencia: loteFolha.emConferencia,
-      };
-    }
-    return { ...montarFolhaSalario(ativos, registros, competenciaRef), emConferencia: [] };
-  }, [loteFolha, ativos, registros, competenciaRef]);
+    const efetivos = loteFolha
+      ? {
+          itens: loteFolha.itens,
+          semSalario: loteFolha.semCadastro,
+          emConferencia: loteFolha.emConferencia,
+        }
+      : { ...montarFolhaSalario(ativos, registros, competenciaRef), emConferencia: [] };
+    const vm = valoresMensais.data;
+    const outros = vm
+      ? [
+          ...itensValorMensal(vm.terceirizados, vm.valores, "terceirizado", competenciaRef),
+          ...itensValorMensal(vm.extras, vm.valores, "extra", competenciaRef),
+        ]
+      : [];
+    return {
+      ...loteComValoresMensais(efetivos.itens, outros),
+      semSalario: efetivos.semSalario,
+      emConferencia: efetivos.emConferencia,
+    };
+  }, [loteFolha, ativos, registros, competenciaRef, valoresMensais.data]);
 
   const abrirModalFolha = () => {
     if (!schoolId) {
       toast.error("Selecione uma unidade específica para salvar a folha.");
       return;
     }
+    if (!valoresMensais.data) {
+      toast.error("Não foi possível carregar Terceirizados e Extras. Recarregue a tela.");
+      return;
+    }
     if (folha.itens.length === 0) {
-      toast.error("Nenhum funcionário para entrar na folha desta competência.");
+      toast.error("Ninguém para entrar na folha desta competência.");
       return;
     }
     setFolhaTitulo(`Salário ${rotuloCompetencia(competenciaRef)}`);
@@ -270,7 +290,7 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
                 <button
                   type="button"
                   onClick={abrirModalFolha}
-                  disabled={salarios.isLoading}
+                  disabled={salarios.isLoading || valoresMensais.isLoading}
                   className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
                   Salvar Folha de Pagamento
@@ -527,11 +547,25 @@ const SalariosRH: React.FC<SalariosRHProps> = ({
             <h4 className="text-sm font-bold text-gray-800">
               Salvar folha de Salário — {rotuloCompetencia(competenciaRef)}
             </h4>
+            <ul className="text-xs text-gray-600 space-y-0.5">
+              {TIPOS_PESSOA_LOTE.map((t) => (
+                <li key={t} className="flex justify-between">
+                  <span>
+                    {ROTULO_BLOCO[t]} ({folha.itens.filter((i) => i.tipo_pessoa === t).length})
+                  </span>
+                  <span className="tabular-nums">{brl(folha.subtotais[t])}</span>
+                </li>
+              ))}
+              <li className="flex justify-between border-t border-gray-200 pt-0.5 font-semibold text-gray-800">
+                <span>Total geral</span>
+                <span className="tabular-nums">{brl(folha.total)}</span>
+              </li>
+            </ul>
             <p className="text-xs text-gray-500">
-              {folha.itens.length} funcionário(s) · total {brl(folha.total)}.{" "}
               {loteFolha
-                ? "Folha importada: entram os Confirmados e os Manuais, pelo líquido (sem restituição)."
-                : "Usa o líquido quando informado, senão o bruto."}
+                ? "Efetivos da folha importada: entram os Confirmados e os Manuais, pelo líquido (sem restituição)."
+                : "Efetivos: usa o líquido quando informado, senão o bruto."}{" "}
+              Terceirizados e Extras: valor a pagar na competência.
             </p>
             {folha.emConferencia.length > 0 && (
               <p className="text-xs font-medium text-amber-700">

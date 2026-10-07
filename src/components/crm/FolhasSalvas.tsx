@@ -3,7 +3,9 @@ import { Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
+  ROTULO_BLOCO,
   ROTULO_TIPO_LOTE,
+  blocosDaFolhaSalva,
   contagemQuitados,
   podeEditarLote,
   podeVerLote,
@@ -38,6 +40,8 @@ interface BatchItem {
   absences: number;
   total_amount: number;
   is_paid: boolean;
+  // Só em folhas de Salário; folhas antigas (sem tipo) ficam em Efetivos.
+  tipo_pessoa?: string | null;
 }
 
 const fmtBRL = (n: number): string =>
@@ -89,7 +93,11 @@ const FolhasSalvas: React.FC<FolhasSalvasProps> = ({ schoolId, permissoes, refre
     setItensCarregando(true);
     const { data, error } = await supabase
       .from("hr_transport_batch_items" as never)
-      .select("id, employee_name, daily_value, working_days, absences, total_amount, is_paid")
+      .select(
+        batch.tipo === "salario"
+          ? "id, employee_name, daily_value, working_days, absences, total_amount, is_paid, tipo_pessoa"
+          : "id, employee_name, daily_value, working_days, absences, total_amount, is_paid",
+      )
       .eq("batch_id", batch.id)
       .order("employee_name", { ascending: true });
     setItensCarregando(false);
@@ -177,6 +185,50 @@ const FolhasSalvas: React.FC<FolhasSalvasProps> = ({ schoolId, permissoes, refre
             {batches.map((b) => {
               const isAdmin = podeEditarLote(b.tipo, permissoes);
               const ehVt = b.tipo === "vt";
+              const linha = (it: BatchItem) => (
+                <tr key={it.id} className="hover:bg-gray-50">
+                  <td className="px-3 py-2 text-sm font-medium text-gray-800">
+                    {it.employee_name}
+                  </td>
+                  {ehVt && (
+                    <>
+                      <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
+                        {it.working_days}
+                      </td>
+                      <td className="px-3 py-2 text-sm text-right tabular-nums">
+                        {it.absences > 0 ? (
+                          <span className="text-red-600 font-medium">{it.absences}</span>
+                        ) : (
+                          <span className="text-gray-400">0</span>
+                        )}
+                      </td>
+                    </>
+                  )}
+                  <td className="px-3 py-2 text-sm font-bold text-emerald-700 text-right tabular-nums">
+                    {fmtBRL(it.total_amount)}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => isAdmin && togglePago(it)}
+                      disabled={!isAdmin}
+                      title={isAdmin ? "Marcar como quitado / pendente" : undefined}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        it.is_paid
+                          ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                          : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                      } ${isAdmin ? "cursor-pointer" : "cursor-default opacity-80"}`}
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          it.is_paid ? "bg-emerald-500" : "bg-amber-500"
+                        }`}
+                      />
+                      {it.is_paid ? "Pago" : "Pendente"}
+                    </button>
+                  </td>
+                </tr>
+              );
               return (
                 <div key={b.id} className="border border-gray-200 rounded-lg overflow-hidden">
                   <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50">
@@ -276,54 +328,47 @@ const FolhasSalvas: React.FC<FolhasSalvasProps> = ({ schoolId, permissoes, refre
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {itens.map((it) => (
-                                  <tr key={it.id} className="hover:bg-gray-50">
-                                    <td className="px-3 py-2 text-sm font-medium text-gray-800">
-                                      {it.employee_name}
-                                    </td>
-                                    {ehVt && (
-                                      <>
-                                        <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
-                                          {it.working_days}
-                                        </td>
-                                        <td className="px-3 py-2 text-sm text-right tabular-nums">
-                                          {it.absences > 0 ? (
-                                            <span className="text-red-600 font-medium">
-                                              {it.absences}
-                                            </span>
-                                          ) : (
-                                            <span className="text-gray-400">0</span>
-                                          )}
-                                        </td>
-                                      </>
-                                    )}
-                                    <td className="px-3 py-2 text-sm font-bold text-emerald-700 text-right tabular-nums">
-                                      {fmtBRL(it.total_amount)}
-                                    </td>
-                                    <td className="px-3 py-2 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => isAdmin && togglePago(it)}
-                                        disabled={!isAdmin}
-                                        title={
-                                          isAdmin ? "Marcar como quitado / pendente" : undefined
-                                        }
-                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                                          it.is_paid
-                                            ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                                            : "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                                        } ${isAdmin ? "cursor-pointer" : "cursor-default opacity-80"}`}
-                                      >
-                                        <span
-                                          className={`h-2 w-2 rounded-full ${
-                                            it.is_paid ? "bg-emerald-500" : "bg-amber-500"
-                                          }`}
-                                        />
-                                        {it.is_paid ? "Pago" : "Pendente"}
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
+                                {ehVt
+                                  ? itens.map(linha)
+                                  : (() => {
+                                      const { blocos, total } = blocosDaFolhaSalva(itens);
+                                      const cols = 3;
+                                      return (
+                                        <>
+                                          {blocos.map((bl) => (
+                                            <React.Fragment key={bl.tipo}>
+                                              <tr className="bg-gray-50">
+                                                <td
+                                                  colSpan={cols}
+                                                  className="px-3 py-1.5 text-xs font-semibold uppercase text-gray-600"
+                                                >
+                                                  {ROTULO_BLOCO[bl.tipo]}
+                                                </td>
+                                              </tr>
+                                              {bl.itens.map(linha)}
+                                              <tr>
+                                                <td className="px-3 py-1.5 text-xs font-medium text-gray-600">
+                                                  Subtotal {ROTULO_BLOCO[bl.tipo]}
+                                                </td>
+                                                <td className="px-3 py-1.5 text-sm font-semibold text-gray-700 text-right tabular-nums">
+                                                  {fmtBRL(bl.subtotal)}
+                                                </td>
+                                                <td />
+                                              </tr>
+                                            </React.Fragment>
+                                          ))}
+                                          <tr className="bg-gray-50">
+                                            <td className="px-3 py-2 text-sm font-bold text-gray-800">
+                                              Total
+                                            </td>
+                                            <td className="px-3 py-2 text-sm font-bold text-emerald-700 text-right tabular-nums">
+                                              {fmtBRL(total)}
+                                            </td>
+                                            <td />
+                                          </tr>
+                                        </>
+                                      );
+                                    })()}
                               </tbody>
                             </table>
                           </div>

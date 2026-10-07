@@ -139,6 +139,56 @@ export function totalDoBloco(
   return centavos / 100;
 }
 
+// Pessoas ATIVAS do bloco com valor a pagar > 0 na competência (Resumo e lote).
+export type ItemValorMensal = {
+  tipo: TipoPessoaPagamento;
+  pessoaId: string;
+  nome: string;
+  valor: number;
+};
+
+export function itensValorMensal(
+  pessoas: readonly { id: string; nome: string; ativo?: boolean }[],
+  registros: readonly ValorMensalRegistro[],
+  tipo: TipoPessoaPagamento,
+  competencia: string,
+): ItemValorMensal[] {
+  return pessoas.flatMap((p) => {
+    if (p.ativo === false) return [];
+    const valor = valorAPagar(registros, tipo, p.id, competencia);
+    if (valor == null || Math.round(valor * 100) <= 0) return [];
+    return [{ tipo, pessoaId: p.id, nome: p.nome, valor }];
+  });
+}
+
+// Servidor: item de Terceirizado/Extra do lote só passa se a pessoa está ativa,
+// é do colégio do lote e o valor bate, em centavos, com o valor a pagar.
+// Devolve a mensagem de recusa (null = tudo certo).
+export function conferirItensValorMensal(
+  itens: readonly { tipo: TipoPessoaPagamento; pessoaId: string; nome: string; valor: number }[],
+  pessoas: ReadonlyMap<string, { schoolId: string | null; ativo: boolean }>,
+  registros: readonly ValorMensalRegistro[],
+  schoolId: string,
+  competencia: string,
+): string | null {
+  const vistos = new Set<string>();
+  for (const i of itens) {
+    const chave = `${i.tipo}:${i.pessoaId}`;
+    const rotulo = i.tipo === "terceirizado" ? "Terceirizado" : "Extra";
+    if (vistos.has(chave)) return `${rotulo} ${i.nome} aparece mais de uma vez no lote.`;
+    vistos.add(chave);
+    const p = pessoas.get(chave);
+    if (!p) return `${rotulo} ${i.nome} não encontrado.`;
+    if (p.schoolId !== schoolId) return `${rotulo} ${i.nome} é de outro colégio.`;
+    if (!p.ativo) return `${rotulo} ${i.nome} está inativo.`;
+    const devido = valorAPagar(registros, i.tipo, i.pessoaId, competencia);
+    if (devido == null || Math.round(devido * 100) !== Math.round(i.valor * 100)) {
+      return `O valor de ${i.nome} (${rotulo}) não confere com o valor a pagar na competência. Recarregue a tela e tente de novo.`;
+    }
+  }
+  return null;
+}
+
 // Valores iniciais do cadastro numa competência. Se já existe registro próprio,
 // usa ele; senão herda do vigente (última competência anterior). `proprio`
 // diz se o formulário está editando um registro existente ou criando um novo.

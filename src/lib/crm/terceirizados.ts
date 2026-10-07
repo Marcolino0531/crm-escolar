@@ -163,11 +163,12 @@ export function useTerceirizados() {
       if (error) throw error;
     });
 
+  // "Remover" inativa: valores lançados e folhas salvas continuam com a pessoa.
   const remover = (id: string) =>
     run(async () => {
       const { error } = await supabase
         .from("terceirizados" as never)
-        .delete()
+        .update({ ativo: false } as never)
         .eq("id", id);
       if (error) throw error;
     });

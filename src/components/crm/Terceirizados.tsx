@@ -33,8 +33,16 @@ const resumoGrade = (grade: GradeTurnos): string => {
 
 const Terceirizados: React.FC<TerceirizadosProps> = ({ unidadeSelecionada, isAdmin }) => {
   const { schools } = useSchool();
-  const { terceirizados, isLoading, adicionar, editar, remover, adicionarFalta, removerFalta } =
-    useTerceirizados();
+  const {
+    terceirizados: todos,
+    isLoading,
+    adicionar,
+    editar,
+    remover,
+    adicionarFalta,
+    removerFalta,
+  } = useTerceirizados();
+  const terceirizados = todos.filter((t) => t.ativo);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [selecionadoId, setSelecionadoId] = useState<string | null>(null);

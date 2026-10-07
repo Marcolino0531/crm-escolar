@@ -889,3 +889,136 @@ describe("líquido manual nos meses seguintes", () => {
     expect(cmp).toEqual(compararFolhas([colab(), colab({ codigo: "2" })], atual));
   });
 });
+
+// ── Resumo em blocos: Efetivos, Terceirizados e Extras ──────────────────────
+import { blocosResumo, linhasDeValoresMensais } from "./folha-pagamento";
+import { itensValorMensal, type ValorMensalRegistro } from "./rh-salario";
+
+describe("Resumo em blocos", () => {
+  const collatorBlocos = new Intl.Collator("pt-BR", { sensitivity: "base" });
+  const efetivos: LinhaResumo[] = [
+    {
+      chave: "1",
+      funcionarioId: "f1",
+      nome: "ZELIA TESTE",
+      status: "confirmado",
+      bruto: 3000.1,
+      liquido: 2670.05,
+      restituicao: 12.34,
+    },
+    {
+      chave: "2",
+      funcionarioId: "f2",
+      nome: "ANA TESTE",
+      status: "manual",
+      bruto: 1500.2,
+      liquido: 1400.1,
+      restituicao: 0,
+    },
+  ];
+  const valor = (
+    tipo: "terceirizado" | "extra",
+    pessoaId: string,
+    competencia: string,
+    v: number,
+  ): ValorMensalRegistro => ({
+    id: `${tipo}-${pessoaId}-${competencia}`,
+    tipo,
+    pessoaId,
+    competencia,
+    valor: v,
+    observacao: "",
+    criadoEm: "2026-01-01T00:00:00Z",
+    criadoPor: "Teste",
+  });
+  const registros = [
+    valor("terceirizado", "t1", "2026-01", 800.1),
+    valor("terceirizado", "t2", "2026-01", 0.2),
+    valor("terceirizado", "t3", "2026-01", 500),
+    valor("terceirizado", "t3", "2026-05", 0), // encerrado
+    valor("extra", "e1", "2026-04", 350.35),
+    valor("extra", "e2", "2026-07", 999), // só a partir de julho
+  ];
+  const terceirizados = [
+    { id: "t1", nome: "bruno terceiro" },
+    { id: "t2", nome: "ALICE TERCEIRA" },
+    { id: "t3", nome: "Carla Encerrada" },
+    { id: "t4", nome: "Sem Lançamento" },
+    { id: "t5", nome: "Inativa", ativo: false },
+  ];
+  const extras = [
+    { id: "e1", nome: "extra um" },
+    { id: "e2", nome: "extra futuro" },
+  ];
+  const linhasDo = (tipo: "terceirizado" | "extra") =>
+    linhasDeValoresMensais(
+      itensValorMensal(
+        tipo === "terceirizado" ? terceirizados : extras,
+        registros,
+        tipo,
+        "2026-06",
+      ),
+    );
+  const r = blocosResumo(
+    { efetivo: efetivos, terceirizado: linhasDo("terceirizado"), extra: linhasDo("extra") },
+    collatorBlocos.compare,
+  );
+  const centavos = (n: number) => Math.round(n * 100);
+
+  it("três blocos na ordem, cada um em ordem alfabética pelo nome padronizado", () => {
+    expect(r.blocos.map((b) => b.tipo)).toEqual(["efetivo", "terceirizado", "extra"]);
+    expect(r.blocos[0].linhas.map((l) => l.nome)).toEqual(["Ana Teste", "Zelia Teste"]);
+    expect(r.blocos[1].linhas.map((l) => l.nome)).toEqual(["Alice Terceira", "Bruno Terceiro"]);
+    expect(r.blocos[2].linhas.map((l) => l.nome)).toEqual(["Extra Um"]);
+  });
+
+  it("Terceirizado/Extra: Bruto = Líquido = valor, Restituição 0, status Manual", () => {
+    const l = r.blocos[2].linhas[0];
+    expect([l.bruto, l.liquido, l.restituicao, l.status, l.funcionarioId]).toEqual([
+      350.35,
+      350.35,
+      0,
+      "manual",
+      null,
+    ]);
+  });
+
+  it("subtotal de cada bloco = soma das suas linhas; total geral = soma dos subtotais", () => {
+    for (const b of r.blocos) {
+      for (const k of ["bruto", "liquido", "restituicao"] as const) {
+        expect(centavos(b.subtotal[k])).toBe(b.linhas.reduce((acc, l) => acc + centavos(l[k]), 0));
+      }
+    }
+    expect(r.blocos[1].subtotal.liquido).toBe(800.3);
+    for (const k of ["bruto", "liquido", "restituicao"] as const) {
+      expect(centavos(r.total[k])).toBe(
+        r.blocos.reduce((acc, b) => acc + centavos(b.subtotal[k]), 0),
+      );
+    }
+    expect(r.total).toEqual({ bruto: 5650.95, liquido: 5220.8, restituicao: 12.34 });
+  });
+
+  it("bloco Efetivos tem os mesmos valores de antes", () => {
+    expect(r.blocos[0].subtotal).toEqual(totaisResumo(efetivos));
+    expect(r.blocos[0].linhas.map((l) => [l.chave, l.bruto, l.liquido, l.restituicao])).toEqual([
+      ["2", 1500.2, 1400.1, 0],
+      ["1", 3000.1, 2670.05, 12.34],
+    ]);
+  });
+
+  it("valor zero, sem lançamento, encerrado, futuro ou inativa não entram", () => {
+    const chaves = r.blocos.flatMap((b) => b.linhas.map((l) => l.chave));
+    for (const fora of ["t3", "t4", "t5", "e2"]) {
+      expect(chaves.some((c) => c.endsWith(`:${fora}`))).toBe(false);
+    }
+  });
+
+  it("sem Terceirizados e sem Extras: só o bloco Efetivos, total igual ao de hoje", () => {
+    const so = blocosResumo(
+      { efetivo: efetivos, terceirizado: [], extra: [] },
+      collatorBlocos.compare,
+    );
+    expect(so.blocos.map((b) => b.tipo)).toEqual(["efetivo"]);
+    expect(so.total).toEqual(totaisResumo(efetivos));
+  });
+});
