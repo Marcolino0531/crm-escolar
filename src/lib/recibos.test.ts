@@ -217,6 +217,7 @@ describe("validarRecibo", () => {
     responsavel: RESPONSAVEL,
     itens: itensDoRecibo({ mensalidade: 1200 }),
     dataRecibo: "2026-08-14",
+    competencia: "2026-08",
   };
 
   it("recibo completo não tem impedimento", () => {
@@ -234,5 +235,61 @@ describe("validarRecibo", () => {
     expect(erros).toHaveLength(6);
     expect(erros[0]).toContain("razão social");
     expect(erros.at(-1)).toContain("pelo menos um tópico");
+  });
+
+  it("exige a competência quando há Mensalidade, e só nesse caso", () => {
+    expect(validarRecibo({ ...base, competencia: "" })).toEqual([
+      "Informe a competência da mensalidade.",
+    ]);
+    expect(
+      validarRecibo({ ...base, itens: itensDoRecibo({ hora_extra: 50 }), competencia: "" }),
+    ).toEqual([]);
+  });
+});
+
+describe("competência da mensalidade", () => {
+  const entrada = {
+    numero: 9,
+    dataRecibo: "2026-10-05",
+    colegio: COLEGIO,
+    aluno: ALUNO,
+    responsavel: RESPONSAVEL,
+  };
+  const extensoHoje = montarRecibo({ ...entrada, valores: { mensalidade: 3366.92 } }).totalExtenso;
+
+  it("com competência 2026-10, a Mensalidade sai com o mês e os valores não mudam", () => {
+    const doc = montarRecibo({
+      ...entrada,
+      valores: { mensalidade: 3366.92 },
+      competencia: "2026-10",
+    });
+    expect(doc.itens).toEqual([
+      { id: "mensalidade", descricao: "Mensalidade (outubro 2026)", valor: 3366.92 },
+    ]);
+    expect(doc.total).toBe(3366.92);
+    expect(doc.totalExtenso).toBe(extensoHoje);
+    expect(doc.totalExtenso).toBe(
+      "três mil trezentos e sessenta e seis reais e noventa e dois centavos",
+    );
+  });
+
+  it("sem competência (recibo antigo), a descrição fica Mensalidade com o mesmo total", () => {
+    const doc = montarRecibo({ ...entrada, valores: { mensalidade: 3366.92 } });
+    expect(doc.itens).toEqual([{ id: "mensalidade", descricao: "Mensalidade", valor: 3366.92 }]);
+    expect(doc.total).toBe(3366.92);
+    expect(doc.totalExtenso).toBe(extensoHoje);
+  });
+
+  it("com Mensalidade e Hora Extra, só a Mensalidade ganha a competência", () => {
+    const doc = montarRecibo({
+      ...entrada,
+      valores: { mensalidade: 3366.92, hora_extra: 150.5 },
+      competencia: "2026-10",
+    });
+    expect(doc.itens.map((i) => [i.descricao, i.valor])).toEqual([
+      ["Mensalidade (outubro 2026)", 3366.92],
+      ["Hora Extra", 150.5],
+    ]);
+    expect(doc.total).toBe(3517.42);
   });
 });

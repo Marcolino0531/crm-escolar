@@ -269,6 +269,26 @@ export function mesPorExtenso(mes: number): string {
   return MESES[mes - 1] ?? "";
 }
 
+/** "outubro 2026" a partir de "AAAA-MM"; "" quando a competência não é válida. */
+export function competenciaPorExtenso(competencia: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(competencia ?? "");
+  const mes = m ? mesPorExtenso(Number(m[2])) : "";
+  return m && mes ? `${mes} ${m[1]}` : "";
+}
+
+/** Só a Mensalidade leva a competência na descrição: "Mensalidade (outubro 2026)". */
+export function aplicarCompetencia(
+  itens: readonly ItemRecibo[],
+  competencia: string | null | undefined,
+): ItemRecibo[] {
+  const extenso = competenciaPorExtenso(competencia);
+  return itens.map((item) =>
+    item.id === "mensalidade" && extenso
+      ? { ...item, descricao: `${item.descricao} (${extenso})` }
+      : item,
+  );
+}
+
 /** "14 de agosto de 2026" a partir de YYYY-MM-DD (sem passar por Date/UTC). */
 export function dataPorExtenso(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
@@ -320,6 +340,8 @@ export interface MontarReciboInput {
   responsavel: ResponsavelRecibo;
   valores: Record<string, number>;
   topicos?: readonly TopicoRecibo[];
+  /** Competência da Mensalidade, "AAAA-MM". Recibos antigos não têm. */
+  competencia?: string;
 }
 
 /**
@@ -328,7 +350,10 @@ export interface MontarReciboInput {
  * O "local" da data é a cidade do colégio.
  */
 export function montarRecibo(input: MontarReciboInput): ReciboDocumento {
-  const itens = itensDoRecibo(input.valores, input.topicos ?? TOPICOS_RECIBO);
+  const itens = aplicarCompetencia(
+    itensDoRecibo(input.valores, input.topicos ?? TOPICOS_RECIBO),
+    input.competencia,
+  );
   const total = calcularTotalRecibo(itens);
   const dataExtensoBase = dataPorExtenso(input.dataRecibo);
   const cidade = input.colegio.cidade.trim();
@@ -362,6 +387,7 @@ export function validarRecibo(input: {
   responsavel: ResponsavelRecibo | null;
   itens: readonly ItemRecibo[];
   dataRecibo: string;
+  competencia?: string;
 }): string[] {
   const erros: string[] = [];
   if (!input.colegio || !input.colegio.razaoSocial.trim()) {
@@ -374,6 +400,12 @@ export function validarRecibo(input: {
   if (!input.responsavel) erros.push("Selecione o responsável que consta no recibo.");
   if (!formatarDataBR(input.dataRecibo)) erros.push("Informe a data do recibo.");
   if (input.itens.length === 0) erros.push("Preencha o valor de pelo menos um tópico.");
+  if (
+    input.itens.some((i) => i.id === "mensalidade") &&
+    !competenciaPorExtenso(input.competencia)
+  ) {
+    erros.push("Informe a competência da mensalidade.");
+  }
   return erros;
 }
 

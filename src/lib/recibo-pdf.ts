@@ -45,11 +45,10 @@ function corpo(doc: Doc, recibo: ReciboDocumento, y: number): number {
   doc.setFontSize(10.5);
 
   const texto =
-    `Recebemos de ${r.nome}${r.cpf ? `, CPF ${r.cpf}` : ""}` +
-    `${r.parentesco ? ` (${r.parentesco})` : ""}, a quantia de ${recibo.totalFormatado} ` +
+    `Recebemos de ${r.nome}${r.cpf ? `, CPF ${r.cpf}` : ""}, ` +
+    `a quantia de ${recibo.totalFormatado} ` +
     `(${recibo.totalExtenso}), referente ao(s) item(ns) discriminado(s) abaixo, ` +
-    `relativo(s) ao aluno ${a.nome}` +
-    `${a.matricula ? `, matrícula ${a.matricula}` : ""}${a.turma ? `, turma ${a.turma}` : ""}.`;
+    `relativo(s) ao aluno ${a.nome}${a.turma ? `, turma ${a.turma}` : ""}.`;
 
   const linhas = doc.splitTextToSize(texto, CONTEUDO) as string[];
   doc.text(linhas, MARGEM, y, { align: "justify", maxWidth: CONTEUDO });
