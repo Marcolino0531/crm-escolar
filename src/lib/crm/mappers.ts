@@ -2,6 +2,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import type {
   AlunoLead,
   EstadoCivil,
+  TamanhoCamisa,
   Funcionario,
   Genero,
   ItemMatricula,
@@ -85,6 +86,7 @@ export function rowToFuncionario(r: Tables<"funcionarios">): Funcionario {
     dataNascimento: r.data_nascimento ?? undefined,
     genero: (r.genero as Genero) ?? undefined,
     estadoCivil: (r.estado_civil as EstadoCivil) ?? undefined,
+    tamanhoCamisa: (r.tamanho_camisa as TamanhoCamisa) ?? undefined,
     cargo: r.cargo ?? undefined,
     dataAdmissao: r.data_admissao ?? undefined,
     dataInicio: r.data_inicio ?? undefined,

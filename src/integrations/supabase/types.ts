@@ -252,6 +252,7 @@ export type Database = {
           nome_completo: string;
           recebe_vt: boolean;
           school_id: string;
+          tamanho_camisa: string | null;
           updated_at: string;
           valor_diario_vt: number;
         };
@@ -277,6 +278,7 @@ export type Database = {
           nome_completo: string;
           recebe_vt?: boolean;
           school_id: string;
+          tamanho_camisa?: string | null;
           updated_at?: string;
           valor_diario_vt?: number;
         };
@@ -302,6 +304,7 @@ export type Database = {
           nome_completo?: string;
           recebe_vt?: boolean;
           school_id?: string;
+          tamanho_camisa?: string | null;
           updated_at?: string;
           valor_diario_vt?: number;
         };
