@@ -45,6 +45,8 @@ import {
 } from "@/lib/diario-rotina-matricula";
 import type { RotinaPersistida } from "@/lib/matricula-form";
 import { agruparUnidadesPorCredencial } from "@/lib/portal-responsavel";
+import { anoCorrenteSaoPaulo, unidadesDoAluno } from "@/lib/aluno-unidades";
+import { vinculosPorSponteId } from "@/lib/aluno-unidades.server";
 
 export { escapeXml };
 
@@ -1262,15 +1264,29 @@ export const buscarAlunosSponte = createServerFn({ method: "POST" })
     if (fault) return { alunos: [], truncado: false, error: fault };
 
     const alunos: AlunoBuscaSponte[] = [];
-    for (const node of parseXmlList(xml, "wsAluno")) {
+    const nos = parseXmlList(xml, "wsAluno");
+    // CEC e CEC Baby compartilham o token: separa por TurmaAtual e pelo vínculo
+    // do ano letivo (aluno rematriculado para a outra unidade continua na atual).
+    const vinculos = creds.segmentaPorTurma
+      ? await vinculosPorSponteId(nos.map((n) => parseXmlValue(n, "AlunoID")))
+      : null;
+    const anoCorrente = anoCorrenteSaoPaulo();
+    for (const node of nos) {
       if (!parseXmlValue(node, "RetornoOperacao").startsWith("01")) continue;
       const alunoId = parseXmlValue(node, "AlunoID");
       if (!alunoId || alunoId === "0") continue;
 
-      const turma = parseXmlValue(node, "TurmaAtual");
-      // CEC e CEC Baby compartilham o token: separa por TurmaAtual. Aluno sem
-      // turma classificável (inativo/ex-aluno) fica na unidade-mãe CEC.
-      if (creds.segmentaPorTurma && (classificarUnidade(turma) ?? "CEC") !== unidade) continue;
+      let turma = parseXmlValue(node, "TurmaAtual");
+      if (vinculos) {
+        const naUnidade = unidadesDoAluno(
+          turma,
+          vinculos.get(alunoId) ?? [],
+          anoCorrente,
+          classificarUnidade,
+        ).get(unidade);
+        if (naUnidade === undefined) continue;
+        turma = naUnidade;
+      }
 
       const respFinanceiroId = parseXmlValue(node, "ResponsavelFinanceiroID");
       const respDidaticoId = parseXmlValue(node, "ResponsavelDidaticoID");
