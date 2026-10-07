@@ -7,6 +7,8 @@ import {
   EstadoCivil,
   TipoFalta,
   CategoriaFalta,
+  TAMANHOS_CAMISA,
+  type TamanhoCamisa,
 } from "@/lib/crm/types";
 import { UNIDADES } from "@/lib/crm/constants";
 import { formatValorVt, parseValorVt, valorVtValido } from "@/lib/crm/vt-valor";
@@ -174,6 +176,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     dataNascimento: funcionarioExistente?.dataNascimento || "",
     genero: funcionarioExistente?.genero || "",
     estadoCivil: funcionarioExistente?.estadoCivil || "",
+    tamanhoCamisa: funcionarioExistente?.tamanhoCamisa || "",
     cargo: funcionarioExistente?.cargo || "",
     unidade: funcionarioExistente?.unidade || unidadeSelecionada,
     dataAdmissaoDisplay: converterParaBR(funcionarioExistente?.dataAdmissao || ""),
@@ -540,6 +543,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       !form.cpf.trim() ||
       !form.genero ||
       !form.estadoCivil ||
+      !form.tamanhoCamisa ||
       !form.dataNascimento ||
       !form.dataInicio ||
       !validarHora(form.horarioTrabalhoInicio) ||
@@ -555,6 +559,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
       dataNascimento: form.dataNascimento,
       genero: form.genero as Genero,
       estadoCivil: form.estadoCivil as EstadoCivil,
+      tamanhoCamisa: form.tamanhoCamisa as TamanhoCamisa,
       cargo: form.cargo || undefined,
       unidade: form.unidade as Unidade,
       dataAdmissao: form.dataAdmissao || undefined,
@@ -574,6 +579,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
     form.cpf.trim() &&
     form.genero &&
     form.estadoCivil &&
+    form.tamanhoCamisa &&
     form.dataNascimento &&
     form.dataInicio &&
     validarHora(form.horarioTrabalhoInicio) &&
@@ -703,6 +709,25 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Camisa */}
+          <div>
+            <label className={labelClass}>
+              Camisa <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={form.tamanhoCamisa}
+              onChange={(e) => setForm((prev) => ({ ...prev, tamanhoCamisa: e.target.value }))}
+              className={inputClass}
+            >
+              <option value="">Selecione...</option>
+              {TAMANHOS_CAMISA.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Unidade - full width */}

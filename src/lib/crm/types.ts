@@ -154,6 +154,8 @@ export interface Terceirizado {
 
 export type Genero = "feminino" | "masculino" | "outro" | "prefiro-nao-informar";
 export type EstadoCivil = "solteiro" | "casado" | "divorciado" | "viuvo" | "outro";
+export const TAMANHOS_CAMISA = ["PP", "P", "M", "G", "GG", "G1", "G2", "G3"] as const;
+export type TamanhoCamisa = (typeof TAMANHOS_CAMISA)[number];
 
 export interface Funcionario {
   id: string;
@@ -165,6 +167,7 @@ export interface Funcionario {
   dataNascimento?: string;
   genero?: Genero;
   estadoCivil?: EstadoCivil;
+  tamanhoCamisa?: TamanhoCamisa;
   cargo?: string;
   dataAdmissao?: string;
   dataInicio?: string;
