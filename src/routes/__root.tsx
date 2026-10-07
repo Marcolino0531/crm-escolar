@@ -174,6 +174,8 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   );
 }
 
+const OG_IMAGEM = "https://schoolhubbr.vercel.app/school-hub-og.png";
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -199,13 +201,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       {
         property: "og:image",
-        content:
-          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png",
+        content: OG_IMAGEM,
       },
       {
         name: "twitter:image",
-        content:
-          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/6a56dd46-dd62-4f56-ba56-f4942f91bdc0/id-preview-a4d05dd0--3ae47d10-0cbb-451a-80d8-e4f83acf4008.lovable.app-1779281612230.png",
+        content: OG_IMAGEM,
       },
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "website" },
