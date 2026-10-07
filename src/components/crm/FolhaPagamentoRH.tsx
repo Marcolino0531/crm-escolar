@@ -7,8 +7,15 @@ import type { Funcionario } from "@/lib/crm/types";
 import { useRole } from "@/lib/app-context";
 import { parseBRLNumber } from "@/lib/currency";
 import { toTitleCase } from "@/lib/name-format";
-import { competenciaAtual, rotuloCompetencia, salarioVigente } from "@/lib/rh-salario";
-import { listarSalarios } from "@/lib/rh-salario.functions";
+import {
+  competenciaAtual,
+  itensValorMensal,
+  rotuloCompetencia,
+  salarioVigente,
+} from "@/lib/rh-salario";
+import { listarSalarios, listarValoresMensais } from "@/lib/rh-salario.functions";
+import { ROTULO_BLOCO } from "@/lib/rh-folhas";
+import { chaveValoresMensais } from "@/components/crm/ValoresMensaisRH";
 import {
   somenteDigitos,
   type FolhaExtrato,
@@ -19,6 +26,7 @@ import { lerExtratoMensalPdf } from "@/lib/extrato-mensal.pdf";
 import {
   ROTULO_DIVERGENCIA,
   ROTULO_STATUS,
+  blocosResumo,
   chaveColaborador,
   compararFolhas,
   competenciaFechada,
@@ -26,6 +34,7 @@ import {
   emOrdemAlfabetica,
   montarLoteFolha,
   planejarReimportacao,
+  linhasDeValoresMensais,
   preSelecao,
   registrosPorCpf,
   restituicoesDaCompetencia,
@@ -34,7 +43,6 @@ import {
   semDescartados,
   totaisAjustados,
   totaisDasEmpresas,
-  totaisResumo,
   valorPago,
   type ComparacaoFolhas,
   type Divergencia,
@@ -867,6 +875,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   const fnMarcacoes = useServerFn(listarMarcacoesRestituicao);
   const fnMarcar = useServerFn(marcarRestituicaoInss);
   const fnSalarios = useServerFn(listarSalarios);
+  const fnValoresMensais = useServerFn(listarValoresMensais);
 
   const competencias = useQuery({
     queryKey: ["rh-folha-competencias", schoolId],
@@ -892,6 +901,12 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     queryKey: ["rh-salarios", schoolId],
     enabled: !!schoolId,
     queryFn: async () => fnSalarios({ data: { schoolId } }),
+  });
+
+  const valoresMensaisQ = useQuery({
+    queryKey: chaveValoresMensais(schoolId),
+    enabled: !!schoolId,
+    queryFn: async () => fnValoresMensais({ data: { schoolId: schoolId as string } }),
   });
 
   const recarregar = () => {
@@ -962,7 +977,26 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
     });
     return emOrdemAlfabetica([...daFolha, ...manuais], collator.compare);
   }, [colaboradores, restituicao, salariosQ.data, ativosForaDaFolha, competencia]);
-  const totais = totaisResumo(linhasResumo);
+  const resumo = useMemo(() => {
+    const vm = valoresMensaisQ.data;
+    const doTipo = (tipo: "terceirizado" | "extra") =>
+      vm
+        ? linhasDeValoresMensais(
+            itensValorMensal(
+              tipo === "terceirizado" ? vm.terceirizados : vm.extras,
+              vm.valores,
+              tipo,
+              competencia,
+            ),
+          )
+        : [];
+    return blocosResumo(
+      { efetivo: linhasResumo, terceirizado: doTipo("terceirizado"), extra: doTipo("extra") },
+      collator.compare,
+    );
+  }, [linhasResumo, valoresMensaisQ.data, competencia]);
+  const emBlocos = resumo.blocos.some((b) => b.tipo !== "efetivo");
+  const totais = resumo.total;
   const lote = useMemo(
     () => (temFolha ? montarLoteFolha(linhasResumo) : null),
     [temFolha, linhasResumo],
@@ -1845,22 +1879,52 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {linhasResumo.map((l) => (
-                  <tr key={l.chave} className="border-t border-gray-100">
-                    <td className="px-4 py-2">
-                      {toTitleCase(l.nome)}
-                      <SeloContratos contratos={l.contratos} />
-                      {l.liquidoManual && <SeloLiquidoManual />}
-                    </td>
-                    <td className="px-4 py-2">
-                      <SeloStatus status={l.status} />
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{brl(l.bruto)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{brl(l.liquido)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{brl(l.restituicao)}</td>
-                  </tr>
+                {resumo.blocos.map((b) => (
+                  <React.Fragment key={b.tipo}>
+                    {emBlocos && (
+                      <tr className="border-t border-gray-200 bg-gray-50">
+                        <td
+                          colSpan={5}
+                          className="px-4 py-2 text-xs font-semibold uppercase text-gray-600"
+                        >
+                          {ROTULO_BLOCO[b.tipo]}
+                        </td>
+                      </tr>
+                    )}
+                    {b.linhas.map((l) => (
+                      <tr key={l.chave} className="border-t border-gray-100">
+                        <td className="px-4 py-2">
+                          {toTitleCase(l.nome)}
+                          <SeloContratos contratos={l.contratos} />
+                          {l.liquidoManual && <SeloLiquidoManual />}
+                        </td>
+                        <td className="px-4 py-2">
+                          <SeloStatus status={l.status} />
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">{brl(l.bruto)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{brl(l.liquido)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{brl(l.restituicao)}</td>
+                      </tr>
+                    ))}
+                    {emBlocos && (
+                      <tr className="border-t border-gray-100 font-medium text-gray-700">
+                        <td className="px-4 py-2" colSpan={2}>
+                          Subtotal {ROTULO_BLOCO[b.tipo]}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {brl(b.subtotal.bruto)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {brl(b.subtotal.liquido)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {brl(b.subtotal.restituicao)}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
-                {linhasResumo.length === 0 && (
+                {resumo.blocos.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
                       Nenhum colaborador nesta competência.
@@ -1871,7 +1935,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
               <tfoot className="bg-gray-50 font-semibold">
                 <tr>
                   <td className="px-4 py-2" colSpan={2}>
-                    Total
+                    {emBlocos ? "Total geral" : "Total"}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">{brl(totais.bruto)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{brl(totais.liquido)}</td>

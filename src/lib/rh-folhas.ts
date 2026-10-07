@@ -1,6 +1,8 @@
 // Lotes de pagamento de RH (hr_transport_batches): Vale-Transporte e Salário
 // convivem na mesma tabela, diferenciados por `tipo`.
-import { salarioVigente, type SalarioRegistro } from "./rh-salario";
+import { somaReais } from "./extrato-mensal";
+import { toTitleCase } from "./name-format";
+import { salarioVigente, type ItemValorMensal, type SalarioRegistro } from "./rh-salario";
 
 export type TipoLote = "vt" | "salario";
 
@@ -60,6 +62,91 @@ export function montarFolhaSalario<T extends FuncionarioFolha>(
   semSalario.sort(collator.compare);
   const total = Math.round(itens.reduce((acc, i) => acc + i.total_amount, 0) * 100) / 100;
   return { itens, total, semSalario };
+}
+
+// ── Lote de Salário em três blocos: Efetivos, Terceirizados e Extras ──
+export type TipoPessoaLote = "efetivo" | "terceirizado" | "extra";
+
+export const TIPOS_PESSOA_LOTE: readonly TipoPessoaLote[] = ["efetivo", "terceirizado", "extra"];
+
+export const ROTULO_BLOCO: Record<TipoPessoaLote, string> = {
+  efetivo: "Efetivos",
+  terceirizado: "Terceirizados",
+  extra: "Extras",
+};
+
+// Item sem tipo (folhas salvas antes dos blocos) é efetivo.
+export function tipoPessoaLote(v: string | null | undefined): TipoPessoaLote {
+  return v === "terceirizado" || v === "extra" ? v : "efetivo";
+}
+
+export type ItemLoteSalario = {
+  tipo_pessoa: TipoPessoaLote;
+  employee_id: string | null;
+  pessoa_id: string | null;
+  employee_name: string;
+  total_amount: number;
+};
+
+export type LoteSalario = {
+  itens: ItemLoteSalario[];
+  subtotais: Record<TipoPessoaLote, number>;
+  total: number;
+};
+
+// Junta aos efetivos (folha importada ou salário manual) os Terceirizados e
+// Extras com valor a pagar; cada bloco em ordem alfabética pelo nome padronizado.
+export function loteComValoresMensais(
+  efetivos: readonly { employee_id: string; employee_name: string; total_amount: number }[],
+  valoresMensais: readonly ItemValorMensal[],
+): LoteSalario {
+  const collator = new Intl.Collator("pt-BR", { sensitivity: "base" });
+  const doTipo = (tipo: "terceirizado" | "extra"): ItemLoteSalario[] =>
+    valoresMensais
+      .filter((v) => v.tipo === tipo)
+      .map((v) => ({
+        tipo_pessoa: tipo,
+        employee_id: null,
+        pessoa_id: v.pessoaId,
+        employee_name: toTitleCase(v.nome),
+        total_amount: Math.round(v.valor * 100) / 100,
+      }))
+      .sort((a, b) => collator.compare(a.employee_name, b.employee_name));
+  const itens: ItemLoteSalario[] = [
+    ...efetivos.map((e) => ({
+      tipo_pessoa: "efetivo" as const,
+      employee_id: e.employee_id,
+      pessoa_id: null,
+      employee_name: e.employee_name,
+      total_amount: e.total_amount,
+    })),
+    ...doTipo("terceirizado"),
+    ...doTipo("extra"),
+  ];
+  const subtotal = (t: TipoPessoaLote) =>
+    somaReais(itens.filter((i) => i.tipo_pessoa === t).map((i) => i.total_amount));
+  const subtotais = {
+    efetivo: subtotal("efetivo"),
+    terceirizado: subtotal("terceirizado"),
+    extra: subtotal("extra"),
+  };
+  return { itens, subtotais, total: somaReais(Object.values(subtotais)) };
+}
+
+// Detalhe de uma folha salva de Salário: itens nos três blocos (bloco vazio não
+// aparece), mantendo a ordem recebida, com subtotal e total.
+export function blocosDaFolhaSalva<T extends { tipo_pessoa?: string | null; total_amount: number }>(
+  itens: readonly T[],
+): { blocos: { tipo: TipoPessoaLote; itens: T[]; subtotal: number }[]; total: number } {
+  const blocos = TIPOS_PESSOA_LOTE.map((tipo) => {
+    const doBloco = itens.filter((i) => tipoPessoaLote(i.tipo_pessoa) === tipo);
+    return {
+      tipo,
+      itens: doBloco,
+      subtotal: somaReais(doBloco.map((i) => Number(i.total_amount))),
+    };
+  }).filter((b) => b.itens.length > 0);
+  return { blocos, total: somaReais(blocos.map((b) => b.subtotal)) };
 }
 
 export type PermissoesLotes = {

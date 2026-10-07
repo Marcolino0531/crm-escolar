@@ -15,6 +15,8 @@ import {
   type TipoRubrica,
 } from "@/lib/extrato-mensal";
 import { toTitleCase } from "@/lib/name-format";
+import type { ItemValorMensal } from "@/lib/rh-salario";
+import type { TipoPessoaLote } from "@/lib/rh-folhas";
 
 export type StatusColaboradorFolha = "confirmado" | "em_conferencia";
 export type StatusResumo = "confirmado" | "em_conferencia" | "manual";
@@ -618,6 +620,47 @@ export function totaisResumo(linhas: readonly LinhaResumo[]) {
     bruto: somaReais(linhas.map((l) => l.bruto)),
     liquido: somaReais(linhas.map((l) => l.liquido)),
     restituicao: somaReais(linhas.map((l) => l.restituicao)),
+  };
+}
+
+/** Terceirizados e Extras no Resumo: Bruto = Líquido = valor; sem restituição. */
+export function linhasDeValoresMensais(itens: readonly ItemValorMensal[]): LinhaResumo[] {
+  return itens.map((i) => ({
+    chave: `${i.tipo}:${i.pessoaId}`,
+    funcionarioId: null,
+    nome: i.nome,
+    status: "manual" as const,
+    bruto: i.valor,
+    liquido: i.valor,
+    restituicao: 0,
+  }));
+}
+
+export type BlocoResumo = {
+  tipo: TipoPessoaLote;
+  linhas: LinhaResumo[];
+  subtotal: ReturnType<typeof totaisResumo>;
+};
+
+/**
+ * Aba Resumo em blocos (Efetivos, Terceirizados, Extras), cada um em ordem
+ * alfabética e com subtotal; bloco vazio não aparece. Total geral = soma dos subtotais.
+ */
+export function blocosResumo(
+  porTipo: Record<TipoPessoaLote, readonly LinhaResumo[]>,
+  comparar: (a: string, b: string) => number,
+): { blocos: BlocoResumo[]; total: ReturnType<typeof totaisResumo> } {
+  const blocos = (["efetivo", "terceirizado", "extra"] as const)
+    .map((tipo) => {
+      const linhas = emOrdemAlfabetica(porTipo[tipo], comparar);
+      return { tipo, linhas, subtotal: totaisResumo(linhas) };
+    })
+    .filter((b) => b.linhas.length > 0);
+  const soma = (k: "bruto" | "liquido" | "restituicao") =>
+    somaReais(blocos.map((b) => b.subtotal[k]));
+  return {
+    blocos,
+    total: { bruto: soma("bruto"), liquido: soma("liquido"), restituicao: soma("restituicao") },
   };
 }
 
