@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Unidade, Funcionario, Genero, EstadoCivil } from "@/lib/crm/types";
+import { Unidade, Funcionario, Genero, EstadoCivil, TAMANHOS_CAMISA } from "@/lib/crm/types";
 import { useFuncionarios } from "@/lib/crm/hooks";
 import { usePermissions, useSchool } from "@/lib/app-context";
 import { PAGINAS_RH_SEM_SALARIO } from "@/lib/permissoes-arvore";
@@ -87,6 +87,12 @@ const COLUNAS_EXPORT: ColunaExport[] = [
   { id: "cargo", label: "Cargo", getValue: (f) => f.cargo || "" },
   { id: "genero", label: "Gênero", getValue: (f) => generoLabel(f.genero) },
   { id: "estadoCivil", label: "Estado Civil", getValue: (f) => estadoCivilLabel(f.estadoCivil) },
+  {
+    id: "tamanhoCamisa",
+    label: "Camisa",
+    getValue: (f) =>
+      f.tamanhoCamisa && TAMANHOS_CAMISA.includes(f.tamanhoCamisa) ? f.tamanhoCamisa : "",
+  },
   { id: "unidade", label: "Unidade", getValue: (f) => f.unidade },
   {
     id: "dataAdmissao",
