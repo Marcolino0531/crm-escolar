@@ -100,6 +100,11 @@ export function turnoDaRotina(rotina: PeriodoRotinaTurma): TurnoTurma | null {
   return rotina.periodoManha ? "M" : "T";
 }
 
+/** Série de Berçário ("Berçário", "Berçário II"…), sem acento e sem caixa. */
+export function serieBercario(serie: string): boolean {
+  return normalizar(serie).includes("bercario");
+}
+
 // ─── Curso (série) ──────────────────────────────────────────────────────────
 
 // O Sponte alterna os indicadores ordinais entre o nome e a série do mesmo
@@ -168,17 +173,18 @@ export function turmaAberta(turma: TurmaSponte): boolean {
  * Escolhe a turma para a matrícula: mesma série (curso), mesmo turno, mesmo ano
  * letivo e ainda aberta. Havendo mais de uma candidata, vale a de menor
  * TurmaID — sem balanceamento por vaga, como combinado; o critério é fixo só
- * para o resultado ser reproduzível.
+ * para o resultado ser reproduzível. No Berçário (`ignorarTurno`) o turno do
+ * nome não conta: há uma única turma, com horário flexível.
  */
 export function escolherTurma(
   turmas: readonly TurmaSponte[],
-  alvo: { cursoId: number; turno: TurnoTurma; anoLetivo: number },
+  alvo: { cursoId: number; turno: TurnoTurma; anoLetivo: number; ignorarTurno?: boolean },
 ): TurmaSponte | null {
   const candidatas = turmas
     .filter((t) => t.cursoId === alvo.cursoId)
     .filter((t) => t.anoLetivo === null || t.anoLetivo === alvo.anoLetivo)
     .filter((t) => turmaAberta(t))
-    .filter((t) => turnoDaTurma(t) === alvo.turno)
+    .filter((t) => alvo.ignorarTurno === true || turnoDaTurma(t) === alvo.turno)
     .sort((a, b) => a.turmaId - b.turmaId);
   return candidatas[0] ?? null;
 }
