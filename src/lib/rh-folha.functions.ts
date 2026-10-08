@@ -36,6 +36,7 @@ import {
   mensagemCnpjNaoCadastrado,
   pendentesParaFechar,
   planejarReimportacao,
+  planoExclusaoImportacao,
   reaplicarAjusteManual,
   registroExcluido,
   salarioAposExclusao,
@@ -340,10 +341,11 @@ async function ehAdmin(userId: string): Promise<boolean> {
   return ((data ?? []) as { role: string }[]).some((r) => r.role === "admin");
 }
 
-async function exigirAdminFolha(userId: string): Promise<void> {
-  if (!(await ehAdmin(userId))) {
-    throw new Error("Apenas administradores podem excluir colaboradores da folha.");
-  }
+async function exigirAdminFolha(
+  userId: string,
+  mensagem = "Apenas administradores podem excluir colaboradores da folha.",
+): Promise<void> {
+  if (!(await ehAdmin(userId))) throw new Error(mensagem);
 }
 
 /** Unidade específica do seletor global e liberada para o usuário. Devolve o nome. */
@@ -1330,6 +1332,106 @@ export const excluirColaboradorFolha = createServerFn({ method: "POST" })
           .eq("observacao", OBS_SALARIO_FOLHA);
         if (sErr) throw new Error(sErr.message);
       }
+    }
+    return { ok: true };
+  });
+
+/**
+ * Exclui de uma vez a importação de uma empresa na competência (só admin, com a
+ * competência aberta). A função do banco apaga, em uma transação, os registros,
+ * rubricas, restituições e eventos da importação, as exclusões de colaborador
+ * da competência daquela empresa e a própria importação, e grava o registro
+ * mínimo da exclusão. Depois, o salário da folha de cada funcionário dela é
+ * recalculado com o que restou nas outras empresas ou removido; o salário
+ * manual nunca é tocado.
+ */
+export const excluirImportacaoFolha = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    compInput.extend({ importacaoId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    await contexto(context.userId, data.schoolId, false);
+    await exigirAdminFolha(
+      context.userId,
+      "Apenas administradores podem excluir a importação da folha.",
+    );
+    const imps = await importacoesDa(data.schoolId, data.competencia);
+    const imp = imps.find((i) => i.id === data.importacaoId);
+    if (!imp) throw new Error("Importação não encontrada nesta competência.");
+    if (imps.some((i) => i.status === "fechada")) {
+      throw new Error("Competência fechada: reabra para excluir a importação.");
+    }
+    const registros = await colaboradoresDaCompetencia(imps);
+    const ids = [
+      ...new Set(
+        registros.flatMap((r) =>
+          r.importacaoId === imp.id && r.funcionarioId ? [r.funcionarioId] : [],
+        ),
+      ),
+    ];
+    const manuais = new Set<string>();
+    if (ids.length) {
+      const { data: sal, error: salErr } = await supabaseAdmin
+        .from("funcionarios_salarios" as never)
+        .select("funcionario_id, observacao")
+        .eq("competencia", data.competencia)
+        .in("funcionario_id", ids);
+      if (salErr) throw new Error(salErr.message);
+      for (const s of (sal ?? []) as { funcionario_id: string; observacao: string | null }[]) {
+        if (s.observacao !== OBS_SALARIO_FOLHA) manuais.add(s.funcionario_id);
+      }
+    }
+    const plano = planoExclusaoImportacao(registros, imp.id, manuais);
+    const nome = await nomeDoUsuario(context.userId);
+    const { error } = await supabaseAdmin.rpc(
+      "rh_folha_excluir_importacao" as never,
+      {
+        p: {
+          school_id: data.schoolId,
+          competencia: data.competencia,
+          importacao_id: imp.id,
+          registros: plano.totais.colaboradores,
+          total_proventos: plano.totais.proventos,
+          total_descontos: plano.totais.descontos,
+          liquido_geral: plano.totais.liquido,
+          por: context.userId,
+          por_nome: nome,
+        },
+      } as never,
+    );
+    if (error) throw new Error(error.message);
+    const gravar = plano.salarios.flatMap((s) =>
+      s.acao === "gravar"
+        ? [
+            {
+              funcionario_id: s.funcionarioId,
+              competencia: data.competencia,
+              valor: s.valor,
+              valor_liquido: s.valorLiquido,
+              observacao: OBS_SALARIO_FOLHA,
+              created_by: context.userId,
+              created_by_nome: nome,
+              updated_at: new Date().toISOString(),
+            },
+          ]
+        : [],
+    );
+    if (gravar.length) {
+      const { error: gErr } = await supabaseAdmin
+        .from("funcionarios_salarios" as never)
+        .upsert(gravar as never, { onConflict: "funcionario_id,competencia" } as never);
+      if (gErr) throw new Error(gErr.message);
+    }
+    const remover = plano.salarios.filter((s) => s.acao === "remover").map((s) => s.funcionarioId);
+    if (remover.length) {
+      const { error: rErr } = await supabaseAdmin
+        .from("funcionarios_salarios" as never)
+        .delete()
+        .in("funcionario_id", remover)
+        .eq("competencia", data.competencia)
+        .eq("observacao", OBS_SALARIO_FOLHA);
+      if (rErr) throw new Error(rErr.message);
     }
     return { ok: true };
   });

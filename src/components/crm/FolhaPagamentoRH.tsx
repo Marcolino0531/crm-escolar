@@ -56,6 +56,7 @@ import {
   confirmarColaboradoresFolha,
   desfazerExclusaoFolha,
   excluirColaboradorFolha,
+  excluirImportacaoFolha,
   fecharCompetenciaFolha,
   gravarImportacaoFolha,
   listarCompetenciasFolha,
@@ -728,6 +729,52 @@ const ModalExclusao: React.FC<{
   );
 };
 
+const ModalExclusaoImportacao: React.FC<{
+  importacao: ImportacaoFolha;
+  registros: number;
+  excluindo: boolean;
+  onCancelar: () => void;
+  onExcluir: () => void;
+}> = ({ importacao, registros, excluindo, onCancelar, onExcluir }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
+      <div className="border-b border-gray-100 px-4 py-3">
+        <h4 className="text-sm font-bold text-gray-800">
+          Excluir importação — {importacao.empresa}
+        </h4>
+        <p className="text-xs text-gray-500">
+          CNPJ {importacao.cnpj} · {rotuloCompetencia(importacao.competencia)} · {registros}{" "}
+          {registros === 1 ? "registro" : "registros"}
+        </p>
+      </div>
+      <p className="px-4 py-3 text-sm text-gray-700">
+        Esta ação é definitiva. Serão apagados os registros dos colaboradores, as rubricas, os
+        ajustes manuais (incluindo o Líquido a pagar digitado), as confirmações, as restituições
+        desta competência e as exclusões de colaborador desta competência. As Folhas Salvas não são
+        alteradas. Para voltar, importe o PDF de novo.
+      </p>
+      <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3">
+        <button
+          type="button"
+          onClick={onCancelar}
+          disabled={excluindo}
+          className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={onExcluir}
+          disabled={excluindo}
+          className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {excluindo ? "Excluindo…" : "Excluir importação"}
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 const ModalExcluidos: React.FC<{
   schoolId: string;
   competencia: string;
@@ -872,6 +919,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   const fnFechar = useServerFn(fecharCompetenciaFolha);
   const fnReabrir = useServerFn(reabrirCompetenciaFolha);
   const fnExcluir = useServerFn(excluirColaboradorFolha);
+  const fnExcluirImportacao = useServerFn(excluirImportacaoFolha);
   const fnMarcacoes = useServerFn(listarMarcacoesRestituicao);
   const fnMarcar = useServerFn(marcarRestituicaoInss);
   const fnSalarios = useServerFn(listarSalarios);
@@ -926,6 +974,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   );
   const fechada = competenciaFechada(importacoes);
   const editavel = podeEditar && temFolha && !fechada;
+  const podeExcluirImportacao = isAdmin && !fechada;
   const totaisFolha = totaisDasEmpresas(colaboradores);
   const empresasFaltando = folhaQ.data?.empresasNaoImportadas ?? [];
   const pendentes = colaboradores.filter((c) => c.status === "em_conferencia");
@@ -1072,6 +1121,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
   const [ajustando, setAjustando] = useState<ColaboradorFolhaGravado | null>(null);
   const [excluindo, setExcluindo] = useState<ColaboradorFolhaGravado | null>(null);
   const [verExcluidos, setVerExcluidos] = useState(false);
+  const [excluindoImportacao, setExcluindoImportacao] = useState<ImportacaoFolha | null>(null);
   useEffect(() => setSelecionados(new Set()), [competencia, schoolId]);
   useEffect(() => setFiltro(null), [competencia, schoolId, secao]);
 
@@ -1122,6 +1172,18 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
       void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
     },
     onError: (e) => toast.error(msgErro(e, "Não foi possível excluir da folha.")),
+  });
+  const excluirImportacao = useMutation({
+    mutationFn: async (importacaoId: string) =>
+      fnExcluirImportacao({ data: { ...base, importacaoId } }),
+    onSuccess: () => {
+      toast.success("Importação excluída.");
+      setExcluindoImportacao(null);
+      recarregar();
+      void qc.invalidateQueries({ queryKey: ["rh-folha-marcacoes", schoolId] });
+      void qc.invalidateQueries({ queryKey: ["rh-folha-exclusoes", schoolId] });
+    },
+    onError: (e) => toast.error(msgErro(e, "Não foi possível excluir a importação.")),
   });
   const marcar = useMutation({
     mutationFn: async (v: { funcionarioId: string; recebe: boolean }) =>
@@ -1315,6 +1377,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                     <th className="px-3 py-2 text-right">Descontos</th>
                     <th className="px-3 py-2 text-right">Líquido</th>
                     <th className="px-3 py-2 text-right">Em conferência</th>
+                    {podeExcluirImportacao && <th className="px-3 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -1343,6 +1406,17 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                         <td className="px-3 py-2 text-right tabular-nums">
                           {pendentesPorEmpresa(imp.id)}
                         </td>
+                        {podeExcluirImportacao && (
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setExcluindoImportacao(imp)}
+                              className="whitespace-nowrap text-xs text-red-600 hover:underline"
+                            >
+                              Excluir importação
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1366,6 +1440,7 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
                         {brl(totaisFolha.liquido)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{pendentes.length}</td>
+                      {podeExcluirImportacao && <td />}
                     </tr>
                   </tfoot>
                 )}
@@ -1971,6 +2046,15 @@ const FolhaPagamentoRH: React.FC<FolhaPagamentoRHProps> = ({
           excluindo={excluir.isPending}
           onCancelar={() => setExcluindo(null)}
           onExcluir={(v) => excluir.mutate({ id: excluindo.id, ...v })}
+        />
+      )}
+      {isAdmin && excluindoImportacao && (
+        <ModalExclusaoImportacao
+          importacao={excluindoImportacao}
+          registros={colaboradores.filter((c) => c.importacaoId === excluindoImportacao.id).length}
+          excluindo={excluirImportacao.isPending}
+          onCancelar={() => setExcluindoImportacao(null)}
+          onExcluir={() => excluirImportacao.mutate(excluindoImportacao.id)}
         />
       )}
       {isAdmin && verExcluidos && (
