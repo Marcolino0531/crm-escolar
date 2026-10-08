@@ -382,7 +382,7 @@ export const TEMAS_DISPONIVEIS: string[] = [
   "Financeiro: divergências de despesas recorrentes",
   "Financeiro: inadimplência agregada por unidade e período",
   "Financeiro: saldo projetado por unidade e mês",
-  "Cantina: recargas solicitadas, efetivadas e lançadas no Sponte",
+  "Cantina: recargas solicitadas, efetivadas, lançadas no Sponte e canceladas",
   "Rematrícula/Material Pedagógico: status, parcelamentos escolhidos e material a receber",
   "Esportes extracurriculares: repasses a parceiros e alunos por turma/modalidade",
   "Uniformes: estoque abaixo do mínimo e pedidos pagos na Nuvemshop",
@@ -399,7 +399,7 @@ export const FERRAMENTAS_MODULOS: DefinicaoFerramentaModulo[] = [
   {
     nome: "buscar_recargas_cantina",
     descricao:
-      "Recargas do cartão da cantina solicitadas pelo portal público, com contagem e valor por status (pendente, recarga efetivada, lançada no Sponte), filtradas por unidade e período da solicitação. Não devolve dado de aluno ou responsável.",
+      "Recargas do cartão da cantina solicitadas pelo portal público, com contagem e valor por status (pendente, recarga efetivada, lançada no Sponte, cancelada), filtradas por unidade e período da solicitação. Não devolve dado de aluno ou responsável.",
     schemaJson: {
       type: "object",
       properties: {
@@ -570,7 +570,14 @@ export function mesesDoIntervaloIA(mesInicio: string, mesFim: string): string[] 
 // ─── Agregações ──────────────────────────────────────────────────────────────
 
 export function agregarRecargasCantina(recargas: RecargaCantinaIA[]) {
-  const statusPossiveis: StatusRecarga[] = ["pendente", "efetivada", "lancada_no_boleto"];
+  const statusPossiveis: StatusRecarga[] = [
+    "pendente",
+    "efetivada",
+    "lancada_no_boleto",
+    "cancelada",
+  ];
+  // "Solicitadas" é o total pedido pelo portal, sem as canceladas.
+  const solicitadas = recargas.filter((r) => r.status !== "cancelada");
   const porStatus = statusPossiveis.map((status) => {
     const doStatus = recargas.filter((r) => r.status === status);
     return {
@@ -584,16 +591,16 @@ export function agregarRecargasCantina(recargas: RecargaCantinaIA[]) {
     a.localeCompare(b, "pt-BR"),
   );
   return {
-    // "Solicitadas" é o total pedido pelo portal, em qualquer status.
-    quantidadeSolicitadas: recargas.length,
-    valorSolicitado: arred(recargas.reduce((s, r) => s + r.valor, 0)),
+    quantidadeSolicitadas: solicitadas.length,
+    valorSolicitado: arred(solicitadas.reduce((s, r) => s + r.valor, 0)),
     porStatus,
     porUnidade: unidades.map((unidade) => {
       const daUnidade = recargas.filter((r) => r.unidade === unidade);
+      const solicitadasDaUnidade = daUnidade.filter((r) => r.status !== "cancelada");
       return {
         unidade,
-        quantidadeSolicitadas: daUnidade.length,
-        valorSolicitado: arred(daUnidade.reduce((s, r) => s + r.valor, 0)),
+        quantidadeSolicitadas: solicitadasDaUnidade.length,
+        valorSolicitado: arred(solicitadasDaUnidade.reduce((s, r) => s + r.valor, 0)),
         porStatus: statusPossiveis.map((status) => ({
           status,
           quantidade: daUnidade.filter((r) => r.status === status).length,

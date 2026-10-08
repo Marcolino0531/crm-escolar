@@ -16,6 +16,14 @@ import {
 } from "lucide-react";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -37,8 +45,14 @@ import { usePermissions, useSchool } from "@/lib/app-context";
 import { unidadeDaSelecao } from "@/lib/esportes-unidades";
 import { supabase } from "@/integrations/supabase/client";
 import { selectAll } from "@/lib/supabase-paginate";
-import { STATUS_RECARGA_LABEL, formatarBRLRecarga, type StatusRecarga } from "@/lib/cantina";
 import {
+  STATUS_RECARGA_LABEL,
+  formatarBRLRecarga,
+  indicadoresRecargas,
+  type StatusRecarga,
+} from "@/lib/cantina";
+import {
+  cancelarRecargaCantina,
   efetivarRecargaCantina,
   lancarRecargaNoSponte,
   marcarRecargaLancadaNoBoleto,
@@ -66,6 +80,8 @@ interface RecargaRow {
   lancada_automatica: boolean;
   lancada_at: string | null;
   lancada_por_nome: string;
+  cancelada_at: string | null;
+  cancelada_por_nome: string;
 }
 
 function formatarDataHora(iso: string | null): string {
@@ -185,6 +201,8 @@ function CantinaPage() {
   const efetivar = useServerFn(efetivarRecargaCantina);
   const lancarSponte = useServerFn(lancarRecargaNoSponte);
   const marcarLancada = useServerFn(marcarRecargaLancadaNoBoleto);
+  const cancelar = useServerFn(cancelarRecargaCantina);
+  const [aCancelar, setACancelar] = useState<RecargaRow | null>(null);
 
   const [filtroStatus, setFiltroStatus] = useState<"todos" | StatusRecarga>("todos");
   const [busca, setBusca] = useState("");
@@ -197,7 +215,7 @@ function CantinaPage() {
         supabase
           .from("cantina_recargas" as never)
           .select(
-            "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancada_automatica, lancada_at, lancada_por_nome",
+            "id, unidade, aluno_nome, aluno_turma, valor, status, created_at, efetivada_at, efetivada_por_nome, sponte_conta_receber_id, sponte_vencimento, sponte_erro, lancada_automatica, lancada_at, lancada_por_nome, cancelada_at, cancelada_por_nome",
           )
           .order("created_at", { ascending: false })
           .order("id", { ascending: true }),
@@ -264,6 +282,21 @@ function CantinaPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const cancelarMutation = useMutation({
+    mutationFn: async (id: string) => cancelar({ data: { id } }),
+    onSuccess: (res) => {
+      setACancelar(null);
+      queryClient.invalidateQueries({ queryKey: ["cantina_recargas"] });
+      queryClient.invalidateQueries({ queryKey: ["cantina_recargas_pendentes"] });
+      if (!res.ok) {
+        toast.error(res.erro ?? "Não foi possível cancelar a solicitação.");
+        return;
+      }
+      toast.success("Solicitação cancelada.");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // Isolamento por unidade: com uma unidade selecionada no topo só aparecem as
   // solicitações dela; em "Todas as Unidades" ficam as unidades permitidas ao
   // usuário (a lista de escolas já vem escopada pelas permissões).
@@ -285,8 +318,7 @@ function CantinaPage() {
     });
   }, [daUnidade, filtroStatus, busca]);
 
-  const pendentes = daUnidade.filter((r) => r.status === "pendente");
-  const aLancar = daUnidade.filter((r) => r.status === "efetivada");
+  const indicadores = indicadoresRecargas(daUnidade);
   const podeEditar = canEdit("cantina");
 
   if (!canView("cantina")) return <AccessDenied />;
@@ -309,16 +341,16 @@ function CantinaPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-lg border p-4">
           <p className="text-xs text-muted-foreground">Pendentes de recarga</p>
-          <p className="text-2xl font-semibold">{pendentes.length}</p>
+          <p className="text-2xl font-semibold">{indicadores.pendentes}</p>
         </div>
         <div className="rounded-lg border p-4">
           <p className="text-xs text-muted-foreground">Sem cobrança no Sponte</p>
-          <p className="text-2xl font-semibold">{aLancar.length}</p>
+          <p className="text-2xl font-semibold">{indicadores.semCobrancaNoSponte}</p>
         </div>
         <div className="rounded-lg border p-4">
           <p className="text-xs text-muted-foreground">Valor sem cobrança lançada</p>
           <p className="text-2xl font-semibold">
-            {formatarBRLRecarga(aLancar.reduce((s, r) => s + Number(r.valor), 0))}
+            {formatarBRLRecarga(indicadores.valorSemCobranca)}
           </p>
         </div>
       </div>
@@ -357,6 +389,7 @@ function CantinaPage() {
             <SelectItem value="lancada_no_boleto">
               {STATUS_RECARGA_LABEL.lancada_no_boleto}
             </SelectItem>
+            <SelectItem value="cancelada">{STATUS_RECARGA_LABEL.cancelada}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -386,7 +419,10 @@ function CantinaPage() {
                 </TableRow>
               )}
               {filtradas.map((r) => (
-                <TableRow key={r.id}>
+                <TableRow
+                  key={r.id}
+                  className={r.status === "cancelada" ? "text-muted-foreground" : undefined}
+                >
                   <TableCell className="whitespace-nowrap">
                     {formatarDataHora(r.created_at)}
                   </TableCell>
@@ -415,6 +451,12 @@ function CantinaPage() {
                         {r.lancada_automatica ? "" : " · manual"}
                       </p>
                     )}
+                    {r.status === "cancelada" && (
+                      <p className="text-xs text-muted-foreground">
+                        Cancelada: {formatarDataHora(r.cancelada_at)}
+                        {r.cancelada_por_nome ? ` · ${r.cancelada_por_nome}` : ""}
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm">
                     {r.status === "lancada_no_boleto" && r.lancada_automatica ? (
@@ -435,19 +477,30 @@ function CantinaPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     {podeEditar && r.status === "pendente" && (
-                      <Button
-                        size="sm"
-                        className="gap-2"
-                        disabled={efetivarMutation.isPending}
-                        onClick={() => efetivarMutation.mutate(r.id)}
-                      >
-                        {efetivarMutation.isPending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4" />
-                        )}
-                        Recarga efetivada
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-transparent hover:text-red-700"
+                          disabled={cancelarMutation.isPending || efetivarMutation.isPending}
+                          onClick={() => setACancelar(r)}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="gap-2"
+                          disabled={efetivarMutation.isPending || cancelarMutation.isPending}
+                          onClick={() => efetivarMutation.mutate(r.id)}
+                        >
+                          {efetivarMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4" />
+                          )}
+                          Recarga efetivada
+                        </Button>
+                      </div>
                     )}
                     {/* Só aparece quando a criação automática falhou: repetir ou,
                         se o Sponte estiver recusando, registrar o lançamento manual. */}
@@ -484,6 +537,52 @@ function CantinaPage() {
           </Table>
         </div>
       )}
+
+      <Dialog
+        open={aCancelar !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto && !cancelarMutation.isPending) setACancelar(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancelar solicitação de recarga</DialogTitle>
+            <DialogDescription>
+              A solicitação será cancelada e não poderá ser efetivada. Nada é lançado no Sponte.
+            </DialogDescription>
+          </DialogHeader>
+          {aCancelar && (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-muted-foreground">Aluno</dt>
+              <dd className="font-medium">{aCancelar.aluno_nome}</dd>
+              <dt className="text-muted-foreground">Unidade</dt>
+              <dd>{aCancelar.unidade}</dd>
+              <dt className="text-muted-foreground">Solicitação</dt>
+              <dd>{formatarDataHora(aCancelar.created_at)}</dd>
+              <dt className="text-muted-foreground">Valor</dt>
+              <dd>{formatarBRLRecarga(Number(aCancelar.valor))}</dd>
+            </dl>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={cancelarMutation.isPending}
+              onClick={() => setACancelar(null)}
+            >
+              Voltar
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              disabled={cancelarMutation.isPending}
+              onClick={() => aCancelar && cancelarMutation.mutate(aCancelar.id)}
+            >
+              {cancelarMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Cancelar solicitação
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

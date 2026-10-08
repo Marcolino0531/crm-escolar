@@ -827,10 +827,68 @@ describe("buscar_recargas_cantina", () => {
       { status: "pendente", rotulo: expect.any(String), quantidade: 1, valor: 50 },
       { status: "efetivada", rotulo: expect.any(String), quantidade: 1, valor: 100 },
       { status: "lancada_no_boleto", rotulo: expect.any(String), quantidade: 1, valor: 200 },
+      { status: "cancelada", rotulo: expect.any(String), quantidade: 0, valor: 0 },
     ]);
     expect(dados.porUnidade).toEqual([
       expect.objectContaining({ unidade: "CEC", valorSolicitado: 150 }),
       expect.objectContaining({ unidade: "CEC Baby", valorSolicitado: 200 }),
+    ]);
+  });
+
+  it("canceladas entram em porStatus, mas não nas solicitadas (geral e por unidade)", async () => {
+    const quatroStatus: RecargaCantinaIA[] = [
+      { unidade: "CEC", data: "2026-08-03", status: "pendente", valor: 10.1 },
+      { unidade: "CEC", data: "2026-08-04", status: "efetivada", valor: 20.2 },
+      { unidade: "CEC", data: "2026-08-05", status: "lancada_no_boleto", valor: 30 },
+      { unidade: "CEC", data: "2026-08-06", status: "cancelada", valor: 40 },
+      { unidade: "CEC Baby", data: "2026-08-07", status: "pendente", valor: 5 },
+      { unidade: "CEC Baby", data: "2026-08-08", status: "cancelada", valor: 7.5 },
+      { unidade: "CEC Baby", data: "2026-08-09", status: "cancelada", valor: 2.5 },
+    ];
+    const { fonte } = fonteFake({ cantina: quatroStatus });
+    const r = await roda("buscar_recargas_cantina", periodoAgosto, fonte);
+    const dados = r.dados as {
+      quantidadeSolicitadas: number;
+      valorSolicitado: number;
+      porStatus: { status: string; rotulo: string; quantidade: number; valor: number }[];
+      porUnidade: {
+        unidade: string;
+        quantidadeSolicitadas: number;
+        valorSolicitado: number;
+        porStatus: { status: string; quantidade: number; valor: number }[];
+      }[];
+    };
+    expect(dados.quantidadeSolicitadas).toBe(4);
+    expect(dados.valorSolicitado).toBe(65.3);
+    expect(dados.porStatus).toEqual([
+      { status: "pendente", rotulo: "Pendente", quantidade: 2, valor: 15.1 },
+      { status: "efetivada", rotulo: "Recarga efetivada", quantidade: 1, valor: 20.2 },
+      { status: "lancada_no_boleto", rotulo: "Lançada no Sponte", quantidade: 1, valor: 30 },
+      { status: "cancelada", rotulo: "Cancelada", quantidade: 3, valor: 50 },
+    ]);
+    expect(dados.porUnidade).toEqual([
+      {
+        unidade: "CEC",
+        quantidadeSolicitadas: 3,
+        valorSolicitado: 60.3,
+        porStatus: [
+          { status: "pendente", quantidade: 1, valor: 10.1 },
+          { status: "efetivada", quantidade: 1, valor: 20.2 },
+          { status: "lancada_no_boleto", quantidade: 1, valor: 30 },
+          { status: "cancelada", quantidade: 1, valor: 40 },
+        ],
+      },
+      {
+        unidade: "CEC Baby",
+        quantidadeSolicitadas: 1,
+        valorSolicitado: 5,
+        porStatus: [
+          { status: "pendente", quantidade: 1, valor: 5 },
+          { status: "efetivada", quantidade: 0, valor: 0 },
+          { status: "lancada_no_boleto", quantidade: 0, valor: 0 },
+          { status: "cancelada", quantidade: 2, valor: 10 },
+        ],
+      },
     ]);
   });
 

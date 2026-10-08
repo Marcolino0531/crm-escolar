@@ -20,6 +20,7 @@ import {
   vencimentoRecarga,
   registrarFalha,
   registrarSucesso,
+  indicadoresRecargas,
   transicaoRecarga,
   valorRecargaValido,
   type ParcelaAberta,
@@ -372,9 +373,44 @@ describe("cantina — transições da solicitação", () => {
     expect(transicaoRecarga("lancada_no_boleto", "marcar_lancada").ok).toBe(false);
   });
 
+  it("cancela só a solicitação pendente, e o cancelamento é definitivo", () => {
+    expect(transicaoRecarga("pendente", "cancelar")).toEqual({
+      ok: true,
+      proximoStatus: "cancelada",
+    });
+    expect(transicaoRecarga("efetivada", "cancelar").ok).toBe(false);
+    expect(transicaoRecarga("lancada_no_boleto", "cancelar").ok).toBe(false);
+    expect(transicaoRecarga("cancelada", "cancelar").ok).toBe(false);
+    expect(transicaoRecarga("cancelada", "efetivar").ok).toBe(false);
+    expect(transicaoRecarga("cancelada", "marcar_lancada").ok).toBe(false);
+  });
+
   it("identifica a recarga na observação do lançamento", () => {
     const texto = observacaoRecargaSponte("2026-08-18");
     expect(texto).toContain("cantina");
     expect(texto).toContain("18/08/2026");
+  });
+});
+
+describe("cantina — indicadores do topo da tela", () => {
+  it("Pendentes e Valor sem cobrança lançada não somam canceladas", () => {
+    const r = indicadoresRecargas([
+      { status: "pendente", valor: 50 },
+      { status: "pendente", valor: "20.10" },
+      { status: "efetivada", valor: 100.2 },
+      { status: "efetivada", valor: "0.1" },
+      { status: "lancada_no_boleto", valor: 300 },
+      { status: "cancelada", valor: 999.99 },
+      { status: "cancelada", valor: "45" },
+    ]);
+    expect(r).toEqual({ pendentes: 2, semCobrancaNoSponte: 2, valorSemCobranca: 100.3 });
+  });
+
+  it("só canceladas: indicadores zerados", () => {
+    expect(indicadoresRecargas([{ status: "cancelada", valor: 10 }])).toEqual({
+      pendentes: 0,
+      semCobrancaNoSponte: 0,
+      valorSemCobranca: 0,
+    });
   });
 });
