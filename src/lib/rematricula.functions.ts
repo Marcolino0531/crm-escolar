@@ -78,8 +78,12 @@ import {
   type EscolhaAcompanhamento,
 } from "@/lib/rematricula-acompanhamento";
 import {
+  DIAS_UTEIS,
   REFEICOES_ROTINA,
   ROTINA_FORM_VAZIA,
+  refeicoesVazias,
+  type HorariosRotina,
+  type RefeicoesRotina,
   linhasDiarioDaRotina,
   montarRotinaPersistida,
   rotinaDoPlanoExistente,
@@ -123,7 +127,11 @@ import {
   type TurnosDisponiveis,
   type ValoresMatricula,
 } from "@/lib/rematricula-matricula";
-import { CATEGORIA_MATRICULA_SPONTE } from "@/lib/matricula-faturamento";
+import {
+  CATEGORIA_MATRICULA_SPONTE,
+  calcularExtrasPelaRotina,
+  type ExtraPelaRotina,
+} from "@/lib/matricula-faturamento";
 import { addMesesYMD } from "@/lib/confissao-divida";
 import { buscarTurmasDoAno } from "@/lib/matricula-turma.sponte";
 import {
@@ -2912,6 +2920,109 @@ interface AuditoriaRow {
   erro: string;
   created_at: string;
 }
+
+interface LinhaRotinaRevisao {
+  serie: string | null;
+  dias_ativos: number[] | null;
+  horarios: { weekday: number; entrada: string; saida: string }[] | null;
+  periodo_manha: boolean | null;
+  periodo_tarde: boolean | null;
+  horario_estendido: boolean | null;
+  sem_refeicoes: boolean | null;
+  refeicoes: Record<string, number[]> | null;
+}
+
+export interface RotinaRevisaoRematricula {
+  serie: string;
+  diasAtivos: Weekday[];
+  periodoManha: boolean;
+  periodoTarde: boolean;
+  horarioEstendido: boolean;
+  horarios: { weekday: Weekday; entrada: string; saida: string }[];
+  semRefeicoes: boolean;
+  refeicoes: RefeicoesRotina;
+}
+
+export interface RotinaRevisaoResult {
+  // null = o responsável não salvou a rotina desta rematrícula.
+  rotina: RotinaRevisaoRematricula | null;
+  extras: ExtraPelaRotina[];
+}
+
+function rotinaRevisaoDaLinha(l: LinhaRotinaRevisao): RotinaRevisaoRematricula {
+  const diasAtivos = DIAS_UTEIS.filter((d) => (l.dias_ativos ?? []).includes(d));
+  const semRefeicoes = l.sem_refeicoes ?? false;
+  const refeicoes = refeicoesVazias();
+  if (!semRefeicoes) {
+    for (const meal of REFEICOES_ROTINA) {
+      refeicoes[meal] = diasAtivos.filter((d) => (l.refeicoes?.[meal] ?? []).includes(d));
+    }
+  }
+  return {
+    serie: l.serie ?? "",
+    diasAtivos,
+    periodoManha: l.periodo_manha ?? false,
+    periodoTarde: l.periodo_tarde ?? false,
+    horarioEstendido: l.horario_estendido ?? false,
+    horarios: (l.horarios ?? [])
+      .filter((h) => diasAtivos.includes(h.weekday as Weekday))
+      .map((h) => ({ weekday: h.weekday as Weekday, entrada: h.entrada, saida: h.saida })),
+    semRefeicoes,
+    refeicoes,
+  };
+}
+
+// Revisar e aprovar: rotina salva no portal e o valor mensal de cada Extra por
+// ela, com os pacotes do colégio e do ano letivo da rematrícula. Só leitura:
+// indicação para o lançamento manual dos Extras pendentes.
+export const rotinaRevisaoRematricula = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => DetalheSchema.parse(input))
+  .handler(async ({ data, context }): Promise<RotinaRevisaoResult> => {
+    await exigirPermissaoRematricula(context.userId, false);
+    const permitidas = await allowedSponteUnidades(context.userId);
+    if (permitidas !== null && !permitidas.includes(data.unidade)) {
+      throw new Error("Sem permissão para esta unidade.");
+    }
+
+    const [rotina, pacotes] = await Promise.all([
+      supabaseAdmin
+        .from("student_routine" as never)
+        .select(
+          "serie, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, sem_refeicoes, refeicoes",
+        )
+        .eq("submission_id", submissionIdRematricula(data.unidade, data.alunoId, data.anoLetivo))
+        .maybeSingle<LinhaRotinaRevisao>(),
+      supabaseAdmin
+        .from("pacotes_extras_valores" as never)
+        .select(
+          "unidade, ano_letivo, lanche_manha, almoco, lanche_tarde, jantar, hora_extra, updated_at, updated_by_nome",
+        )
+        .eq("unidade", data.unidade)
+        .eq("ano_letivo", data.anoLetivo)
+        .maybeSingle<PacotesExtrasRow>(),
+    ]);
+    if (rotina.error) throw new Error(rotina.error.message);
+    if (pacotes.error && !tabelaInexistente(pacotes.error)) throw new Error(pacotes.error.message);
+    if (!rotina.data) return { rotina: null, extras: [] };
+
+    const r = rotinaRevisaoDaLinha(rotina.data);
+    const horarios: HorariosRotina = {};
+    for (const h of r.horarios) horarios[h.weekday] = { entrada: h.entrada, saida: h.saida };
+    return {
+      rotina: r,
+      extras: calcularExtrasPelaRotina({
+        anoLetivo: data.anoLetivo,
+        serie: r.serie,
+        refeicoes: r.refeicoes,
+        semRefeicoes: r.semRefeicoes,
+        horarioEstendido: r.horarioEstendido,
+        diasAtivos: r.diasAtivos,
+        horarios,
+        pacotes: pacotes.data ? registroPacotes(pacotes.data).pacotes : null,
+      }),
+    };
+  });
 
 export interface EfetivarEscolhaResult {
   ok: boolean;

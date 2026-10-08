@@ -37,6 +37,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { AvisoDivergenciasExtras } from "@/components/rematricula/AvisoDivergenciasExtras";
 import { BotaoReconferirExtras } from "@/components/rematricula/BotaoReconferirExtras";
+import { CardRotinaRematricula } from "@/components/rematricula/CardRotinaRematricula";
 import { ContratosMatricula } from "@/components/rematricula/ContratosMatricula";
 import {
   AnoVigenteDiario,
@@ -64,6 +65,7 @@ import {
   acompanhamentoRematricula,
   detalheAcompanhamentoRematricula,
   detalheMatriculaRematricula,
+  rotinaRevisaoRematricula,
   efetivarEscolhaRematricula,
   efetivarMatriculaRematricula,
   lancarMatriculaRematriculaNoSponte,
@@ -178,6 +180,7 @@ function DialogoRevisao({
   }>({ lista: divergencias, reconferidaEm: null });
   const carregarDetalhe = useServerFn(detalheAcompanhamentoRematricula);
   const carregarMatricula = useServerFn(detalheMatriculaRematricula);
+  const carregarRotina = useServerFn(rotinaRevisaoRematricula);
   const efetivar = useServerFn(efetivarEscolhaRematricula);
   const efetivarMatricula = useServerFn(efetivarMatriculaRematricula);
   const relancarMatricula = useServerFn(lancarMatriculaRematriculaNoSponte);
@@ -191,6 +194,17 @@ function DialogoRevisao({
     queryKey: ["rematricula_detalhe_matricula", linha.unidade, linha.alunoId, anoLetivo],
     queryFn: async () => carregarMatricula({ data: chave }),
   });
+  const rotinaRevisao = useQuery({
+    queryKey: ["rematricula_rotina_revisao", linha.unidade, linha.alunoId, anoLetivo],
+    queryFn: async () => carregarRotina({ data: chave }),
+  });
+  const valoresPelaRotina = useMemo(() => {
+    const valores: Record<string, number> = {};
+    for (const x of rotinaRevisao.data?.extras ?? []) {
+      if (x.valorMensal !== null) valores[x.categoria] = x.valorMensal;
+    }
+    return valores;
+  }, [rotinaRevisao.data]);
 
   const escolha = detalhe.data?.escolha ?? null;
   const matricula = detalheMatricula.data?.matricula ?? null;
@@ -271,7 +285,11 @@ function DialogoRevisao({
         ) : (
           <div className="space-y-4 text-sm">
             {divergenciasAtuais.lista.length > 0 ? (
-              <AvisoDivergenciasExtras divergencias={divergenciasAtuais.lista} detalhado />
+              <AvisoDivergenciasExtras
+                divergencias={divergenciasAtuais.lista}
+                detalhado
+                valoresPelaRotina={valoresPelaRotina}
+              />
             ) : divergenciasAtuais.reconferidaEm ? (
               <p
                 className="flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900"
@@ -293,6 +311,12 @@ function DialogoRevisao({
                 />
               </div>
             )}
+            <CardRotinaRematricula
+              rotina={rotinaRevisao.data?.rotina ?? null}
+              extras={rotinaRevisao.data?.extras ?? []}
+              carregando={rotinaRevisao.isLoading}
+              erro={rotinaRevisao.isError}
+            />
             {matricula && <CardMatriculaRevisao matricula={matricula} anoLetivo={anoLetivo} />}
             {escolha && (
               <div className="rounded-md border p-3">
