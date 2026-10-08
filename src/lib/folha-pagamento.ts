@@ -929,6 +929,41 @@ export function salarioAposExclusao(
   return s ? { acao: "gravar", valor: s.valor, valorLiquido: s.valorLiquido } : { acao: "remover" };
 }
 
+type RegistroDaImportacao = Parameters<typeof salariosDaFolha>[0][number] & {
+  importacaoId: string;
+  proventos: number;
+  descontos: number;
+  liquido: number;
+};
+
+/**
+ * Excluir a importação inteira de uma empresa: totais do que sai (registro da
+ * exclusão) e, para cada funcionário que tinha registro nela, a decisão de
+ * salarioAposExclusao com o que restou nas outras empresas da competência.
+ * Funcionário com salário manual na competência fica de fora: a linha manual
+ * nunca é tocada.
+ */
+export function planoExclusaoImportacao<T extends RegistroDaImportacao>(
+  registros: readonly T[],
+  importacaoId: string,
+  comSalarioManual: ReadonlySet<string> = new Set(),
+) {
+  const apagados = registros.filter((r) => r.importacaoId === importacaoId);
+  const restantes = registros.filter((r) => r.importacaoId !== importacaoId);
+  const funcionarios = [
+    ...new Set(apagados.flatMap((r) => (r.funcionarioId ? [r.funcionarioId] : []))),
+  ];
+  return {
+    totais: totaisDasEmpresas(apagados),
+    salarios: funcionarios
+      .filter((f) => !comSalarioManual.has(f))
+      .map((funcionarioId) => ({
+        funcionarioId,
+        ...salarioAposExclusao(restantes, funcionarioId),
+      })),
+  };
+}
+
 /** Aviso da tela depois de "Desfazer" uma exclusão da folha. */
 export function avisoDesfazerExclusao(r: { restaurado: boolean; semCopia: boolean }): string {
   if (r.restaurado) return "Exclusão desfeita: o registro voltou para a folha.";
