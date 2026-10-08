@@ -17,7 +17,12 @@ import {
   type ScheduleRow,
   type Weekday,
 } from "@/lib/diario";
-import { anoLetivoValidoMatricula, type TurnoTurma } from "@/lib/matricula-turma";
+import {
+  TURNOS_TURMA,
+  anoLetivoValidoMatricula,
+  serieBercario,
+  type TurnoTurma,
+} from "@/lib/matricula-turma";
 import { type MatriculaPayload, type ResponsavelMatricula } from "@/lib/matriculas.sponte";
 import { parcelasMaterialValida } from "@/lib/rematricula";
 import { parcelasMatriculaValida, validarPrimeiroVencimento } from "@/lib/rematricula-matricula";
@@ -525,6 +530,112 @@ export function horariosEfetivos(rotina: RotinaForm, serie: string): HorariosRot
   return resultado;
 }
 
+// ─── Turno das aulas curriculares no Horário Estendido ─────────────────────
+//
+// O aluno só é matriculado no turno cujo horário de aulas (HORARIOS_PADRAO do
+// segmento) ele cumpre inteiro em TODOS os dias ativos. Berçário é exceção:
+// horário flexível, a família escolhe qualquer turno.
+
+export function horarioDoTurno(serie: string, turno: TurnoTurma): HorarioDia {
+  const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
+  return turno === "M" ? padrao.manha : padrao.tarde;
+}
+
+// null enquanto algum dia ativo não tem entrada e saída válidas.
+function turnosCobertosPorDia(
+  rotina: RotinaForm,
+  serie: string,
+): { dia: Weekday; turnos: TurnoTurma[] }[] | null {
+  const ativos = diasAtivosRotina(rotina);
+  if (ativos.length === 0) return null;
+  const porDia: { dia: Weekday; turnos: TurnoTurma[] }[] = [];
+  for (const dia of ativos) {
+    const h = rotina.horarios[dia];
+    if (!h || !horarioValido(h.entrada) || !horarioValido(h.saida)) return null;
+    const entrada = minutos(h.entrada.trim());
+    const saida = minutos(h.saida.trim());
+    if (saida <= entrada) return null;
+    const turnos = TURNOS_TURMA.filter((t) => {
+      const aula = horarioDoTurno(serie, t);
+      return entrada <= minutos(aula.entrada) && saida >= minutos(aula.saida);
+    });
+    porDia.push({ dia, turnos });
+  }
+  return porDia;
+}
+
+/** Turnos cumpridos inteiros em todos os dias ativos (null: horários incompletos). */
+export function turnosCobertos(rotina: RotinaForm, serie: string): TurnoTurma[] | null {
+  const porDia = turnosCobertosPorDia(rotina, serie);
+  if (porDia === null) return null;
+  return TURNOS_TURMA.filter((t) => porDia.every((d) => d.turnos.includes(t)));
+}
+
+function naDias(dias: readonly Weekday[]): string {
+  const nomes = dias.map(
+    (d) => `na ${(WEEKDAYS.find((w) => w.value === d)?.long ?? String(d)).toLowerCase()}`,
+  );
+  if (nomes.length <= 1) return nomes[0] ?? "";
+  return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+}
+
+/** Mensagem de bloqueio quando o Horário Estendido não cumpre nenhum turno inteiro. */
+export function mensagemSemTurnoCoberto(rotina: RotinaForm, serie: string): string {
+  const m = horarioDoTurno(serie, "M");
+  const t = horarioDoTurno(serie, "T");
+  const texto = `o aluno não fica no colégio durante todo o horário de aulas da manhã (${m.entrada} às ${m.saida}) nem da tarde (${t.entrada} às ${t.saida}).`;
+  const ajuste = "Ajuste a entrada ou a saída para que ele cumpra um dos dois turnos inteiro.";
+  const porDia = rotina.frequenciaParcial ? turnosCobertosPorDia(rotina, serie) : null;
+  if (porDia !== null) {
+    const impedem = porDia.filter((d) => d.turnos.length === 0).map((d) => d.dia);
+    if (impedem.length > 0) {
+      const dias = naDias(impedem);
+      return `${dias.charAt(0).toUpperCase()}${dias.slice(1)}, ${texto} ${ajuste}`;
+    }
+    const semManha = porDia.filter((d) => !d.turnos.includes("M")).map((d) => d.dia);
+    const semTarde = porDia.filter((d) => !d.turnos.includes("T")).map((d) => d.dia);
+    return `Com esses horários, ${texto} A manhã não é cumprida ${naDias(semManha)} e a tarde não é cumprida ${naDias(semTarde)}. ${ajuste}`;
+  }
+  return `Com esses horários, ${texto} ${ajuste}`;
+}
+
+/**
+ * Tela: com um único turno coberto, ele vira o horário curricular; escolha que
+ * deixou de ser coberta (ou horários incompletos) é limpa. Berçário não muda.
+ */
+export function ajustarHorarioCurricular(rotina: RotinaForm, serie: string): RotinaForm {
+  if (!rotina.horarioEstendido || serieBercario(serie)) return rotina;
+  const cobertos = turnosCobertos(rotina, serie) ?? [];
+  const atual = rotina.horarioCurricular;
+  const novo: TurnoTurma | "" =
+    cobertos.length === 1 ? cobertos[0] : atual !== "" && cobertos.includes(atual) ? atual : "";
+  return novo === atual ? rotina : { ...rotina, horarioCurricular: novo };
+}
+
+/** Servidor: horário curricular vazio com um único turno coberto é preenchido com ele. */
+export function preencherHorarioCurricular(rotina: RotinaForm, serie: string): RotinaForm {
+  if (!rotina.horarioEstendido || rotina.horarioCurricular !== "" || serieBercario(serie))
+    return rotina;
+  const cobertos = turnosCobertos(rotina, serie);
+  return cobertos !== null && cobertos.length === 1
+    ? { ...rotina, horarioCurricular: cobertos[0] }
+    : rotina;
+}
+
+function erroHorarioCurricular(rotina: RotinaForm, serie: string): string {
+  const escolha = "Escolha o turno das aulas curriculares (manhã ou tarde).";
+  if (serieBercario(serie)) return rotina.horarioCurricular === "" ? escolha : "";
+  const cobertos = turnosCobertos(rotina, serie);
+  // Horários incompletos já têm erro próprio por dia.
+  if (cobertos === null) return "";
+  if (rotina.horarioCurricular !== "")
+    return cobertos.includes(rotina.horarioCurricular)
+      ? ""
+      : "O turno escolhido não é cumprido inteiro pelos horários informados.";
+  if (cobertos.length === 0) return mensagemSemTurnoCoberto(rotina, serie);
+  return cobertos.length === 1 ? "" : escolha;
+}
+
 /**
  * Validação da etapa 2. Chaves de erro no mesmo formato da etapa 1
  * ("rotina.horario.1"), para a tela destacar campo a campo.
@@ -568,9 +679,8 @@ export function validarRotinaForm(
     erros["rotina.periodos"] = "Escolha a manhã, a tarde ou o horário estendido.";
 
   if (rotina.horarioEstendido && opcoes.exigirHorarioCurricular === true) {
-    if (rotina.horarioCurricular === "")
-      erros["rotina.horarioCurricular"] =
-        "Escolha o turno das aulas curriculares (manhã ou tarde).";
+    const erro = erroHorarioCurricular(rotina, serie);
+    if (erro) erros["rotina.horarioCurricular"] = erro;
   }
 
   if (rotina.horarioEstendido) {
