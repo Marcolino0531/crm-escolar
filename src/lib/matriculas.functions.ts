@@ -208,6 +208,8 @@ export interface RotinaSubmissao {
   periodoManha: boolean;
   periodoTarde: boolean;
   horarioEstendido: boolean;
+  // Turno das aulas curriculares do Horário Estendido ("" quando não há).
+  horarioCurricular?: "M" | "T" | "";
   horarios: { weekday: number; entrada: string; saida: string }[];
   semRefeicoes: boolean;
   refeicoes: Record<string, number[]>;
@@ -300,7 +302,7 @@ async function documentoAssinado(
 }
 
 const COLUNAS_ROTINA_FICHA =
-  "serie, origem, ano_letivo, data_inicio, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, sem_refeicoes, refeicoes";
+  "serie, origem, ano_letivo, data_inicio, dias_ativos, horarios, periodo_manha, periodo_tarde, horario_estendido, horario_curricular, sem_refeicoes, refeicoes";
 
 interface LinhaRotinaFicha {
   serie: string | null;
@@ -312,6 +314,7 @@ interface LinhaRotinaFicha {
   periodo_manha: boolean;
   periodo_tarde: boolean;
   horario_estendido: boolean;
+  horario_curricular: string | null;
   sem_refeicoes: boolean;
   refeicoes: Record<string, number[]>;
 }
@@ -326,6 +329,10 @@ function rotinaDaLinha(linha: LinhaRotinaFicha): RotinaSubmissao {
     periodoManha: linha.periodo_manha,
     periodoTarde: linha.periodo_tarde,
     horarioEstendido: linha.horario_estendido,
+    horarioCurricular:
+      linha.horario_curricular === "M" || linha.horario_curricular === "T"
+        ? linha.horario_curricular
+        : "",
     horarios: linha.horarios ?? [],
     semRefeicoes: linha.sem_refeicoes,
     refeicoes: linha.refeicoes ?? {},
