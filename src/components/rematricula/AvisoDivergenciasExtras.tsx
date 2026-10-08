@@ -14,12 +14,22 @@ const ACAO_MANUAL: Record<DivergenciaExtraAluno["tipo"], string> = {
 export function AvisoDivergenciasExtras({
   divergencias,
   detalhado = false,
+  valoresPelaRotina,
 }: {
   divergencias: readonly DivergenciaExtraAluno[];
   detalhado?: boolean;
+  // Valor mensal calculado pela rotina salva, por categoria (só indicação).
+  valoresPelaRotina?: Readonly<Partial<Record<string, number>>>;
 }) {
   if (divergencias.length === 0) return null;
   const pendentes = divergencias.filter((d) => d.tipo === "lancamento_pendente");
+  const valorTexto = (d: DivergenciaExtraAluno): string => {
+    if (d.valor !== null) return ` (${formatarBRL(d.valor)}/mês)`;
+    const pelaRotina = valoresPelaRotina?.[d.categoria];
+    return d.tipo === "lancamento_pendente" && pelaRotina !== undefined
+      ? ` (${formatarBRL(pelaRotina)}/mês pela rotina)`
+      : "";
+  };
 
   if (!detalhado) {
     const resumo = pendentes.length > 0 ? pendentes : divergencias;
@@ -50,8 +60,7 @@ export function AvisoDivergenciasExtras({
         {divergencias.map((d) => (
           <li key={`${d.categoria}|${d.tipo}`}>
             <strong>{d.categoria}</strong>
-            {d.valor !== null ? ` (${formatarBRL(d.valor)}/mês)` : ""} —{" "}
-            {ROTULO_TIPO_DIVERGENCIA[d.tipo]}: {ACAO_MANUAL[d.tipo]}.
+            {valorTexto(d)} — {ROTULO_TIPO_DIVERGENCIA[d.tipo]}: {ACAO_MANUAL[d.tipo]}.
           </li>
         ))}
       </ul>
