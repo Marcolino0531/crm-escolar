@@ -1,12 +1,20 @@
 // Texto do modelo "Contrato_Matricula_Rematricula_REVISADO.docx" transcrito
 // parágrafo a parágrafo, com os campos «Assim» exatamente como no DOCX. Nada
 // aqui é calculado: contrato-matricula.ts preenche os campos e troca os blocos
-// de MATERIAL/EXTRAS pelo texto de fallback quando não há contratação.
+// de MATERIAL/EXTRAS pelo texto de fallback quando não há contratação; sem
+// desconto, usa MENSALIDADE_SEM_DESCONTO e retira o bloco "bolsa".
 
 export type ParagrafoModelo =
   | { tipo: "titulo"; texto: string }
   | { tipo: "paragrafo"; texto: string }
-  | { tipo: "bloco"; chave: "matricula" | "mensalidade" | "material" | "extras"; texto: string };
+  | {
+      tipo: "bloco";
+      chave: "matricula" | "mensalidade" | "material" | "extras" | "bolsa";
+      texto: string;
+    };
+
+export const MENSALIDADE_SEM_DESCONTO =
+  "MENSALIDADE: «NumeroParcelasMensalidade» parcelas mensais, «PeriodoParcelasMensalidade» de «AnoLetivoContrato», no valor de R$«ValorMensalidade» («ValorMensalidadeExtenso») cada, com vencimento todo dia «DiaVencimentoMensalidade» de cada mês.";
 
 export const TITULO_CONTRATO = "CONTRATO PRESTAÇÃO DE SERVIÇOS EDUCACIONAIS";
 
@@ -161,7 +169,8 @@ export const MODELO_CONTRATO: readonly ParagrafoModelo[] = [
       "Os EXTRAS contratados no formato de pacote mensal (Hora Extra e/ou Alimentação) têm valor fixo mensal, que não é reduzido nos meses de julho e dezembro mesmo havendo menos dias letivos por férias. Já a contratação avulsa, por dia de uso, tem valor diferenciado (mais elevado que o valor proporcional do pacote mensal) e é cobrada separadamente, sem se integrar ao valor das mensalidades.",
   },
   {
-    tipo: "paragrafo",
+    tipo: "bloco",
+    chave: "bolsa",
     texto: "Bolsa de desconto: «PercentualBolsaMensalidade».",
   },
   {
