@@ -470,6 +470,107 @@ export function problemaMensalidadeDoPlano(
   return null;
 }
 
+/** Rotina e pacotes que definem os Extras (refeições e hora extra). */
+export type EntradaExtrasRotina = Pick<
+  EntradaFaturamentoMatricula,
+  | "anoLetivo"
+  | "serie"
+  | "refeicoes"
+  | "semRefeicoes"
+  | "horarioEstendido"
+  | "diasAtivos"
+  | "horarios"
+  | "pacotes"
+>;
+
+/** Valor mensal de um Extra pela rotina, ou a pendência que impede o cálculo. */
+export type ExtraPelaRotina = {
+  tipo: ItemPacoteExtras;
+  categoria: string;
+} & (
+  | { valorMensal: number; observacao: string; pendencia: null }
+  | { valorMensal: null; observacao: null; pendencia: string }
+);
+
+/**
+ * Extras marcados na rotina, na ordem dos lançamentos: refeições (pacote ÷ 5 ×
+ * dias marcados; Jantar só para série que serve jantar) e hora extra (minutos
+ * além do turno regular nos dias ativos com horário estendido). Pacote sem
+ * valor vira pendência daquele item.
+ */
+export function calcularExtrasPelaRotina(e: EntradaExtrasRotina): ExtraPelaRotina[] {
+  const extras: ExtraPelaRotina[] = [];
+  const pendente = (tipo: ItemPacoteExtras, pendencia: string) =>
+    extras.push({
+      tipo,
+      categoria: CATEGORIA_SPONTE_POR_ITEM[tipo],
+      valorMensal: null,
+      observacao: null,
+      pendencia,
+    });
+  const itemExtra = (
+    tipo: ItemPacoteExtras,
+    valorMensal: (pacote: number) => number,
+    observacao: (pacote: number) => string,
+  ) => {
+    const pacote = e.pacotes?.[tipo] ?? null;
+    if (pacote === null || pacoteSemValor(pacote)) {
+      pendente(tipo, mensagemPacoteSemValor(tipo, e.anoLetivo));
+    } else {
+      extras.push({
+        tipo,
+        categoria: CATEGORIA_SPONTE_POR_ITEM[tipo],
+        valorMensal: valorMensal(pacote),
+        observacao: observacao(pacote),
+        pendencia: null,
+      });
+    }
+  };
+
+  // Refeições: pacote mensal (5 dias) ÷ 5 × dias marcados na semana.
+  if (!e.semRefeicoes) {
+    for (const refeicao of REFEICOES_PACOTE) {
+      const item = ITEM_POR_REFEICAO[refeicao];
+      if (item === "jantar" && !serveJantar(e.serie)) continue;
+      const dias = diasUteisMarcados(e.refeicoes[refeicao]);
+      if (dias <= 0) continue;
+      itemExtra(
+        item,
+        (pacote) => valorMensalPacote(pacote, dias),
+        (pacote) =>
+          `${CATEGORIA_SPONTE_POR_ITEM[item]} ${e.anoLetivo} — ${dias}x por semana — pacote ${formatarBRL(pacote)}`,
+      );
+    }
+  }
+
+  // Hora extra: pacote = 1 hora extra por dia, 5 dias por semana; cobra os
+  // minutos além do turno regular em cada dia ativo com horário estendido.
+  if (e.horarioEstendido) {
+    const ativos = new Set(e.diasAtivos);
+    const porDia = minutosExtrasPorDia(e.horarios ?? {}, e.serie);
+    const minutosDias = DIAS_UTEIS.filter((d) => ativos.has(d))
+      .map((d) => porDia[d] ?? 0)
+      .filter((m) => m > 0);
+    const minutosSemana = minutosDias.reduce((s, m) => s + m, 0);
+    if (minutosSemana <= 0) {
+      pendente("hora_extra", MSG_ESTENDIDO_SEM_HORA_EXTRA);
+    } else {
+      const diasSemana = minutosDias.length;
+      const porDiaTexto = minutosDias.every((m) => m === minutosDias[0])
+        ? `${horasEmTexto(minutosDias[0])} por dia`
+        : `${horasEmTexto(minutosSemana)} por semana`;
+      itemExtra(
+        "hora_extra",
+        (pacote) => valorMensalHoraExtra(pacote, minutosSemana),
+        (pacote) =>
+          `${CATEGORIA_SPONTE_POR_ITEM.hora_extra} ${e.anoLetivo} — ${porDiaTexto}, ${diasSemana}x por semana — ${formatarBRL(pacote)} por hora`,
+      );
+    }
+  }
+
+  return extras;
+}
+
 /**
  * Cronograma financeiro da matrícula nova. Cada tipo é calculado de forma
  * independente: o que faltar vira pendência só daquele tipo, e os demais são
@@ -585,69 +686,17 @@ export function montarPlanoFaturamento(e: EntradaFaturamentoMatricula): PlanoFat
 
   // Refeições e hora extra: um lançamento mensal por item pelo mesmo
   // cronograma da mensalidade (1º mês proporcional quando for o caso).
-  const itemExtra = (
-    tipo: ItemPacoteExtras,
-    valorMensal: (pacote: number) => number,
-    observacao: (pacote: number) => string,
-  ) => {
-    const pacote = e.pacotes?.[tipo] ?? null;
-    if (pacote === null || pacoteSemValor(pacote)) {
-      pendente(tipo, mensagemPacoteSemValor(tipo, e.anoLetivo));
+  for (const extra of calcularExtrasPelaRotina(e)) {
+    if (extra.pendencia !== null) {
+      pendente(extra.tipo, extra.pendencia);
     } else if (cronograma.length === 0) {
       pendente(
-        tipo,
-        `${CATEGORIA_SPONTE_POR_ITEM[tipo]} marcado na rotina, mas não há mês de ${e.anoLetivo} a vencer — lance na mão.`,
+        extra.tipo,
+        `${extra.categoria} marcado na rotina, mas não há mês de ${e.anoLetivo} a vencer — lance na mão.`,
       );
     } else {
       lancamentos.push(
-        mensal(
-          tipo,
-          CATEGORIA_SPONTE_POR_ITEM[tipo],
-          valorMensal(pacote),
-          cronograma,
-          observacao(pacote),
-        ),
-      );
-    }
-  };
-
-  // Refeições: pacote mensal (5 dias) ÷ 5 × dias marcados na semana.
-  if (!e.semRefeicoes) {
-    for (const refeicao of REFEICOES_PACOTE) {
-      const item = ITEM_POR_REFEICAO[refeicao];
-      if (item === "jantar" && !serveJantar(e.serie)) continue;
-      const dias = diasUteisMarcados(e.refeicoes[refeicao]);
-      if (dias <= 0) continue;
-      itemExtra(
-        item,
-        (pacote) => valorMensalPacote(pacote, dias),
-        (pacote) =>
-          `${CATEGORIA_SPONTE_POR_ITEM[item]} ${e.anoLetivo} — ${dias}x por semana — pacote ${formatarBRL(pacote)}`,
-      );
-    }
-  }
-
-  // Hora extra: pacote = 1 hora extra por dia, 5 dias por semana; cobra os
-  // minutos além do turno regular em cada dia ativo com horário estendido.
-  if (e.horarioEstendido) {
-    const ativos = new Set(e.diasAtivos);
-    const porDia = minutosExtrasPorDia(e.horarios ?? {}, e.serie);
-    const minutosDias = DIAS_UTEIS.filter((d) => ativos.has(d))
-      .map((d) => porDia[d] ?? 0)
-      .filter((m) => m > 0);
-    const minutosSemana = minutosDias.reduce((s, m) => s + m, 0);
-    if (minutosSemana <= 0) {
-      pendente("hora_extra", MSG_ESTENDIDO_SEM_HORA_EXTRA);
-    } else {
-      const diasSemana = minutosDias.length;
-      const porDiaTexto = minutosDias.every((m) => m === minutosDias[0])
-        ? `${horasEmTexto(minutosDias[0])} por dia`
-        : `${horasEmTexto(minutosSemana)} por semana`;
-      itemExtra(
-        "hora_extra",
-        (pacote) => valorMensalHoraExtra(pacote, minutosSemana),
-        (pacote) =>
-          `${CATEGORIA_SPONTE_POR_ITEM.hora_extra} ${e.anoLetivo} — ${porDiaTexto}, ${diasSemana}x por semana — ${formatarBRL(pacote)} por hora`,
+        mensal(extra.tipo, extra.categoria, extra.valorMensal, cronograma, extra.observacao),
       );
     }
   }

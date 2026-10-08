@@ -6,6 +6,7 @@ import {
   ITEM_PLANO_VAZIO,
   MSG_ESTENDIDO_SEM_HORA_EXTRA,
   anoDoPlanoCurso,
+  calcularExtrasPelaRotina,
   cronogramaMensal,
   diasUteisMarcados,
   minutosExtrasPorDia,
@@ -830,5 +831,93 @@ describe("ETAPA 3 — primeiro mês proporcional pela data de início + hora ext
     expect(MSG_ESTENDIDO_SEM_HORA_EXTRA).toBe(
       "Horário estendido sem horas além do turno regular. Confira a rotina.",
     );
+  });
+});
+
+describe("calcularExtrasPelaRotina (Extras pela rotina salva)", () => {
+  const base = {
+    anoLetivo: 2027,
+    serie: "1º Ano",
+    refeicoes: refeicoesVazias(),
+    semRefeicoes: false,
+    horarioEstendido: false,
+    diasAtivos: [1, 2, 3, 4, 5] as Weekday[],
+    pacotes: pacotesBase({ lanche_manha: 100.01, almoco: 100.01, lanche_tarde: 100.01 }),
+  };
+
+  it("refeição em 5, 3 e 1 dia(s): pacote ÷ 5 × dias, ao centavo", () => {
+    const refeicoes = refeicoesVazias();
+    refeicoes.lunch = [1, 2, 3, 4, 5];
+    refeicoes.breakfast = [1, 3, 5];
+    refeicoes.snack = [2];
+    const extras = calcularExtrasPelaRotina({ ...base, refeicoes });
+    expect(extras.map((x) => [x.tipo, x.valorMensal])).toEqual([
+      ["lanche_manha", 60.01],
+      ["almoco", 100.01],
+      ["lanche_tarde", 20],
+    ]);
+    expect(extras[1]).toEqual({
+      tipo: "almoco",
+      categoria: "Almoço",
+      valorMensal: 100.01,
+      observacao: `Almoço 2027 — 5x por semana — pacote ${formatarBRL(100.01)}`,
+      pendencia: null,
+    });
+  });
+
+  it("hora extra com minutos diferentes por dia soma os minutos da semana", () => {
+    // 1º Ano (turno 5h20): seg 1h, qua 1h30, demais dias sem minuto extra.
+    const horarios: HorariosRotina = {
+      ...horariosIguais([2, 4, 5], "07:20", "12:40"),
+      1: { entrada: "07:20", saida: "13:40" },
+      3: { entrada: "07:20", saida: "14:10" },
+    };
+    const extras = calcularExtrasPelaRotina({ ...base, horarioEstendido: true, horarios });
+    // 890 × (150 min ÷ 60) ÷ 5 = 445,00.
+    expect(extras).toEqual([
+      {
+        tipo: "hora_extra",
+        categoria: "Hora Extra",
+        valorMensal: 445,
+        observacao: `Hora Extra 2027 — 2h30 por semana, 2x por semana — ${formatarBRL(890)} por hora`,
+        pendencia: null,
+      },
+    ]);
+    expect(valorMensalHoraExtra(890, 150)).toBe(445);
+  });
+
+  it("Jantar fica fora para série que não serve jantar", () => {
+    const refeicoes = refeicoesVazias();
+    refeicoes.dinner = [1, 2, 3, 4, 5];
+    expect(calcularExtrasPelaRotina({ ...base, serie: "7º Ano", refeicoes })).toEqual([]);
+    const bercario = calcularExtrasPelaRotina({ ...base, serie: "Berçário", refeicoes });
+    expect(bercario.map((x) => [x.tipo, x.valorMensal])).toEqual([["jantar", 250]]);
+  });
+
+  it("pacote sem valor (ou sem linha de pacotes) vira pendência do item", () => {
+    const refeicoes = refeicoesVazias();
+    refeicoes.lunch = [1, 2, 3];
+    const zerado = calcularExtrasPelaRotina({
+      ...base,
+      refeicoes,
+      pacotes: pacotesBase({ almoco: 0 }),
+    });
+    expect(zerado).toEqual([
+      {
+        tipo: "almoco",
+        categoria: "Almoço",
+        valorMensal: null,
+        observacao: null,
+        pendencia: mensagemPacoteSemValor("almoco", 2027),
+      },
+    ]);
+    const semPacotes = calcularExtrasPelaRotina({ ...base, refeicoes, pacotes: null });
+    expect(semPacotes.map((x) => x.pendencia)).toEqual([mensagemPacoteSemValor("almoco", 2027)]);
+  });
+
+  it("sem refeições e sem horário estendido: nenhum Extra", () => {
+    const refeicoes = refeicoesVazias();
+    refeicoes.lunch = [1, 2, 3, 4, 5];
+    expect(calcularExtrasPelaRotina({ ...base, refeicoes, semRefeicoes: true })).toEqual([]);
   });
 });
