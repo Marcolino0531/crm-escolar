@@ -572,6 +572,40 @@ export const efetivarRecargaCantina = createServerFn({ method: "POST" })
     return lancarNoSponte({ ...recarga, status: "efetivada" }, nome, context.userId);
   });
 
+// Cancelamento definitivo de uma solicitação pendente (ex.: valor pedido
+// errado). Nada é consultado nem escrito no Sponte. A gravação exige
+// status = 'pendente' na própria atualização: cancelar e efetivar ao mesmo
+// tempo nunca resultam nos dois.
+export const cancelarRecargaCantina = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => IdInputSchema.parse(input))
+  .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
+    const nome = await assertPodeEditarCantina(context.userId);
+    const recarga = await carregarRecarga(data.id);
+    if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    const transicao = transicaoRecarga(recarga.status, "cancelar");
+    if (!transicao.ok) return { ok: false, erro: transicao.erro };
+
+    const agoraISO = new Date().toISOString();
+    const { data: atualizadas, error } = await supabaseAdmin
+      .from("cantina_recargas" as never)
+      .update({
+        status: "cancelada",
+        cancelada_at: agoraISO,
+        cancelada_por: context.userId,
+        cancelada_por_nome: nome,
+        historico: historicoCom(recarga, "cancelada", nome, agoraISO),
+      } as never)
+      .eq("id", recarga.id)
+      .eq("status", "pendente")
+      .select("id");
+    if (error) return { ok: false, erro: "Não foi possível cancelar a solicitação." };
+    if ((atualizadas ?? []).length === 0) {
+      return { ok: false, erro: "Esta solicitação não está mais pendente." };
+    }
+    return { ok: true };
+  });
+
 // Retentativa do lançamento quando o Sponte falhou no momento da efetivação.
 export const lancarRecargaNoSponte = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

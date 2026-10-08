@@ -265,15 +265,16 @@ export function mensagemPortalFechado(janela: JanelaPortal = JANELA_PORTAL_PADRA
 
 // ─── Solicitação de recarga ─────────────────────────────────────────────────
 
-export type StatusRecarga = "pendente" | "efetivada" | "lancada_no_boleto";
+export type StatusRecarga = "pendente" | "efetivada" | "lancada_no_boleto" | "cancelada";
 
 export const STATUS_RECARGA_LABEL: Record<StatusRecarga, string> = {
   pendente: "Pendente",
   efetivada: "Recarga efetivada",
   lancada_no_boleto: "Lançada no Sponte",
+  cancelada: "Cancelada",
 };
 
-export type AcaoRecarga = "efetivar" | "marcar_lancada";
+export type AcaoRecarga = "efetivar" | "marcar_lancada" | "cancelar";
 
 export interface TransicaoRecarga {
   ok: boolean;
@@ -284,10 +285,30 @@ export interface TransicaoRecarga {
 // Transições permitidas da solicitação. É uma máquina de estados de mão única:
 // 'pendente' → 'efetivada' (a recarga física do cartão foi feita) e
 // 'efetivada' → 'lancada_no_boleto' (a conta a receber da recarga existe no
-// Sponte — criada pelo sistema ou lançada à mão pela equipe). Repetir a ação num
-// status que já avançou é recusado, então clique duplo não gera transição nem
+// Sponte — criada pelo sistema ou lançada à mão pela equipe). Só a pendente
+// pode ser cancelada, e o cancelamento é definitivo. Repetir a ação num status
+// que já avançou é recusado, então clique duplo não gera transição nem
 // histórico duplicado.
 export function transicaoRecarga(atual: StatusRecarga, acao: AcaoRecarga): TransicaoRecarga {
+  if (acao === "cancelar") {
+    if (atual === "cancelada") return { ok: false, erro: "Esta solicitação já foi cancelada." };
+    if (atual !== "pendente") {
+      return {
+        ok: false,
+        erro: "Só a solicitação pendente pode ser cancelada. Esta já foi efetivada.",
+      };
+    }
+    return { ok: true, proximoStatus: "cancelada" };
+  }
+  if (atual === "cancelada") {
+    return {
+      ok: false,
+      erro:
+        acao === "efetivar"
+          ? "Esta solicitação foi cancelada e não pode ser efetivada."
+          : "Esta solicitação foi cancelada e não pode ser marcada como lançada.",
+    };
+  }
   if (acao === "efetivar") {
     if (atual !== "pendente") return { ok: false, erro: "Esta solicitação já foi efetivada." };
     return { ok: true, proximoStatus: "efetivada" };
@@ -299,6 +320,26 @@ export function transicaoRecarga(atual: StatusRecarga, acao: AcaoRecarga): Trans
     return { ok: false, erro: "Efetive a recarga do cartão antes de marcar o lançamento." };
   }
   return { ok: true, proximoStatus: "lancada_no_boleto" };
+}
+
+export interface IndicadoresRecargas {
+  pendentes: number;
+  semCobrancaNoSponte: number;
+  valorSemCobranca: number;
+}
+
+// Indicadores do topo da tela: canceladas não contam em nenhum deles.
+export function indicadoresRecargas(
+  recargas: { status: StatusRecarga; valor: number | string }[],
+): IndicadoresRecargas {
+  const pendentes = recargas.filter((r) => r.status === "pendente");
+  const aLancar = recargas.filter((r) => r.status === "efetivada");
+  const centavos = aLancar.reduce((s, r) => s + Math.round(Number(r.valor) * 100), 0);
+  return {
+    pendentes: pendentes.length,
+    semCobrancaNoSponte: aLancar.length,
+    valorSemCobranca: centavos / 100,
+  };
 }
 
 export const VALOR_RECARGA_MINIMO = 1;
