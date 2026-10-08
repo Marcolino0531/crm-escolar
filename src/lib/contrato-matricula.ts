@@ -13,6 +13,7 @@
 import { parseBRLNumber } from "@/lib/currency";
 import { dataPorExtenso, valorPorExtenso } from "@/lib/recibos";
 import {
+  MENSALIDADE_SEM_DESCONTO,
   MODELO_CONTRATO,
   TITULO_CONTRATO,
   type ParagrafoModelo,
@@ -536,8 +537,13 @@ function renderizarParagrafo(
   p: ParagrafoModelo,
   campos: CamposContrato,
   input: MontarContratoInput,
-): ParagrafoContrato {
+): ParagrafoContrato | null {
   if (p.tipo === "bloco") {
+    const semDesconto = !(input.mensalidade.descontoPercentual > 0);
+    if (p.chave === "bolsa" && semDesconto) return null;
+    if (p.chave === "mensalidade" && semDesconto) {
+      return { tipo: "paragrafo", texto: preencherModelo(MENSALIDADE_SEM_DESCONTO, campos) };
+    }
     if (p.chave === "material" && !input.material) {
       return { tipo: "paragrafo", texto: `MATERIAL PEDAGÓGICO: ${TEXTO_SEM_MATERIAL}` };
     }
@@ -555,7 +561,7 @@ export function montarContratoMatricula(input: MontarContratoInput): ContratoMat
     titulo: TITULO_CONTRATO,
     numero: input.numeroContrato,
     campos,
-    paragrafos: MODELO_CONTRATO.map((p) => renderizarParagrafo(p, campos, input)),
+    paragrafos: MODELO_CONTRATO.flatMap((p) => renderizarParagrafo(p, campos, input) ?? []),
     fecho: `Belo Horizonte, ${campos.DiaAtual} de ${campos.MesAtualExtenso} de ${campos.AnoAtual}.`,
     assinaturas: [
       { papel: "CONTRATANTE", nome: campos.NomeResponsavel, cpf: campos.CPFResponsavel },

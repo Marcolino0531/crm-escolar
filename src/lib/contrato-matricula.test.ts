@@ -326,25 +326,46 @@ describe("montarCamposContrato — valores monetários", () => {
     expect(campos.AnoAtual).toBe("2026");
   });
 
-  it("sem desconto: 0% e 'Não há bolsa de desconto'", () => {
-    const c = montarCamposContrato(
-      entrada({
-        mensalidade: {
-          valor: 1500,
-          descontoPercentual: 0,
-          vencimento: "2026-10-05",
-          totalParcelas: 9,
-          primeiroMes: "abril",
-          ultimoMes: "dezembro",
-        },
-      }),
-    );
-    expect(c.PercentualDesconto).toBe("0");
+  it("sem desconto: MENSALIDADE sem 'desconto', com extenso, e sem 'Bolsa de desconto'", () => {
+    const semDesconto = entrada({
+      mensalidade: {
+        valor: 1500,
+        descontoPercentual: 0,
+        vencimento: "2026-10-05",
+        totalParcelas: 9,
+        primeiroMes: "abril",
+        ultimoMes: "dezembro",
+      },
+    });
+    const c = montarCamposContrato(semDesconto);
     expect(c.NumeroParcelasMensalidade).toBe("9");
     expect(c.PeriodoParcelasMensalidade).toBe("de abril a dezembro");
-    expect(c.ValorMensalidadeComDesconto).toBe("1.500,00");
-    expect(c.PercentualBolsaMensalidade).toBe("Não há bolsa de desconto");
     expect(c.DiaVencimentoMensalidade).toBe("5");
+
+    const doc = montarContratoMatricula(semDesconto);
+    const mensalidade = doc.paragrafos.filter((p) => p.texto.startsWith("MENSALIDADE:"));
+    expect(mensalidade.map((p) => p.texto)).toEqual([
+      "MENSALIDADE: 9 parcelas mensais, de abril a dezembro de 2027, no valor de R$1.500,00 (mil e quinhentos reais) cada, com vencimento todo dia 5 de cada mês.",
+    ]);
+    expect(mensalidade[0].texto).not.toMatch(/desconto/i);
+    expect(doc.paragrafos.some((p) => p.texto.startsWith("Bolsa de desconto"))).toBe(false);
+    const texto = doc.paragrafos.map((p) => p.texto).join("\n");
+    expect(texto).not.toMatch(/«|»/);
+    expect(texto).not.toContain("desconto de 0%");
+    expect(texto).not.toContain("Não há bolsa de desconto");
+  });
+
+  it("sem desconto: um parágrafo a menos que o contrato com desconto", () => {
+    const comDesconto = montarContratoMatricula(entrada());
+    const semDesconto = montarContratoMatricula(
+      entrada({ mensalidade: { ...entrada().mensalidade, descontoPercentual: 0 } }),
+    );
+    expect(comDesconto.paragrafos).toHaveLength(MODELO_CONTRATO.length);
+    expect(semDesconto.paragrafos).toHaveLength(MODELO_CONTRATO.length - 1);
+    expect(comDesconto.paragrafos).toContainEqual({
+      tipo: "paragrafo",
+      texto: "Bolsa de desconto: 30%.",
+    });
   });
 
   it("desconto fracionário arredonda em centavos", () => {
