@@ -11,15 +11,19 @@ import { MEALS, WEEKDAYS, type MealKey, type Weekday } from "@/lib/diario";
 import {
   DIAS_UTEIS,
   HORARIOS_PADRAO,
+  ajustarHorarioCurricular,
   diasAtivosRotina,
   formatarHora,
+  horarioDoTurno,
+  mensagemSemTurnoCoberto,
   segmentoDaSerie,
   selecionarPeriodo,
+  turnosCobertos,
   type ErrosForm,
   type HorarioDia,
   type RotinaForm,
 } from "@/lib/matricula-form";
-import { ROTULO_TURNO, TURNOS_TURMA, type TurnoTurma } from "@/lib/matricula-turma";
+import { ROTULO_TURNO, TURNOS_TURMA, serieBercario, type TurnoTurma } from "@/lib/matricula-turma";
 import {
   TODOS_OS_TURNOS,
   perguntaFrequenciaParcial,
@@ -63,16 +67,21 @@ export function RotinaEscolar({
   embutido?: boolean;
   onChange: (r: RotinaForm) => void;
 }) {
+  // Matrícula nova: o turno da turma acompanha os horários do Horário Estendido.
+  const mudar = (r: RotinaForm) =>
+    onChange(perguntarHorarioCurricular ? ajustarHorarioCurricular(r, serie) : r);
   const ativos = diasAtivosRotina(rotina);
   const padrao = HORARIOS_PADRAO[segmentoDaSerie(serie)];
   const mostrarFrequenciaParcial = !frequenciaParcialPorSerie || perguntaFrequenciaParcial(serie);
+  // Berçário: horário flexível, os dois turnos ficam livres.
+  const cobertos = serieBercario(serie) ? TURNOS_TURMA : turnosCobertos(rotina, serie);
   const refeicoes = MEALS.filter((meal) => meal.key !== "dinner" || serveJantar(serie));
 
   const definirHorario = (dia: Weekday, horario: HorarioDia) =>
-    onChange({ ...rotina, horarios: { ...rotina.horarios, [dia]: horario } });
+    mudar({ ...rotina, horarios: { ...rotina.horarios, [dia]: horario } });
 
   const alternarRefeicao = (meal: MealKey, dia: Weekday) =>
-    onChange({
+    mudar({
       ...rotina,
       refeicoes: { ...rotina.refeicoes, [meal]: alternar(rotina.refeicoes[meal], dia) },
     });
@@ -96,7 +105,7 @@ export function RotinaEscolar({
             className="sm:max-w-[220px]"
             value={rotina.dataInicio}
             aria-invalid={!!erros["rotina.dataInicio"]}
-            onChange={(e) => onChange({ ...rotina, dataInicio: e.target.value })}
+            onChange={(e) => mudar({ ...rotina, dataInicio: e.target.value })}
           />
           {erros["rotina.dataInicio"] && (
             <p data-erro className="text-xs text-destructive">
@@ -112,7 +121,7 @@ export function RotinaEscolar({
             <Checkbox
               className="mt-0.5"
               checked={rotina.frequenciaParcial}
-              onCheckedChange={(v) => onChange({ ...rotina, frequenciaParcial: v === true })}
+              onCheckedChange={(v) => mudar({ ...rotina, frequenciaParcial: v === true })}
             />
             O(A) aluno(a) não frequenta todos os dias úteis (segunda a sexta)
           </label>
@@ -126,7 +135,7 @@ export function RotinaEscolar({
                     <Checkbox
                       checked={rotina.diasSelecionados.includes(dia)}
                       onCheckedChange={() =>
-                        onChange({
+                        mudar({
                           ...rotina,
                           diasSelecionados: alternar(rotina.diasSelecionados, dia),
                         })
@@ -159,7 +168,7 @@ export function RotinaEscolar({
                 name="rotina-periodo"
                 className="size-4"
                 checked={rotina.periodoManha}
-                onChange={() => onChange(selecionarPeriodo(rotina, "manha"))}
+                onChange={() => mudar(selecionarPeriodo(rotina, "manha"))}
               />
               <span>
                 Manhã — <strong>{padrao.manha.entrada}</strong> às{" "}
@@ -174,7 +183,7 @@ export function RotinaEscolar({
                 name="rotina-periodo"
                 className="size-4"
                 checked={rotina.periodoTarde}
-                onChange={() => onChange(selecionarPeriodo(rotina, "tarde"))}
+                onChange={() => mudar(selecionarPeriodo(rotina, "tarde"))}
               />
               <span>
                 Tarde — <strong>{padrao.tarde.entrada}</strong> às{" "}
@@ -188,7 +197,7 @@ export function RotinaEscolar({
               name="rotina-periodo"
               className="mt-0.5 size-4"
               checked={rotina.horarioEstendido}
-              onChange={() => onChange(selecionarPeriodo(rotina, "estendido"))}
+              onChange={() => mudar(selecionarPeriodo(rotina, "estendido"))}
             />
             <span>
               Horário Estendido — entra antes ou sai depois dos horários acima
@@ -204,31 +213,46 @@ export function RotinaEscolar({
           )}
         </div>
 
-        {rotina.horarioEstendido && perguntarHorarioCurricular && (
+        {rotina.horarioEstendido && perguntarHorarioCurricular && cobertos !== null && (
           <div className="space-y-2 rounded-md border p-3">
             <p className="text-sm font-medium">Horário curricular</p>
-            <p className="text-xs text-muted-foreground">
-              Em qual turno o aluno assiste às aulas curriculares? É o turno da turma em que ele
-              será matriculado.
-            </p>
-            <div className="flex flex-wrap gap-4">
-              {TURNOS_TURMA.map((turno: TurnoTurma) => (
-                <label key={turno} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="rotina-horario-curricular"
-                    className="size-4"
-                    checked={rotina.horarioCurricular === turno}
-                    onChange={() => onChange({ ...rotina, horarioCurricular: turno })}
-                  />
-                  {ROTULO_TURNO[turno]}
-                </label>
-              ))}
-            </div>
-            {erros["rotina.horarioCurricular"] && (
-              <p data-erro className="text-xs text-destructive">
-                {erros["rotina.horarioCurricular"]}
+            {cobertos.length === 1 ? (
+              <p className="text-xs text-muted-foreground">
+                O aluno será matriculado na turma da {ROTULO_TURNO[cobertos[0]]}, porque fica no
+                colégio durante todo o horário de aulas desse turno (
+                {horarioDoTurno(serie, cobertos[0]).entrada} às{" "}
+                {horarioDoTurno(serie, cobertos[0]).saida}).
               </p>
+            ) : cobertos.length === 0 ? (
+              <p data-erro className="text-xs text-destructive">
+                {mensagemSemTurnoCoberto(rotina, serie)}
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Em qual turno o aluno assiste às aulas curriculares? É o turno da turma em que ele
+                  será matriculado.
+                </p>
+                <div className="flex flex-wrap gap-4">
+                  {TURNOS_TURMA.map((turno: TurnoTurma) => (
+                    <label key={turno} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="rotina-horario-curricular"
+                        className="size-4"
+                        checked={rotina.horarioCurricular === turno}
+                        onChange={() => mudar({ ...rotina, horarioCurricular: turno })}
+                      />
+                      {ROTULO_TURNO[turno]}
+                    </label>
+                  ))}
+                </div>
+                {erros["rotina.horarioCurricular"] && (
+                  <p data-erro className="text-xs text-destructive">
+                    {erros["rotina.horarioCurricular"]}
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
@@ -295,7 +319,7 @@ export function RotinaEscolar({
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={rotina.semRefeicoes}
-            onCheckedChange={(v) => onChange({ ...rotina, semRefeicoes: v === true })}
+            onCheckedChange={(v) => mudar({ ...rotina, semRefeicoes: v === true })}
           />
           Não vou contratar nenhuma refeição
         </label>

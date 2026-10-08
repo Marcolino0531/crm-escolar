@@ -172,9 +172,20 @@ describe("validarRotinaForm", () => {
       ],
     ).toBeDefined();
     expect(
-      validarRotinaForm(rotinaCompleta({ horarioCurricular: "M" }), INFANTIL, {
-        exigirHorarioCurricular: true,
-      }),
+      validarRotinaForm(
+        rotinaCompleta({
+          horarioCurricular: "M",
+          horarios: {
+            1: { entrada: "07:20", saida: "15:00" },
+            2: { entrada: "07:20", saida: "15:00" },
+            3: { entrada: "07:20", saida: "15:00" },
+            4: { entrada: "07:20", saida: "15:00" },
+            5: { entrada: "07:20", saida: "15:00" },
+          },
+        }),
+        INFANTIL,
+        { exigirHorarioCurricular: true },
+      ),
     ).toEqual({});
     // Fora do estendido a pergunta não existe.
     expect(

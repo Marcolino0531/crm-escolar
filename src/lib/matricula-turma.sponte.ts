@@ -16,6 +16,7 @@ import {
   escolherTurma,
   matriculaConfirmada,
   montarParametrosInsertMatricula,
+  serieBercario,
   textoPendenciaTurma,
   type CursoSponte,
   type StatusMatriculaTurma,
@@ -247,6 +248,7 @@ export async function matricularEmTurma(
       cursoId,
       turno: entrada.turno,
       anoLetivo: entrada.anoLetivo,
+      ignorarTurno: serieBercario(entrada.serie),
     });
     if (!turma) {
       return {

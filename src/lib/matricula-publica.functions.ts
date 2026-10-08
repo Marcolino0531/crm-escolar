@@ -41,6 +41,7 @@ import {
   validarMaterialForm,
   validarMatriculaCobrancaForm,
   validarMatriculaForm,
+  preencherHorarioCurricular,
   validarRotinaForm,
   validarSaudeForm,
   type DocumentoChave,
@@ -801,13 +802,16 @@ export const enviarMatriculaPublica = createServerFn({ method: "POST" })
     // Mesma validação da tela, agora do lado do servidor (a tela pode ser
     // burlada; o Sponte não pode receber lixo).
     const form = padronizarMatriculaForm(data.form as MatriculaForm);
-    const rotina = data.rotina as RotinaForm;
+    const rotinaEnviada = data.rotina as RotinaForm;
     const material = data.material as MaterialForm;
     const cobranca = (data.matriculaCobranca ??
       MATRICULA_COBRANCA_FORM_VAZIO) as MatriculaCobrancaForm;
     const saude = padronizarSaudeForm(data.saude as SaudeForm);
     const documentos = data.documentos as DocumentosForm;
     const serie = serieCalculada(form.aluno.dataNascimento, form.anoLetivo || undefined);
+    // Horário Estendido com um único turno cumprido inteiro: é o turno da turma,
+    // antes de validar, gravar e matricular.
+    const rotina = preencherHorarioCurricular(rotinaEnviada, serie);
     // O valor do material é lido do banco pela unidade + série do servidor: a
     // escolha do responsável só é exigida quando existe valor cadastrado.
     const hoje = hojeSaoPaulo();

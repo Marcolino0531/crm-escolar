@@ -8,6 +8,7 @@ import { z } from "zod";
 import { MEALS, WEEKDAYS } from "@/lib/diario";
 import { origemDocumentoTexto, rotuloDocumento } from "@/lib/matricula-documentos";
 import { CORES_RACAS, DOCUMENTOS_MATRICULA, PERGUNTAS_SAUDE } from "@/lib/matricula-form";
+import { ROTULO_TURNO } from "@/lib/matricula-turma";
 import { nomeInformadoDiferente } from "@/lib/matriculas-nome";
 import {
   dataBR,
@@ -301,6 +302,14 @@ function secaoRotina(rotina: RotinaSubmissao | null): SecaoDetalhe {
           campo("Início", dataDaFicha(rotina.dataInicio)),
           campo("Origem", rotina.origem),
           campo("Períodos", periodos.join(" · ")),
+          ...(rotina.horarioEstendido
+            ? [
+                campo(
+                  "Turno das aulas curriculares",
+                  rotina.horarioCurricular ? ROTULO_TURNO[rotina.horarioCurricular] : "",
+                ),
+              ]
+            : []),
           campo("Dias da semana", diasEmTexto(rotina.diasAtivos)),
         ],
       },
@@ -347,6 +356,7 @@ function secaoRotinaEmBranco(): SecaoDetalhe {
           campo("Início", "____/____/________"),
           campo("Origem", LINHA),
           campo("Períodos", marcar(["Manhã", "Tarde", "Horário estendido"])),
+          campo("Turno das aulas curriculares", marcar(["Manhã", "Tarde"])),
           campo("Dias da semana", marcar(dias)),
         ],
       },
