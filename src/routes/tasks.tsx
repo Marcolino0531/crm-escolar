@@ -163,7 +163,7 @@ function TasksPage() {
     queryFn: () =>
       selectAll<Task>(() =>
         supabase
-          .from("tasks" as any)
+          .from("tasks" as never)
           .select("*")
           .order("created_at", { ascending: false })
           .order("id", { ascending: true }),

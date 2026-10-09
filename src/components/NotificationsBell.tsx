@@ -341,7 +341,7 @@ export function NotificationsBell() {
       const [vRes, pRes] = await Promise.all([
         selectAll<unknown>(() =>
           supabase
-            .from("uniform_variants" as any)
+            .from("uniform_variants" as never)
             .select("id, store_key, ns_product_id, stock, min_stock, order_placed_at")
             .order("stock", { ascending: true })
             .order("id", { ascending: true }),
