@@ -129,37 +129,6 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     const { alvo, avisos } = unidadesSponte(filtro.unidades);
     if (alvo.length === 0) return { linhas: [], avisos };
 
-    const [config, escolhas, acessos, envios] = await Promise.all([
-      supabaseAdmin
-        .from("rematricula_config" as never)
-        .select("ano_letivo")
-        .maybeSingle(),
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select(
-          "id, unidade, aluno_id, serie, valor_anual, parcelas, valor_parcela, valor_primeira_parcela, ano_letivo, status, updated_at",
-        )
-        .in("unidade", alvo),
-      supabaseAdmin
-        .from("rematricula_acessos" as never)
-        .select("unidade, aluno_id")
-        .in("unidade", alvo),
-      supabaseAdmin
-        .from("rematricula_envios" as never)
-        .select("unidade, aluno_id")
-        .in("unidade", alvo),
-    ]);
-    if (escolhas.error) throw new Error(escolhas.error.message);
-    if (acessos.error) throw new Error(acessos.error.message);
-    if (envios.error) throw new Error(envios.error.message);
-
-    const anoConfigurado =
-      ((config.data ?? null) as unknown as { ano_letivo: number } | null)?.ano_letivo ?? null;
-    if (anoConfigurado === null) {
-      avisos.push('O "Ano Letivo de Referência" ainda não foi configurado no módulo Rematrícula.');
-    }
-    const anoAlvo = filtro.anoLetivo ?? anoConfigurado;
-
     type EscolhaRow = {
       id: string;
       unidade: string;
@@ -175,15 +144,50 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     };
     type AcessoRow = { unidade: string; aluno_id: string };
 
+    const [config, escolhas, acessos, envios] = await Promise.all([
+      supabaseAdmin
+        .from("rematricula_config" as never)
+        .select("ano_letivo")
+        .maybeSingle(),
+      selectAll<EscolhaRow>(() =>
+        supabaseAdmin
+          .from("rematricula_escolhas" as never)
+          .select(
+            "id, unidade, aluno_id, serie, valor_anual, parcelas, valor_parcela, valor_primeira_parcela, ano_letivo, status, updated_at",
+          )
+          .in("unidade", alvo)
+          .order("id", { ascending: true }),
+      ),
+      selectAll<AcessoRow>(() =>
+        supabaseAdmin
+          .from("rematricula_acessos" as never)
+          .select("unidade, aluno_id")
+          .in("unidade", alvo)
+          .order("unidade", { ascending: true })
+          .order("aluno_id", { ascending: true })
+          .order("ano_letivo", { ascending: true }),
+      ),
+      selectAll<AcessoRow>(() =>
+        supabaseAdmin
+          .from("rematricula_envios" as never)
+          .select("unidade, aluno_id")
+          .in("unidade", alvo)
+          .order("id", { ascending: true }),
+      ),
+    ]);
+
+    const anoConfigurado =
+      ((config.data ?? null) as unknown as { ano_letivo: number } | null)?.ano_letivo ?? null;
+    if (anoConfigurado === null) {
+      avisos.push('O "Ano Letivo de Referência" ainda não foi configurado no módulo Rematrícula.');
+    }
+    const anoAlvo = filtro.anoLetivo ?? anoConfigurado;
+
     const chave = (unidade: string, alunoId: string) => `${unidade}::${alunoId}`;
-    const acessou = new Set(
-      ((acessos.data ?? []) as unknown as AcessoRow[]).map((a) => chave(a.unidade, a.aluno_id)),
-    );
-    const enviou = new Set(
-      ((envios.data ?? []) as unknown as AcessoRow[]).map((e) => chave(e.unidade, e.aluno_id)),
-    );
+    const acessou = new Set(acessos.map((a) => chave(a.unidade, a.aluno_id)));
+    const enviou = new Set(envios.map((e) => chave(e.unidade, e.aluno_id)));
     const escolhaPorAluno = new Map<string, EscolhaAcompanhamento>();
-    for (const r of (escolhas.data ?? []) as unknown as EscolhaRow[]) {
+    for (const r of escolhas) {
       // Escolha de outro ano letivo não conta como resposta do ano consultado.
       if (anoAlvo !== null && r.ano_letivo !== null && r.ano_letivo !== anoAlvo) continue;
       escolhaPorAluno.set(chave(r.unidade, r.aluno_id), {
@@ -274,15 +278,17 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
         .in("modalidade_id", ids)
         .gte("mes_referencia", filtro.mesInicio)
         .lte("mes_referencia", filtro.mesFim),
-      supabaseAdmin
-        .from("esportes_matriculas" as never)
-        .select("modalidade_id, turma")
-        .is("cancelado_em", null)
-        .in("modalidade_id", ids),
+      selectAll<MatriculaRow>(() =>
+        supabaseAdmin
+          .from("esportes_matriculas" as never)
+          .select("modalidade_id, turma")
+          .is("cancelado_em", null)
+          .in("modalidade_id", ids)
+          .order("id", { ascending: true }),
+      ),
     ]);
     if (parceiros.error) throw new Error(parceiros.error.message);
     if (repasses.error) throw new Error(repasses.error.message);
-    if (matriculas.error) throw new Error(matriculas.error.message);
 
     const nomeParceiro = new Map(
       ((parceiros.data ?? []) as unknown as ParceiroRow[]).map((p) => [p.id, p.nome]),
@@ -308,7 +314,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     // Quantidade de alunos por turma/modalidade: só a contagem sai daqui, nunca
     // as matrículas individuais.
     const contagem = new Map<string, TurmaEsporteIA>();
-    for (const m of (matriculas.data ?? []) as unknown as MatriculaRow[]) {
+    for (const m of matriculas) {
       const modalidade = porId.get(m.modalidade_id);
       if (!modalidade) continue;
       const turma = m.turma || "—";
@@ -457,15 +463,17 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     tipo?: TipoDocumentoIA;
   }): Promise<DocumentoEmitidoIA[]> {
     if (filtro.unidades.length === 0) return [];
-    let query = supabaseAdmin
-      .from("documentos_recibos" as never)
-      .select("unidade, tipo, data_recibo, valor_total")
-      .in("unidade", filtro.unidades)
-      .gte("data_recibo", filtro.dataInicio)
-      .lte("data_recibo", filtro.dataFim);
-    if (filtro.tipo) query = query.eq("tipo", filtro.tipo);
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
+    const data = await selectAll<unknown>(() => {
+      let query = supabaseAdmin
+        .from("documentos_recibos" as never)
+        .select("unidade, tipo, data_recibo, valor_total")
+        .in("unidade", filtro.unidades)
+        .gte("data_recibo", filtro.dataInicio)
+        .lte("data_recibo", filtro.dataFim)
+        .order("id", { ascending: true });
+      if (filtro.tipo) query = query.eq("tipo", filtro.tipo);
+      return query;
+    });
 
     type Linha = {
       unidade: string;
@@ -479,7 +487,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
       "declaracao_ir",
       "termo_confissao_divida",
     ];
-    return ((data ?? []) as unknown as Linha[])
+    return (data as Linha[])
       .filter((r): r is Linha => tipos.includes(r.tipo as TipoDocumentoIA))
       .map((r) => ({
         unidade: r.unidade,
@@ -498,16 +506,17 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     if (filtro.unidades.length === 0) return { submissoes: [], ativos: [], avisos: [] };
 
     // O payload da submissão (nome, CPF, telefone, endereço) nunca é lido aqui.
-    const { data, error } = await supabaseAdmin
-      .from("enrollment_submissions" as never)
-      .select("unidade, status, created_at")
-      .in("unidade", filtro.unidades)
-      .gte("created_at", inicioDoDia(filtro.dataInicio))
-      .lte("created_at", fimDoDia(filtro.dataFim));
-    if (error) throw new Error(error.message);
-
     type Linha = { unidade: string | null; status: string; created_at: string };
-    const submissoes = ((data ?? []) as unknown as Linha[]).map((r) => ({
+    const data = await selectAll<Linha>(() =>
+      supabaseAdmin
+        .from("enrollment_submissions" as never)
+        .select("unidade, status, created_at")
+        .in("unidade", filtro.unidades)
+        .gte("created_at", inicioDoDia(filtro.dataInicio))
+        .lte("created_at", fimDoDia(filtro.dataFim))
+        .order("id", { ascending: true }),
+    );
+    const submissoes = data.map((r) => ({
       unidade: r.unidade ?? "—",
       status: r.status,
       data: diaBRT(r.created_at),
@@ -667,13 +676,15 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
         .in("school_id", ids)
         .gte("reference_month", filtro.mesInicio)
         .lte("reference_month", filtro.mesFim),
-      supabaseAdmin
-        .from("funcionarios" as never)
-        .select("school_id, data_rescisao")
-        .in("school_id", ids),
+      selectAll<FuncionarioRow>(() =>
+        supabaseAdmin
+          .from("funcionarios" as never)
+          .select("school_id, data_rescisao")
+          .in("school_id", ids)
+          .order("id", { ascending: true }),
+      ),
     ]);
     if (lotes.error) throw new Error(lotes.error.message);
-    if (funcionarios.error) throw new Error(funcionarios.error.message);
 
     const contracheques: ContrachequeEnvioIA[] = [];
     for (const r of payslips) {
@@ -694,7 +705,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     }
 
     const ativosPorEscola = new Map<string, number>();
-    for (const f of (funcionarios.data ?? []) as unknown as FuncionarioRow[]) {
+    for (const f of funcionarios) {
       if (f.data_rescisao) continue;
       ativosPorEscola.set(f.school_id, (ativosPorEscola.get(f.school_id) ?? 0) + 1);
     }

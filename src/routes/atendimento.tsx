@@ -42,6 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
+import { lerUsoIaDoMes } from "@/lib/supabase-leituras";
 import {
   enviarMensagemChat,
   enviarMidiaChat,
@@ -49,7 +50,7 @@ import {
 } from "@/lib/atendimento.functions";
 import { gerarSugestaoResposta, registrarEnvioDaSugestao } from "@/lib/atendimento-ia.functions";
 import { salvarExemploTreinamento } from "@/lib/atendimento-ia-exemplos.functions";
-import { competenciaDeIso, contarSugestoesDoMes, edicaoSignificativa } from "@/lib/atendimento-ia";
+import { edicaoSignificativa } from "@/lib/atendimento-ia";
 import { displayPhoneBR } from "@/lib/phone";
 import { carregarCodificadorMp3, gravacaoParaMp3 } from "@/lib/audio-mp3";
 import { AcaoPausarCobranca } from "@/components/cobranca/PausaComprovante";
@@ -137,24 +138,11 @@ function useUsoIaDoMes(ativo: boolean) {
     queryKey: ["atendimento-ia-uso"],
     enabled: ativo,
     queryFn: async () => {
-      const desde = new Date(Date.now() - 62 * 24 * 60 * 60 * 1000).toISOString();
-      const { data, error } = await supabase
-        .from("ai_suggestions" as never)
-        .select("gerado_em, tokens_entrada, tokens_saida")
-        .gte("gerado_em", desde)
-        .limit(2000);
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as unknown as {
-        gerado_em: string;
-        tokens_entrada: number;
-        tokens_saida: number;
-      }[];
-      const competencia = competenciaDeIso(new Date().toISOString());
-      const doMes = rows.filter((r) => competenciaDeIso(r.gerado_em) === competencia);
+      const { competencia, total, tokens } = await lerUsoIaDoMes();
       return {
         competencia,
-        total: contarSugestoesDoMes(rows, competencia),
-        tokens: doMes.reduce((s, r) => s + (r.tokens_entrada ?? 0) + (r.tokens_saida ?? 0), 0),
+        total,
+        tokens,
       };
     },
   });

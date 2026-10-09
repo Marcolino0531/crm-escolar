@@ -6,6 +6,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Plus, Trash2, CreditCard, ArrowRightLeft, Search, Loader2, User } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { lerRecebiveisCartao } from "@/lib/supabase-leituras";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
 import { parseBRLNumber, formatBRLInput } from "@/lib/currency";
@@ -101,18 +102,11 @@ function CartaoPage() {
   const { data: receivables = [], isLoading } = useQuery({
     queryKey: ["credit_card_receivables", schoolFilterIds ?? "all"],
     refetchInterval: 60000,
-    queryFn: async () => {
-      let rq = supabase
-        .from("credit_card_receivables" as never)
-        .select(
-          "id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status, unit_id, aluno_id, aluno_nome",
-        )
-        .order("data_disponibilidade", { ascending: true });
-      if (schoolFilterIds) rq = rq.in("unit_id", schoolFilterIds as never);
-      const { data, error } = await rq;
-      if (error) throw error;
-      return (data ?? []) as unknown as Receivable[];
-    },
+    queryFn: () =>
+      lerRecebiveisCartao<Receivable>(
+        "id, data_pagamento, data_disponibilidade, valor_bruto, valor_liquido, status, unit_id, aluno_id, aluno_nome",
+        schoolFilterIds ?? null,
+      ),
   });
 
   const create = useMutation({

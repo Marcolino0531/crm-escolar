@@ -44,14 +44,14 @@ export async function handleReceivablesApi(request: Request): Promise<Response |
     }
     try {
       const today = todayISO();
-      const { data, error } = await supabaseAdmin
+      // Contagem feita no banco: devolver as linhas atualizadas cortaria em 1000.
+      const { count, error } = await supabaseAdmin
         .from("credit_card_receivables" as never)
-        .update({ status: "disponivel" } as never)
+        .update({ status: "disponivel" } as never, { count: "exact" })
         .eq("status", "aguardando")
-        .lte("data_disponibilidade", today)
-        .select("id");
+        .lte("data_disponibilidade", today);
       if (error) throw new Error(error.message);
-      const liberados = (data ?? []).length;
+      const liberados = count ?? 0;
       console.log(`[receivables] cron: ${liberados} recebível(is) liberado(s) em ${today}`);
       // Acordos da Cobrança: releitura diária das parcelas "Acordo" no Sponte.
       // Falha aqui não derruba o flip dos recebíveis.

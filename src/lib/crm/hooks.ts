@@ -201,10 +201,15 @@ export function useOnboarding() {
   const { data: alunos = [], isLoading } = useQuery({
     queryKey: ["onboarding", selected, schoolFilterIds],
     queryFn: async () => {
-      let q = supabase.from("onboarding").select("*").order("created_at", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data, error } = await q;
-      if (error) throw error;
+      const data = await selectAll<Tables<"onboarding">>(() => {
+        let q = supabase
+          .from("onboarding")
+          .select("*")
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
       return data.map(rowToOnboarding);
     },
   });

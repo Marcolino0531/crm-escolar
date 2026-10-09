@@ -13,6 +13,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { lerLancamentosFundos } from "@/lib/supabase-leituras";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { escolaAtivaId, unidadeAtiva } from "@/lib/unidade-global";
 import { SelecioneUnidade } from "@/components/SelecioneUnidade";
@@ -134,15 +135,7 @@ function FundosPage() {
   const { data: entries = [], isLoading: loadingEntries } = useQuery({
     queryKey: ["provision_fund_entries", fundIds.join(",")],
     enabled: fundIds.length > 0,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("provision_fund_entries" as any)
-        .select("*")
-        .in("fund_id", fundIds)
-        .order("competencia", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as unknown as FundEntry[];
-    },
+    queryFn: () => lerLancamentosFundos<FundEntry>(fundIds),
   });
 
   // ---- Computed data ----

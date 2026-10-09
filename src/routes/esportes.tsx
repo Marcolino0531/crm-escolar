@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/table";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { supabase } from "@/integrations/supabase/client";
+import { contarMatriculasAtivasPorModalidade } from "@/lib/supabase-leituras";
 import { buscarAlunosSponte, type AlunoBuscaSponte } from "@/lib/sponte.functions";
 import { fetchArrecadacaoModalidade, fetchParcelasModalidade } from "@/lib/esportes.functions";
 import {
@@ -383,18 +384,7 @@ function ConsolidadoUnidades({ modalidades }: { modalidades: Modalidade[] }) {
 
   const { data: matriculasPorModalidade = {} } = useQuery({
     queryKey: ["esportes_matriculas_contagem"],
-    queryFn: async (): Promise<Record<string, number>> => {
-      const { data, error } = await supabase
-        .from("esportes_matriculas" as never)
-        .select("modalidade_id")
-        .is("cancelado_em", null);
-      if (error) throw new Error(error.message);
-      const contagem: Record<string, number> = {};
-      for (const row of (data ?? []) as unknown as { modalidade_id: string }[]) {
-        contagem[row.modalidade_id] = (contagem[row.modalidade_id] ?? 0) + 1;
-      }
-      return contagem;
-    },
+    queryFn: contarMatriculasAtivasPorModalidade,
   });
 
   if (grupos.length === 0)

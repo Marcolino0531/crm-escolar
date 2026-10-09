@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -253,11 +254,14 @@ function FluxoFuturoPage() {
     if (schoolId === "all" || !isAdmin) return;
     let cancelled = false;
     (async () => {
-      const { data: series } = await supabase
-        .from("recurring_series")
-        .select("*")
-        .eq("school_id", schoolId)
-        .lte("start_month", month);
+      const series = await selectAll<Series>(() =>
+        supabase
+          .from("recurring_series")
+          .select("*")
+          .eq("school_id", schoolId)
+          .lte("start_month", month)
+          .order("id", { ascending: true }),
+      ).catch(() => null);
       if (cancelled || !series) return;
       const monthNum = calendarMonthOf(month);
       const active = (series as Series[]).filter(
