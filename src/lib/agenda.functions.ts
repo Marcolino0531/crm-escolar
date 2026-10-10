@@ -23,6 +23,7 @@ async function assertCanEditAgenda(userId: string) {
 export const listAgendaUsers = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AgendaUser[]> => {
+    // escopo-unidade: diretório de usuários, sem dado de colégio
     await assertCanEditAgenda(context.userId);
     const { data, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 200 });
     if (error) throw new Error(error.message);

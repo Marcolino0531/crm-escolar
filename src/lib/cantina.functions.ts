@@ -94,6 +94,7 @@ async function statusPortal(): Promise<StatusPortalResult> {
 // Consultada pela página pública para decidir se mostra o formulário — sem
 // autenticação, porque precede o login.
 export const statusPortalCantina = createServerFn({ method: "GET" }).handler(
+  // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
   async (): Promise<StatusPortalResult> => statusPortal(),
 );
 
@@ -263,6 +264,7 @@ async function autenticarPortal(cpf: string, senha: string): Promise<LoginPortal
 export const loginPortalCantina = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => LoginInputSchema.parse(input))
   .handler(async ({ data }): Promise<LoginPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     // Fora da janela do calendário o portal não autentica: quem já estava
     // logado no navegador também para aqui.
     const status = await statusPortal();
@@ -297,6 +299,7 @@ const JANELA_IDEMPOTENCIA_MS = 5 * 60 * 1000;
 export const solicitarRecargaCantina = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarInputSchema.parse(input))
   .handler(async ({ data }): Promise<SolicitarRecargaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const status = await statusPortal();
     if (!status.aberto) return { ok: false, erro: status.mensagem };
 
@@ -385,6 +388,7 @@ export const salvarJanelaPortalCantina = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => JanelaInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
+    // escopo-unidade: configuração global, sem colégio
     const nome = await assertPodeEditarCantina(context.userId);
     if (!mmddValido(data.abertura) || !mmddValido(data.fechamento)) {
       return { ok: false, erro: "Informe as datas no formato MM-DD (ex.: 02-01 e 11-25)." };
@@ -411,6 +415,7 @@ export const obterJanelaPortalCantina = createServerFn({ method: "GET" })
   .handler(async (): Promise<StatusPortalResult> => statusPortal());
 
 interface RecargaRow {
+  // escopo-unidade: configuração global, sem colégio
   id: string;
   unidade: string;
   aluno_id: string;

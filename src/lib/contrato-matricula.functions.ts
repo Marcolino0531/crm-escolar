@@ -1307,6 +1307,7 @@ export interface RegistrarWebhookProducaoResult {
 export const registrarWebhookContratos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<RegistrarWebhookProducaoResult> => {
+    // escopo-unidade: configuração global, sem colégio
     const nomeUsuario = await exigirPermissaoContratos(context.userId, true);
     if (await webhookProducaoRegistrado()) return { ok: true, jaExistia: true };
     const url = `${BASE_URL_PORTAL}/api/zapsign/webhook`;

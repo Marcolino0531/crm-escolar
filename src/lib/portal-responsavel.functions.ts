@@ -180,6 +180,7 @@ export interface SolicitarLinkPortalResult {
 export const solicitarLinkPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarLinkSchema.parse(input))
   .handler(async ({ data }): Promise<SolicitarLinkPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const cpf = normalizarCpf(data.cpf);
     const naoLocalizado = { ok: false, mensagem: MENSAGEM_CPF_NAO_LOCALIZADO };
     if (!cpfValido(cpf)) return naoLocalizado;
@@ -307,6 +308,7 @@ interface LinkRow {
 export const validarLinkPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<ValidarLinkPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const agora = new Date().toISOString();
     const linkHash = hashLink(data.token);
     const { data: linha } = await supabaseAdmin
@@ -405,6 +407,7 @@ export interface DadosSessaoPortalResult {
 export const dadosSessaoPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<DadosSessaoPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
     return { ok: true, sessao };
@@ -451,6 +454,7 @@ export interface BoletosPortalResult {
 export const listarBoletosPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => AlunoSessaoSchema.parse(input))
   .handler(async ({ data }): Promise<BoletosPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await exigirAlunoDaSessao(data);
     const aluno = sessao.alunos.find(
       (a) => a.unidade === data.unidade && a.alunoId === data.alunoId,
@@ -530,6 +534,7 @@ interface DocRow {
 export const listarContratosPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => AlunoSessaoSchema.parse(input))
   .handler(async ({ data }): Promise<ContratosPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     await exigirAlunoDaSessao(data);
 
     const { data: contratos } = await supabaseAdmin
@@ -665,6 +670,7 @@ export interface DeclaracaoDebitosPortalResult {
 export const gerarDeclaracaoDebitosPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => AlunoSessaoSchema.parse(input))
   .handler(async ({ data }): Promise<DeclaracaoDebitosPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     await exigirAlunoDaSessao(data);
     const col = await colegioDaUnidade(data.unidade);
     if (!col || !col.colegio.razaoSocial.trim() || !col.colegio.cnpj.trim()) {
@@ -753,6 +759,7 @@ export interface DeclaracaoIRPortalResult {
 export const gerarDeclaracaoIRPortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => DeclaracaoIRSchema.parse(input))
   .handler(async ({ data }): Promise<DeclaracaoIRPortalResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     await exigirAlunoDaSessao(data);
     const col = await colegioDaUnidade(data.unidade);
     if (!col || !col.colegio.razaoSocial.trim() || !col.colegio.cnpj.trim()) {
@@ -843,6 +850,7 @@ export const gerarDeclaracaoIRPortal = createServerFn({ method: "POST" })
 export const logoUnidadePortal = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => AlunoSessaoSchema.parse(input))
   .handler(async ({ data }): Promise<{ logoUrl: string }> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     await exigirAlunoDaSessao(data);
     const col = await colegioDaUnidade(data.unidade);
     return { logoUrl: col?.logoUrl ?? "" };

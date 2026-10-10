@@ -211,6 +211,7 @@ export const criarTemplateTeste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => CriarTemplateSchema.parse(input))
   .handler(async ({ data, context }) => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirEdicaoDocumentos(context.userId);
     const limpo = data.docxBase64.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
     const bytes = Buffer.from(limpo, "base64");
@@ -316,6 +317,7 @@ export const registrarWebhookTeste = createServerFn({ method: "POST" })
     z.object({ ambiente: AmbienteSchema, baseUrl: z.string().url().max(300) }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    // escopo-unidade: configuração global, sem colégio
     const autor = await exigirEdicaoDocumentos(context.userId);
     const url = `${data.baseUrl.replace(/\/+$/, "")}/api/zapsign/webhook`;
     const r = await criarWebhook(url, data.ambiente);

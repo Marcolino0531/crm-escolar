@@ -598,6 +598,7 @@ export interface SolicitarLinkResult {
 export const solicitarLinkRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarLinkSchema.parse(input))
   .handler(async ({ data }): Promise<SolicitarLinkResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const cpf = normalizarCpf(data.cpf);
     if (!cpfValido(cpf)) {
       return { ok: false, mensagem: "Informe os 11 dígitos do CPF do aluno." };
@@ -739,6 +740,7 @@ export interface ValidarLinkResult {
 export const validarLinkRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ValidarLinkSchema.parse(input))
   .handler(async ({ data }): Promise<ValidarLinkResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const agora = new Date().toISOString();
     const linkHash = hashLink(data.token);
 
@@ -1018,6 +1020,7 @@ export async function itensMaterialDaSerie(
 export const dadosRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<DadosRematricula> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1149,6 +1152,7 @@ export interface DefinirFinanceiroResult {
 export const definirResponsavelFinanceiroRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => DefinirFinanceiroSchema.parse(input))
   .handler(async ({ data }): Promise<DefinirFinanceiroResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1202,6 +1206,7 @@ export interface SalvarEscolhaResult {
 export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => EscolhaSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarEscolhaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
     if (!parcelasMaterialValida(data.parcelas)) {
@@ -1397,6 +1402,7 @@ export function submissionIdRematricula(
 export const rotinaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<RotinaRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1469,6 +1475,7 @@ export interface SalvarRotinaRematriculaResult {
 export const salvarRotinaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SalvarRotinaSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarRotinaRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1548,6 +1555,7 @@ export interface SaudeRematriculaResult {
 export const saudeRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<SaudeRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1594,6 +1602,7 @@ export interface SalvarSaudeRematriculaResult {
 export const salvarSaudeRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SalvarSaudeSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarSaudeRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1658,6 +1667,7 @@ export interface FinalizarRematriculaResult {
 export const finalizarRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => FinalizarSchema.parse(input))
   .handler(async ({ data }): Promise<FinalizarRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1902,6 +1912,7 @@ async function gravarAuditoriaCadastro(linhas: AuditoriaCadastro[]): Promise<voi
 export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SincronizarCadastroSchema.parse(input))
   .handler(async ({ data }): Promise<SincronizarCadastroResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -2117,6 +2128,7 @@ export interface CampanhaPublica {
 export const campanhaPublicaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ ano: z.string().optional() }).parse(input))
   .handler(async ({ data }): Promise<CampanhaPublica> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const anosAbertos = await anosCampanhasAbertas();
     if (data.ano === undefined) {
       return {
@@ -2170,6 +2182,7 @@ export interface AnosLetivosDiario {
 export const anosLetivosDiario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<AnosLetivosDiario> => {
+    // escopo-unidade: configuração global, sem colégio
     const [anoVigente, anoRematricula] = await Promise.all([
       anoVigenteConfigurado(),
       anoLetivoConfigurado(),
@@ -2181,6 +2194,7 @@ export const salvarAnoVigenteDiario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoVigente: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoVigente)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2488,6 +2502,7 @@ async function pendenciasDaCampanha(anoLetivo: number): Promise<PendenciasCampan
 export const listarCampanhasRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<CampanhaConfig[]> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, false);
     const campanhas = await listarCampanhas();
     return Promise.all(
@@ -2500,6 +2515,7 @@ export const prepararCampanhaRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoLetivo: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2524,6 +2540,7 @@ export const alterarCampanhaRematricula = createServerFn({ method: "POST" })
     z.object({ anoLetivo: z.number().int(), aberta: z.boolean() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     const campanha = await campanhaDoAno(data.anoLetivo);
     if (!campanha) throw new Error(`A campanha de ${data.anoLetivo} não existe.`);
