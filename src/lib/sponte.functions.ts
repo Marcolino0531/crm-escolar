@@ -37,6 +37,7 @@ import {
 } from "@/lib/diario-sync";
 import { planejarSincronizacaoPedagogico, type MatriculaAnoRow } from "@/lib/pedagogico";
 import { selectAll } from "@/lib/supabase-paginate";
+import { unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 import {
   planejarRotinasNoDiario,
   type AlunoDiarioRotina,
@@ -3128,7 +3129,7 @@ export interface StatusSemanaColoniaResult {
 
 // Restringe as unidades às que o usuário realmente enxerga (admin vê todas).
 async function filtrarEscolasPermitidas(userId: string, schoolIds: string[]): Promise<string[]> {
-  const allowed = await allowedSponteUnidades(userId);
+  const allowed = await unidadesDoUsuario(userId);
   if (allowed === null) return schoolIds;
   // leitura-restrita: configuração: tabela de colégios
   const { data: escolas } = await supabaseAdmin

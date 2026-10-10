@@ -85,6 +85,7 @@ import { rotuloDocumento } from "@/lib/matricula-documentos";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { BUCKET_ZAPSIGN_ASSINADOS, guardarArquivoAssinado } from "@/lib/zapsign.arquivo";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 
 const VALIDADE_LINK = 60 * 60; // 1h
 const LOG = "[cobrança manual]";
@@ -106,9 +107,7 @@ export async function exigirPermissao(userId: string, edicao: boolean): Promise<
 }
 
 export async function exigirUnidade(userId: string, unidade: string): Promise<void> {
-  const allowed = await allowedSponteUnidades(userId);
-  if (allowed !== null && !allowed.includes(unidade))
-    throw new Error("Sem permissão para esta unidade.");
+  await exigirUnidadeDoUsuario(userId, unidade);
 }
 
 export function hojeYMD(): string {
