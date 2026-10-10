@@ -7,7 +7,13 @@
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { onlyDigits } from "@/lib/phone";
-import { escolherConversaDoNumero, grupoDaUnidade, type NumeroGrupo } from "@/lib/whatsapp-numeros";
+import {
+  acrescentarUnidadeDaConversa,
+  escolherConversaDoNumero,
+  grupoDaConversa,
+  grupoDaUnidade,
+  type NumeroGrupo,
+} from "@/lib/whatsapp-numeros";
 import { getNumerosPublicos, getWhatsAppSendConfigDoGrupo } from "@/lib/whatsapp.server";
 
 export interface VinculoAluno {
@@ -32,6 +38,7 @@ export interface ConversaMatch {
   phone_number_id: string | null;
   numero_grupo: string | null;
   unidade: string | null;
+  unidades: string[] | null;
 }
 
 // Localiza a conversa de um telefone tolerando o 9º dígito e o DDI que a Meta
@@ -47,7 +54,7 @@ export async function findConversaBySuffix(
   // limite-intencional: busca por telefone, 10 conversas mais recentes
   const { data } = await supabaseAdmin
     .from("whatsapp_conversations" as never)
-    .select("id, aluno_id, aluno_name, phone_number_id, numero_grupo, unidade")
+    .select("id, aluno_id, aluno_name, phone_number_id, numero_grupo, unidade, unidades")
     .ilike("wa_phone", `%${suffix}%`)
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(10);
@@ -65,7 +72,7 @@ async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<strin
   const atual = await findConversaBySuffix(waPhone, phoneNumberId);
 
   if (atual) {
-    const patch: Record<string, string | null> = {};
+    const patch: Record<string, string | string[] | null> = {};
     if (!atual.aluno_id && v.aluno_id) {
       patch.aluno_id = v.aluno_id;
       patch.aluno_name = v.aluno_name;
@@ -76,6 +83,13 @@ async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<strin
       patch.phone_number_id = phoneNumberId;
       patch.numero_grupo = grupo;
     }
+    // A cada disparo, o colégio do aluno entra nos colégios da conversa.
+    const grupoConversa = grupoDaConversa({
+      numero_grupo: atual.numero_grupo ?? grupo,
+      unidade: atual.unidade,
+    });
+    const unidades = acrescentarUnidadeDaConversa(atual.unidades, v.unidade, grupoConversa);
+    if (unidades !== (atual.unidades ?? [])) patch.unidades = unidades;
     if (Object.keys(patch).length > 0) {
       await supabaseAdmin
         .from("whatsapp_conversations" as never)
@@ -94,6 +108,11 @@ async function garantirConversa(waPhone: string, v: VinculoAluno): Promise<strin
       aluno_name: v.aluno_name,
       responsavel_name: v.responsavel_name,
       unidade: v.unidade,
+      unidades: acrescentarUnidadeDaConversa(
+        [],
+        v.unidade,
+        grupoDaConversa({ numero_grupo: grupo, unidade: v.unidade }),
+      ),
       phone_number_id: phoneNumberId,
       numero_grupo: grupo,
     } as never)

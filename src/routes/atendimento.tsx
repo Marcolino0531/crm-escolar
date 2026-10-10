@@ -95,6 +95,8 @@ type Conversation = {
   unidade: string;
   // Número da escola por onde a conversa é atendida (null nas conversas antigas).
   numero_grupo: string | null;
+  // Colégios da família (um número atende dois colégios).
+  unidades: string[] | null;
   last_message_at: string | null;
   last_message_preview: string;
   last_message_direction: "in" | "out";
@@ -208,7 +210,7 @@ function AtendimentoPage() {
         const { data, error } = await supabase
           .from("whatsapp_conversations" as never)
           .select(
-            "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, numero_grupo, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
+            "id, wa_phone, contact_name, aluno_id, aluno_name, responsavel_name, unidade, unidades, numero_grupo, last_message_at, last_message_preview, last_message_direction, unread_count, archived",
           )
           .order("last_message_at", { ascending: false, nullsFirst: false })
           .order("id", { ascending: true })

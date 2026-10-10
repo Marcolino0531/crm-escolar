@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  acrescentarUnidadeDaConversa,
   conversaVisivelNaUnidade,
   escolherConversaDoNumero,
   grupoDaConversa,
@@ -130,11 +131,25 @@ describe("conversaVisivelNaUnidade", () => {
   const doCec = { numero_grupo: "cec", unidade: "CEC" };
   const doBelvedere = { numero_grupo: "belvedere", unidade: "Núcleo Belvedere" };
 
-  it("mostra somente as conversas do número da unidade selecionada", () => {
-    expect(conversaVisivelNaUnidade(doCec, "CEC Baby")).toBe(true);
+  it("mostra somente as conversas dos colégios da família", () => {
+    expect(conversaVisivelNaUnidade(doCec, "CEC Baby")).toBe(false);
     expect(conversaVisivelNaUnidade(doBelvedere, "CEC Baby")).toBe(false);
-    expect(conversaVisivelNaUnidade(doBelvedere, "Núcleo Vale do Sereno")).toBe(true);
+    expect(conversaVisivelNaUnidade(doBelvedere, "Núcleo Vale do Sereno")).toBe(false);
     expect(conversaVisivelNaUnidade(doCec, "Núcleo Vale do Sereno")).toBe(false);
+  });
+
+  it("família nos dois colégios do número aparece nos dois", () => {
+    const familia = { numero_grupo: "cec", unidade: "CEC", unidades: ["CEC", "CEC Baby"] };
+    expect(conversaVisivelNaUnidade(familia, "CEC")).toBe(true);
+    expect(conversaVisivelNaUnidade(familia, "CEC Baby")).toBe(true);
+    expect(conversaVisivelNaUnidade(familia, "Núcleo Belvedere")).toBe(false);
+  });
+
+  it("conversa sem colégio aparece nas unidades do grupo do número", () => {
+    const semAluno = { numero_grupo: "belvedere", unidade: "", unidades: [] };
+    expect(conversaVisivelNaUnidade(semAluno, "Núcleo Belvedere")).toBe(true);
+    expect(conversaVisivelNaUnidade(semAluno, "Núcleo Vale do Sereno")).toBe(true);
+    expect(conversaVisivelNaUnidade(semAluno, "CEC")).toBe(false);
   });
 
   it("não filtra em Todas as Unidades", () => {
@@ -145,5 +160,20 @@ describe("conversaVisivelNaUnidade", () => {
   it("mantém conversa legada visível no número do CEC", () => {
     expect(conversaVisivelNaUnidade({}, "CEC")).toBe(true);
     expect(conversaVisivelNaUnidade({}, "Núcleo Belvedere")).toBe(false);
+  });
+});
+
+describe("acrescentarUnidadeDaConversa", () => {
+  it("acrescenta o colégio do aluno sem duplicar e sem remover", () => {
+    expect(acrescentarUnidadeDaConversa([], "CEC", "cec")).toEqual(["CEC"]);
+    expect(acrescentarUnidadeDaConversa(["CEC"], "CEC Baby", "cec")).toEqual(["CEC", "CEC Baby"]);
+    const atuais = ["CEC"];
+    expect(acrescentarUnidadeDaConversa(atuais, "CEC", "cec")).toBe(atuais);
+  });
+
+  it("ignora colégio vazio, desconhecido ou de outro número", () => {
+    expect(acrescentarUnidadeDaConversa(null, "", "cec")).toEqual([]);
+    expect(acrescentarUnidadeDaConversa(["CEC"], "Colégio X", "cec")).toEqual(["CEC"]);
+    expect(acrescentarUnidadeDaConversa(["CEC"], "Núcleo Belvedere", "cec")).toEqual(["CEC"]);
   });
 });
