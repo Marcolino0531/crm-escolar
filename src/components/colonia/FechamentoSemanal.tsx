@@ -25,7 +25,7 @@ import {
 import { toast } from "sonner";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAllResult } from "@/lib/supabase-paginate";
 import { useSchool } from "@/lib/app-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -424,14 +424,17 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     queryKey: ["colonia_invoices", schoolKey, weekStartYMD],
     enabled: canFaturar,
     queryFn: async () => {
-      let q = supabase
-        .from("holiday_camp_invoices" as never)
-        .select(
-          "student_id, school_id, amount, due_date, sponte_aluno_id, sponte_conta_receber_id, manual_settlement",
-        )
-        .eq("week_start", weekStartYMD);
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
-      const { data, error } = await q;
+      const { data, error } = await selectAllResult<unknown>(() => {
+        let q = supabase
+          .from("holiday_camp_invoices" as never)
+          .select(
+            "student_id, school_id, amount, due_date, sponte_aluno_id, sponte_conta_receber_id, manual_settlement",
+          )
+          .eq("week_start", weekStartYMD)
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds as never);
+        return q;
+      });
       if (error) throw error;
       return (data ?? []).map((r) => {
         const row = r as {
@@ -519,6 +522,7 @@ export function FechamentoSemanal({ schoolFilterIds, canEdit, canFaturar = false
     queryKey: ["colonia_status_semana", schoolKey, weekStartYMD],
     enabled: canFaturar,
     queryFn: async () => {
+      // leitura-restrita: filtrada por week_start (uma linha por colégio)
       let q = supabase
         .from("holiday_camp_week_status" as never)
         .select("school_id, status")

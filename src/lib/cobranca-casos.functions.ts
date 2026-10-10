@@ -147,6 +147,7 @@ export async function carregarCasoRow(casoId: string): Promise<CasoCompleto> {
 }
 
 async function carregarMensagens(casoId: string): Promise<MensagemCaso[]> {
+  // leitura-restrita: filtrada por caso_id
   const { data, error } = await supabaseAdmin
     .from("cobranca_mensagens" as never)
     .select(
@@ -160,6 +161,7 @@ async function carregarMensagens(casoId: string): Promise<MensagemCaso[]> {
 }
 
 async function carregarAnexos(casoId: string): Promise<AnexoCaso[]> {
+  // leitura-restrita: filtrada por caso_id
   const { data, error } = await supabaseAdmin
     .from("cobranca_anexos" as never)
     .select(
@@ -1220,6 +1222,7 @@ export const documentosMatriculaDoCaso = createServerFn({ method: "POST" })
     await exigirUnidade(context.userId, caso.unidade);
     const ids = caso.alunos.map((a) => Number(a.aluno_id)).filter((n) => Number.isFinite(n));
     if (ids.length === 0) return [];
+    // leitura-restrita: filtrada pelos alunos de um caso
     const { data: rows, error } = await supabaseAdmin
       .from("matricula_documentos" as never)
       .select(
@@ -1253,6 +1256,7 @@ export const copiarDocumentosMatricula = createServerFn({ method: "POST" })
     await exigirUnidade(context.userId, caso.unidade);
     exigirAberto(caso);
     const ids = caso.alunos.map((a) => Number(a.aluno_id));
+    // leitura-restrita: filtrada pelos alunos de um caso
     const { data: rows, error } = await supabaseAdmin
       .from("matricula_documentos" as never)
       .select(
@@ -1328,6 +1332,7 @@ interface ContratoAssinado {
 async function contratosAssinadosDoCaso(caso: CasoCompleto): Promise<ContratoAssinado[]> {
   const alunoIds = caso.alunos.map((a) => a.aluno_id);
   if (alunoIds.length === 0) return [];
+  // leitura-restrita: filtrada pelos alunos de um caso
   const { data: contratos, error } = await supabaseAdmin
     .from("contratos_matricula" as never)
     .select(
@@ -1344,6 +1349,7 @@ async function contratosAssinadosDoCaso(caso: CasoCompleto): Promise<ContratoAss
   );
   if (elegiveis.length === 0) return [];
 
+  // leitura-restrita: filtrada pelos contratos de um caso
   const { data: docs, error: eDocs } = await supabaseAdmin
     .from("zapsign_documentos" as never)
     .select("id, ambiente, status, zapsign_token, assinado_em, arquivo_assinado_path")
@@ -1381,6 +1387,7 @@ async function contratosAssinadosDoCaso(caso: CasoCompleto): Promise<ContratoAss
 }
 
 async function nomesContratosAnexados(casoId: string): Promise<Set<string>> {
+  // leitura-restrita: filtrada por caso_id
   const { data, error } = await supabaseAdmin
     .from("cobranca_anexos" as never)
     .select("nome_personalizado")
@@ -1639,6 +1646,7 @@ export const listarTermosAssinadosZapSign = createServerFn({ method: "POST" })
     const caso = await carregarCasoRow(data.casoId);
     await exigirUnidade(context.userId, caso.unidade);
     exigirAcordo(caso);
+    // limite-intencional: termos assinados mais recentes para escolha
     const { data: docs, error } = await supabaseAdmin
       .from("zapsign_documentos" as never)
       .select(
@@ -1661,6 +1669,7 @@ export const listarTermosAssinadosZapSign = createServerFn({ method: "POST" })
 
 /** Apaga o termo assinado anterior (linha + arquivo) ao substituir. */
 async function removerTermoAssinadoAnterior(casoId: string): Promise<void> {
+  // leitura-restrita: filtrada por caso_id
   const { data, error } = await supabaseAdmin
     .from("cobranca_anexos" as never)
     .select("id, storage_path")

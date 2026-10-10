@@ -128,6 +128,7 @@ function TasksPage() {
     queryKey: ["recurring_task_defs", me],
     enabled: !!me,
     queryFn: async () => {
+      // leitura-restrita: configuração: definições de tarefas recorrentes
       const { data, error } = await supabase
         .from("recurring_task_defs" as never)
         .select("id, title, description, day_of_month, start_month")
@@ -396,6 +397,7 @@ function TaskChatSheet({
     enabled: !!task,
     refetchInterval: task ? 10000 : false,
     queryFn: async () => {
+      // leitura-restrita: filtrada por task_id
       const { data, error } = await supabase
         .from("task_messages" as any)
         .select("*")

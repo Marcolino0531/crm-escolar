@@ -9,6 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 
 async function assertCanEditRh(userId: string) {
@@ -121,10 +122,13 @@ export const salvarFolhaPonto = createServerFn({ method: "POST" })
     await assertCanEditRh(context.userId);
 
     const ids = [...new Set(data.linhas.map((l) => l.employeeId))];
-    const { data: rows, error: rowsErr } = await supabaseAdmin
-      .from("funcionarios")
-      .select("id, school_id, nome_completo")
-      .in("id", ids);
+    const { data: rows, error: rowsErr } = await selectAllResult<FuncionarioRow>(() =>
+      supabaseAdmin
+        .from("funcionarios")
+        .select("id, school_id, nome_completo")
+        .in("id", ids)
+        .order("id", { ascending: true }),
+    );
     if (rowsErr) return { ok: false, error: rowsErr.message };
 
     const funcionarios = (rows ?? []) as unknown as FuncionarioRow[];

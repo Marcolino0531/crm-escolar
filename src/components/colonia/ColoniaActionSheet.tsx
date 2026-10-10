@@ -101,6 +101,7 @@ export function ColoniaActionSheet({
     queryKey: ["colonia_records", student?.id ?? "none", selectedDate],
     enabled: open && !!student,
     queryFn: async () => {
+      // leitura-restrita: filtrada por um aluno
       const { data, error } = await supabase
         .from("holiday_camp_records" as never)
         .select("id, record_type, occurred_at")

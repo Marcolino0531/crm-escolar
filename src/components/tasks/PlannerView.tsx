@@ -92,6 +92,7 @@ export function PlannerView() {
     queryKey: ["recurring_task_defs", me],
     enabled: !!me,
     queryFn: async () => {
+      // leitura-restrita: configuração: definições de tarefas recorrentes
       const { data, error } = await supabase
         .from("recurring_task_defs" as never)
         .select(DEF_SELECT)

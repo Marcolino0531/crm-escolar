@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { toast } from "sonner";
 import {
   ROTULO_BLOCO,
@@ -65,12 +66,15 @@ const FolhasSalvas: React.FC<FolhasSalvasProps> = ({ schoolId, permissoes, refre
 
   const carregarBatches = useCallback(async () => {
     setCarregando(true);
-    let q = supabase
-      .from("hr_transport_batches" as never)
-      .select("id, tipo, title, payment_date, reference_month, total_amount, created_at")
-      .order("created_at", { ascending: false });
-    if (schoolId) q = q.eq("school_id", schoolId);
-    const { data, error } = await q;
+    const { data, error } = await selectAllResult<unknown>(() => {
+      let q = supabase
+        .from("hr_transport_batches" as never)
+        .select("id, tipo, title, payment_date, reference_month, total_amount, created_at")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true });
+      if (schoolId) q = q.eq("school_id", schoolId);
+      return q;
+    });
     setCarregando(false);
     if (error) {
       toast.error("Não foi possível carregar as folhas.");
@@ -91,6 +95,7 @@ const FolhasSalvas: React.FC<FolhasSalvasProps> = ({ schoolId, permissoes, refre
   const abrirFolha = async (batch: Batch) => {
     setAberta(batch);
     setItensCarregando(true);
+    // leitura-restrita: filtrada por batch_id
     const { data, error } = await supabase
       .from("hr_transport_batch_items" as never)
       .select(

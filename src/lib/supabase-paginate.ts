@@ -37,3 +37,12 @@ export async function fetchAllRows<T>(
 export function selectAll<T>(query: () => unknown): Promise<T[]> {
   return fetchAllRows<T>((from, to) => (query() as Rangeable<T>).range(from, to));
 }
+
+// Igual a `selectAll`, mas no formato `{ data, error }` de uma consulta comum do
+// supabase-js: pagina uma leitura sem mudar o tratamento de erro de quem chama.
+export function selectAllResult<T>(query: () => unknown): Promise<PagedRows<T>> {
+  return selectAll<T>(query).then(
+    (data) => ({ data, error: null }),
+    (error: PostgrestError) => ({ data: null, error }),
+  );
+}

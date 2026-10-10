@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { fetchSponteInadimplencia } from "@/lib/sponte.functions";
 import { useSchool, usePermissions } from "@/lib/app-context";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -223,6 +223,7 @@ function FluxoFuturoPage() {
   const { data: costCenters = [] } = useQuery({
     queryKey: ["cost_centers_all"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase
         .from("cost_centers")
         .select("id, name, color")
@@ -234,6 +235,7 @@ function FluxoFuturoPage() {
   const { data: subCostCenters = [] } = useQuery({
     queryKey: ["sub_cost_centers_all"],
     queryFn: async () => {
+      // leitura-restrita: configuração: subcentros de custo
       const { data, error } = await supabase
         .from("sub_cost_centers")
         .select("id, name, cost_center_id")
@@ -274,12 +276,15 @@ function FluxoFuturoPage() {
             s.incidence_months.includes(monthNum)),
       );
       if (active.length === 0) return;
-      const { data: existing } = await supabase
-        .from("recurring_forecasts")
-        .select("series_id")
-        .eq("school_id", schoolId)
-        .eq("month", month)
-        .not("series_id", "is", null);
+      const { data: existing } = await selectAllResult<{ series_id: string | null }>(() =>
+        supabase
+          .from("recurring_forecasts")
+          .select("series_id")
+          .eq("school_id", schoolId)
+          .eq("month", month)
+          .not("series_id", "is", null)
+          .order("id", { ascending: true }),
+      );
       const existingIds = new Set((existing ?? []).map((r: any) => r.series_id));
       const toInsert = active
         .filter((s) => !existingIds.has(s.id))
@@ -309,11 +314,14 @@ function FluxoFuturoPage() {
     queryKey: ["recurring_forecasts", schoolId, month],
     enabled: schoolId !== "all",
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("recurring_forecasts")
-        .select("*")
-        .eq("school_id", schoolId)
-        .eq("month", month);
+      const { data, error } = await selectAllResult<Forecast>(() =>
+        supabase
+          .from("recurring_forecasts")
+          .select("*")
+          .eq("school_id", schoolId)
+          .eq("month", month)
+          .order("id", { ascending: true }),
+      );
       if (error) throw error;
       const rows = (data ?? []) as Forecast[];
       return rows.sort((a, b) => {
@@ -993,6 +1001,7 @@ function ForecastDialog({
             })
             .eq("id", forecast.series_id);
           // Fetch affected forecasts and update each due_date according to its own month
+          // leitura-restrita: filtrada por series_id
           const { data: rows } = await supabase
             .from("recurring_forecasts")
             .select("id, month")

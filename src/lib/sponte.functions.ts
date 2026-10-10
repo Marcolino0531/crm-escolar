@@ -156,12 +156,14 @@ export function resolverCredenciais(unidade: string): SponteCreds | null {
 // consolidado "Todas as Unidades"). Usado para impedir que um usuário restrito
 // force, via requisição forjada, a leitura de dados fora da sua permissão.
 export async function allowedSponteUnidades(userId: string): Promise<string[] | null> {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: roles } = await supabaseAdmin
     .from("user_roles" as any)
     .select("role")
     .eq("user_id", userId);
   if (((roles ?? []) as any[]).some((r) => r.role === "admin")) return null;
 
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: us } = await supabaseAdmin
     .from("user_schools" as any)
     .select("school_id")
@@ -169,6 +171,7 @@ export async function allowedSponteUnidades(userId: string): Promise<string[] | 
   const ids = ((us ?? []) as any[]).map((r) => r.school_id as string);
   if (ids.length === 0) return []; // fail-closed: sem vínculo = nenhuma unidade
 
+  // leitura-restrita: configuração: tabela de colégios
   const { data: schools } = await supabaseAdmin
     .from("schools" as any)
     .select("name")
@@ -3127,6 +3130,7 @@ export interface StatusSemanaColoniaResult {
 async function filtrarEscolasPermitidas(userId: string, schoolIds: string[]): Promise<string[]> {
   const allowed = await allowedSponteUnidades(userId);
   if (allowed === null) return schoolIds;
+  // leitura-restrita: configuração: tabela de colégios
   const { data: escolas } = await supabaseAdmin
     .from("schools" as any)
     .select("id, name")
@@ -3207,6 +3211,7 @@ export async function aplicarRotinasMatriculaNoDiario(
   anoLetivo: number,
   opts: { dryRun: boolean },
 ): Promise<{ previstas: RotinaDiarioPrevista[]; gravadas: number }> {
+  // leitura-restrita: configuração: tabela de colégios
   const { data: escolas } = await supabaseAdmin
     .from("schools")
     .select("id, name")
@@ -3363,6 +3368,7 @@ export type ColetaAlunosAno =
   | { ok: false; error: string };
 
 export async function coletarAlunosVigentesDoAno(anoLetivo: number): Promise<ColetaAlunosAno> {
+  // leitura-restrita: configuração: tabela de colégios
   const { data: schoolRows } = await supabaseAdmin.from("schools").select("id, name");
   const schoolIdByName: Record<string, string> = {};
   for (const s of (schoolRows ?? []) as { id: string; name: string }[])
@@ -3435,6 +3441,7 @@ export async function runDiarioSponteSync(
     if (upErr) return { ...vazio(anoLetivo), error: upErr.message };
   }
   const schoolIds = Array.from(new Set(validos.map((c) => schoolIdByName[c.schoolName])));
+  // leitura-restrita: configuração: turmas por colégio
   const { data: classRows } = await supabaseAdmin
     .from("diario_classes" as never)
     .select("id, school_id, name")

@@ -5,6 +5,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 import { exigirUnidadeFolha } from "@/lib/rh-folha.functions";
@@ -60,6 +61,7 @@ async function extraDoId(id: string): Promise<ExtraRow> {
 }
 
 async function exigirNomeLivre(schoolId: string, nome: string, ignorarId?: string): Promise<void> {
+  // leitura-restrita: filtrada por nome_chave (um registro)
   let q = supabaseAdmin
     .from("rh_extras" as never)
     .select("id")
@@ -83,12 +85,15 @@ export const listarExtras = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<Extra[]> => {
     await exigirPermissaoExtras(context.userId, false);
     await exigirUnidadeFolha(context.userId, data.schoolId);
-    const { data: rows, error } = await supabaseAdmin
-      .from("rh_extras" as never)
-      .select(COLS)
-      .eq("school_id", data.schoolId)
-      .eq("ativo", true)
-      .order("nome_completo");
+    const { data: rows, error } = await selectAllResult<ExtraRow>(() =>
+      supabaseAdmin
+        .from("rh_extras" as never)
+        .select(COLS)
+        .eq("school_id", data.schoolId)
+        .eq("ativo", true)
+        .order("nome_completo")
+        .order("id", { ascending: true }),
+    );
     if (error) throw new Error(error.message);
     return ((rows ?? []) as ExtraRow[]).map(paraExtra);
   });

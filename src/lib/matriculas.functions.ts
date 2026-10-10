@@ -378,11 +378,13 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         .select("*")
         .eq("submission_id", data.submissionId)
         .maybeSingle(),
+      // leitura-restrita: filtrada por submission_id
       supabaseAdmin
         .from("matricula_documentos" as never)
         .select(COLUNAS_DOCUMENTO_FICHA)
         .eq("submission_id", data.submissionId)
         .order("created_at"),
+      // leitura-restrita: filtrada por submission_id
       supabaseAdmin
         .from("matricula_documentos_historico" as never)
         .select(
@@ -390,6 +392,7 @@ export const detalheMatricula = createServerFn({ method: "POST" })
         )
         .eq("submission_id", data.submissionId)
         .order("substituido_em", { ascending: false }),
+      // leitura-restrita: filtrada por submission_id
       supabaseAdmin
         .from("matricula_faturamento_lancamentos" as never)
         .select(
@@ -454,6 +457,7 @@ export interface PendenciaMatricula {
 }
 
 async function ehAdmin(userId: string): Promise<boolean> {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
@@ -465,6 +469,7 @@ export const listarPendenciasMatricula = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<PendenciaMatricula[]> => {
     if (!(await ehAdmin(context.userId))) return [];
+    // limite-intencional: fila de pendências limitada a 200
     const { data, error } = await supabaseAdmin
       .from("enrollment_submissions" as never)
       .select(
@@ -528,6 +533,7 @@ async function assertAdmin(
   userId: string,
   mensagem = "Apenas administradores podem excluir uma submissão.",
 ) {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
@@ -574,6 +580,7 @@ async function carregarResumoExclusao(id: string): Promise<{
 
   let lancamentos: LancamentoResumo[] = [];
   if (row.submission_id) {
+    // leitura-restrita: filtrada por submission_id
     const { data: lanc } = await supabaseAdmin
       .from("matricula_faturamento_lancamentos" as never)
       .select("tipo, status")
@@ -647,10 +654,12 @@ export const excluirMatricula = createServerFn({ method: "POST" })
     let caminhos: string[] = [];
     if (row.submission_id) {
       const [{ data: docs }, { data: hist }] = await Promise.all([
+        // leitura-restrita: filtrada por submission_id
         supabaseAdmin
           .from("matricula_documentos" as never)
           .select("storage_path")
           .eq("submission_id", row.submission_id),
+        // leitura-restrita: filtrada por submission_id
         supabaseAdmin
           .from("matricula_documentos_historico" as never)
           .select("storage_path")
@@ -964,6 +973,7 @@ export const fichaAlunoMatricula = createServerFn({ method: "POST" })
           .select("*")
           .eq("submission_id", idRematricula)
           .maybeSingle<ColunasSaude>(),
+        // leitura-restrita: filtrada por um aluno
         supabaseAdmin
           .from("matricula_documentos" as never)
           .select(COLUNAS_DOCUMENTO_FICHA)

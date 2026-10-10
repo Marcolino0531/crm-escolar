@@ -579,6 +579,7 @@ function ThreadConversa({
     queryKey: ["atendimento-mensagens", conversa.id],
     refetchInterval: 10000,
     queryFn: async (): Promise<ChatMessage[]> => {
+      // limite-intencional: mensagens de uma única conversa, no máximo 500
       const { data, error } = await supabase
         .from("whatsapp_messages" as never)
         .select(

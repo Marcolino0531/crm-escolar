@@ -99,6 +99,7 @@ const Contracheques: React.FC<{
     queryKey: ["hr-payslip-sends", schoolId],
     queryFn: async (): Promise<EnvioRow[]> => {
       const filtro = filtroHistoricoEnvios(schoolId);
+      // limite-intencional: últimos 300 envios do histórico
       let query = supabase
         .from("hr_payslip_sends" as never)
         .select(

@@ -132,12 +132,14 @@ async function matriculasAtivas(
   ano: number,
 ): Promise<MatriculaAtiva[]> {
   if (alunoIds.length === 0) return [];
+  // leitura-restrita: configuração: tabela de colégios
   const { data: schools } = await supabaseAdmin
     .from("schools")
     .select("id, name")
     .returns<{ id: string; name: string }[]>();
   const nomePorSchool = new Map((schools ?? []).map((s) => [s.id, s.name]));
 
+  // leitura-restrita: filtrada pelos alunos de um responsável
   const { data: rows, error } = await supabaseAdmin
     .from("diario_students" as never)
     .select(

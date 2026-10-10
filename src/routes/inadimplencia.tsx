@@ -385,6 +385,7 @@ function InadimplenciaPage() {
     queryKey: ["faturamento-anual", "schools"],
     staleTime: 60_000,
     queryFn: async () => {
+      // leitura-restrita: configuração: tabela de colégios
       const { data: rows, error: qErr } = await supabase
         .from("schools")
         .select("id, faturamento_retroativo_jan_mai");

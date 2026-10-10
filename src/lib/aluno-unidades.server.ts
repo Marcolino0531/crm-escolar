@@ -16,6 +16,7 @@ export async function vinculosPorSponteId(
   const ids = [...new Set(sponteIds.filter((id) => id && id !== "0"))];
   if (ids.length === 0) return porAluno;
   try {
+    // leitura-restrita: configuração: tabela de colégios
     const { data: escolas, error } = await supabaseAdmin
       .from("schools")
       .select("id")

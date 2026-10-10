@@ -60,6 +60,7 @@ export const listarValoresBiblioteca = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<BibliotecaValoresRegistro[]> => {
     await exigirPermissao(context.userId, false);
+    // leitura-restrita: configuração: valores da biblioteca por colégio
     const { data, error } = await supabaseAdmin
       .from("biblioteca_valores" as never)
       .select(SELECT)

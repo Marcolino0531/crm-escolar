@@ -105,6 +105,7 @@ export function PlanEditor({ student, open, onOpenChange, anoLetivo, canEdit }: 
       }
 
       // Confirma no banco antes de anunciar sucesso.
+      // leitura-restrita: filtrada por um aluno
       const { data: saved, error: rErr } = await supabase
         .from("diario_meal_plans" as never)
         .select("student_id, meal, weekday, ano_letivo")

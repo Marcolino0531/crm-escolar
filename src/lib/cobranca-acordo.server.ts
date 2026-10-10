@@ -16,7 +16,7 @@ import {
 import type { AcordoTimeline, CasoCompleto } from "@/lib/cobranca-casos";
 import type { TermoConfissaoSnapshot } from "@/lib/confissao-divida";
 import { coletarTitulosAluno } from "@/lib/sponte.functions";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAllResult } from "@/lib/supabase-paginate";
 
 const LOG = "[cobrança acordo]";
 
@@ -214,11 +214,13 @@ export async function sincronizarAcordosDiario(
   hojeYMD: string,
   carregar: (casoId: string) => Promise<CasoCompleto>,
 ): Promise<{ sincronizados: number; encerrados: number; falhas: number }> {
-  const { data, error } = await supabaseAdmin
-    .from("cobranca_casos" as never)
-    .select("id")
-    .eq("status", "acordo")
-    .returns<{ id: string }[]>();
+  const { data, error } = await selectAllResult<{ id: string }>(() =>
+    supabaseAdmin
+      .from("cobranca_casos" as never)
+      .select("id")
+      .eq("status", "acordo")
+      .order("id", { ascending: true }),
+  );
   if (error) throw new Error(error.message);
   let sincronizados = 0;
   let encerrados = 0;

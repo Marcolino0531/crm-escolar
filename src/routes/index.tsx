@@ -215,6 +215,7 @@ function MainDashboard() {
     queryKey: ["dash-faturamento-schools"],
     staleTime: 5 * 60_000,
     queryFn: async () => {
+      // leitura-restrita: configuração: tabela de colégios
       const { data, error } = await supabase
         .from("schools")
         .select("id, faturamento_retroativo_jan_mai");

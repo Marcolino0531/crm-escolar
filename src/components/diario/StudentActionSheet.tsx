@@ -135,6 +135,7 @@ export function StudentActionSheet({
     queryKey: ["diario_events_dia", student?.id ?? "none", selectedDate],
     enabled: open && !!student,
     queryFn: async () => {
+      // leitura-restrita: filtrada por um aluno
       const { data, error } = await supabase
         .from("diario_events" as never)
         .select(

@@ -8,6 +8,7 @@
 // vercel.json para 10:00 UTC (= 07:00 no horário de Brasília).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { getResendConfig, sendEmail } from "@/lib/agenda.email";
 
 function json(body: unknown, status = 200): Response {
@@ -63,10 +64,13 @@ async function enviarLembretesDoDia(): Promise<{
   if (!cfg) throw new Error("config ausente: defina RESEND_API_KEY e RESEND_FROM.");
 
   const hoje = hojeYMD();
-  const { data, error } = await supabaseAdmin
-    .from("agenda_reunioes" as never)
-    .select("id, data, horario, responsavel_nome, aluno_nome, colaboradores, participante_ids")
-    .eq("data", hoje);
+  const { data, error } = await selectAllResult<ReuniaoRow>(() =>
+    supabaseAdmin
+      .from("agenda_reunioes" as never)
+      .select("id, data, horario, responsavel_nome, aluno_nome, colaboradores, participante_ids")
+      .eq("data", hoje)
+      .order("id", { ascending: true }),
+  );
   if (error) throw new Error(error.message);
 
   const reunioes = ((data ?? []) as unknown as ReuniaoRow[]).filter(

@@ -69,6 +69,7 @@ export const listarValoresColonia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ColoniaValoresRegistro[]> => {
     await exigirPermissao(context.userId, false);
+    // leitura-restrita: configuração: valores da colônia por colégio
     const { data, error } = await supabaseAdmin
       .from("colonia_valores" as never)
       .select(SELECT)

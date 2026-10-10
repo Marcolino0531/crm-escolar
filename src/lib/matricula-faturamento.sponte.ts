@@ -225,6 +225,7 @@ export async function submissaoConferida(submissionId: string): Promise<boolean>
 }
 
 async function linhasExistentes(submissionId: string): Promise<LinhaLancamento[]> {
+  // leitura-restrita: filtrada por submission_id
   const { data } = await supabaseAdmin
     .from("matricula_faturamento_lancamentos" as never)
     .select("id, tipo, status, sponte_conta_receber_id")

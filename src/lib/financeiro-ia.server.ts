@@ -43,6 +43,7 @@ export async function assertPermissaoAnaliseFinanceira(userId: string) {
 type Escola = { id: string; name: string };
 
 async function escolasPermitidas(userId: string): Promise<Escola[]> {
+  // leitura-restrita: configuração: tabela de colégios
   const { data, error } = await supabaseAdmin.from("schools" as never).select("id, name");
   if (error) throw new Error(error.message);
   const todas = ((data ?? []) as unknown as Escola[]).slice();
@@ -120,7 +121,9 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
   async function catalogos() {
     if (!categorias || !subcategorias) {
       const [cc, sub] = await Promise.all([
+        // leitura-restrita: configuração: centros de custo
         supabaseAdmin.from("cost_centers" as never).select("id, name"),
+        // leitura-restrita: configuração: subcentros de custo
         supabaseAdmin.from("sub_cost_centers" as never).select("id, name"),
       ]);
       categorias = new Map(

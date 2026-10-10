@@ -19,7 +19,7 @@ import {
   exigirSalarioManual,
   exigirUnidadeFolha,
 } from "@/lib/rh-folha.functions";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { somaReais } from "@/lib/extrato-mensal";
 
 type SalarioRow = {
@@ -202,16 +202,22 @@ export const listarValoresMensais = createServerFn({ method: "POST" })
       await exigirPermissaoSalario(context.userId, false);
       await exigirUnidadeFolha(context.userId, data.schoolId);
       const [ter, ext, valores] = await Promise.all([
-        supabaseAdmin
-          .from("terceirizados" as never)
-          .select("id, nome_completo, especialidade")
-          .eq("school_id", data.schoolId)
-          .eq("ativo", true),
-        supabaseAdmin
-          .from("rh_extras" as never)
-          .select("id, nome_completo")
-          .eq("school_id", data.schoolId)
-          .eq("ativo", true),
+        selectAllResult<{ id: string; nome_completo: string; especialidade: string | null }>(() =>
+          supabaseAdmin
+            .from("terceirizados" as never)
+            .select("id, nome_completo, especialidade")
+            .eq("school_id", data.schoolId)
+            .eq("ativo", true)
+            .order("id", { ascending: true }),
+        ),
+        selectAllResult<{ id: string; nome_completo: string }>(() =>
+          supabaseAdmin
+            .from("rh_extras" as never)
+            .select("id, nome_completo")
+            .eq("school_id", data.schoolId)
+            .eq("ativo", true)
+            .order("id", { ascending: true }),
+        ),
         selectAll<ValorMensalRow>(() =>
           supabaseAdmin
             .from("rh_pagamentos_valores" as never)

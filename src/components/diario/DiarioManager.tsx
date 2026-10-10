@@ -65,6 +65,7 @@ function useClasses(schoolId: string) {
   return useQuery({
     queryKey: ["diario_classes", schoolId],
     queryFn: async () => {
+      // leitura-restrita: configuração: turmas por colégio
       const { data, error } = await supabase
         .from("diario_classes" as never)
         .select("id, name, school_id")
