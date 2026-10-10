@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { toast } from "sonner";
 import { toTitleCase } from "@/lib/name-format";
 
@@ -145,12 +145,14 @@ export function useColaboradores() {
   const { data: colaboradores = [], isLoading } = useQuery({
     queryKey: ["agenda_colaboradores"],
     queryFn: async () => {
-      // leitura-restrita: configuração: colaboradores da agenda
-      const { data, error } = await supabase
-        .from("agenda_colaboradores" as never)
-        .select("id, nome, ativo")
-        .eq("ativo", true)
-        .order("nome", { ascending: true });
+      const { data, error } = await selectAllResult<ColaboradorRow>(() =>
+        supabase
+          .from("agenda_colaboradores" as never)
+          .select("id, nome, ativo")
+          .eq("ativo", true)
+          .order("nome", { ascending: true })
+          .order("id", { ascending: true }),
+      );
       if (error) throw error;
       return ((data ?? []) as unknown as ColaboradorRow[]).map((r) => r.nome);
     },

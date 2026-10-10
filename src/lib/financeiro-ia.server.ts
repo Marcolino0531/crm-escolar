@@ -123,7 +123,7 @@ export function criarFonteDados(userId: string): FonteDadosFinanceiros & FonteDa
       const [cc, sub] = await Promise.all([
         // leitura-restrita: configuração: centros de custo
         supabaseAdmin.from("cost_centers" as never).select("id, name"),
-        // leitura-restrita: configuração: centros de custo
+        // leitura-restrita: configuração: subcentros de custo
         supabaseAdmin.from("sub_cost_centers" as never).select("id, name"),
       ]);
       categorias = new Map(

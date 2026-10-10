@@ -235,7 +235,7 @@ function FluxoFuturoPage() {
   const { data: subCostCenters = [] } = useQuery({
     queryKey: ["sub_cost_centers_all"],
     queryFn: async () => {
-      // leitura-restrita: configuração: centros de custo
+      // leitura-restrita: configuração: subcentros de custo
       const { data, error } = await supabase
         .from("sub_cost_centers")
         .select("id, name, cost_center_id")

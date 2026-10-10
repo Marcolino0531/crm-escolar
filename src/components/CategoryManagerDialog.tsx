@@ -86,7 +86,7 @@ function ExpenseManager() {
   const { data: subs = [] } = useQuery({
     queryKey: ["sub_cc"],
     queryFn: async () => {
-      // leitura-restrita: configuração: centros de custo
+      // leitura-restrita: configuração: subcentros de custo
       const { data, error } = await supabase.from("sub_cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -311,7 +311,7 @@ function RevenueManager() {
   const { data: subs = [] } = useQuery({
     queryKey: ["rev_sub"],
     queryFn: async () => {
-      // leitura-restrita: configuração: categorias de receita
+      // leitura-restrita: configuração: subcategorias de receita
       const { data, error } = await supabase
         .from("revenue_subcategories")
         .select("*")
