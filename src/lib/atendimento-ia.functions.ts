@@ -38,6 +38,7 @@ import {
 import { carregarExemplosAtivos } from "@/lib/atendimento-ia-exemplos.functions";
 import { assertPermissaoIA, nomeDoUsuario, type MensagemBanco } from "@/lib/atendimento-ia.server";
 import { calcularTotalVencido } from "@/lib/billing-debt";
+import { exigirConversaIdDoUsuario } from "@/lib/unidade-acesso.server";
 import { isMesReferencia } from "@/lib/billing-exceptions";
 import { buscarResponsavelFinanceiroAluno, coletarDividaAbertaAluno } from "@/lib/sponte.functions";
 
@@ -149,6 +150,7 @@ export const gerarSugestaoResposta = createServerFn({ method: "POST" })
       .maybeSingle();
     const conversa = convRow as unknown as ConversaIA | null;
     if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+    await exigirConversaIdDoUsuario(context.userId, conversa.id);
 
     // limite-intencional: mensagens de uma única conversa, no máximo 500
     const { data: msgRows, error: msgErro } = await supabaseAdmin
@@ -288,11 +290,16 @@ export const registrarEnvioDaSugestao = createServerFn({ method: "POST" })
 
       const { data: row } = await supabaseAdmin
         .from("ai_suggestions" as never)
-        .select("id, sugestao")
+        .select("id, sugestao, conversation_id")
         .eq("id", data.suggestionId)
         .maybeSingle();
-      const sugestao = row as unknown as { id: string; sugestao: string } | null;
+      const sugestao = row as unknown as {
+        id: string;
+        sugestao: string;
+        conversation_id: string;
+      } | null;
       if (!sugestao) return { ok: false, error: "Sugestão não encontrada." };
+      await exigirConversaIdDoUsuario(context.userId, sugestao.conversation_id);
 
       const atualizacao = montarAtualizacaoEnvio(
         sugestao.sugestao,

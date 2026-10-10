@@ -408,6 +408,66 @@ export function classificarUnidade(turmaAtual: string): "CEC" | "CEC Baby" | nul
   return null;
 }
 
+// CEC e CEC Baby dividem o token: o aluno é da unidade da TurmaAtual; sem turma
+// (ex-aluno) fica na unidade-mãe "CEC", como nas listagens. Demais unidades: livre.
+export function alunoDaUnidadePorTurma(unidade: string, turmaAtual: string): boolean {
+  if (!SPONTE_UNIDADES[unidade]?.segmentaPorTurma) return true;
+  return (classificarUnidade(turmaAtual) ?? "CEC") === unidade;
+}
+
+// Conciliação: nas unidades de token compartilhado só vale a conta caixa da própria unidade.
+export function contaCreditadaDaUnidade(unidade: string, conta: string | undefined): boolean {
+  const config = SPONTE_UNIDADES[unidade];
+  if (!config?.segmentaPorTurma || conta === undefined) return true;
+  return !!config.contaCaixa && conta.trim() === config.contaCaixa;
+}
+
+// Confere no Sponte (GetAlunos) que cada aluno é da unidade pela turma atual.
+async function alunosDaUnidadePorTurma(
+  unidade: string,
+  alunoIds: readonly string[],
+): Promise<boolean> {
+  if (!SPONTE_UNIDADES[unidade]?.segmentaPorTurma) return true;
+  const creds = resolverCredenciais(unidade);
+  if (!creds) return true;
+  const CONC = 8;
+  for (let i = 0; i < alunoIds.length; i += CONC) {
+    const lote = alunoIds.slice(i, i + CONC);
+    const resultados = await Promise.all(
+      lote.map(async (id) => {
+        const xml = await callSponte("GetAlunos", `AlunoID=${id}`, creds.codigoCliente, creds.token);
+        const node = parseXmlList(xml, "wsAluno").find((n) =>
+          parseXmlValue(n, "RetornoOperacao").startsWith("01"),
+        );
+        return !!node && alunoDaUnidadePorTurma(unidade, parseXmlValue(node, "TurmaAtual"));
+      }),
+    );
+    if (resultados.some((ok) => !ok)) return false;
+  }
+  return true;
+}
+
+// Colônia: o aluno (e a escola informada) têm de ser do colégio da unidade.
+async function alunoColoniaDaUnidade(
+  unidade: string,
+  studentId: string,
+  schoolId?: string,
+): Promise<boolean> {
+  const { data: aluno } = await supabaseAdmin
+    .from("diario_students" as any)
+    .select("school_id")
+    .eq("id", studentId)
+    .maybeSingle();
+  const escolaAluno = (aluno as { school_id: string } | null)?.school_id;
+  if (!escolaAluno || (schoolId !== undefined && schoolId !== escolaAluno)) return false;
+  const { data: escola } = await supabaseAdmin
+    .from("schools" as any)
+    .select("name")
+    .eq("id", escolaAluno)
+    .maybeSingle();
+  return (escola as { name: string } | null)?.name === unidade;
+}
+
 interface ColetaResult {
   pendencias: PendenciaAgrupada[];
   alunoUnidadeMap: Record<string, "CEC" | "CEC Baby" | null>;
@@ -869,6 +929,9 @@ export const fetchSponteConciliacao = createServerFn({ method: "POST" })
     // RBAC por unidade: bloqueia se o usuário não pode acessar a unidade pedida.
     const allowed = await allowedSponteUnidades(context.userId);
     if (allowed !== null && !allowed.includes(unidade)) {
+      return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, meta };
+    }
+    if (!contaCreditadaDaUnidade(unidade, contaCreditada)) {
       return { itens: [], total: 0, qtdParcelas: 0, qtdBoletos: 0, meta };
     }
 
@@ -1380,6 +1443,9 @@ export const buscarDadosCadastraisAluno = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+      return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
+    }
     return coletarCadastroAluno(unidade, alunoId);
   });
 
@@ -1553,6 +1619,9 @@ export const fetchTitulosAlunoSponte = createServerFn({ method: "POST" })
     // RBAC por unidade (server-side).
     const allowed = await allowedSponteUnidades(context.userId);
     if (allowed !== null && !allowed.includes(data.unidade)) {
+      return { titulos: [], error: "Sem permissão para esta unidade." };
+    }
+    if (!(await alunosDaUnidadePorTurma(data.unidade, [data.alunoId]))) {
       return { titulos: [], error: "Sem permissão para esta unidade." };
     }
     return coletarTitulosAluno(data.unidade, data.alunoId);
@@ -2058,6 +2127,9 @@ export const enviarCobrancaTeste = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
 
     const creds = resolverCredenciais(unidade);
     if (!creds) return { ok: false, error: "Unidade sem integração Sponte." };
@@ -2370,6 +2442,9 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ...vazio, error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+      return { ...vazio, error: "Sem permissão para esta unidade." };
+    }
 
     const creds = resolverCredenciais(unidade);
     if (!creds) return { ...vazio, indisponivel: true };
@@ -2503,6 +2578,9 @@ export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
 
     const allowed = await allowedSponteUnidades(context.userId);
     if (allowed !== null && !allowed.includes(unidade)) {
+      return { beneficios: {}, error: "Sem permissão para esta unidade." };
+    }
+    if (!(await alunosDaUnidadePorTurma(unidade, alunoIds))) {
       return { beneficios: {}, error: "Sem permissão para esta unidade." };
     }
 
@@ -2856,6 +2934,9 @@ export const faturarColoniaSponte = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunoColoniaDaUnidade(unidade, studentId, schoolId))) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
 
     // Anti-duplicidade: já faturado nesta semana? Curto-circuita sem chamar o
     // Sponte. No refaturamento forçado a trava é ignorada de propósito.
@@ -3014,6 +3095,9 @@ export const marcarAcordoManualColonia = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunoColoniaDaUnidade(unidade, studentId, schoolId))) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
 
     // Anti-duplicidade: já resolvido (faturado ou acordo manual) nesta semana?
     const { data: existente } = await supabaseAdmin
@@ -3066,6 +3150,9 @@ export const desvincularFaturamentoColonia = createServerFn({ method: "POST" })
     }
     const allowed = await allowedSponteUnidades(context.userId);
     if (allowed !== null && !allowed.includes(unidade)) {
+      return { ok: false, error: "Sem permissão para esta unidade." };
+    }
+    if (!(await alunoColoniaDaUnidade(unidade, studentId))) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
     const { error } = await supabaseAdmin
@@ -3852,6 +3939,9 @@ export const buscarResponsaveisFinanceirosLoteIR = createServerFn({ method: "POS
     if (allowed !== null && !allowed.includes(unidade)) {
       return { responsaveis: [], error: "Sem permissão para esta unidade." };
     }
+    if (!(await alunosDaUnidadePorTurma(unidade, alunoIds))) {
+      return { responsaveis: [], error: "Sem permissão para esta unidade." };
+    }
     const creds = resolverCredenciais(unidade);
     if (!creds) return { responsaveis: [], error: "Unidade sem integração Sponte." };
 
@@ -3881,6 +3971,9 @@ export async function emailResponsavelFinanceiroLoteIR(
 ): Promise<{ responsavel: ResponsavelFinanceiroLoteIR | null; error?: string }> {
   const allowed = await allowedSponteUnidades(userId);
   if (allowed !== null && !allowed.includes(unidade)) {
+    return { responsavel: null, error: "Sem permissão para esta unidade." };
+  }
+  if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
     return { responsavel: null, error: "Sem permissão para esta unidade." };
   }
   const creds = resolverCredenciais(unidade);

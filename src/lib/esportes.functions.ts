@@ -12,6 +12,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { coletarTitulosAluno } from "@/lib/sponte.functions";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 import {
   calcularRepasseModalidade,
   frequenciaPorDias,
@@ -142,6 +143,7 @@ export const fetchParcelasModalidade = createServerFn({ method: "POST" })
     if (modErr) return { ...vazio, error: modErr.message };
     const modalidade = modRow as unknown as ModalidadeRow | null;
     if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, modalidade.unidade);
 
     // leitura-restrita: filtrada por modalidade_id
     const { data: matRows, error: matErr } = await supabaseAdmin
@@ -219,6 +221,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     if (modErr) return { ...vazio, error: modErr.message };
     const modalidade = modRow as unknown as ModalidadeRow | null;
     if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, modalidade.unidade);
 
     // leitura-restrita: filtrada por modalidade_id
     const { data: parcRows, error: parcErr } = await supabaseAdmin

@@ -40,6 +40,12 @@ import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { turmasDoAno, type VinculoAno } from "@/lib/diario-sync";
 import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import {
+  exigirEscolaDoUsuario,
+  exigirUnidadeDoUsuario,
+  unidadeLiberada,
+  unidadesDoUsuario,
+} from "@/lib/unidade-acesso.server";
 
 const LOG_TAG = "[Diário][Faturamento]";
 
@@ -64,6 +70,23 @@ async function schoolIdDaUnidade(unidade: string): Promise<string> {
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`Unidade "${unidade}" não encontrada.`);
   return data.id;
+}
+
+// Colégio do aluno dono do consumo. false = consumo inexistente.
+async function exigirEscolaDoEvento(userId: string, eventId: string): Promise<boolean> {
+  const { data: evento } = await supabaseAdmin
+    .from("diario_events" as never)
+    .select("student_id")
+    .eq("id", eventId)
+    .maybeSingle<{ student_id: string }>();
+  if (!evento) return false;
+  const { data: aluno } = await supabaseAdmin
+    .from("diario_students" as never)
+    .select("school_id")
+    .eq("id", evento.student_id)
+    .maybeSingle<{ school_id: string }>();
+  await exigirEscolaDoUsuario(userId, aluno?.school_id);
+  return true;
 }
 
 function hojeSaoPaulo(): string {
@@ -191,6 +214,7 @@ export const listarPendenciasFaturamentoDiario = createServerFn({ method: "POST"
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<PendenciaFaturamento[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     return (await calcularPendencias(data.unidade, schoolId)).pendencias;
   });
@@ -205,11 +229,14 @@ export const unidadesComExtrasPendentes = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadesSchema.parse(input))
   .handler(async ({ data, context }): Promise<string[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
+    const unidades = data.unidades.filter((u) => unidadeLiberada(permitidas, u));
+    if (unidades.length === 0) return [];
     // leitura-restrita: configuração: tabela de colégios
     const { data: schools, error } = await supabaseAdmin
       .from("schools")
       .select("id, name")
-      .in("name", data.unidades);
+      .in("name", unidades);
     if (error) throw new Error(error.message);
     const comPendencia: string[] = [];
     for (const s of (schools ?? []) as { id: string; name: string }[]) {
@@ -309,6 +336,7 @@ export const listarFaturamentosDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<FaturamentoDiario[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     await marcarInterrompidos(schoolId);
     const rows = await selectAll<FaturamentoRow>(() =>
@@ -531,6 +559,7 @@ export const faturarExtrasDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => FaturarSchema.parse(input))
   .handler(async ({ data, context }): Promise<ResultadoFaturamento> => {
     await exigirPermissaoDiario(context.userId, true);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const nome = await nomeDoUsuario(context.userId);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     return faturarAluno(data.unidade, schoolId, data.studentId, nome, context.userId);
@@ -550,6 +579,7 @@ export const faturarTodosExtrasDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<ResultadoFaturarTodos> => {
     await exigirPermissaoDiario(context.userId, true);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const nome = await nomeDoUsuario(context.userId);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     const { pendencias } = await calcularPendencias(data.unidade, schoolId);
@@ -576,6 +606,7 @@ export const relancarFaturamentoDiario = createServerFn({ method: "POST" })
     const nome = await nomeDoUsuario(context.userId);
     const f = await carregarFaturamento(data.id);
     if (!f) return { ok: false, erro: "Faturamento não encontrado." };
+    await exigirUnidadeDoUsuario(context.userId, f.unidade);
     const t = transicaoFaturamento(f.status, "lancar", Boolean(f.sponte_conta_receber_id));
     if (!t.ok) return { ok: false, erro: t.erro };
     return lancarNoSponte(f, nome, context.userId);
@@ -596,6 +627,7 @@ export const marcarFaturamentoDiarioManual = createServerFn({ method: "POST" })
     const nome = await nomeDoUsuario(context.userId);
     const f = await carregarFaturamento(data.id);
     if (!f) return { ok: false, erro: "Faturamento não encontrado." };
+    await exigirUnidadeDoUsuario(context.userId, f.unidade);
     const t = transicaoFaturamento(f.status, "marcar_manual", Boolean(f.sponte_conta_receber_id));
     if (!t.ok) return { ok: false, erro: t.erro };
 
@@ -631,6 +663,7 @@ export const cancelarFaturamentoDiario = createServerFn({ method: "POST" })
     await exigirPermissaoDiario(context.userId, true);
     const f = await carregarFaturamento(data.id);
     if (!f) return { ok: false, erro: "Faturamento não encontrado." };
+    await exigirUnidadeDoUsuario(context.userId, f.unidade);
     const t = podeCancelar(f.status);
     if (!t.ok) return { ok: false, erro: t.erro };
 
@@ -675,6 +708,9 @@ export const definirMinutosHoraExtraDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => MinutosSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
     await exigirPermissaoDiario(context.userId, true);
+    if (!(await exigirEscolaDoEvento(context.userId, data.eventId))) {
+      return { ok: false, erro: "Registro não encontrado ou já faturado." };
+    }
     const { data: atualizadas, error } = await supabaseAdmin
       .from("diario_events" as never)
       .update({ extra_minutes: data.minutos, extra_charge: data.minutos > 0 } as never)
@@ -702,6 +738,9 @@ export const isentarEventoDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => IsentarSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; erro?: string }> => {
     await exigirPermissaoDiario(context.userId, true);
+    if (!(await exigirEscolaDoEvento(context.userId, data.eventId))) {
+      return { ok: false, erro: "Consumo extra não encontrado." };
+    }
     const { data: atual, error: eSel } = await supabaseAdmin
       .from("diario_events" as never)
       .select("id, faturamento_id, isento")

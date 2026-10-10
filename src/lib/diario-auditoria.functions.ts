@@ -31,6 +31,7 @@ import { anoVigenteConfigurado } from "@/lib/rematricula.functions";
 import { turmasDoAno } from "@/lib/diario-sync";
 import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 
 const CONCORRENCIA_SPONTE = 4;
 
@@ -263,6 +264,7 @@ export const executarAuditoriaDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<ExecucaoAuditoria> => {
     await exigirPermissaoDiario(context.userId, true);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     return runAuditoriaDiarioSponte(data.unidade, "manual");
   });
 
@@ -271,6 +273,7 @@ export const listarAuditoriaDiario = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadeSchema.parse(input))
   .handler(async ({ data, context }): Promise<ResultadoAuditoria> => {
     await exigirPermissaoDiario(context.userId, false);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const schoolId = await schoolIdDaUnidade(data.unidade);
     const anoLetivo = await anoVigenteConfigurado();
 

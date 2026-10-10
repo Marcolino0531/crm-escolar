@@ -10,6 +10,20 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { montarRegistroExemplo, type ExemploTreinamento } from "@/lib/atendimento-ia-exemplos";
 import { assertPermissaoIA, nomeDoUsuario, type MensagemBanco } from "@/lib/atendimento-ia.server";
 import type { MensagemContexto } from "@/lib/atendimento-ia";
+import { exigirConversaIdDoUsuario, exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
+
+// Exemplo inexistente: false. Com conversa, vale a regra da conversa; sem ela, a unidade.
+async function exigirColegioDoExemplo(userId: string, id: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from("ai_training_examples" as never)
+    .select("conversation_id, unidade")
+    .eq("id", id)
+    .maybeSingle<{ conversation_id: string | null; unidade: string }>();
+  if (!data) return false;
+  if (data.conversation_id) await exigirConversaIdDoUsuario(userId, data.conversation_id);
+  else await exigirUnidadeDoUsuario(userId, data.unidade);
+  return true;
+}
 
 // Histórico usado só para classificar a situação e resumir o contexto do exemplo.
 async function mensagensDaConversa(conversationId: string): Promise<MensagemContexto[]> {
@@ -52,6 +66,7 @@ export const salvarExemploTreinamento = createServerFn({ method: "POST" })
       unidade: string;
     } | null;
     if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+    await exigirConversaIdDoUsuario(context.userId, conversa.id);
 
     let sugestaoOriginal = "";
     if (data.suggestionId) {
@@ -101,6 +116,9 @@ export const atualizarExemploTreinamento = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => AtualizarExemploInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; error?: string }> => {
     await assertPermissaoIA(context.userId, true, "editar exemplos de treinamento");
+    if (!(await exigirColegioDoExemplo(context.userId, data.id))) {
+      return { ok: false, error: "Exemplo não encontrado." };
+    }
 
     const patch: Record<string, string | boolean | null> = {
       atualizado_em: new Date().toISOString(),
@@ -126,6 +144,9 @@ export const removerExemploTreinamento = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => RemoverExemploInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; error?: string }> => {
     await assertPermissaoIA(context.userId, true, "remover exemplos de treinamento");
+    if (!(await exigirColegioDoExemplo(context.userId, data.id))) {
+      return { ok: false, error: "Exemplo não encontrado." };
+    }
 
     const { error } = await supabaseAdmin
       .from("ai_training_examples" as never)
