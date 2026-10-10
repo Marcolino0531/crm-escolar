@@ -17,6 +17,7 @@ import { dimensoesImagem } from "@/lib/contrato-matricula.functions";
 import type { LogoRecibo, Timbre } from "@/lib/documento-pdf";
 import { enderecoLinha } from "@/lib/recibos";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 import { MatriculaSchema, problemasDoPayload } from "@/lib/matriculas.schema";
 import {
   BUCKET_DOCUMENTOS_MATRICULA,
@@ -113,11 +114,15 @@ export const reprocessarMatricula = createServerFn({ method: "POST" })
 
     const { data: row } = await supabaseAdmin
       .from("enrollment_submissions" as never)
-      .select("id, status, sponte_aluno_id, payload, tentativas, conferido_em")
+      .select("id, status, sponte_aluno_id, payload, tentativas, conferido_em, unidade")
       .eq("id", data.id)
       .maybeSingle();
     const submissao = row as unknown as SubmissaoRow | null;
     if (!submissao) return { ok: false, error: "Submissão não encontrada." };
+    await exigirUnidadeDoUsuario(
+      context.userId,
+      (row as unknown as { unidade: string | null }).unidade,
+    );
     if (submissao.conferido_em) {
       return {
         ok: false,
@@ -366,6 +371,13 @@ export const detalheMatricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => DetalheInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<DetalheMatriculaResult> => {
     await assertCanViewAdmissoes(context.userId);
+    const { data: sub } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .select("unidade")
+      .eq("submission_id", data.submissionId)
+      .limit(1)
+      .maybeSingle<{ unidade: string | null }>();
+    await exigirUnidadeDoUsuario(context.userId, sub?.unidade);
 
     const [rotinaRes, saudeRes, docsRes, histRes, lancRes] = await Promise.all([
       supabaseAdmin
@@ -759,6 +771,12 @@ export const atualizarNomeMatricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<NomeSubmissaoResult> => {
     await assertCanViewAdmissoes(context.userId);
+    const { data: sub } = await supabaseAdmin
+      .from("enrollment_submissions" as never)
+      .select("unidade")
+      .eq("id", data.id)
+      .maybeSingle<{ unidade: string | null }>();
+    await exigirUnidadeDoUsuario(context.userId, sub?.unidade);
     return sincronizarNomeSubmissao(data.id);
   });
 
@@ -1155,6 +1173,7 @@ export const urlUploadDocumentoSecretaria = createServerFn({ method: "POST" })
     const erro = erroArquivoDocumento(data.tipo, data.tamanho);
     if (erro) return { ok: false, erro };
     const sub = await carregarSubmissaoDocumentos(data.id);
+    await exigirUnidadeDoUsuario(context.userId, sub.unidade);
 
     const path = `${pastaDocumentosSecretaria(sub.id)}/${randomUUID()}`;
     const { data: assinado, error } = await supabaseAdmin.storage
@@ -1202,6 +1221,7 @@ export const registrarDocumentoSecretaria = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<{ ok: true; substituido: boolean }> => {
     await assertCanAnexarDocumento(context.userId);
     const sub = await carregarSubmissaoDocumentos(data.id);
+    await exigirUnidadeDoUsuario(context.userId, sub.unidade);
     if (!caminhoDaSubmissao(data.path, sub.id)) throw new Error("Arquivo inválido.");
 
     const nomeDocumento = data.nomeDocumento?.trim() ?? null;

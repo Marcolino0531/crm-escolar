@@ -80,6 +80,7 @@ import { valorMatricula } from "@/lib/rematricula-matricula";
 import { parcelasMensalidadeDoAnoLetivo, type ParcelasMensalidade } from "@/lib/rematricula";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { allowedSponteUnidades, coletarTitulosAluno } from "@/lib/sponte.functions";
+import { unidadeLiberada, unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 import {
   criarDocumentoPdf,
   criarWebhook,
@@ -294,8 +295,7 @@ async function exigirPermissaoContratos(userId: string, edicao: boolean): Promis
 }
 
 async function unidadePermitida(userId: string, unidade: string): Promise<boolean> {
-  const permitidas = await allowedSponteUnidades(userId);
-  return permitidas === null || permitidas.includes(unidade);
+  return unidadeLiberada(await unidadesDoUsuario(userId), unidade);
 }
 
 async function webhookProducaoRegistrado(): Promise<boolean> {
@@ -1307,6 +1307,7 @@ export interface RegistrarWebhookProducaoResult {
 export const registrarWebhookContratos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<RegistrarWebhookProducaoResult> => {
+    // escopo-unidade: configuração global, sem colégio
     const nomeUsuario = await exigirPermissaoContratos(context.userId, true);
     if (await webhookProducaoRegistrado()) return { ok: true, jaExistia: true };
     const url = `${BASE_URL_PORTAL}/api/zapsign/webhook`;

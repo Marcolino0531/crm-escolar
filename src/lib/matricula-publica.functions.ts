@@ -445,6 +445,7 @@ async function uploadsRecentes(ipHash: string, agoraISO: string): Promise<number
 export const urlUploadDocumentoMatricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UploadInput.parse(input))
   .handler(async ({ data }): Promise<UrlUploadDocumento> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     if (!TIPOS_DOCUMENTO_ACEITOS.includes(data.tipo))
       return { ok: false, erro: "Envie uma imagem (JPG/PNG) ou um PDF." };
 
@@ -773,6 +774,7 @@ async function formalizar(
 export const enviarMatriculaPublica = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => EnviarInput.parse(input))
   .handler(async ({ data }): Promise<EnviarMatriculaPublicaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const ip = getRequestIP({ xForwardedFor: true }) ?? null;
     const ipHash = ip ? hashIp(ip) : null;
     const agoraISO = new Date().toISOString();

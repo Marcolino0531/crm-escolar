@@ -490,6 +490,7 @@ export const dispensarAvisoPrazo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => DispensarSchema.parse(i))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: grava só a dispensa do próprio usuário
     await exigirPermissao(context.userId, true);
     const { error } = await supabaseAdmin
       .from("cobranca_avisos_dispensados" as never)

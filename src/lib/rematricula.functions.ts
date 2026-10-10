@@ -17,6 +17,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  exigirUnidadeDoUsuario,
+  unidadeLiberada,
+  unidadesDoUsuario,
+} from "@/lib/unidade-acesso.server";
 import { selectAll } from "@/lib/supabase-paginate";
 import { cpfValido, normalizarCpf } from "@/lib/cantina";
 import {
@@ -593,6 +598,7 @@ export interface SolicitarLinkResult {
 export const solicitarLinkRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SolicitarLinkSchema.parse(input))
   .handler(async ({ data }): Promise<SolicitarLinkResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const cpf = normalizarCpf(data.cpf);
     if (!cpfValido(cpf)) {
       return { ok: false, mensagem: "Informe os 11 dígitos do CPF do aluno." };
@@ -734,6 +740,7 @@ export interface ValidarLinkResult {
 export const validarLinkRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ValidarLinkSchema.parse(input))
   .handler(async ({ data }): Promise<ValidarLinkResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const agora = new Date().toISOString();
     const linkHash = hashLink(data.token);
 
@@ -1013,6 +1020,7 @@ export async function itensMaterialDaSerie(
 export const dadosRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<DadosRematricula> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1144,6 +1152,7 @@ export interface DefinirFinanceiroResult {
 export const definirResponsavelFinanceiroRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => DefinirFinanceiroSchema.parse(input))
   .handler(async ({ data }): Promise<DefinirFinanceiroResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1197,6 +1206,7 @@ export interface SalvarEscolhaResult {
 export const salvarEscolhaMaterialRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => EscolhaSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarEscolhaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
     if (!parcelasMaterialValida(data.parcelas)) {
@@ -1392,6 +1402,7 @@ export function submissionIdRematricula(
 export const rotinaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<RotinaRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1464,6 +1475,7 @@ export interface SalvarRotinaRematriculaResult {
 export const salvarRotinaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SalvarRotinaSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarRotinaRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1543,6 +1555,7 @@ export interface SaudeRematriculaResult {
 export const saudeRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => TokenSchema.parse(input))
   .handler(async ({ data }): Promise<SaudeRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1589,6 +1602,7 @@ export interface SalvarSaudeRematriculaResult {
 export const salvarSaudeRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SalvarSaudeSchema.parse(input))
   .handler(async ({ data }): Promise<SalvarSaudeRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1653,6 +1667,7 @@ export interface FinalizarRematriculaResult {
 export const finalizarRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => FinalizarSchema.parse(input))
   .handler(async ({ data }): Promise<FinalizarRematriculaResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -1897,6 +1912,7 @@ async function gravarAuditoriaCadastro(linhas: AuditoriaCadastro[]): Promise<voi
 export const sincronizarCadastroRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SincronizarCadastroSchema.parse(input))
   .handler(async ({ data }): Promise<SincronizarCadastroResult> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const sessao = await resolverSessao(data.token);
     if (!sessao) return { ok: false, erro: MENSAGEM_SESSAO_EXPIRADA };
 
@@ -2112,6 +2128,7 @@ export interface CampanhaPublica {
 export const campanhaPublicaRematricula = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ ano: z.string().optional() }).parse(input))
   .handler(async ({ data }): Promise<CampanhaPublica> => {
+    // escopo-unidade: público por link (sessão do responsável, sem usuário da equipe)
     const anosAbertos = await anosCampanhasAbertas();
     if (data.ano === undefined) {
       return {
@@ -2165,6 +2182,7 @@ export interface AnosLetivosDiario {
 export const anosLetivosDiario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<AnosLetivosDiario> => {
+    // escopo-unidade: configuração global, sem colégio
     const [anoVigente, anoRematricula] = await Promise.all([
       anoVigenteConfigurado(),
       anoLetivoConfigurado(),
@@ -2176,6 +2194,7 @@ export const salvarAnoVigenteDiario = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoVigente: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoVigente)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2483,6 +2502,7 @@ async function pendenciasDaCampanha(anoLetivo: number): Promise<PendenciasCampan
 export const listarCampanhasRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<CampanhaConfig[]> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, false);
     const campanhas = await listarCampanhas();
     return Promise.all(
@@ -2495,6 +2515,7 @@ export const prepararCampanhaRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ anoLetivo: z.number().int() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
@@ -2519,6 +2540,7 @@ export const alterarCampanhaRematricula = createServerFn({ method: "POST" })
     z.object({ anoLetivo: z.number().int(), aberta: z.boolean() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
+    // escopo-unidade: configuração global, sem colégio
     await exigirPermissaoCampanhas(context.userId, true);
     const campanha = await campanhaDoAno(data.anoLetivo);
     if (!campanha) throw new Error(`A campanha de ${data.anoLetivo} não existe.`);
@@ -2627,13 +2649,12 @@ export const listarSolicitacoesRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<SolicitacaoRematricula[]> => {
     await exigirPermissaoRematricula(context.userId, false);
-    const data = await selectAll<EscolhaRow>(() =>
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select(CAMPOS_ESCOLHA)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true }),
-    );
+    const permitidas = await unidadesDoUsuario(context.userId);
+    const data = await selectAll<EscolhaRow>(() => {
+      let q = supabaseAdmin.from("rematricula_escolhas" as never).select(CAMPOS_ESCOLHA);
+      if (permitidas !== null) q = q.in("unidade", permitidas);
+      return q.order("created_at", { ascending: false }).order("id", { ascending: true });
+    });
     return data.map(paraSolicitacao);
   });
 
@@ -3195,6 +3216,7 @@ export const efetivarEscolhaRematricula = createServerFn({ method: "POST" })
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarEscolha(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "pendente_lancamento") {
       return {
         ok: false,
@@ -3238,6 +3260,7 @@ export const lancarEscolhaRematriculaNoSponte = createServerFn({ method: "POST" 
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarEscolha(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "efetivada") {
       return {
         ok: false,
@@ -3515,6 +3538,7 @@ export const efetivarMatriculaRematricula = createServerFn({ method: "POST" })
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarMatricula(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "pendente_lancamento") {
       return {
         ok: false,
@@ -3553,6 +3577,7 @@ export const lancarMatriculaRematriculaNoSponte = createServerFn({ method: "POST
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarMatricula(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "efetivada") {
       return {
         ok: false,
@@ -3660,10 +3685,25 @@ const exigirPermissaoPacotesExtras = (userId: string, edicao: boolean) =>
 const exigirPermissaoCampanhas = (userId: string, edicao: boolean) =>
   exigirPermissaoCadastro(userId, "matricula.campanhas", edicao, "as campanhas e o ano vigente");
 
+// Linha atual do cadastro de material: o colégio dela também tem de estar liberado.
+async function exigirUnidadeDaLinhaMaterial(
+  userId: string,
+  tabela: "material_pedagogico_series" | "material_pedagogico_itens",
+  id: string,
+): Promise<void> {
+  const { data } = await supabaseAdmin
+    .from(tabela as never)
+    .select("unidade")
+    .eq("id", id)
+    .maybeSingle<{ unidade: string }>();
+  await exigirUnidadeDoUsuario(userId, data?.unidade);
+}
+
 export const listarMaterialSeries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialSerieRegistro[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
     // leitura-restrita: configuração: séries do material pedagógico
     const { data, error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
@@ -3684,16 +3724,18 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
       updated_at: string;
       updated_by_nome: string | null;
     }[];
-    return linhas.map((r) => ({
-      id: r.id,
-      unidade: r.unidade,
-      anoLetivo: Number(r.ano_letivo),
-      serie: r.serie,
-      serieChave: r.serie_chave,
-      valorAnual: Number(r.valor_anual),
-      atualizadoEm: r.updated_at,
-      atualizadoPor: r.updated_by_nome ?? "",
-    }));
+    return linhas
+      .filter((r) => unidadeLiberada(permitidas, r.unidade))
+      .map((r) => ({
+        id: r.id,
+        unidade: r.unidade,
+        anoLetivo: Number(r.ano_letivo),
+        serie: r.serie,
+        serieChave: r.serie_chave,
+        valorAnual: Number(r.valor_anual),
+        atualizadoEm: r.updated_at,
+        atualizadoPor: r.updated_by_nome ?? "",
+      }));
   });
 
 const SalvarMaterialSerieSchema = z.object({
@@ -3711,6 +3753,10 @@ export const salvarMaterialSerie = createServerFn({ method: "POST" })
     await exigirPermissaoMaterialPedagogico(context.userId, true);
     if (!UNIDADES_SPONTE.includes(data.unidade)) {
       throw new Error("Unidade inválida.");
+    }
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
+    if (data.id) {
+      await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_series", data.id);
     }
 
     const registro = {
@@ -3747,6 +3793,7 @@ export const excluirMaterialSerie = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_series", data.id);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
       .delete()
@@ -3765,6 +3812,7 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialItemRegistro[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
     const linhas = await selectAll<{
       id: string;
       unidade: string;
@@ -3791,7 +3839,7 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
         .order("id"),
     );
     const grupos = new Map<string, typeof linhas>();
-    for (const r of linhas) {
+    for (const r of linhas.filter((l) => unidadeLiberada(permitidas, l.unidade))) {
       const k = `${r.unidade}|${r.ano_letivo}|${r.serie_chave}`;
       grupos.set(k, [...(grupos.get(k) ?? []), r]);
     }
@@ -3849,6 +3897,10 @@ export const salvarMaterialItem = createServerFn({ method: "POST" })
     if (!UNIDADES_SPONTE.includes(data.unidade)) {
       throw new Error("Unidade inválida.");
     }
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
+    if (data.id) {
+      await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_itens", data.id);
+    }
     const serieChave = chaveSerie(data.serie);
     const base = {
       unidade: data.unidade,
@@ -3901,6 +3953,7 @@ export const excluirMaterialItem = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_itens", data.id);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_itens" as never)
       .delete()

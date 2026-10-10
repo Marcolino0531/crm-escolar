@@ -6,6 +6,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirUnidadeDoUsuario, unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { ehDestinatarioBoleto, T_BOLETO_AVISOS } from "@/lib/contrato-boleto-avisos.server";
 
@@ -40,12 +41,15 @@ export const listarAvisosBoletoMatricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<AvisoBoletoMatricula[]> => {
     if (!(await ehDestinatarioBoleto(context.userId))) return [];
-    const { data, error } = await supabaseAdmin
+    const permitidas = await unidadesDoUsuario(context.userId);
+    let q = supabaseAdmin
       .from(T_BOLETO_AVISOS)
       .select(
-        "id, contrato_id, assinado_em, contrato:contrato_id(unidade, aluno_nome, ano_letivo, responsavel_nome, numero_contrato, status, campos)",
+        `id, contrato_id, assinado_em, contrato:contrato_id${permitidas === null ? "" : "!inner"}(unidade, aluno_nome, ano_letivo, responsavel_nome, numero_contrato, status, campos)`,
       )
-      .is("concluido_em", null)
+      .is("concluido_em", null);
+    if (permitidas !== null) q = q.in("contrato.unidade", permitidas);
+    const { data, error } = await q
       .order("created_at", { ascending: false })
       .limit(50)
       .returns<AvisoRow[]>();
@@ -79,6 +83,12 @@ export const concluirAvisoBoletoMatricula = createServerFn({ method: "POST" })
     if (!(await ehDestinatarioBoleto(context.userId))) {
       throw new Error("Você não recebe os avisos de boleto de matrícula.");
     }
+    const { data: aviso } = await supabaseAdmin
+      .from(T_BOLETO_AVISOS)
+      .select("contrato:contrato_id(unidade)")
+      .eq("id", data.avisoId)
+      .maybeSingle<{ contrato: { unidade: string } | null }>();
+    await exigirUnidadeDoUsuario(context.userId, aviso?.contrato?.unidade);
     const { error } = await supabaseAdmin
       .from(T_BOLETO_AVISOS)
       .update({

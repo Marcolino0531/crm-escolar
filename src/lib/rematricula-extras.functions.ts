@@ -8,6 +8,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 import { selectAll } from "@/lib/supabase-paginate";
 import { groupMealPlans, groupSchedules, emptyPlan, emptySchedule } from "@/lib/diario";
 import type { MealPlanRow, ScheduleRow } from "@/lib/diario";
@@ -341,6 +342,7 @@ export const reconferirExtrasAluno = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<ResultadoReconferencia> => {
     await exigirPermissaoReconferir(context.userId);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
 
     const { data: escolha, error: eErr } = await supabaseAdmin
       .from("rematricula_extras_escolhas" as never)
@@ -415,6 +417,7 @@ export const listarDivergenciasExtras = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ unidade: z.string().trim().min(1) }).parse(input))
   .handler(async ({ data, context }): Promise<LinhaDivergenciaExtra[]> => {
     await exigirPermissaoDiario(context.userId);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const rows = await selectAll<DivergenciaRow>(() =>
       supabaseAdmin
         .from("rematricula_extras_divergencias" as never)
