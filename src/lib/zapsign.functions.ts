@@ -9,6 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirUnidadeDoUsuario, unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 import {
   criarDocumentoPdf,
   criarDocumentoViaTemplate,
@@ -139,6 +140,7 @@ export const criarDocumentoTestePdf = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => CriarPdfSchema.parse(input))
   .handler(async ({ data, context }) => {
     const autor = await exigirEdicaoDocumentos(context.userId);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const { ambiente } = data;
     exigirTokenDoAmbiente(ambiente);
     const pdf = validarBase64Pdf(data.pdfBase64);
@@ -242,6 +244,7 @@ export const criarDocumentoTesteTemplate = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => CriarViaTemplateSchema.parse(input))
   .handler(async ({ data, context }) => {
     const autor = await exigirEdicaoDocumentos(context.userId);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     const { ambiente } = data;
     exigirTokenDoAmbiente(ambiente);
     const [signatario] = normalizarSignatarios([data.signatario]);
@@ -338,10 +341,11 @@ export const sincronizarDocumentoTeste = createServerFn({ method: "POST" })
     await exigirEdicaoDocumentos(context.userId);
     const { data: doc } = await supabaseAdmin
       .from(T_DOCS)
-      .select("zapsign_token")
+      .select("zapsign_token, unidade")
       .eq("id", data.id)
       .eq("ambiente", data.ambiente)
-      .maybeSingle<{ zapsign_token: string | null }>();
+      .maybeSingle<{ zapsign_token: string | null; unidade: string | null }>();
+    await exigirUnidadeDoUsuario(context.userId, doc?.unidade);
     if (!doc?.zapsign_token) throw new Error("Documento sem token da ZapSign.");
     const r = await detalharDocumento(doc.zapsign_token, data.ambiente);
     if (!r.ok) throw new Error(r.erro);
@@ -438,15 +442,30 @@ export const listarEventosZapSign = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ ambiente: AmbienteSchema }).parse(input))
   .handler(async ({ data, context }) => {
     await exigirVisualizacao(context.userId, ["documentos.zapsign"]);
-    const { data: eventos, error } = await supabaseAdmin
+    // Não admin: só eventos de documentos dos colégios liberados.
+    const permitidas = await unidadesDoUsuario(context.userId);
+    let q = supabaseAdmin
       .from(T_EVENTOS)
-      .select("id, documento_id, zapsign_token, event_type, status_documento, recebido_em")
-      .eq("sandbox", data.ambiente === "sandbox")
+      .select(
+        `id, documento_id, zapsign_token, event_type, status_documento, recebido_em${permitidas === null ? "" : ", documento:documento_id!inner(unidade)"}`,
+      )
+      .eq("sandbox", data.ambiente === "sandbox");
+    if (permitidas !== null) q = q.in("documento.unidade", permitidas);
+    const { data: eventos, error } = await q
       .order("recebido_em", { ascending: false })
       .limit(200)
       .returns<ZapSignEventoLista[]>();
     if (error) throw new Error(error.message);
-    return eventos ?? [];
+    return (eventos ?? []).map(
+      ({ id, documento_id, zapsign_token, event_type, status_documento, recebido_em }) => ({
+        id,
+        documento_id,
+        zapsign_token,
+        event_type,
+        status_documento,
+        recebido_em,
+      }),
+    );
   });
 
 async function exigirVisualizacao(userId: string, paginas: ChavePermissao[]): Promise<void> {
@@ -466,6 +485,13 @@ export const obterLinkArquivoAssinado = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await exigirVisualizacao(context.userId, ["documentos.zapsign", "matricula.contratos"]);
+    const { data: doc } = await supabaseAdmin
+      .from(T_DOCS)
+      .select("unidade")
+      .eq("id", data.id)
+      .eq("ambiente", data.ambiente)
+      .maybeSingle<{ unidade: string | null }>();
+    await exigirUnidadeDoUsuario(context.userId, doc?.unidade);
     const r = await linkArquivoAssinado(data.id, data.ambiente);
     if (r.url === null) throw new Error(r.erro);
     return { url: r.url };
@@ -487,6 +513,9 @@ export const backfillArquivosAssinados = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ dryRun: z.boolean() }).parse(input))
   .handler(async ({ data, context }) => {
     await exigirEdicaoDocumentos(context.userId);
+    if ((await unidadesDoUsuario(context.userId)) !== null) {
+      throw new Error("Somente administradores podem guardar os PDFs assinados em lote.");
+    }
     const { data: docs, error } = await supabaseAdmin
       .from(T_DOCS)
       .select("id, nome, unidade, assinado_em, zapsign_token")

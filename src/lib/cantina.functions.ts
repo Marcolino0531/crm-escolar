@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 import {
   UNIDADES_SPONTE,
   callSponte,
@@ -544,6 +545,7 @@ export const efetivarRecargaCantina = createServerFn({ method: "POST" })
     const nome = await assertPodeEditarCantina(context.userId);
     const recarga = await carregarRecarga(data.id);
     if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, recarga.unidade);
     // Efetivação é única: reclique não gera nova efetivação nem novo histórico.
     const transicao = transicaoRecarga(recarga.status, "efetivar");
     if (!transicao.ok) return { ok: false, erro: transicao.erro };
@@ -583,6 +585,7 @@ export const cancelarRecargaCantina = createServerFn({ method: "POST" })
     const nome = await assertPodeEditarCantina(context.userId);
     const recarga = await carregarRecarga(data.id);
     if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, recarga.unidade);
     const transicao = transicaoRecarga(recarga.status, "cancelar");
     if (!transicao.ok) return { ok: false, erro: transicao.erro };
 
@@ -614,6 +617,7 @@ export const lancarRecargaNoSponte = createServerFn({ method: "POST" })
     const nome = await assertPodeEditarCantina(context.userId);
     const recarga = await carregarRecarga(data.id);
     if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, recarga.unidade);
     if (recarga.status !== "efetivada") {
       return {
         ok: false,
@@ -646,6 +650,7 @@ export const marcarRecargaLancadaNoBoleto = createServerFn({ method: "POST" })
     const nome = await assertPodeEditarCantina(context.userId);
     const recarga = await carregarRecarga(data.id);
     if (!recarga) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, recarga.unidade);
     const transicao = transicaoRecarga(recarga.status, "marcar_lancada");
     if (!transicao.ok) return { ok: false, erro: transicao.erro };
 

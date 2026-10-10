@@ -4,6 +4,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  exigirEscolaDoUsuario,
+  unidadeLiberada,
+  unidadesDoUsuario,
+} from "@/lib/unidade-acesso.server";
 import { nomeDoUsuario } from "@/lib/atendimento-ia.server";
 import { valoresValidos, type ColoniaValoresRegistro } from "@/lib/colonia-valores";
 import { ANO_LETIVO_MAX, ANO_LETIVO_MIN, anoLetivoValido } from "@/lib/rematricula";
@@ -69,6 +74,7 @@ export const listarValoresColonia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<ColoniaValoresRegistro[]> => {
     await exigirPermissao(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
     // leitura-restrita: configuração: valores da colônia por colégio
     const { data, error } = await supabaseAdmin
       .from("colonia_valores" as never)
@@ -76,7 +82,7 @@ export const listarValoresColonia = createServerFn({ method: "POST" })
       .order("ano_letivo", { ascending: false })
       .returns<Row[]>();
     if (error) throw new Error(error.message);
-    return (data ?? []).map(paraRegistro);
+    return (data ?? []).map(paraRegistro).filter((r) => unidadeLiberada(permitidas, r.unidade));
   });
 
 const SalvarSchema = z.object({
@@ -97,6 +103,7 @@ export const salvarValoresColonia = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SalvarSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissao(context.userId, true);
+    await exigirEscolaDoUsuario(context.userId, data.schoolId);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }
@@ -130,6 +137,12 @@ export const excluirValoresColonia = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissao(context.userId, true);
+    const { data: atual } = await supabaseAdmin
+      .from("colonia_valores" as never)
+      .select("school_id")
+      .eq("id", data.id)
+      .maybeSingle<{ school_id: string }>();
+    await exigirEscolaDoUsuario(context.userId, atual?.school_id);
     const { error } = await supabaseAdmin
       .from("colonia_valores" as never)
       .delete()

@@ -17,6 +17,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  exigirUnidadeDoUsuario,
+  unidadeLiberada,
+  unidadesDoUsuario,
+} from "@/lib/unidade-acesso.server";
 import { selectAll } from "@/lib/supabase-paginate";
 import { cpfValido, normalizarCpf } from "@/lib/cantina";
 import {
@@ -2627,13 +2632,12 @@ export const listarSolicitacoesRematricula = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<SolicitacaoRematricula[]> => {
     await exigirPermissaoRematricula(context.userId, false);
-    const data = await selectAll<EscolhaRow>(() =>
-      supabaseAdmin
-        .from("rematricula_escolhas" as never)
-        .select(CAMPOS_ESCOLHA)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true }),
-    );
+    const permitidas = await unidadesDoUsuario(context.userId);
+    const data = await selectAll<EscolhaRow>(() => {
+      let q = supabaseAdmin.from("rematricula_escolhas" as never).select(CAMPOS_ESCOLHA);
+      if (permitidas !== null) q = q.in("unidade", permitidas);
+      return q.order("created_at", { ascending: false }).order("id", { ascending: true });
+    });
     return data.map(paraSolicitacao);
   });
 
@@ -3195,6 +3199,7 @@ export const efetivarEscolhaRematricula = createServerFn({ method: "POST" })
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarEscolha(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "pendente_lancamento") {
       return {
         ok: false,
@@ -3238,6 +3243,7 @@ export const lancarEscolhaRematriculaNoSponte = createServerFn({ method: "POST" 
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarEscolha(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "efetivada") {
       return {
         ok: false,
@@ -3515,6 +3521,7 @@ export const efetivarMatriculaRematricula = createServerFn({ method: "POST" })
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarMatricula(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "pendente_lancamento") {
       return {
         ok: false,
@@ -3553,6 +3560,7 @@ export const lancarMatriculaRematriculaNoSponte = createServerFn({ method: "POST
     const nome = await exigirPermissaoRematricula(context.userId, true);
     const escolha = await carregarMatricula(data.id);
     if (!escolha) return { ok: false, erro: "Solicitação não encontrada." };
+    await exigirUnidadeDoUsuario(context.userId, escolha.unidade);
     if (escolha.status !== "efetivada") {
       return {
         ok: false,
@@ -3660,10 +3668,25 @@ const exigirPermissaoPacotesExtras = (userId: string, edicao: boolean) =>
 const exigirPermissaoCampanhas = (userId: string, edicao: boolean) =>
   exigirPermissaoCadastro(userId, "matricula.campanhas", edicao, "as campanhas e o ano vigente");
 
+// Linha atual do cadastro de material: o colégio dela também tem de estar liberado.
+async function exigirUnidadeDaLinhaMaterial(
+  userId: string,
+  tabela: "material_pedagogico_series" | "material_pedagogico_itens",
+  id: string,
+): Promise<void> {
+  const { data } = await supabaseAdmin
+    .from(tabela as never)
+    .select("unidade")
+    .eq("id", id)
+    .maybeSingle<{ unidade: string }>();
+  await exigirUnidadeDoUsuario(userId, data?.unidade);
+}
+
 export const listarMaterialSeries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialSerieRegistro[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
     // leitura-restrita: configuração: séries do material pedagógico
     const { data, error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
@@ -3684,16 +3707,18 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
       updated_at: string;
       updated_by_nome: string | null;
     }[];
-    return linhas.map((r) => ({
-      id: r.id,
-      unidade: r.unidade,
-      anoLetivo: Number(r.ano_letivo),
-      serie: r.serie,
-      serieChave: r.serie_chave,
-      valorAnual: Number(r.valor_anual),
-      atualizadoEm: r.updated_at,
-      atualizadoPor: r.updated_by_nome ?? "",
-    }));
+    return linhas
+      .filter((r) => unidadeLiberada(permitidas, r.unidade))
+      .map((r) => ({
+        id: r.id,
+        unidade: r.unidade,
+        anoLetivo: Number(r.ano_letivo),
+        serie: r.serie,
+        serieChave: r.serie_chave,
+        valorAnual: Number(r.valor_anual),
+        atualizadoEm: r.updated_at,
+        atualizadoPor: r.updated_by_nome ?? "",
+      }));
   });
 
 const SalvarMaterialSerieSchema = z.object({
@@ -3711,6 +3736,10 @@ export const salvarMaterialSerie = createServerFn({ method: "POST" })
     await exigirPermissaoMaterialPedagogico(context.userId, true);
     if (!UNIDADES_SPONTE.includes(data.unidade)) {
       throw new Error("Unidade inválida.");
+    }
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
+    if (data.id) {
+      await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_series", data.id);
     }
 
     const registro = {
@@ -3747,6 +3776,7 @@ export const excluirMaterialSerie = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_series", data.id);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
       .delete()
@@ -3765,6 +3795,7 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialItemRegistro[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
+    const permitidas = await unidadesDoUsuario(context.userId);
     const linhas = await selectAll<{
       id: string;
       unidade: string;
@@ -3791,7 +3822,7 @@ export const listarMaterialItens = createServerFn({ method: "POST" })
         .order("id"),
     );
     const grupos = new Map<string, typeof linhas>();
-    for (const r of linhas) {
+    for (const r of linhas.filter((l) => unidadeLiberada(permitidas, l.unidade))) {
       const k = `${r.unidade}|${r.ano_letivo}|${r.serie_chave}`;
       grupos.set(k, [...(grupos.get(k) ?? []), r]);
     }
@@ -3849,6 +3880,10 @@ export const salvarMaterialItem = createServerFn({ method: "POST" })
     if (!UNIDADES_SPONTE.includes(data.unidade)) {
       throw new Error("Unidade inválida.");
     }
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
+    if (data.id) {
+      await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_itens", data.id);
+    }
     const serieChave = chaveSerie(data.serie);
     const base = {
       unidade: data.unidade,
@@ -3901,6 +3936,7 @@ export const excluirMaterialItem = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoMaterialPedagogico(context.userId, true);
+    await exigirUnidadeDaLinhaMaterial(context.userId, "material_pedagogico_itens", data.id);
     const { error } = await supabaseAdmin
       .from("material_pedagogico_itens" as never)
       .delete()
