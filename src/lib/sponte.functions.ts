@@ -46,7 +46,12 @@ import {
 } from "@/lib/diario-rotina-matricula";
 import type { RotinaPersistida } from "@/lib/matricula-form";
 import { agruparUnidadesPorCredencial } from "@/lib/portal-responsavel";
-import { anoCorrenteSaoPaulo, unidadesDoAluno } from "@/lib/aluno-unidades";
+import {
+  anoCorrenteSaoPaulo,
+  UNIDADES_SEGMENTADAS,
+  unidadesDoAluno,
+  type VinculoTurma,
+} from "@/lib/aluno-unidades";
 import { vinculosPorSponteId } from "@/lib/aluno-unidades.server";
 
 export { escapeXml };
@@ -408,11 +413,25 @@ export function classificarUnidade(turmaAtual: string): "CEC" | "CEC Baby" | nul
   return null;
 }
 
-// CEC e CEC Baby dividem o token: o aluno é da unidade da TurmaAtual; sem turma
-// (ex-aluno) fica na unidade-mãe "CEC", como nas listagens. Demais unidades: livre.
-export function alunoDaUnidadePorTurma(unidade: string, turmaAtual: string): boolean {
+// CEC e CEC Baby dividem o token. A checagem por aluno só vale para quem não é
+// admin e tem exatamente um dos dois colégios; admin e quem tem os dois passam.
+export function exigeChecagemDeTurma(
+  permitidas: readonly string[] | null,
+  unidade: string,
+): boolean {
+  if (permitidas === null || !SPONTE_UNIDADES[unidade]?.segmentaPorTurma) return false;
+  return UNIDADES_SEGMENTADAS.filter((u) => permitidas.includes(u)).length === 1;
+}
+
+// Mesma regra da busca: TurmaAtual + vínculo do ano letivo (unidadesDoAluno).
+export function alunoDaUnidadePorTurma(
+  unidade: string,
+  turmaAtual: string,
+  vinculos: readonly VinculoTurma[],
+  anoCorrente: number,
+): boolean {
   if (!SPONTE_UNIDADES[unidade]?.segmentaPorTurma) return true;
-  return (classificarUnidade(turmaAtual) ?? "CEC") === unidade;
+  return unidadesDoAluno(turmaAtual, vinculos, anoCorrente, classificarUnidade).has(unidade);
 }
 
 // Conciliação: nas unidades de token compartilhado só vale a conta caixa da própria unidade.
@@ -424,12 +443,15 @@ export function contaCreditadaDaUnidade(unidade: string, conta: string | undefin
 
 // Confere no Sponte (GetAlunos) que cada aluno é da unidade pela turma atual.
 async function alunosDaUnidadePorTurma(
+  permitidas: readonly string[] | null,
   unidade: string,
   alunoIds: readonly string[],
 ): Promise<boolean> {
-  if (!SPONTE_UNIDADES[unidade]?.segmentaPorTurma) return true;
+  if (!exigeChecagemDeTurma(permitidas, unidade)) return true;
   const creds = resolverCredenciais(unidade);
   if (!creds) return true;
+  const vinculos = await vinculosPorSponteId(alunoIds);
+  const ano = anoCorrenteSaoPaulo();
   const CONC = 8;
   for (let i = 0; i < alunoIds.length; i += CONC) {
     const lote = alunoIds.slice(i, i + CONC);
@@ -444,7 +466,15 @@ async function alunosDaUnidadePorTurma(
         const node = parseXmlList(xml, "wsAluno").find((n) =>
           parseXmlValue(n, "RetornoOperacao").startsWith("01"),
         );
-        return !!node && alunoDaUnidadePorTurma(unidade, parseXmlValue(node, "TurmaAtual"));
+        return (
+          !!node &&
+          alunoDaUnidadePorTurma(
+            unidade,
+            parseXmlValue(node, "TurmaAtual"),
+            vinculos.get(id) ?? [],
+            ano,
+          )
+        );
       }),
     );
     if (resultados.some((ok) => !ok)) return false;
@@ -1448,7 +1478,7 @@ export const buscarDadosCadastraisAluno = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, unidade, [alunoId]))) {
       return { aluno: null, responsaveis: [], error: "Sem permissão para esta unidade." };
     }
     return coletarCadastroAluno(unidade, alunoId);
@@ -1626,7 +1656,7 @@ export const fetchTitulosAlunoSponte = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(data.unidade)) {
       return { titulos: [], error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(data.unidade, [data.alunoId]))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, data.unidade, [data.alunoId]))) {
       return { titulos: [], error: "Sem permissão para esta unidade." };
     }
     return coletarTitulosAluno(data.unidade, data.alunoId);
@@ -2132,7 +2162,7 @@ export const enviarCobrancaTeste = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, unidade, [alunoId]))) {
       return { ok: false, error: "Sem permissão para esta unidade." };
     }
 
@@ -2447,7 +2477,7 @@ export const fetchResponsavelCobranca = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { ...vazio, error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, unidade, [alunoId]))) {
       return { ...vazio, error: "Sem permissão para esta unidade." };
     }
 
@@ -2585,7 +2615,7 @@ export const fetchColoniaBeneficios = createServerFn({ method: "POST" })
     if (allowed !== null && !allowed.includes(unidade)) {
       return { beneficios: {}, error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(unidade, alunoIds))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, unidade, alunoIds))) {
       return { beneficios: {}, error: "Sem permissão para esta unidade." };
     }
 
@@ -3944,7 +3974,7 @@ export const buscarResponsaveisFinanceirosLoteIR = createServerFn({ method: "POS
     if (allowed !== null && !allowed.includes(unidade)) {
       return { responsaveis: [], error: "Sem permissão para esta unidade." };
     }
-    if (!(await alunosDaUnidadePorTurma(unidade, alunoIds))) {
+    if (!(await alunosDaUnidadePorTurma(allowed, unidade, alunoIds))) {
       return { responsaveis: [], error: "Sem permissão para esta unidade." };
     }
     const creds = resolverCredenciais(unidade);
@@ -3978,7 +4008,7 @@ export async function emailResponsavelFinanceiroLoteIR(
   if (allowed !== null && !allowed.includes(unidade)) {
     return { responsavel: null, error: "Sem permissão para esta unidade." };
   }
-  if (!(await alunosDaUnidadePorTurma(unidade, [alunoId]))) {
+  if (!(await alunosDaUnidadePorTurma(allowed, unidade, [alunoId]))) {
     return { responsavel: null, error: "Sem permissão para esta unidade." };
   }
   const creds = resolverCredenciais(unidade);
