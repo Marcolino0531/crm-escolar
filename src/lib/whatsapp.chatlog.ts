@@ -44,6 +44,7 @@ export async function findConversaBySuffix(
 ): Promise<ConversaMatch | null> {
   const suffix = waPhone.slice(-8);
   if (suffix.length < 8) return null;
+  // limite-intencional: busca por telefone, 10 conversas mais recentes
   const { data } = await supabaseAdmin
     .from("whatsapp_conversations" as never)
     .select("id, aluno_id, aluno_name, phone_number_id, numero_grupo, unidade")

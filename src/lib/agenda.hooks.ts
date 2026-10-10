@@ -145,6 +145,7 @@ export function useColaboradores() {
   const { data: colaboradores = [], isLoading } = useQuery({
     queryKey: ["agenda_colaboradores"],
     queryFn: async () => {
+      // leitura-restrita: configuração: colaboradores da agenda
       const { data, error } = await supabase
         .from("agenda_colaboradores" as never)
         .select("id, nome, ativo")

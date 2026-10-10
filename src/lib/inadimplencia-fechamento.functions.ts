@@ -32,6 +32,7 @@ const UNIDADES_SPONTE = ["CEC", "CEC Baby", "Núcleo Belvedere", "Núcleo Vale d
 type SchoolRow = { id: string; name: string; faturamento_retroativo_jan_mai: number | null };
 
 async function isAdmin(userId: string): Promise<boolean> {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: roles } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
@@ -47,6 +48,7 @@ async function assertAdmin(userId: string) {
 // Unidades que o usuário pode ver (null = todas, admin). Espelha alunos-ativos.functions.
 async function allowedSchoolIds(userId: string): Promise<string[] | null> {
   if (await isAdmin(userId)) return null;
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: us } = await supabaseAdmin
     .from("user_schools" as never)
     .select("school_id")
@@ -66,6 +68,7 @@ async function schoolPorNome(unidade: string): Promise<SchoolRow> {
 }
 
 async function schoolsSponte(): Promise<SchoolRow[]> {
+  // leitura-restrita: configuração: tabela de colégios
   const { data, error } = await supabaseAdmin
     .from("schools" as never)
     .select("id, name, faturamento_retroativo_jan_mai")
@@ -79,7 +82,9 @@ async function schoolsSponte(): Promise<SchoolRow[]> {
 async function idsFinanceirosServidor(): Promise<IdsFinanceiros> {
   type Nomeado = { id: string; name: string };
   const [rc, cc] = await Promise.all([
+    // leitura-restrita: configuração: categorias de receita
     supabaseAdmin.from("revenue_categories" as never).select("id, name"),
+    // leitura-restrita: configuração: centros de custo
     supabaseAdmin.from("cost_centers" as never).select("id, name"),
   ]);
   if (rc.error) throw new Error(rc.error.message);

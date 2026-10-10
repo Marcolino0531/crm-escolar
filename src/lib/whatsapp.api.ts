@@ -26,7 +26,7 @@
 // o status por `wa_message_id` (wamid retornado no envio).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchAllRows, selectAll, type PagedRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAll, selectAllResult, type PagedRows } from "@/lib/supabase-paginate";
 import { onlyDigits } from "@/lib/phone";
 import {
   buscarLinhaDigitavelPorUnidade,
@@ -278,6 +278,7 @@ async function autorizadoParaSimular(request: Request): Promise<boolean> {
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   const userId = data?.user?.id;
   if (error || !userId) return false;
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: roles, error: erroRoles } = await supabaseAdmin
     .from("user_roles")
     .select("role")
@@ -724,10 +725,18 @@ async function carregarExcecoesAcordo(): Promise<Map<string, string>> {
 // filtro é por `expira_em`, então passado o prazo o disparo volta sozinho — e se
 // a baixa entrou no Sponte nesse meio tempo, a parcela nem aparece mais aqui.
 async function carregarPausasComprovante(): Promise<PausaComprovante[]> {
-  const { data, error } = await supabaseAdmin
-    .from("whatsapp_billing_pauses" as never)
-    .select("telefone, aluno_id, expira_em")
-    .gt("expira_em", new Date().toISOString());
+  const agoraISO = new Date().toISOString();
+  const { data, error } = await selectAllResult<{
+    telefone: string;
+    aluno_id: string | null;
+    expira_em: string;
+  }>(() =>
+    supabaseAdmin
+      .from("whatsapp_billing_pauses" as never)
+      .select("telefone, aluno_id, expira_em")
+      .gt("expira_em", agoraISO)
+      .order("id", { ascending: true }),
+  );
   if (error) {
     // Fail-open explícito, como nas exceções de acordo: uma falha de leitura não
     // derruba o disparo do dia, mas fica registrada.

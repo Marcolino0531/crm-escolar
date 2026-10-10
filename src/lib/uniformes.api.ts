@@ -9,6 +9,7 @@
 
 import ExcelJS from "exceljs";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { STORES, type StoreKey } from "@/lib/nuvemshop.stores";
 import {
   ORDER_QUANTITY,
@@ -161,11 +162,14 @@ async function todasAsVariacoes(stores: StoreKey[] | null): Promise<VariantRow[]
 
 // `${storeKey}:${ns_product_id}` → nome do produto.
 async function nomesDosProdutos(stores: StoreKey[] | null): Promise<Map<string, string>> {
-  let query = supabaseAdmin
-    .from("uniform_products" as never)
-    .select("ns_product_id, store_key, name");
-  if (stores !== null) query = query.in("store_key", stores);
-  const { data, error } = await query;
+  const { data, error } = await selectAllResult<ProductRow>(() => {
+    let query = supabaseAdmin
+      .from("uniform_products" as never)
+      .select("ns_product_id, store_key, name")
+      .order("id", { ascending: true });
+    if (stores !== null) query = query.in("store_key", stores);
+    return query;
+  });
   if (error) throw new Error(error.message);
   const nameByKey = new Map<string, string>();
   for (const p of (data ?? []) as unknown as ProductRow[]) {

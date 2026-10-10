@@ -120,6 +120,7 @@ function FundosPage() {
   const { data: funds = [], isLoading: loadingFunds } = useQuery({
     queryKey: ["provision_funds", schoolId, schoolFilterIds],
     queryFn: async () => {
+      // leitura-restrita: configuração: fundos de provisão
       let q = supabase
         .from("provision_funds" as any)
         .select("*")

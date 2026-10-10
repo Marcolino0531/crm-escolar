@@ -150,6 +150,7 @@ export const gerarSugestaoResposta = createServerFn({ method: "POST" })
     const conversa = convRow as unknown as ConversaIA | null;
     if (!conversa) return { ok: false, error: "Conversa não encontrada." };
 
+    // limite-intencional: mensagens de uma única conversa, no máximo 500
     const { data: msgRows, error: msgErro } = await supabaseAdmin
       .from("whatsapp_messages" as never)
       .select("direction, body, message_type, origem")

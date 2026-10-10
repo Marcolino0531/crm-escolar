@@ -51,6 +51,7 @@ function paraPreco(r: PrecoRow): PrecoExtra | null {
 
 // Preços de uma unidade/ano indexados por categoria (usado pelo faturamento).
 export async function precosExtrasDoAno(unidade: string, anoLetivo: number): Promise<TabelaPrecos> {
+  // leitura-restrita: configuração: preços de extras por colégio
   const { data, error } = await supabaseAdmin
     .from("diario_precos_extras" as never)
     .select("unidade, categoria, ano_letivo, valor, updated_at, updated_by_nome")
@@ -71,6 +72,7 @@ export const listarPrecosExtras = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ unidade: z.string().min(1) }).parse(input))
   .handler(async ({ data, context }): Promise<PrecoExtra[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    // leitura-restrita: configuração: preços de extras por colégio
     const { data: rows, error } = await supabaseAdmin
       .from("diario_precos_extras" as never)
       .select("unidade, categoria, ano_letivo, valor, updated_at, updated_by_nome")

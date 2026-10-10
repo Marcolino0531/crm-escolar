@@ -52,6 +52,7 @@ async function contexto(userId: string, schoolId: string, edicao: boolean): Prom
 }
 
 async function adicionaisDa(schoolId: string): Promise<Row[]> {
+  // leitura-restrita: configuração: CNPJs por colégio
   const { data, error } = await supabaseAdmin
     .from("rh_folha_cnpjs" as never)
     .select(COLS)

@@ -1,4 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+import { selectAllResult } from "@/lib/supabase-paginate";
 
 // Transações candidatas à conciliação automática por subcategoria única.
 export interface AutoReconcileTx {
@@ -96,12 +98,17 @@ export async function autoBaixaForecastsPorExtrato(
   const datas = [...new Set(expenses.map((e) => e.date).filter(Boolean))];
   if (datas.length === 0) return 0;
 
-  const { data: forecasts, error } = await supabase
-    .from("recurring_forecasts")
-    .select("id, due_date, projected_amount, status, notes")
-    .eq("school_id", schoolId)
-    .neq("status", "paid")
-    .in("due_date", datas);
+  const { data: forecasts, error } = await selectAllResult<
+    Pick<Tables<"recurring_forecasts">, "id" | "due_date" | "projected_amount" | "status" | "notes">
+  >(() =>
+    supabase
+      .from("recurring_forecasts")
+      .select("id, due_date, projected_amount, status, notes")
+      .eq("school_id", schoolId)
+      .neq("status", "paid")
+      .in("due_date", datas)
+      .order("id", { ascending: true }),
+  );
   if (error) throw new Error(error.message);
   if (!forecasts || forecasts.length === 0) return 0;
 

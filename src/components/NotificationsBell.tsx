@@ -23,7 +23,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchAllRows, selectAll } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import {
   lerConclusoesRecorrentes,
   lerRecebiveisDisponiveis,
@@ -223,6 +223,7 @@ export function NotificationsBell() {
     enabled: !!userId && canTasks,
     refetchInterval: 30000,
     queryFn: async () => {
+      // limite-intencional: últimas 30 notificações
       const { data, error } = await supabase
         .from("task_notifications" as any)
         .select("*")
@@ -242,6 +243,7 @@ export function NotificationsBell() {
     enabled: !!userId && canTasks,
     refetchInterval: 30000,
     queryFn: async () => {
+      // limite-intencional: últimas 50 tarefas abertas
       const { data, error } = await supabase
         .from("tasks" as any)
         .select("id, title, created_at")
@@ -265,6 +267,7 @@ export function NotificationsBell() {
     refetchInterval: 60000,
     queryFn: async () => {
       const [defsRes, compRes] = await Promise.all([
+        // leitura-restrita: configuração: definições de tarefas recorrentes
         supabase
           .from("recurring_task_defs" as never)
           .select("id, title, description, day_of_month, start_month, kind, due_date")
@@ -290,10 +293,13 @@ export function NotificationsBell() {
     enabled: !!userId && canCobranca,
     refetchInterval: 300000,
     queryFn: async (): Promise<ExecucaoCron[]> => {
-      const { data, error } = await supabase
-        .from("whatsapp_cron_runs" as never)
-        .select("data_ref, slot, status, enviados, falhas")
-        .eq("data_ref", hojeBRT);
+      const { data, error } = await selectAllResult<ExecucaoCron>(() =>
+        supabase
+          .from("whatsapp_cron_runs" as never)
+          .select("data_ref, slot, status, enviados, falhas")
+          .eq("data_ref", hojeBRT)
+          .order("id", { ascending: true }),
+      );
       if (error) return [];
       return (data ?? []) as unknown as ExecucaoCron[];
     },
@@ -349,7 +355,12 @@ export function NotificationsBell() {
           (data) => ({ data, error: null }),
           (error: unknown) => ({ data: null, error }),
         ),
-        supabase.from("uniform_products" as any).select("store_key, ns_product_id, name"),
+        selectAllResult<{ store_key: string; ns_product_id: string; name: string | null }>(() =>
+          supabase
+            .from("uniform_products" as never)
+            .select("store_key, ns_product_id, name")
+            .order("id", { ascending: true }),
+        ),
       ]);
       if (vRes.error) return [] as LowStockVariant[];
       const nameByKey = new Map<string, string>();
@@ -386,6 +397,7 @@ export function NotificationsBell() {
     enabled: !!userId && canCantina && unidadesPermitidas.length > 0,
     refetchInterval: 60000,
     queryFn: async () => {
+      // limite-intencional: 50 recargas pendentes mais antigas
       const { data, error } = await supabase
         .from("cantina_recargas" as any)
         .select("id, aluno_nome, valor, unidade")
@@ -570,6 +582,7 @@ export function NotificationsBell() {
     enabled: !!userId && canAgenda,
     refetchInterval: 30000,
     queryFn: async () => {
+      // limite-intencional: últimas 30 notificações
       const { data, error } = await supabase
         .from("agenda_notifications" as any)
         .select("id, message, read, created_at, concluded_at, reuniao:reuniao_id(data, horario)")
@@ -615,6 +628,7 @@ export function NotificationsBell() {
               .order("id", { ascending: true })
               .range(from, to) as unknown as PromiseLike<PagedRows<ColoniaRegistroSemana>>,
         ).catch(() => null),
+        // leitura-restrita: filtrada por week_start (uma linha por colégio)
         supabase
           .from("holiday_camp_week_status" as never)
           .select("school_id, status")

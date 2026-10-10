@@ -50,11 +50,13 @@ export async function contarAtivosDoAno(ano: number): Promise<Record<string, num
 
 // Unidades que o usuário pode ver (null = todas, admin). Espelha allowedSponteUnidades.
 async function allowedSchoolIds(userId: string): Promise<string[] | null> {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: roles } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
     .eq("user_id", userId);
   if (((roles ?? []) as { role: string }[]).some((r) => r.role === "admin")) return null;
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: us } = await supabaseAdmin
     .from("user_schools" as never)
     .select("school_id")
@@ -80,6 +82,7 @@ export const fetchAlunosAtivosAno = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data, context }): Promise<AlunosAtivosAnoResult> => {
     const allowed = await allowedSchoolIds(context.userId);
+    // leitura-restrita: configuração: tabela de colégios
     const { data: schools } = await supabaseAdmin
       .from("schools" as never)
       .select("id")

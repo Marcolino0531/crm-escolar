@@ -13,6 +13,7 @@ import type { MensagemContexto } from "@/lib/atendimento-ia";
 
 // Histórico usado só para classificar a situação e resumir o contexto do exemplo.
 async function mensagensDaConversa(conversationId: string): Promise<MensagemContexto[]> {
+  // limite-intencional: mensagens de uma única conversa, no máximo 500
   const { data } = await supabaseAdmin
     .from("whatsapp_messages" as never)
     .select("direction, body, message_type, origem")
@@ -138,6 +139,7 @@ export const removerExemploTreinamento = createServerFn({ method: "POST" })
 // Exemplos ativos candidatos ao contexto da próxima sugestão. Lê um lote recente
 // e a escolha final é feita em memória por `selecionarExemplos`.
 export async function carregarExemplosAtivos(limite = 60): Promise<ExemploTreinamento[]> {
+  // limite-intencional: quantidade de exemplos definida pelo chamador
   const { data } = await supabaseAdmin
     .from("ai_training_examples" as never)
     .select("id, situacao, contexto, sugestao_original, resposta_final, ativo, criado_em")

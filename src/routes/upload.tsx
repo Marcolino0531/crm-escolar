@@ -95,12 +95,16 @@ function UploadPage() {
     queryKey: ["refs"],
     queryFn: async () => {
       const [cc, sub, rules, revCat, revSub] = await Promise.all([
+        // leitura-restrita: configuração: centros de custo
         supabase.from("cost_centers").select("*").order("name"),
+        // leitura-restrita: configuração: centros de custo
         supabase.from("sub_cost_centers").select("*").order("name"),
         selectAll<Tables<"categorization_rules">>(() =>
           supabase.from("categorization_rules").select("*").order("id", { ascending: true }),
         ),
+        // leitura-restrita: configuração: categorias de receita
         supabase.from("revenue_categories").select("*").order("name"),
+        // leitura-restrita: configuração: categorias de receita
         supabase.from("revenue_subcategories").select("*").order("name"),
       ]);
       if (cc.error) throw cc.error;

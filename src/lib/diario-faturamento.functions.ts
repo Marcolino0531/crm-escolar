@@ -36,7 +36,7 @@ import { precosExtrasDoAno } from "@/lib/diario-precos.functions";
 import type { TabelaPrecos } from "@/lib/diario-precos";
 import type { MealKey } from "@/lib/diario";
 import { coletarTitulosAluno, inserirPlanoSponte } from "@/lib/sponte.functions";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { turmasDoAno, type VinculoAno } from "@/lib/diario-sync";
 import { vinculosAtivosDosAlunos } from "@/lib/diario-matriculas.server";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
@@ -205,6 +205,7 @@ export const unidadesComExtrasPendentes = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => UnidadesSchema.parse(input))
   .handler(async ({ data, context }): Promise<string[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    // leitura-restrita: configuração: tabela de colégios
     const { data: schools, error } = await supabaseAdmin
       .from("schools")
       .select("id, name")
@@ -323,12 +324,14 @@ export const listarFaturamentosDiario = createServerFn({ method: "POST" })
 // 'faturando' antigo = processo morreu no meio: vira 'erro' para a equipe agir.
 async function marcarInterrompidos(schoolId: string): Promise<void> {
   const agoraISO = new Date().toISOString();
-  const { data } = await supabaseAdmin
-    .from("diario_faturamentos" as never)
-    .select("id, created_at")
-    .eq("school_id", schoolId)
-    .eq("status", "faturando")
-    .returns<{ id: string; created_at: string }[]>();
+  const { data } = await selectAllResult<{ id: string; created_at: string }>(() =>
+    supabaseAdmin
+      .from("diario_faturamentos" as never)
+      .select("id, created_at")
+      .eq("school_id", schoolId)
+      .eq("status", "faturando")
+      .order("id", { ascending: true }),
+  );
   const ids = (data ?? [])
     .filter((r) => faturandoInterrompido(r.created_at, agoraISO))
     .map((r) => r.id);

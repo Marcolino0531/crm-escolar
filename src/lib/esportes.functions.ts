@@ -143,6 +143,7 @@ export const fetchParcelasModalidade = createServerFn({ method: "POST" })
     const modalidade = modRow as unknown as ModalidadeRow | null;
     if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
 
+    // leitura-restrita: filtrada por modalidade_id
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
       .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana, cancelado_em")
@@ -219,6 +220,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     const modalidade = modRow as unknown as ModalidadeRow | null;
     if (!modalidade) return { ...vazio, error: "Modalidade não encontrada." };
 
+    // leitura-restrita: filtrada por modalidade_id
     const { data: parcRows, error: parcErr } = await supabaseAdmin
       .from("esportes_parceiros" as never)
       .select("id, nome, percentual_parceiro, valor_fixo_mensal")
@@ -248,6 +250,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
       };
     }
 
+    // leitura-restrita: filtrada por modalidade_id
     const { data: ajusteRows, error: ajusteErr } = await supabaseAdmin
       .from("esportes_repasses" as never)
       .select("parceiro_id, valor_ajustado")
@@ -261,6 +264,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
       }
     }
 
+    // leitura-restrita: filtrada por modalidade_id
     const { data: matRows, error: matErr } = await supabaseAdmin
       .from("esportes_matriculas" as never)
       .select("aluno_id, aluno_nome, turma, frequencia_id, dias_semana, cancelado_em")
@@ -272,6 +276,7 @@ export const fetchArrecadacaoModalidade = createServerFn({ method: "POST" })
     // Frequências da modalidade (2x/semana, 1x/semana...) para saber o valor
     // esperado de cada aluno. Inclui as inativas: um aluno pode continuar numa
     // frequência que deixou de ser oferecida a novos.
+    // leitura-restrita: filtrada por modalidade_id
     const { data: freqRows, error: freqErr } = await supabaseAdmin
       .from("esportes_frequencias" as never)
       .select("id, nome, valor_mensal, vezes_semana, ordem")

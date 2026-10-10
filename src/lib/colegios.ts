@@ -145,6 +145,7 @@ export function useColegios() {
   return useQuery({
     queryKey: ["documentos_colegios"],
     queryFn: async (): Promise<ColegioRow[]> => {
+      // leitura-restrita: configuração: um registro por colégio
       const { data, error } = await supabase.from("documentos_colegios" as never).select("*");
       if (error) throw new Error(error.message);
       const rows = (data ?? []) as unknown as ColegioRow[];

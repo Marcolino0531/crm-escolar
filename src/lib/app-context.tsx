@@ -103,6 +103,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     queryKey: ["schools", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
+      // leitura-restrita: configuração: tabela de colégios
       const { data, error } = await supabase.from("schools").select("id, name").order("name");
       if (error) throw error;
       return data;
@@ -116,6 +117,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     queryKey: ["user_schools", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
+      // leitura-restrita: filtrada por user_id (um usuário)
       const { data, error } = await supabase
         .from("user_schools" as any)
         .select("school_id")
@@ -201,6 +203,7 @@ export function useRole() {
     queryKey: ["user_role", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
+      // leitura-restrita: filtrada por user_id (um usuário)
       const { data, error } = await supabase
         .from("user_roles" as any)
         .select("role")
@@ -231,6 +234,7 @@ export function usePermissions() {
     queryKey: ["user_permissions", session?.user?.id ?? "anon"],
     enabled: !!session?.user?.id,
     queryFn: async () => {
+      // leitura-restrita: filtrada por user_id (um usuário)
       const { data, error } = await supabase
         .from("user_permissions" as any)
         .select("module, can_view, can_edit")

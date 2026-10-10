@@ -102,6 +102,7 @@ function InstrucoesIaPage() {
   const sugestoesQuery = useQuery({
     queryKey: ["atendimento-ia-registros"],
     queryFn: async (): Promise<SugestaoRegistro[]> => {
+      // limite-intencional: últimas 100 sugestões
       const { data, error } = await supabase
         .from("ai_suggestions" as never)
         .select(
@@ -339,6 +340,7 @@ function AbaExemplos({ podeEditar }: { podeEditar: boolean }) {
   const exemplosQuery = useQuery({
     queryKey: ["atendimento-ia-exemplos"],
     queryFn: async (): Promise<ExemploRegistro[]> => {
+      // limite-intencional: últimos 200 exemplos
       const { data, error } = await supabase
         .from("ai_training_examples" as never)
         .select(

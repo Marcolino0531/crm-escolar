@@ -385,6 +385,7 @@ function AvisosConcluidos() {
     queryKey: ["agenda_notifications_concluidas"],
     enabled: aberto,
     queryFn: async (): Promise<AvisoConcluido[]> => {
+      // limite-intencional: últimas 100 notificações concluídas
       const { data, error } = await supabase
         .from("agenda_notifications" as never)
         .select("id, message, concluded_at")

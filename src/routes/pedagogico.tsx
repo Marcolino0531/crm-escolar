@@ -232,6 +232,7 @@ function useDisciplinas(schoolId: string) {
   return useQuery({
     queryKey: ["disciplinas", schoolId],
     queryFn: async () => {
+      // leitura-restrita: configuração: disciplinas por colégio
       const { data, error } = await supabase
         .from("disciplinas" as never)
         .select("id, school_id, nome, series, ativo")

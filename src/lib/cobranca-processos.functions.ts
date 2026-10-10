@@ -170,6 +170,7 @@ export const carregarProcessoCaso = createServerFn({ method: "POST" })
     await exigirUnidade(context.userId, caso.unidade);
     const processo = await carregarProcessoRow(caso.id);
 
+    // leitura-restrita: filtrada por caso_id
     const { data: anexos, error } = await supabaseAdmin
       .from("cobranca_anexos" as never)
       .select("categoria, origem, created_at, nome_personalizado")

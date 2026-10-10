@@ -105,6 +105,7 @@ async function autorizadoComoAdmin(request: Request): Promise<boolean> {
   const userId = data?.user?.id;
   if (error || !userId) return false;
 
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data: roles, error: erroRoles } = await supabaseAdmin
     .from("user_roles")
     .select("role")

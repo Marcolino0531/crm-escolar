@@ -365,7 +365,9 @@ function ConciliacaoPage() {
     queryKey: ["rev-refs-conciliacao"],
     queryFn: async () => {
       const [cats, subs] = await Promise.all([
+        // leitura-restrita: configuração: categorias de receita
         supabase.from("revenue_categories").select("id, name, color").order("name"),
+        // leitura-restrita: configuração: categorias de receita
         supabase
           .from("revenue_subcategories")
           .select("id, name, revenue_category_id, color")

@@ -1897,6 +1897,7 @@ function HistoricoDocumentos() {
   const { data: recibos = [], isLoading } = useQuery({
     queryKey: ["documentos_recibos"],
     queryFn: async (): Promise<DocumentoRow[]> => {
+      // limite-intencional: últimos 500 recibos
       const { data, error } = await supabase
         .from("documentos_recibos" as never)
         .select(

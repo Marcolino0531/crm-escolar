@@ -213,6 +213,7 @@ function EsportesPage() {
   } = useQuery({
     queryKey: ["esportes_modalidades"],
     queryFn: async (): Promise<Modalidade[]> => {
+      // leitura-restrita: configuração: modalidades de esporte
       const { data, error } = await supabase
         .from("esportes_modalidades" as never)
         .select(COLUNAS_MODALIDADE)
@@ -227,6 +228,7 @@ function EsportesPage() {
   const { data: minhasModalidades = [] } = useQuery({
     queryKey: ["esportes_meus_acessos", session?.user?.id],
     queryFn: async (): Promise<string[]> => {
+      // leitura-restrita: filtrada por user_id (um usuário)
       const { data, error } = await supabase
         .from("esportes_modalidade_acessos" as never)
         .select("modalidade_id")
@@ -818,6 +820,7 @@ function ParceirosDaModalidade({
   const { data: parceiros = [], isLoading } = useQuery({
     queryKey: ["esportes_parceiros", modalidade.id],
     queryFn: async (): Promise<Parceiro[]> => {
+      // leitura-restrita: filtrada por modalidade_id
       const { data, error } = await supabase
         .from("esportes_parceiros" as never)
         .select(COLUNAS_PARCEIRO)
@@ -1071,6 +1074,7 @@ function PainelMensal({
   const { data: repasses = [] } = useQuery({
     queryKey: ["esportes_repasses", modalidade.id, mesReferencia],
     queryFn: async (): Promise<Repasse[]> => {
+      // leitura-restrita: filtrada por modalidade_id
       const { data: rows, error: err } = await supabase
         .from("esportes_repasses" as never)
         .select(COLUNAS_REPASSE)
@@ -1629,6 +1633,7 @@ function SeloSituacao({ parcela }: { parcela: ParcelaAlunoModalidade }) {
 }
 
 async function carregarTurmas(modalidadeId: string): Promise<Turma[]> {
+  // leitura-restrita: filtrada por modalidade_id
   const { data, error } = await supabase
     .from("esportes_turmas" as never)
     .select(COLUNAS_TURMA)
@@ -1640,6 +1645,7 @@ async function carregarTurmas(modalidadeId: string): Promise<Turma[]> {
 }
 
 async function carregarMatriculas(modalidadeId: string): Promise<Matricula[]> {
+  // leitura-restrita: filtrada por modalidade_id
   const { data, error } = await supabase
     .from("esportes_matriculas" as never)
     .select("id, aluno_id, aluno_nome, turma, frequencia_id, turma_id, dias_semana, data_matricula")

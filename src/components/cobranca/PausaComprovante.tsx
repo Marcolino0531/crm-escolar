@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { chaveTelefone } from "@/lib/billing-recurrence";
 import {
   expiracaoPausa,
@@ -53,13 +54,17 @@ function usePausas() {
     queryKey: QUERY_KEY,
     refetchInterval: 60000,
     queryFn: async (): Promise<PausaRow[]> => {
-      const { data, error } = await supabase
-        .from("whatsapp_billing_pauses" as never)
-        .select(
-          "id, telefone, aluno_id, aluno_nome, responsavel_nome, unidade, created_at, expira_em, created_by_nome",
-        )
-        .gt("expira_em", new Date().toISOString())
-        .order("expira_em", { ascending: true });
+      const agoraISO = new Date().toISOString();
+      const { data, error } = await selectAllResult<PausaRow>(() =>
+        supabase
+          .from("whatsapp_billing_pauses" as never)
+          .select(
+            "id, telefone, aluno_id, aluno_nome, responsavel_nome, unidade, created_at, expira_em, created_by_nome",
+          )
+          .gt("expira_em", agoraISO)
+          .order("expira_em", { ascending: true })
+          .order("id", { ascending: true }),
+      );
       if (error) throw new Error(error.message);
       return (data ?? []) as unknown as PausaRow[];
     },

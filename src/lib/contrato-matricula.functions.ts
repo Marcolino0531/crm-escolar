@@ -564,6 +564,7 @@ async function planoDiarioDoAluno(
   if (!school)
     return { plano: null, motivo: `Unidade "${unidade}" sem cadastro no Diário.`, avisos };
 
+  // leitura-restrita: filtrada por um aluno
   const { data: alunos } = await supabaseAdmin
     .from("diario_students" as never)
     .select("id, name")
@@ -604,6 +605,7 @@ async function planoDiarioDoAluno(
         .eq("ano_letivo", anoLetivo)
         .order("weekday"),
     ),
+    // leitura-restrita: filtrada por um aluno
     supabaseAdmin
       .from("student_routine" as never)
       .select("horario_curricular, origem")
@@ -674,6 +676,7 @@ interface TestemunhaRow {
 
 /** As testemunhas ATIVAS da unidade do contrato, na ordem em que assinam. */
 async function testemunhasAtivas(unidade: string): Promise<TestemunhaContrato[]> {
+  // leitura-restrita: configuração: testemunhas por colégio
   const { data, error } = await supabaseAdmin
     .from("contrato_testemunhas" as never)
     .select("nome, cpf, email, celular")

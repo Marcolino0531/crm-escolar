@@ -53,7 +53,7 @@ import {
 } from "@/lib/folha-pagamento";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
 import { competenciaValida } from "@/lib/rh-salario";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 
 // ---------- Tipos devolvidos ao cliente ----------
 
@@ -333,6 +333,7 @@ async function exigirFolha(userId: string, edicao: boolean): Promise<void> {
 }
 
 async function ehAdmin(userId: string): Promise<boolean> {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data, error } = await supabaseAdmin
     .from("user_roles" as never)
     .select("role")
@@ -1372,11 +1373,17 @@ export const excluirImportacaoFolha = createServerFn({ method: "POST" })
     ];
     const manuais = new Set<string>();
     if (ids.length) {
-      const { data: sal, error: salErr } = await supabaseAdmin
-        .from("funcionarios_salarios" as never)
-        .select("funcionario_id, observacao")
-        .eq("competencia", data.competencia)
-        .in("funcionario_id", ids);
+      const { data: sal, error: salErr } = await selectAllResult<{
+        funcionario_id: string;
+        observacao: string | null;
+      }>(() =>
+        supabaseAdmin
+          .from("funcionarios_salarios" as never)
+          .select("funcionario_id, observacao")
+          .eq("competencia", data.competencia)
+          .in("funcionario_id", ids)
+          .order("id", { ascending: true }),
+      );
       if (salErr) throw new Error(salErr.message);
       for (const s of (sal ?? []) as { funcionario_id: string; observacao: string | null }[]) {
         if (s.observacao !== OBS_SALARIO_FOLHA) manuais.add(s.funcionario_id);
@@ -1725,6 +1732,7 @@ export async function exigirSalarioForaDaFolha(
   funcionarioId: string,
   competencia: string,
 ): Promise<void> {
+  // limite-intencional: só verifica se existe
   const { data, error } = await supabaseAdmin
     .from("rh_folha_colaboradores" as never)
     .select("id, rh_folha_importacoes!inner(competencia)")

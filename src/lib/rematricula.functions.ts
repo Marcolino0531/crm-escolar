@@ -611,6 +611,7 @@ export const solicitarLinkRematricula = createServerFn({ method: "POST" })
 
     // Rate limit ANTES de qualquer consulta ao Sponte: 3 pedidos por CPF por
     // hora, contando também os CPFs sem aluno correspondente.
+    // leitura-restrita: filtrada por cpf_hash (um responsável)
     const { data: pedidos } = await supabaseAdmin
       .from("rematricula_link_pedidos" as never)
       .select("criado_em")
@@ -998,6 +999,7 @@ export async function itensMaterialDaSerie(
   anoLetivo: number | null,
 ): Promise<ItemMaterial[]> {
   if (!anoLetivo) return [];
+  // leitura-restrita: configuração: itens de material por série
   const { data } = await supabaseAdmin
     .from("material_pedagogico_itens" as never)
     .select("nome_item, tipo, quantidade, periodicidade, descricao")
@@ -2064,6 +2066,7 @@ export async function campanhaDoAno(anoLetivo: number): Promise<CampanhaRematric
 }
 
 export async function listarCampanhas(): Promise<CampanhaRematricula[]> {
+  // leitura-restrita: configuração: uma campanha por ano letivo
   const { data } = await supabaseAdmin
     .from("rematricula_campanhas" as never)
     .select("ano_letivo, aberta, updated_at, updated_by_nome")
@@ -2216,6 +2219,7 @@ export async function valoresMatriculaDoAno(
   unidade: string,
   anoLetivo: number,
 ): Promise<ValoresMatricula> {
+  // leitura-restrita: configuração: valores de matrícula por segmento
   const { data } = await supabaseAdmin
     .from("rematricula_matricula_valores" as never)
     .select("segmento, valor")
@@ -2246,6 +2250,7 @@ export const listarValoresMatricula = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<ValorMatriculaSegmento[]> => {
     await exigirPermissaoValorMatricula(context.userId, false);
     const permitidas = await allowedSponteUnidades(context.userId);
+    // leitura-restrita: configuração: valores de matrícula por segmento
     let query = supabaseAdmin
       .from("rematricula_matricula_valores" as never)
       .select("unidade, ano_letivo, segmento, valor, updated_at, updated_by_nome")
@@ -2389,6 +2394,7 @@ export const listarPacotesExtras = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<PacotesExtrasRegistro[]> => {
     await exigirPermissaoPacotesExtras(context.userId, false);
     const permitidas = await allowedSponteUnidades(context.userId);
+    // leitura-restrita: configuração: valores de pacotes por colégio
     let query = supabaseAdmin
       .from("pacotes_extras_valores" as never)
       .select(
@@ -2891,6 +2897,7 @@ export const detalheAcompanhamentoRematricula = createServerFn({ method: "POST" 
         .eq("aluno_id", data.alunoId)
         .eq("ano_letivo", anoLetivo)
         .maybeSingle<EscolhaRow>(),
+      // leitura-restrita: filtrada por um aluno
       supabaseAdmin
         .from("rematricula_cadastro_auditoria" as never)
         .select(
@@ -3657,6 +3664,7 @@ export const listarMaterialSeries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<MaterialSerieRegistro[]> => {
     await exigirPermissaoMaterialPedagogico(context.userId, false);
+    // leitura-restrita: configuração: séries do material pedagógico
     const { data, error } = await supabaseAdmin
       .from("material_pedagogico_series" as never)
       .select(

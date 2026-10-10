@@ -251,6 +251,7 @@ const FuncionarioModal: React.FC<FuncionarioModalProps> = ({
 
   const carregarDocumentos = React.useCallback(async (employeeId: string) => {
     setDocsCarregando(true);
+    // leitura-restrita: filtrada por employee_id
     const { data, error } = await supabase
       .from("hr_employee_documents" as never)
       .select("id, file_name, file_url, storage_path, created_at")

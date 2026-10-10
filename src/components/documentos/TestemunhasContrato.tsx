@@ -43,6 +43,7 @@ export function TestemunhasContrato({ podeEditar }: { podeEditar: boolean }) {
     queryKey: ["contrato_testemunhas", unidade],
     enabled: !!unidade,
     queryFn: async (): Promise<TestemunhaRow[]> => {
+      // leitura-restrita: configuração: testemunhas por colégio
       const { data, error } = await supabase
         .from("contrato_testemunhas" as never)
         .select("id, unidade, ordem, nome, cpf, email, celular, ativa, updated_at, updated_by_nome")

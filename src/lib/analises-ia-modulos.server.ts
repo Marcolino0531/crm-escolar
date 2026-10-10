@@ -7,7 +7,7 @@
 // individuais não atravessam esta fronteira.
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import type {
   ConversaAtendimentoIA,
   ContrachequeEnvioIA,
@@ -239,6 +239,7 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     if (filtro.unidades.length === 0) return { repasses: [], turmas: [] };
 
     type ModalidadeRow = { id: string; nome: string; unidade: string; tipo_repasse: string };
+    // leitura-restrita: configuração: modalidades de esporte
     const modalidades = await supabaseAdmin
       .from("esportes_modalidades" as never)
       .select("id, nome, unidade, tipo_repasse")
@@ -266,18 +267,24 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
     type MatriculaRow = { modalidade_id: string; turma: string };
 
     const [parceiros, repasses, matriculas] = await Promise.all([
-      supabaseAdmin
-        .from("esportes_parceiros" as never)
-        .select("id, modalidade_id, nome")
-        .in("modalidade_id", ids),
-      supabaseAdmin
-        .from("esportes_repasses" as never)
-        .select(
-          "modalidade_id, parceiro_id, mes_referencia, valor_arrecadado, valor_repasse, valor_retido, pago_em",
-        )
-        .in("modalidade_id", ids)
-        .gte("mes_referencia", filtro.mesInicio)
-        .lte("mes_referencia", filtro.mesFim),
+      selectAllResult<ParceiroRow>(() =>
+        supabaseAdmin
+          .from("esportes_parceiros" as never)
+          .select("id, modalidade_id, nome")
+          .in("modalidade_id", ids)
+          .order("id", { ascending: true }),
+      ),
+      selectAllResult<RepasseRow>(() =>
+        supabaseAdmin
+          .from("esportes_repasses" as never)
+          .select(
+            "modalidade_id, parceiro_id, mes_referencia, valor_arrecadado, valor_repasse, valor_retido, pago_em",
+          )
+          .in("modalidade_id", ids)
+          .gte("mes_referencia", filtro.mesInicio)
+          .lte("mes_referencia", filtro.mesFim)
+          .order("id", { ascending: true }),
+      ),
       selectAll<MatriculaRow>(() =>
         supabaseAdmin
           .from("esportes_matriculas" as never)
@@ -386,10 +393,13 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
       if (lote.length < PAGE) break;
     }
 
-    const produtos = await supabaseAdmin
-      .from("uniform_products" as never)
-      .select("ns_product_id, store_key, name")
-      .in("store_key", chaves);
+    const produtos = await selectAllResult<ProductRow>(() =>
+      supabaseAdmin
+        .from("uniform_products" as never)
+        .select("ns_product_id, store_key, name")
+        .in("store_key", chaves)
+        .order("id", { ascending: true }),
+    );
     if (produtos.error) throw new Error(produtos.error.message);
 
     const nomePorProduto = new Map<string, string>();
@@ -669,13 +679,16 @@ export function criarFonteDadosModulos(idsDe: IdsDeUnidades): FonteDadosModulos 
           .lte("competencia", filtro.mesFim)
           .order("id", { ascending: true }),
       ),
-      supabaseAdmin
-        .from("hr_transport_batches" as never)
-        .select("school_id, reference_month, total_amount")
-        .eq("tipo", "vt")
-        .in("school_id", ids)
-        .gte("reference_month", filtro.mesInicio)
-        .lte("reference_month", filtro.mesFim),
+      selectAllResult<BatchRow>(() =>
+        supabaseAdmin
+          .from("hr_transport_batches" as never)
+          .select("school_id, reference_month, total_amount")
+          .eq("tipo", "vt")
+          .in("school_id", ids)
+          .gte("reference_month", filtro.mesInicio)
+          .lte("reference_month", filtro.mesFim)
+          .order("id", { ascending: true }),
+      ),
       selectAll<FuncionarioRow>(() =>
         supabaseAdmin
           .from("funcionarios" as never)

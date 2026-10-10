@@ -162,6 +162,7 @@ type ValoresRow = {
 };
 
 async function carregarValores(schoolId: string): Promise<BibliotecaValoresRegistro[]> {
+  // leitura-restrita: configuração: valores da biblioteca por colégio
   const { data, error } = await supabase
     .from("biblioteca_valores" as never)
     .select("id, school_id, ano_letivo, multa_por_dia_util, multa_teto, prazo_padrao_dias")

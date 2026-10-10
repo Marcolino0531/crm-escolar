@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { CHAVES_PERMISSAO_GRAVAVEIS } from "@/lib/permissoes-arvore";
 
@@ -15,6 +15,7 @@ const permissionSchema = z.object({
 });
 
 async function assertAdmin(userId: string) {
+  // leitura-restrita: filtrada por user_id (um usuário)
   const { data, error } = await supabaseAdmin
     .from("user_roles" as any)
     .select("role")
@@ -101,7 +102,12 @@ export const listManagedUsers = createServerFn({ method: "GET" })
     await assertAdmin(context.userId);
     const { data: usersResp, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 200 });
     if (error) throw new Error(error.message);
-    const { data: roles } = await supabaseAdmin.from("user_roles" as any).select("user_id, role");
+    const { data: roles } = await selectAllResult<{ user_id: string; role: string }>(() =>
+      supabaseAdmin
+        .from("user_roles" as never)
+        .select("user_id, role")
+        .order("id", { ascending: true }),
+    );
     const roleMap = new Map<string, string[]>();
     (roles ?? []).forEach((r: any) => {
       const arr = roleMap.get(r.user_id) ?? [];
@@ -125,18 +131,28 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       arr.push({ module: p.module, can_view: p.can_view, can_edit: p.can_edit });
       permMap.set(p.user_id, arr);
     });
-    const { data: userSchools } = await supabaseAdmin
-      .from("user_schools" as any)
-      .select("user_id, school_id");
+    const { data: userSchools } = await selectAllResult<{ user_id: string; school_id: string }>(
+      () =>
+        supabaseAdmin
+          .from("user_schools" as never)
+          .select("user_id, school_id")
+          .order("id", { ascending: true }),
+    );
     const schoolMap = new Map<string, string[]>();
     (userSchools ?? []).forEach((s: any) => {
       const arr = schoolMap.get(s.user_id) ?? [];
       arr.push(s.school_id);
       schoolMap.set(s.user_id, arr);
     });
-    const { data: modalidadeAcessos } = await supabaseAdmin
-      .from("esportes_modalidade_acessos" as never)
-      .select("user_id, modalidade_id");
+    const { data: modalidadeAcessos } = await selectAllResult<{
+      user_id: string;
+      modalidade_id: string;
+    }>(() =>
+      supabaseAdmin
+        .from("esportes_modalidade_acessos" as never)
+        .select("user_id, modalidade_id")
+        .order("id", { ascending: true }),
+    );
     const modalidadeMap = new Map<string, string[]>();
     ((modalidadeAcessos ?? []) as unknown as { user_id: string; modalidade_id: string }[]).forEach(
       (m) => {
@@ -352,10 +368,16 @@ export const listarAcessosProfessores = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const { data: rows, error } = await supabaseAdmin
-      .from("funcionarios")
-      .select("id, auth_user_id")
-      .not("auth_user_id", "is", null);
+    const { data: rows, error } = await selectAllResult<{
+      id: string;
+      auth_user_id: string | null;
+    }>(() =>
+      supabaseAdmin
+        .from("funcionarios")
+        .select("id, auth_user_id")
+        .not("auth_user_id", "is", null)
+        .order("id", { ascending: true }),
+    );
     if (error) throw new Error(error.message);
     const out: Record<string, string> = {};
     for (const r of rows ?? []) {

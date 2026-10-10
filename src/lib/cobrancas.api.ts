@@ -190,6 +190,7 @@ async function listCronRuns(url: URL): Promise<Response> {
   const limit = Math.min(MAX_CRON_RUNS, Math.max(1, limitRaw || 20));
   const tipo = tipoDaQuery(url.searchParams);
 
+  // limite-intencional: histórico recente de execuções do cron
   let query = supabaseAdmin
     .from("whatsapp_cron_runs" as never)
     .select(

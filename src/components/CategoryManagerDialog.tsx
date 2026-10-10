@@ -77,6 +77,7 @@ function ExpenseManager() {
   const { data: ccs = [] } = useQuery({
     queryKey: ["cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -85,6 +86,7 @@ function ExpenseManager() {
   const { data: subs = [] } = useQuery({
     queryKey: ["sub_cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("sub_cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -300,6 +302,7 @@ function RevenueManager() {
   const { data: cats = [] } = useQuery({
     queryKey: ["rev_cat"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase.from("revenue_categories").select("*").order("name");
       if (error) throw error;
       return data;
@@ -308,6 +311,7 @@ function RevenueManager() {
   const { data: subs = [] } = useQuery({
     queryKey: ["rev_sub"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase
         .from("revenue_subcategories")
         .select("*")

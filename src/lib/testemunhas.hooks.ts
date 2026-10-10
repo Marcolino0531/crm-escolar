@@ -9,6 +9,7 @@ export function useTestemunhasDaUnidade(unidade: string | null) {
     queryKey: ["testemunhas_documentos", unidade],
     enabled: !!unidade,
     queryFn: async (): Promise<TestemunhaDocumento[]> => {
+      // leitura-restrita: configuração: testemunhas por colégio
       const { data, error } = await supabase
         .from("contrato_testemunhas" as never)
         .select("unidade, ordem, nome, cpf, email, celular, ativa")

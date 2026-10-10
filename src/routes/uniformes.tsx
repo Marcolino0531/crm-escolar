@@ -27,7 +27,7 @@ import { AccessDenied } from "@/components/AccessDenied";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { selectAll } from "@/lib/supabase-paginate";
+import { selectAll, selectAllResult } from "@/lib/supabase-paginate";
 import { formatDateBR } from "@/lib/date-utils";
 import { compareSize } from "@/lib/uniformes.sizes";
 import {
@@ -110,10 +110,13 @@ function UniformesPage() {
   const { data: products = [], isLoading: loadingProducts } = useQuery({
     queryKey: ["uniform_products"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("uniform_products" as any)
-        .select("ns_product_id, store_key, name, category, active")
-        .order("name", { ascending: true });
+      const { data, error } = await selectAllResult<UniformProduct>(() =>
+        supabase
+          .from("uniform_products" as never)
+          .select("ns_product_id, store_key, name, category, active")
+          .order("name", { ascending: true })
+          .order("id", { ascending: true }),
+      );
       if (error) return [] as UniformProduct[];
       return (data ?? []) as unknown as UniformProduct[];
     },

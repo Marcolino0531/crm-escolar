@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { useSchool } from "@/lib/app-context";
 import { toast } from "sonner";
 import type { FaltaTerceirizado, GradeTurnos, Terceirizado, TurnoFalta } from "./types";
@@ -89,12 +90,15 @@ export function useTerceirizados() {
   const { data: terceirizados = [], isLoading } = useQuery({
     queryKey: ["terceirizados", selected, schools.length, schoolFilterIds],
     queryFn: async () => {
-      let q = supabase
-        .from("terceirizados" as never)
-        .select("*")
-        .order("nome_completo", { ascending: true });
-      if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
-      const { data, error } = await q;
+      const { data, error } = await selectAllResult<TerceirizadoRow>(() => {
+        let q = supabase
+          .from("terceirizados" as never)
+          .select("*")
+          .order("nome_completo", { ascending: true })
+          .order("id", { ascending: true });
+        if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
+        return q;
+      });
       if (error) throw error;
       return (data as unknown as TerceirizadoRow[]).map((r) => rowToTerceirizado(r, nameById));
     },

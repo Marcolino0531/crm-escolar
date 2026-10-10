@@ -175,6 +175,7 @@ const FolhaPonto: React.FC<{
   const folhas = useQuery({
     queryKey: ["hr-timesheets"],
     queryFn: async (): Promise<FolhaRow[]> => {
+      // limite-intencional: últimas 60 folhas de ponto
       const { data, error } = await supabase
         .from("hr_timesheets" as never)
         .select(
@@ -191,6 +192,7 @@ const FolhaPonto: React.FC<{
     queryKey: ["hr-timesheet-entries", folhaHistorico],
     enabled: Boolean(folhaHistorico),
     queryFn: async (): Promise<EntradaRow[]> => {
+      // limite-intencional: uma folha de ponto, até 500 linhas
       const { data, error } = await supabase
         .from("hr_timesheet_entries" as never)
         .select(

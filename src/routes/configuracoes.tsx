@@ -279,6 +279,7 @@ function UserManagement() {
   const { data: modalidades = [] } = useQuery({
     queryKey: ["esportes_modalidades", "acessos"],
     queryFn: async () => {
+      // leitura-restrita: configuração: modalidades de esporte
       const { data, error } = await supabase
         .from("esportes_modalidades" as never)
         .select("id, nome, parceiro_nome")
@@ -618,6 +619,7 @@ function CostCenters({ podeEditar }: { podeEditar: boolean }) {
   const { data: ccs = [] } = useQuery({
     queryKey: ["cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -627,6 +629,7 @@ function CostCenters({ podeEditar }: { podeEditar: boolean }) {
   const { data: subs = [] } = useQuery({
     queryKey: ["sub_cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("sub_cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -898,6 +901,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
   const { data: ccs = [] } = useQuery({
     queryKey: ["cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -906,6 +910,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
   const { data: subCcs = [] } = useQuery({
     queryKey: ["sub_cc"],
     queryFn: async () => {
+      // leitura-restrita: configuração: centros de custo
       const { data, error } = await supabase.from("sub_cost_centers").select("*").order("name");
       if (error) throw error;
       return data;
@@ -914,6 +919,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
   const { data: revCats = [] } = useQuery({
     queryKey: ["rev_cat"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase.from("revenue_categories").select("*").order("name");
       if (error) throw error;
       return data;
@@ -922,6 +928,7 @@ function Rules({ podeEditar }: { podeEditar: boolean }) {
   const { data: revSubs = [] } = useQuery({
     queryKey: ["rev_sub"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase
         .from("revenue_subcategories")
         .select("*")
@@ -1231,6 +1238,7 @@ function RevenueCategories({ podeEditar }: { podeEditar: boolean }) {
   const { data: cats = [] } = useQuery({
     queryKey: ["rev_cat"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase.from("revenue_categories").select("*").order("name");
       if (error) throw error;
       return data;
@@ -1240,6 +1248,7 @@ function RevenueCategories({ podeEditar }: { podeEditar: boolean }) {
   const { data: subs = [] } = useQuery({
     queryKey: ["rev_sub"],
     queryFn: async () => {
+      // leitura-restrita: configuração: categorias de receita
       const { data, error } = await supabase
         .from("revenue_subcategories")
         .select("*")

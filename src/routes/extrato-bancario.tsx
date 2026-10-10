@@ -138,9 +138,13 @@ function Dashboard() {
           if (schoolFilterIds) q = q.in("school_id", schoolFilterIds);
           return q as unknown as PromiseLike<PagedRows<Tables<"transactions">>>;
         }),
+        // leitura-restrita: configuração: centros de custo
         supabase.from("cost_centers").select("*").order("name"),
+        // leitura-restrita: configuração: centros de custo
         supabase.from("sub_cost_centers").select("*").order("name"),
+        // leitura-restrita: configuração: categorias de receita
         supabase.from("revenue_categories").select("*").order("name"),
+        // leitura-restrita: configuração: categorias de receita
         supabase.from("revenue_subcategories").select("*").order("name"),
         fetchAllRows<ReconciliationRow>(
           (from, to) =>

@@ -9,6 +9,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAllResult } from "@/lib/supabase-paginate";
 import { usePermissions } from "@/lib/app-context";
 import { normalizarQuantidade } from "@/lib/estoque-material";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -68,11 +69,14 @@ function EstoqueMaterialPage() {
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["school_material_stock"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("school_material_stock" as any)
-        .select("*")
-        .order("material", { ascending: true })
-        .order("turma", { ascending: true });
+      const { data, error } = await selectAllResult<MaterialStock>(() =>
+        supabase
+          .from("school_material_stock" as never)
+          .select("*")
+          .order("material", { ascending: true })
+          .order("turma", { ascending: true })
+          .order("id", { ascending: true }),
+      );
       if (error) throw error;
       return (data ?? []) as unknown as MaterialStock[];
     },
