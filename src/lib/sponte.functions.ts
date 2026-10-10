@@ -459,18 +459,18 @@ async function alunoColoniaDaUnidade(
   schoolId?: string,
 ): Promise<boolean> {
   const { data: aluno } = await supabaseAdmin
-    .from("diario_students" as any)
+    .from("diario_students" as never)
     .select("school_id")
     .eq("id", studentId)
-    .maybeSingle();
-  const escolaAluno = (aluno as { school_id: string } | null)?.school_id;
+    .maybeSingle<{ school_id: string }>();
+  const escolaAluno = aluno?.school_id;
   if (!escolaAluno || (schoolId !== undefined && schoolId !== escolaAluno)) return false;
   const { data: escola } = await supabaseAdmin
-    .from("schools" as any)
+    .from("schools" as never)
     .select("name")
     .eq("id", escolaAluno)
-    .maybeSingle();
-  return (escola as { name: string } | null)?.name === unidade;
+    .maybeSingle<{ name: string }>();
+  return escola?.name === unidade;
 }
 
 interface ColetaResult {
