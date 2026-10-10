@@ -33,6 +33,8 @@ export interface ConversaRoteavel {
   phone_number_id?: string | null;
   numero_grupo?: string | null;
   unidade?: string | null;
+  // Colégios da família atendida por esta conversa (um número cobre dois).
+  unidades?: string[] | null;
 }
 
 export function ehNumeroGrupo(valor: string | null | undefined): valor is NumeroGrupo {
@@ -104,13 +106,38 @@ export function escolherConversaDoNumero<T extends ConversaRoteavel>(
   return legada ?? null;
 }
 
-// Filtro da lista de conversas pelo seletor de unidade do topo. `unidade` nula
-// (Todas as Unidades) ou desconhecida não filtra nada.
+// Colégios conhecidos da conversa: os de `unidades` mais a unidade vinculada.
+export function colegiosDaConversa(conversa: ConversaRoteavel): string[] {
+  const nomes = [...(conversa.unidades ?? []), conversa.unidade ?? ""].map((n) => n.trim());
+  return [...new Set(nomes.filter((n) => grupoDaUnidade(n) !== null))];
+}
+
+// `unidades` da conversa com o colégio do aluno acrescentado: sem duplicar, sem
+// remover e só colégio do grupo do número da conversa. Devolve a mesma lista
+// quando não há o que acrescentar.
+export function acrescentarUnidadeDaConversa(
+  unidades: string[] | null | undefined,
+  unidade: string | null | undefined,
+  grupo: NumeroGrupo,
+): string[] {
+  const atuais = unidades ?? [];
+  const nome = (unidade ?? "").trim();
+  if (!nome || grupoDaUnidade(nome) !== grupo || atuais.includes(nome)) return atuais;
+  return [...atuais, nome];
+}
+
+// Filtro da lista de conversas pelo seletor de unidade do topo, mesma regra do
+// banco (can_access_conversa): a conversa aparece na unidade que está entre os
+// colégios dela; sem colégio conhecido, nas unidades do grupo do número.
+// `unidade` nula (Todas as Unidades) ou desconhecida não filtra nada.
 export function conversaVisivelNaUnidade(
   conversa: ConversaRoteavel,
   unidade: string | null,
 ): boolean {
-  const grupoSelecionado = grupoDaUnidade(unidade);
+  const selecionada = (unidade ?? "").trim();
+  const grupoSelecionado = grupoDaUnidade(selecionada);
   if (!grupoSelecionado) return true;
+  const colegios = colegiosDaConversa(conversa);
+  if (colegios.length > 0) return colegios.includes(selecionada);
   return grupoDaConversa(conversa) === grupoSelecionado;
 }

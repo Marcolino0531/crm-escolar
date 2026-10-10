@@ -2,8 +2,9 @@
 -- colégio passam a conferir, além da página, se a pessoa tem aquele colégio
 -- liberado (public.user_schools; admin vê tudo).
 --
--- Migration ADITIVA: não apaga nem altera nenhum dado, não cria policy nova e não
--- muda privilégios. Cada policy existente mantém a condição atual e ganha
+-- Migration ADITIVA: não apaga nem altera nenhum dado existente, não cria policy
+-- nova e não muda privilégios. Único dado gravado: a coluna NOVA
+-- whatsapp_conversations.unidades (ver Atendimento abaixo). Cada policy existente mantém a condição atual e ganha
 -- "AND <escopo>" no USING e no WITH CHECK. Idempotente: expressão que já tem a
 -- checagem de colégio é pulada. Não mexe em policy só de admin, de dono
 -- (user_id/auth_user_id = auth.uid()) nem de professor.
@@ -24,6 +25,22 @@
 -- Filhas de funcionarios (funcionarios_salarios, hr_employee_documents,
 -- rh_experiencia_notificacoes_lidas) usam can_access_funcionario. hr_timesheet_days
 -- e hr_timesheet_entries seguem a folha de ponto (timesheet_id -> hr_timesheets).
+--
+-- Atendimento (WhatsApp): um número atende dois colégios ("cec" = CEC e CEC Baby;
+-- "belvedere" = Núcleo Belvedere e Núcleo Vale do Sereno, mesmo mapa de
+-- src/lib/whatsapp-numeros.ts) e uma família pode ter filhos nos dois. A conversa
+-- ganha a coluna whatsapp_conversations.unidades (text[], colégios da família) e o
+-- escopo de whatsapp_conversations, whatsapp_messages e ai_suggestions passa a ser
+-- can_access_conversa(_user_id, unidade, unidades, numero_grupo): admin; quem tem
+-- um dos colégios da conversa (unidades + unidade, só nomes de public.schools);
+-- conversa sem colégio válido: quem tem um colégio do grupo do número
+-- (numero_grupo "cec"/"belvedere"; senão "cec").
+-- Preenchimento: o UPDATE abaixo grava SÓ a coluna nova unidades nas conversas
+-- existentes (o gatilho de updated_at fica desligado durante ele, para nada mais
+-- mudar). Entram os colégios válidos e distintos dos disparos já feitos para o
+-- telefone (whatsapp_billing_logs, casando pelos últimos 8 dígitos, como em
+-- vincularAlunoPorTelefone) restritos aos do grupo do número, mais a unidade atual
+-- se válida. Só acrescenta: nunca remove colégio já gravado.
 --
 -- EXCEÇÃO: uniform_sync_log fica só com a permissão de página, como hoje. O log é
 -- global (cada linha é uma sincronização de todas as lojas) e não tem colégio.
@@ -89,6 +106,93 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.can_access_funcionario(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.can_access_funcionario(uuid, uuid) TO authenticated, service_role;
 
+ALTER TABLE public.whatsapp_conversations
+  ADD COLUMN IF NOT EXISTS unidades text[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE public.whatsapp_conversations DISABLE TRIGGER whatsapp_conversations_set_updated_at;
+DO $$
+DECLARE
+  n integer;
+BEGIN
+  WITH conv AS (
+    SELECT
+      c.id,
+      c.unidade,
+      c.unidades,
+      right(regexp_replace(c.wa_phone, '\D', '', 'g'), 8) AS sufixo,
+      CASE WHEN c.numero_grupo = 'belvedere'
+        THEN ARRAY['Núcleo Belvedere', 'Núcleo Vale do Sereno']
+        ELSE ARRAY['CEC', 'CEC Baby']
+      END AS do_grupo
+    FROM public.whatsapp_conversations c
+  ),
+  disparos AS (
+    SELECT DISTINCT l.telefone, l.unidade
+    FROM public.whatsapp_billing_logs l
+    JOIN public.schools s ON s.name = l.unidade
+  ),
+  novas AS (
+    SELECT conv.id, ARRAY(
+      SELECT DISTINCT x.u FROM (
+        SELECT unnest(conv.unidades) AS u
+        UNION
+        SELECT d.unidade FROM disparos d
+        WHERE length(conv.sufixo) = 8
+          AND d.telefone ILIKE '%' || conv.sufixo || '%'
+          AND d.unidade = ANY (conv.do_grupo)
+        UNION
+        SELECT s.name FROM public.schools s WHERE s.name = conv.unidade
+      ) x
+      WHERE x.u IS NOT NULL
+      ORDER BY x.u
+    ) AS unidades
+    FROM conv
+  )
+  UPDATE public.whatsapp_conversations c
+  SET unidades = novas.unidades
+  FROM novas
+  WHERE novas.id = c.id AND NOT (novas.unidades <@ c.unidades);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE NOTICE 'conversas com unidades preenchidas: %', n;
+END $$;
+ALTER TABLE public.whatsapp_conversations ENABLE TRIGGER whatsapp_conversations_set_updated_at;
+
+CREATE OR REPLACE FUNCTION public.can_access_conversa(
+  _user_id uuid,
+  _unidade text,
+  _unidades text[],
+  _numero_grupo text
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH colegios AS (
+    SELECT s.id FROM public.schools s
+    WHERE s.name = ANY (array_append(coalesce(_unidades, '{}'::text[]), _unidade))
+  )
+  SELECT public.has_role(_user_id, 'admin'::public.app_role)
+    OR EXISTS (SELECT 1 FROM colegios c WHERE public.can_access_school(_user_id, c.id))
+    OR (
+      NOT EXISTS (SELECT 1 FROM colegios)
+      AND EXISTS (
+        SELECT 1 FROM public.schools s
+        WHERE s.name = ANY (
+            CASE WHEN _numero_grupo = 'belvedere'
+              THEN ARRAY['Núcleo Belvedere', 'Núcleo Vale do Sereno']
+              ELSE ARRAY['CEC', 'CEC Baby']
+            END
+          )
+          AND public.can_access_school(_user_id, s.id)
+      )
+    );
+$$;
+REVOKE EXECUTE ON FUNCTION public.can_access_conversa(uuid, text, text[], text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_access_conversa(uuid, text, text[], text)
+  TO authenticated, service_role;
+
 DO $$
 DECLARE
   -- grupo | tabela | escopo (%1$I = nome da tabela, para qualificar a coluna da filha)
@@ -111,7 +215,7 @@ DECLARE
     ['A', 'reconciliations', 'public.can_access_school(auth.uid(), school_id)'],
     ['A', 'recurring_series', 'public.can_access_school(auth.uid(), school_id)'],
     ['A', 'terceirizados', 'public.can_access_school(auth.uid(), school_id)'],
-    ['B', 'ai_suggestions', 'public.can_access_unidade(auth.uid(), unidade)'],
+    ['B', 'ai_suggestions', 'EXISTS (SELECT 1 FROM public.whatsapp_conversations m WHERE m.id = %1$I.conversation_id AND public.can_access_conversa(auth.uid(), m.unidade, m.unidades, m.numero_grupo))'],
     ['B', 'ai_training_examples', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'cantina_recargas', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'contrato_testemunhas', 'public.can_access_unidade(auth.uid(), unidade)'],
@@ -140,7 +244,7 @@ DECLARE
     ['B', 'unidade_valores_opcionais', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'whatsapp_billing_exceptions', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'whatsapp_billing_pauses', 'public.can_access_unidade(auth.uid(), unidade)'],
-    ['B', 'whatsapp_conversations', 'public.can_access_unidade(auth.uid(), unidade)'],
+    ['B', 'whatsapp_conversations', 'public.can_access_conversa(auth.uid(), unidade, unidades, numero_grupo)'],
     ['B', 'whatsapp_falhas_arquivadas', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'whatsapp_lembrete_pausas', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'zapsign_documentos', 'public.can_access_unidade(auth.uid(), unidade)'],
@@ -162,14 +266,14 @@ DECLARE
     ['D', 'hr_timesheet_days', 'EXISTS (SELECT 1 FROM public.hr_timesheets m WHERE m.id = %1$I.timesheet_id AND public.can_access_school(auth.uid(), m.school_id))'],
     ['D', 'hr_timesheet_entries', 'EXISTS (SELECT 1 FROM public.hr_timesheets m WHERE m.id = %1$I.timesheet_id AND public.can_access_school(auth.uid(), m.school_id))'],
     ['D', 'hr_transport_batch_items', 'EXISTS (SELECT 1 FROM public.hr_transport_batches m WHERE m.id = %1$I.batch_id AND public.can_access_school(auth.uid(), m.school_id))'],
-    ['D', 'whatsapp_messages', 'EXISTS (SELECT 1 FROM public.whatsapp_conversations m WHERE m.id = %1$I.conversation_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
+    ['D', 'whatsapp_messages', 'EXISTS (SELECT 1 FROM public.whatsapp_conversations m WHERE m.id = %1$I.conversation_id AND public.can_access_conversa(auth.uid(), m.unidade, m.unidades, m.numero_grupo))'],
     ['D', 'zapsign_eventos', 'EXISTS (SELECT 1 FROM public.zapsign_documentos m WHERE m.id = %1$I.documento_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
     ['U', 'uniform_products', 'public.can_access_store_uniformes(auth.uid(), store_key)'],
     ['U', 'uniform_variants', 'public.can_access_store_uniformes(auth.uid(), store_key)'],
     ['U', 'uniform_order_marks', 'public.can_access_store_uniformes(auth.uid(), store_key)']
   ];
   -- Checagem de colégio já presente (has_school_access tem o mesmo corpo de can_access_school).
-  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|can_access_funcionario|has_school_access';
+  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|can_access_funcionario|can_access_conversa|has_school_access';
   i int;
   escopo text;
   p record;

@@ -93,7 +93,13 @@ import {
   type ParcelaLembrete,
 } from "@/lib/billing-reminders";
 import { parseSystemEvent, decideSystemAction } from "@/lib/whatsapp-system";
-import { grupoDaUnidade, grupoDoPhoneNumberId, type NumeroGrupo } from "@/lib/whatsapp-numeros";
+import {
+  acrescentarUnidadeDaConversa,
+  grupoDaConversa,
+  grupoDaUnidade,
+  grupoDoPhoneNumberId,
+  type NumeroGrupo,
+} from "@/lib/whatsapp-numeros";
 import { parseReacao } from "@/lib/whatsapp-reacoes";
 import {
   slotDaRota,
@@ -1663,6 +1669,9 @@ interface ConversaRow {
   aluno_id: string | null;
   aluno_name: string;
   phone_number_id?: string | null;
+  numero_grupo?: string | null;
+  unidade?: string | null;
+  unidades?: string[] | null;
 }
 
 // Número da escola que recebeu o evento (metadata da Meta) e o par de unidades
@@ -1691,7 +1700,7 @@ async function getOrCreateConversa(
   // podem divergir no 9º dígito/DDI. Converge para uma única conversa.
   const atual = (await findConversaBySuffix(waPhone, phoneNumberId)) as ConversaRow | null;
   if (atual) {
-    const patch: Record<string, string> = {};
+    const patch: Record<string, string | string[]> = {};
     if (contactName && !atual.aluno_name) patch.contact_name = contactName;
     // Grava o número por onde a conversa chega (conversa antiga não tem).
     if (phoneNumberId && atual.phone_number_id !== phoneNumberId) {
@@ -1709,6 +1718,16 @@ async function getOrCreateConversa(
         patch.aluno_name = vinculo.aluno_name;
         patch.responsavel_name = vinculo.responsavel_name;
         patch.unidade = vinculo.unidade;
+        const grupoConversa = grupoDaConversa({
+          numero_grupo: grupo ?? atual.numero_grupo,
+          unidade: atual.unidade,
+        });
+        const unidades = acrescentarUnidadeDaConversa(
+          atual.unidades,
+          vinculo.unidade,
+          grupoConversa,
+        );
+        if (unidades !== (atual.unidades ?? [])) patch.unidades = unidades;
         vinculoAplicado = { aluno_id: vinculo.aluno_id, aluno_name: vinculo.aluno_name };
       }
     }
@@ -1738,6 +1757,11 @@ async function getOrCreateConversa(
       aluno_name: vinculo?.aluno_name ?? "",
       responsavel_name: vinculo?.responsavel_name ?? "",
       unidade: vinculo?.unidade ?? "",
+      unidades: acrescentarUnidadeDaConversa(
+        [],
+        vinculo?.unidade,
+        grupoDaConversa({ numero_grupo: grupo, unidade: vinculo?.unidade }),
+      ),
       phone_number_id: phoneNumberId,
       numero_grupo: grupo,
     } as never)
