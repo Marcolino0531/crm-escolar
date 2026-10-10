@@ -435,7 +435,12 @@ async function alunosDaUnidadePorTurma(
     const lote = alunoIds.slice(i, i + CONC);
     const resultados = await Promise.all(
       lote.map(async (id) => {
-        const xml = await callSponte("GetAlunos", `AlunoID=${id}`, creds.codigoCliente, creds.token);
+        const xml = await callSponte(
+          "GetAlunos",
+          `AlunoID=${id}`,
+          creds.codigoCliente,
+          creds.token,
+        );
         const node = parseXmlList(xml, "wsAluno").find((n) =>
           parseXmlValue(n, "RetornoOperacao").startsWith("01"),
         );

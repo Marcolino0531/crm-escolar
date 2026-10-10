@@ -3,7 +3,7 @@
 // função auxiliar de src/lib/unidade-acesso.server.ts (ou allowedSponteUnidades,
 // em que ela se apoia, direta ou por um helper que a chame), uma checagem de
 // admin, ou ter no corpo o marcador `// escopo-unidade: <motivo>`.
-// PENDENCIAS lista o que ainda falta (Envio 32, parte 3); a lista só encolhe.
+// PENDENCIAS fica vazia: toda função nova já nasce com a checagem.
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -117,37 +117,8 @@ export function serverFnsSemEscopo(): string[] {
   return out.sort();
 }
 
-// Pendências do Envio 32, parte 3 (Diário, Esportes, Atendimento e RH): a
-// parte 3 corrige e remove daqui. Nada novo entra nesta lista.
-const PENDENCIAS: string[] = [
-  "src/lib/atendimento.functions.ts:arquivarConversas",
-  "src/lib/atendimento.functions.ts:enviarMensagemChat",
-  "src/lib/atendimento.functions.ts:enviarMidiaChat",
-  "src/lib/atendimento-ia.functions.ts:gerarSugestaoResposta",
-  "src/lib/atendimento-ia.functions.ts:registrarEnvioDaSugestao",
-  "src/lib/atendimento-ia.functions.ts:salvarInstrucoesIA",
-  "src/lib/atendimento-ia-exemplos.functions.ts:atualizarExemploTreinamento",
-  "src/lib/atendimento-ia-exemplos.functions.ts:removerExemploTreinamento",
-  "src/lib/atendimento-ia-exemplos.functions.ts:salvarExemploTreinamento",
-  "src/lib/contracheques.functions.ts:enviarContracheque",
-  "src/lib/diario-auditoria.functions.ts:executarAuditoriaDiario",
-  "src/lib/diario-auditoria.functions.ts:listarAuditoriaDiario",
-  "src/lib/diario-faturamento.functions.ts:cancelarFaturamentoDiario",
-  "src/lib/diario-faturamento.functions.ts:definirMinutosHoraExtraDiario",
-  "src/lib/diario-faturamento.functions.ts:faturarExtrasDiario",
-  "src/lib/diario-faturamento.functions.ts:faturarTodosExtrasDiario",
-  "src/lib/diario-faturamento.functions.ts:isentarEventoDiario",
-  "src/lib/diario-faturamento.functions.ts:listarFaturamentosDiario",
-  "src/lib/diario-faturamento.functions.ts:listarPendenciasFaturamentoDiario",
-  "src/lib/diario-faturamento.functions.ts:marcarFaturamentoDiarioManual",
-  "src/lib/diario-faturamento.functions.ts:relancarFaturamentoDiario",
-  "src/lib/diario-faturamento.functions.ts:unidadesComExtrasPendentes",
-  "src/lib/diario-precos.functions.ts:listarPrecosExtras",
-  "src/lib/diario-precos.functions.ts:salvarPrecoExtra",
-  "src/lib/esportes.functions.ts:fetchArrecadacaoModalidade",
-  "src/lib/esportes.functions.ts:fetchParcelasModalidade",
-  "src/lib/ponto.functions.ts:salvarFolhaPonto",
-];
+// Pendências: vazia desde o Envio 32, parte 3. Nada novo entra nesta lista.
+const PENDENCIAS: string[] = [];
 
 describe("trava: escopo por colégio nas server functions com supabaseAdmin", () => {
   const semEscopo = serverFnsSemEscopo();

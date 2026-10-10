@@ -324,6 +324,7 @@ export const salvarInstrucoesIA = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => SalvarInstrucoesInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<{ ok: boolean; error?: string }> => {
+    // escopo-unidade: configuração global, sem colégio
     await assertPermissaoIA(context.userId, true, "editar as instruções da IA");
 
     const nome = await nomeDoUsuario(context.userId);
