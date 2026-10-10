@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { lerConclusoesRecorrentes } from "@/lib/supabase-leituras";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -104,13 +105,7 @@ export function PlannerView() {
   const { data: completions = [], isLoading: loadingComp } = useQuery({
     queryKey: ["recurring_task_completions", me],
     enabled: !!me,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("recurring_task_completions" as never)
-        .select("def_id, month_key");
-      if (error) throw error;
-      return (data ?? []) as unknown as Completion[];
-    },
+    queryFn: (): Promise<Completion[]> => lerConclusoesRecorrentes(),
   });
 
   const completedSet = useMemo(

@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { agruparCandidatos, type Candidato, type LogBusca } from "@/lib/billing-lembrete-pausas";
 import { chaveTelefone } from "@/lib/billing-recurrence";
 import { displayPhoneBR } from "@/lib/phone";
@@ -55,16 +56,18 @@ function usePausasLembrete() {
   return useQuery({
     queryKey: QUERY_KEY,
     refetchInterval: 60000,
-    queryFn: async (): Promise<PausaLembreteRow[]> => {
-      const { data, error } = await supabase
-        .from("whatsapp_lembrete_pausas" as never)
-        .select(
-          "id, telefone, responsavel_nome, alunos_nomes, unidade, nota, created_at, created_by_nome",
-        )
-        .order("responsavel_nome", { ascending: true });
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as PausaLembreteRow[];
-    },
+    queryFn: (): Promise<PausaLembreteRow[]> =>
+      selectAll<PausaLembreteRow>(() =>
+        supabase
+          .from("whatsapp_lembrete_pausas" as never)
+          .select(
+            "id, telefone, responsavel_nome, alunos_nomes, unidade, nota, created_at, created_by_nome",
+          )
+          .order("responsavel_nome", { ascending: true })
+          .order("id", { ascending: true }),
+      ).catch((e: { message?: string }) => {
+        throw new Error(e?.message ?? String(e));
+      }),
   });
 }
 

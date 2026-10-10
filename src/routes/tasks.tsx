@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { lerConclusoesRecorrentes } from "@/lib/supabase-leituras";
+import { selectAll } from "@/lib/supabase-paginate";
 import { useAuth, usePermissions } from "@/lib/app-context";
 import { listDirectoryUsers } from "@/lib/tasks.functions";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -137,13 +139,7 @@ function TasksPage() {
   const { data: plannerCompletions = [] } = useQuery({
     queryKey: ["recurring_task_completions", me],
     enabled: !!me,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("recurring_task_completions" as never)
-        .select("def_id, month_key");
-      if (error) throw error;
-      return (data ?? []) as unknown as { def_id: string; month_key: string }[];
-    },
+    queryFn: lerConclusoesRecorrentes,
   });
   const plannerPendentes = useMemo(() => {
     const set = new Set(plannerCompletions.map((c) => completedKey(c.def_id, c.month_key)));
@@ -164,14 +160,14 @@ function TasksPage() {
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ["tasks", me],
     enabled: !!me,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("tasks" as any)
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as unknown as Task[];
-    },
+    queryFn: () =>
+      selectAll<Task>(() =>
+        supabase
+          .from("tasks" as never)
+          .select("*")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+      ),
   });
 
   const visibleTasks = useMemo(() => {

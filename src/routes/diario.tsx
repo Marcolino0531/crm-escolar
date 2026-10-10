@@ -578,17 +578,18 @@ function ExtraChargesTab({
   const { data: events = [], isLoading } = useQuery({
     queryKey: ["diario_extra_events", from, to, schoolFilterIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("diario_events" as never)
-        .select(
-          "id, student_id, event_type, meal, label, reason, extra_minutes, created_at, faturamento_id, isento, isento_motivo, isento_por_nome, faturamento:diario_faturamentos(status)",
-        )
-        .eq("extra_charge", true)
-        .gte("created_at", `${from}T00:00:00`)
-        .lte("created_at", `${to}T23:59:59`)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      let rows = (data ?? []) as unknown as ExtraEventRow[];
+      let rows = await selectAll<ExtraEventRow>(() =>
+        supabase
+          .from("diario_events" as never)
+          .select(
+            "id, student_id, event_type, meal, label, reason, extra_minutes, created_at, faturamento_id, isento, isento_motivo, isento_por_nome, faturamento:diario_faturamentos(status)",
+          )
+          .eq("extra_charge", true)
+          .gte("created_at", `${from}T00:00:00`)
+          .lte("created_at", `${to}T23:59:59`)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+      );
       if (allowedStudentIds) rows = rows.filter((r) => allowedStudentIds.has(r.student_id));
       return rows;
     },

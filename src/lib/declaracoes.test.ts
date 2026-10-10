@@ -81,9 +81,9 @@ describe("filiação", () => {
   });
 
   it("junta três responsáveis com vírgula e 'e' no último", () => {
-    expect(
-      fraseFiliacao([resp("João", "Pai"), resp("Ana", "Mãe"), resp("Rita", "Avó")]),
-    ).toBe("filho(a) de João, Ana e Rita");
+    expect(fraseFiliacao([resp("João", "Pai"), resp("Ana", "Mãe"), resp("Rita", "Avó")])).toBe(
+      "filho(a) de João, Ana e Rita",
+    );
   });
 
   it("devolve vazio quando não há responsável cadastrado", () => {
@@ -114,7 +114,9 @@ describe("texto da declaração", () => {
       aluno: ALUNO,
       responsaveis: [resp("Ana Souza", "Mãe")],
     });
-    expect(texto).toContain("o(a) aluno(a) Bento Ribeiro Marcolino, filho(a) de Ana Souza, não possui");
+    expect(texto).toContain(
+      "o(a) aluno(a) Bento Ribeiro Marcolino, filho(a) de Ana Souza, não possui",
+    );
     expect(texto).not.toMatch(/ e ,|,\s{2,}|filho\(a\) de\s*,/);
   });
 
@@ -148,10 +150,7 @@ describe("parcelas em aberto", () => {
   const hoje = "2026-08-18";
 
   it("não acusa pendência quando tudo está quitado", () => {
-    const pend = pendenciasEmAberto(
-      [titulo({}), titulo({ vencimento: "2026-07-10" })],
-      hoje,
-    );
+    const pend = pendenciasEmAberto([titulo({}), titulo({ vencimento: "2026-07-10" })], hoje);
     expect(pend).toEqual({ total: 0, vencidas: 0, aVencer: 0, valor: 0, valorVencido: 0 });
     expect(exigeConfirmacao(pend)).toBe(false);
   });
@@ -182,7 +181,10 @@ describe("parcelas em aberto", () => {
   });
 
   it("trata parcela vencida hoje como a vencer (o dia ainda não passou)", () => {
-    const pend = pendenciasEmAberto([titulo({ quitada: false, saldo: 100, vencimento: hoje })], hoje);
+    const pend = pendenciasEmAberto(
+      [titulo({ quitada: false, saldo: 100, vencimento: hoje })],
+      hoje,
+    );
     expect(pend).toEqual({
       total: 1,
       vencidas: 0,

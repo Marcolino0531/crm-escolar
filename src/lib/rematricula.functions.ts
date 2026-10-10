@@ -2676,30 +2676,37 @@ export async function carregarAcompanhamentoUnidade(
           .eq("ano_letivo", anoLetivo)
           .order("id", { ascending: true }),
       ),
-      supabaseAdmin
-        .from("rematricula_acessos" as never)
-        .select("unidade, aluno_id, ultimo_acesso_em")
-        .eq("unidade", unidade)
-        .eq("ano_letivo", anoLetivo),
-      supabaseAdmin
-        .from("rematricula_envios" as never)
-        .select("unidade, aluno_id, enviada_em")
-        .eq("unidade", unidade)
-        .eq("ano_letivo", anoLetivo),
-      supabaseAdmin
-        .from("rematricula_cadastro_auditoria" as never)
-        .select("aluno_id")
-        .eq("unidade", unidade)
-        .eq("resultado", "gravado"),
+      selectAll<unknown>(() =>
+        supabaseAdmin
+          .from("rematricula_acessos" as never)
+          .select("unidade, aluno_id, ultimo_acesso_em")
+          .eq("unidade", unidade)
+          .eq("ano_letivo", anoLetivo)
+          .order("aluno_id", { ascending: true }),
+      ),
+      selectAll<unknown>(() =>
+        supabaseAdmin
+          .from("rematricula_envios" as never)
+          .select("unidade, aluno_id, enviada_em")
+          .eq("unidade", unidade)
+          .eq("ano_letivo", anoLetivo)
+          .order("id", { ascending: true }),
+      ),
+      selectAll<{ aluno_id: string }>(() =>
+        supabaseAdmin
+          .from("rematricula_cadastro_auditoria" as never)
+          .select("aluno_id")
+          .eq("unidade", unidade)
+          .eq("resultado", "gravado")
+          .order("id", { ascending: true }),
+      ),
       divergenciasExtrasDaUnidade(unidade, anoLetivo),
       listarCampanhas(),
       contratosAcompanhamentoDaUnidade(unidade, anoLetivo),
     ]);
 
   const linhas = escolhas;
-  const alterados = new Set(
-    ((auditoria.data ?? []) as unknown as { aluno_id: string }[]).map((a) => a.aluno_id),
-  );
+  const alterados = new Set(auditoria.map((a) => a.aluno_id));
 
   return {
     unidade,
@@ -2726,12 +2733,12 @@ export async function carregarAcompanhamentoUnidade(
       sponteErro: r.sponte_erro ?? "",
       id: r.id,
     })),
-    acessos: ((acessos.data ?? []) as unknown as AcessoRow[]).map((a) => ({
+    acessos: (acessos as AcessoRow[]).map((a) => ({
       unidade: a.unidade,
       alunoId: a.aluno_id,
       ultimoAcessoEm: a.ultimo_acesso_em,
     })),
-    envios: ((envios.data ?? []) as unknown as EnvioRow[]).map((e) => ({
+    envios: (envios as EnvioRow[]).map((e) => ({
       unidade: e.unidade,
       alunoId: e.aluno_id,
       enviadaEm: e.enviada_em,

@@ -44,6 +44,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AbasArvore, useAbasArvore } from "@/components/AbasArvore";
 import { MonthYearPicker } from "@/components/MonthYearPicker";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import {
   buscarAlunosSponte,
   enviarCobrancaTeste,
@@ -1437,14 +1438,16 @@ function AlunosComAcordo({ podeEditar }: { podeEditar: boolean }) {
 
   const { data: excecoes = [], isError } = useQuery({
     queryKey: ["cobranca-excecoes"],
-    queryFn: async (): Promise<ExcecaoAcordo[]> => {
-      const { data, error } = await supabase
-        .from("whatsapp_billing_exceptions" as never)
-        .select("id, aluno_id, aluno_nome, unidade, mes_referencia, created_at, created_by_nome")
-        .order("created_at", { ascending: false });
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as ExcecaoAcordo[];
-    },
+    queryFn: (): Promise<ExcecaoAcordo[]> =>
+      selectAll<ExcecaoAcordo>(() =>
+        supabase
+          .from("whatsapp_billing_exceptions" as never)
+          .select("id, aluno_id, aluno_nome, unidade, mes_referencia, created_at, created_by_nome")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true }),
+      ).catch((e: { message?: string }) => {
+        throw new Error(e?.message ?? String(e));
+      }),
   });
 
   const buscarAlunos = useMutation({

@@ -24,6 +24,11 @@ import { Link } from "@tanstack/react-router";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows, selectAll } from "@/lib/supabase-paginate";
+import {
+  lerConclusoesRecorrentes,
+  lerRecebiveisDisponiveis,
+  type ConclusaoRecorrente,
+} from "@/lib/supabase-leituras";
 import { useAuth, usePermissions, useSchool } from "@/lib/app-context";
 import { PAGINAS_RH_SEM_SALARIO } from "@/lib/permissoes-arvore";
 import { Button } from "@/components/ui/button";
@@ -264,15 +269,11 @@ export function NotificationsBell() {
           .from("recurring_task_defs" as never)
           .select("id, title, description, day_of_month, start_month, kind, due_date")
           .eq("active", true),
-        supabase.from("recurring_task_completions" as never).select("def_id, month_key"),
+        lerConclusoesRecorrentes().catch(() => [] as ConclusaoRecorrente[]),
       ]);
       if (defsRes.error) return [] as DueOccurrence[];
       const defs = (defsRes.data ?? []) as unknown as RecurringTaskDef[];
-      const completed = new Set(
-        ((compRes.data ?? []) as unknown as { def_id: string; month_key: string }[]).map((c) =>
-          completedKey(c.def_id, c.month_key),
-        ),
-      );
+      const completed = new Set(compRes.map((c) => completedKey(c.def_id, c.month_key)));
       return dueOccurrences(defs, completed, today);
     },
   });
@@ -338,11 +339,16 @@ export function NotificationsBell() {
     refetchInterval: 60000,
     queryFn: async () => {
       const [vRes, pRes] = await Promise.all([
-        supabase
-          .from("uniform_variants" as any)
-          .select("id, store_key, ns_product_id, stock, min_stock, order_placed_at")
-          .order("stock", { ascending: true })
-          .limit(1000),
+        selectAll<unknown>(() =>
+          supabase
+            .from("uniform_variants" as never)
+            .select("id, store_key, ns_product_id, stock, min_stock, order_placed_at")
+            .order("stock", { ascending: true })
+            .order("id", { ascending: true }),
+        ).then(
+          (data) => ({ data, error: null }),
+          (error: unknown) => ({ data: null, error }),
+        ),
         supabase.from("uniform_products" as any).select("store_key, ns_product_id, name"),
       ]);
       if (vRes.error) return [] as LowStockVariant[];
@@ -400,14 +406,11 @@ export function NotificationsBell() {
     enabled: !!userId && canCartao,
     refetchInterval: 60000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("credit_card_receivables" as any)
-        .select("id, valor_liquido")
-        .neq("status", "transferido")
-        .lte("data_disponibilidade", today)
-        .order("data_disponibilidade", { ascending: true });
-      if (error) return [] as AvailableReceivable[];
-      return (data ?? []) as unknown as AvailableReceivable[];
+      try {
+        return (await lerRecebiveisDisponiveis(today)) as unknown as AvailableReceivable[];
+      } catch {
+        return [] as AvailableReceivable[];
+      }
     },
   });
 

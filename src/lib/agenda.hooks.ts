@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { selectAll } from "@/lib/supabase-paginate";
 import { toast } from "sonner";
 import { toTitleCase } from "@/lib/name-format";
 
@@ -61,12 +62,14 @@ export function useReunioes() {
   const { data: reunioes = [], isLoading } = useQuery({
     queryKey: ["agenda_reunioes"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("agenda_reunioes" as never)
-        .select("*")
-        .order("data", { ascending: true });
-      if (error) throw error;
-      return ((data ?? []) as unknown as ReuniaoRow[]).map(rowToReuniao);
+      const data = await selectAll<ReuniaoRow>(() =>
+        supabase
+          .from("agenda_reunioes" as never)
+          .select("*")
+          .order("data", { ascending: true })
+          .order("id", { ascending: true }),
+      );
+      return data.map(rowToReuniao);
     },
   });
 

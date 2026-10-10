@@ -26,7 +26,7 @@
 // o status por `wa_message_id` (wamid retornado no envio).
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { fetchAllRows, type PagedRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, selectAll, type PagedRows } from "@/lib/supabase-paginate";
 import { onlyDigits } from "@/lib/phone";
 import {
   buscarLinhaDigitavelPorUnidade,
@@ -699,16 +699,20 @@ async function runCronRegistrado(
 // linha na tabela, o aluno é cobrado normalmente — remover a exceção não exige
 // nenhum outro desfazimento.
 async function carregarExcecoesAcordo(): Promise<Map<string, string>> {
-  const { data, error } = await supabaseAdmin
-    .from("whatsapp_billing_exceptions" as never)
-    .select("aluno_id, mes_referencia");
-  if (error) {
+  let rows: { aluno_id: string; mes_referencia: string }[];
+  try {
+    rows = await selectAll<{ aluno_id: string; mes_referencia: string }>(() =>
+      supabaseAdmin
+        .from("whatsapp_billing_exceptions" as never)
+        .select("aluno_id, mes_referencia")
+        .order("id", { ascending: true }),
+    );
+  } catch (error) {
     // Fail-open explícito: a falha de leitura não pode travar o disparo do dia,
     // mas fica registrada para não passar em silêncio.
-    console.error("[whatsapp] falha ao ler exceções de acordo:", error.message);
+    console.error("[whatsapp] falha ao ler exceções de acordo:", (error as Error).message);
     return new Map();
   }
-  const rows = (data ?? []) as unknown as { aluno_id: string; mes_referencia: string }[];
   const excecoes: ExcecaoCobranca[] = rows.map((r) => ({
     alunoId: r.aluno_id,
     mesReferencia: r.mes_referencia,
@@ -742,14 +746,17 @@ async function carregarPausasComprovante(): Promise<PausaComprovante[]> {
 }
 
 async function carregarPausasLembrete(): Promise<PausaLembrete[]> {
-  const { data, error } = await supabaseAdmin
-    .from("whatsapp_lembrete_pausas" as never)
-    .select("telefone");
-  if (error) {
-    console.error("[whatsapp] falha ao ler pausas manuais de lembrete:", error.message);
+  try {
+    return await selectAll<PausaLembrete>(() =>
+      supabaseAdmin
+        .from("whatsapp_lembrete_pausas" as never)
+        .select("telefone")
+        .order("id", { ascending: true }),
+    );
+  } catch (error) {
+    console.error("[whatsapp] falha ao ler pausas manuais de lembrete:", (error as Error).message);
     return [];
   }
-  return (data ?? []) as unknown as PausaLembrete[];
 }
 
 // Alunos a avaliar hoje: os que ENTRAM em cobrança (fim da tolerância) e os que
