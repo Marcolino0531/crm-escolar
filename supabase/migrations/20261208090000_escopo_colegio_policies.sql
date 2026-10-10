@@ -30,8 +30,9 @@
 -- "belvedere" = Núcleo Belvedere e Núcleo Vale do Sereno, mesmo mapa de
 -- src/lib/whatsapp-numeros.ts) e uma família pode ter filhos nos dois. A conversa
 -- ganha a coluna whatsapp_conversations.unidades (text[], colégios da família) e o
--- escopo de whatsapp_conversations, whatsapp_messages e ai_suggestions passa a ser
--- can_access_conversa(_user_id, unidade, unidades, numero_grupo): admin; quem tem
+-- escopo de whatsapp_conversations e whatsapp_messages passa a ser
+-- can_access_conversa(_user_id, unidade, unidades, numero_grupo) (ai_suggestions:
+-- can_access_conversa_id, que lê a conversa sem a RLS dela): admin; quem tem
 -- um dos colégios da conversa (unidades + unidade, só nomes de public.schools);
 -- conversa sem colégio válido: quem tem um colégio do grupo do número
 -- (numero_grupo "cec"/"belvedere"; senão "cec").
@@ -193,6 +194,26 @@ REVOKE EXECUTE ON FUNCTION public.can_access_conversa(uuid, text, text[], text) 
 GRANT EXECUTE ON FUNCTION public.can_access_conversa(uuid, text, text[], text)
   TO authenticated, service_role;
 
+-- Mesmo escopo pela conversa, lendo-a sem a RLS dela (a página do ai_suggestions
+-- não é a de Atendimento). Conversa inexistente ou id nulo: só admin.
+CREATE OR REPLACE FUNCTION public.can_access_conversa_id(_user_id uuid, _conversation_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.has_role(_user_id, 'admin'::public.app_role)
+    OR EXISTS (
+      SELECT 1 FROM public.whatsapp_conversations c
+      WHERE c.id = _conversation_id
+        AND public.can_access_conversa(_user_id, c.unidade, c.unidades, c.numero_grupo)
+    );
+$$;
+REVOKE EXECUTE ON FUNCTION public.can_access_conversa_id(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_access_conversa_id(uuid, uuid)
+  TO authenticated, service_role;
+
 DO $$
 DECLARE
   -- grupo | tabela | escopo (%1$I = nome da tabela, para qualificar a coluna da filha)
@@ -215,7 +236,7 @@ DECLARE
     ['A', 'reconciliations', 'public.can_access_school(auth.uid(), school_id)'],
     ['A', 'recurring_series', 'public.can_access_school(auth.uid(), school_id)'],
     ['A', 'terceirizados', 'public.can_access_school(auth.uid(), school_id)'],
-    ['B', 'ai_suggestions', 'EXISTS (SELECT 1 FROM public.whatsapp_conversations m WHERE m.id = %1$I.conversation_id AND public.can_access_conversa(auth.uid(), m.unidade, m.unidades, m.numero_grupo))'],
+    ['B', 'ai_suggestions', 'public.can_access_conversa_id(auth.uid(), conversation_id)'],
     ['B', 'ai_training_examples', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'cantina_recargas', 'public.can_access_unidade(auth.uid(), unidade)'],
     ['B', 'contrato_testemunhas', 'public.can_access_unidade(auth.uid(), unidade)'],
@@ -273,7 +294,7 @@ DECLARE
     ['U', 'uniform_order_marks', 'public.can_access_store_uniformes(auth.uid(), store_key)']
   ];
   -- Checagem de colégio já presente (has_school_access tem o mesmo corpo de can_access_school).
-  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|can_access_funcionario|can_access_conversa|has_school_access';
+  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|can_access_funcionario|can_access_conversa|can_access_conversa_id|has_school_access';
   i int;
   escopo text;
   p record;
