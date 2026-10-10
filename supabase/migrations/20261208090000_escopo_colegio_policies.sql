@@ -11,6 +11,8 @@
 --   can_access_unidade(_user_id, _unidade)          colégio pelo NOME (coluna unidade)
 --   can_access_store_uniformes(_user_id, _store_key) colégio pela loja Nuvemshop
 --                                                    (mesmo mapa de src/lib/nuvemshop.stores.ts)
+--   can_access_funcionario(_user_id, _funcionario_id) colégio do funcionário, sem depender
+--                                                    das páginas da policy de funcionarios
 --
 -- Escopos:
 --   A  school_id                 can_access_school(auth.uid(), school_id)
@@ -18,6 +20,13 @@
 --   C  unit_id (pode ser nula)   unit_id IS NULL OR can_access_school(auth.uid(), unit_id)
 --   D  filhas sem colégio        EXISTS na mãe com a checagem da mãe; vínculo nulo: só admin
 --   U  uniformes (store_key)     can_access_store_uniformes(auth.uid(), store_key)
+--
+-- Filhas de funcionarios (funcionarios_salarios, hr_employee_documents,
+-- rh_experiencia_notificacoes_lidas) usam can_access_funcionario. hr_timesheet_days
+-- e hr_timesheet_entries seguem a folha de ponto (timesheet_id -> hr_timesheets).
+--
+-- EXCEÇÃO: uniform_sync_log fica só com a permissão de página, como hoje. O log é
+-- global (cada linha é uma sincronização de todas as lojas) e não tem colégio.
 
 BEGIN;
 
@@ -63,6 +72,22 @@ AS $$
 $$;
 REVOKE EXECUTE ON FUNCTION public.can_access_store_uniformes(uuid, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.can_access_store_uniformes(uuid, text) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.can_access_funcionario(_user_id uuid, _funcionario_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.has_role(_user_id, 'admin'::public.app_role)
+    OR EXISTS (
+      SELECT 1 FROM public.funcionarios f
+      WHERE f.id = _funcionario_id AND public.can_access_school(_user_id, f.school_id)
+    );
+$$;
+REVOKE EXECUTE ON FUNCTION public.can_access_funcionario(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_access_funcionario(uuid, uuid) TO authenticated, service_role;
 
 DO $$
 DECLARE
@@ -131,10 +156,11 @@ DECLARE
     ['D', 'esportes_parceiros', 'EXISTS (SELECT 1 FROM public.esportes_modalidades m WHERE m.id = %1$I.modalidade_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
     ['D', 'esportes_repasses', 'EXISTS (SELECT 1 FROM public.esportes_modalidades m WHERE m.id = %1$I.modalidade_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
     ['D', 'esportes_turmas', 'EXISTS (SELECT 1 FROM public.esportes_modalidades m WHERE m.id = %1$I.modalidade_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
-    ['D', 'hr_employee_documents', 'EXISTS (SELECT 1 FROM public.funcionarios m WHERE m.id = %1$I.employee_id AND public.can_access_school(auth.uid(), m.school_id))'],
-    ['D', 'hr_timesheet_days', 'EXISTS (SELECT 1 FROM public.funcionarios m WHERE m.id = %1$I.employee_id AND public.can_access_school(auth.uid(), m.school_id))'],
-    ['D', 'hr_timesheet_entries', 'EXISTS (SELECT 1 FROM public.funcionarios m WHERE m.id = %1$I.employee_id AND public.can_access_school(auth.uid(), m.school_id))'],
-    ['D', 'rh_experiencia_notificacoes_lidas', 'EXISTS (SELECT 1 FROM public.funcionarios m WHERE m.id = %1$I.funcionario_id AND public.can_access_school(auth.uid(), m.school_id))'],
+    ['D', 'funcionarios_salarios', 'public.can_access_funcionario(auth.uid(), funcionario_id)'],
+    ['D', 'hr_employee_documents', 'public.can_access_funcionario(auth.uid(), employee_id)'],
+    ['D', 'rh_experiencia_notificacoes_lidas', 'public.can_access_funcionario(auth.uid(), funcionario_id)'],
+    ['D', 'hr_timesheet_days', 'EXISTS (SELECT 1 FROM public.hr_timesheets m WHERE m.id = %1$I.timesheet_id AND public.can_access_school(auth.uid(), m.school_id))'],
+    ['D', 'hr_timesheet_entries', 'EXISTS (SELECT 1 FROM public.hr_timesheets m WHERE m.id = %1$I.timesheet_id AND public.can_access_school(auth.uid(), m.school_id))'],
     ['D', 'hr_transport_batch_items', 'EXISTS (SELECT 1 FROM public.hr_transport_batches m WHERE m.id = %1$I.batch_id AND public.can_access_school(auth.uid(), m.school_id))'],
     ['D', 'whatsapp_messages', 'EXISTS (SELECT 1 FROM public.whatsapp_conversations m WHERE m.id = %1$I.conversation_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
     ['D', 'zapsign_eventos', 'EXISTS (SELECT 1 FROM public.zapsign_documentos m WHERE m.id = %1$I.documento_id AND public.can_access_unidade(auth.uid(), m.unidade))'],
@@ -143,7 +169,7 @@ DECLARE
     ['U', 'uniform_order_marks', 'public.can_access_store_uniformes(auth.uid(), store_key)']
   ];
   -- Checagem de colégio já presente (has_school_access tem o mesmo corpo de can_access_school).
-  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|has_school_access';
+  marca constant text := 'can_access_school|can_access_unidade|can_access_store_uniformes|can_access_funcionario|has_school_access';
   i int;
   escopo text;
   p record;
