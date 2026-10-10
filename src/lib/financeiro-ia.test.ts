@@ -936,7 +936,9 @@ describe("buscar_rematricula_material", () => {
       ["nao_iniciado", 1],
       ["em_andamento", 1],
       ["aguardando_aprovacao", 1],
+      ["contrato_enviado", 0],
       ["rematriculado", 1],
+      ["matriculado", 0],
     ]);
     expect(dados.distribuicaoParcelamentos).toHaveLength(8);
     expect(dados.distribuicaoParcelamentos.filter((d) => d.quantidade > 0)).toEqual([
