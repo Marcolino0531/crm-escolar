@@ -19,6 +19,8 @@ import {
 } from "@/lib/uniformes.pedido";
 import { agregaVendas, type CatalogoVariacoes, type VendaAgregada } from "@/lib/uniformes.vendas";
 import { configuredStores, fetchPaidOrders } from "@/lib/nuvemshop.server";
+import { temPermissaoPagina } from "@/lib/permissoes-servidor";
+import { unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization") ?? request.headers.get("Authorization");
@@ -27,11 +29,43 @@ function bearer(request: Request): string | null {
   return match ? match[1] : null;
 }
 
-async function isAuthenticated(request: Request): Promise<boolean> {
+async function usuarioDaRequisicao(request: Request): Promise<string | null> {
   const token = bearer(request);
-  if (!token) return false;
+  if (!token) return null;
   const { data, error } = await supabaseAdmin.auth.getUser(token);
-  return !error && !!data?.user;
+  return !error && data?.user ? data.user.id : null;
+}
+
+// Lojas cujos colégios o usuário tem liberados (null = admin, todas).
+async function lojasDoUsuario(userId: string): Promise<StoreKey[] | null> {
+  const permitidas = await unidadesDoUsuario(userId);
+  if (permitidas === null) return null;
+  return STORES.filter((s) => s.units.some((u) => permitidas.includes(u))).map((s) => s.key);
+}
+
+// Pedido ∩ lojas liberadas; "forbidden" quando pede loja não liberada.
+async function lojasPermitidas(userId: string, url: URL): Promise<StoreKey[] | null | "forbidden"> {
+  const pedidas = parseStores(url);
+  const liberadas = await lojasDoUsuario(userId);
+  if (liberadas === null) return pedidas;
+  if (pedidas === null) return liberadas;
+  return pedidas.every((k) => liberadas.includes(k)) ? pedidas : "forbidden";
+}
+
+async function autorizar(
+  request: Request,
+  pagina: "uniformes.estoque" | "uniformes.vendas",
+): Promise<{ stores: StoreKey[] | null } | Response> {
+  const userId = await usuarioDaRequisicao(request);
+  if (!userId) return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+  if (!(await temPermissaoPagina(userId, [pagina], "ver"))) {
+    return json({ ok: false, error: "Você não tem permissão para Uniformes." }, 403);
+  }
+  const stores = await lojasPermitidas(userId, new URL(request.url));
+  if (stores === "forbidden") {
+    return json({ ok: false, error: "Sem permissão para esta unidade." }, 403);
+  }
+  return { stores };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -55,11 +89,10 @@ export async function handleUniformesApi(request: Request): Promise<Response | n
   if (!pathname.startsWith("/api/uniformes/")) return null;
 
   if (pathname === "/api/uniformes/export-order" && request.method === "GET") {
-    if (!(await isAuthenticated(request))) {
-      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
-    }
+    const acesso = await autorizar(request, "uniformes.estoque");
+    if (acesso instanceof Response) return acesso;
     try {
-      return await exportOrder(url);
+      return await exportOrder(acesso.stores);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[uniformes] /export-order falhou:", msg);
@@ -68,15 +101,14 @@ export async function handleUniformesApi(request: Request): Promise<Response | n
   }
 
   if (pathname === "/api/uniformes/vendas" && request.method === "GET") {
-    if (!(await isAuthenticated(request))) {
-      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
-    }
+    const acesso = await autorizar(request, "uniformes.vendas");
+    if (acesso instanceof Response) return acesso;
     try {
       const ano = Number(url.searchParams.get("ano"));
       if (!Number.isInteger(ano) || ano < 2000 || ano > 2100) {
         return json({ ok: false, error: "Parâmetro 'ano' inválido." }, 400);
       }
-      const vendas = await vendasDoAno(ano, parseStores(url));
+      const vendas = await vendasDoAno(ano, acesso.stores);
       return json({ ok: true, ano, vendas });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -178,9 +210,7 @@ async function nomesDosProdutos(stores: StoreKey[] | null): Promise<Map<string, 
   return nameByKey;
 }
 
-async function exportOrder(url: URL): Promise<Response> {
-  const stores = parseStores(url);
-
+async function exportOrder(stores: StoreKey[] | null): Promise<Response> {
   // stores === [] significa unidade selecionada sem nenhuma loja correspondente:
   // nada a exportar.
   if (stores !== null && stores.length === 0) {

@@ -8,6 +8,7 @@
 //   GET  /api/nuvemshop/callback  — callback OAuth do App de Parceiro (code -> token)
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { temPermissaoPagina } from "@/lib/permissoes-servidor";
 import {
   handleWebhookEvent,
   NuvemshopAuthError,
@@ -71,11 +72,11 @@ function bearer(request: Request): string | null {
   return match ? match[1] : null;
 }
 
-async function isAuthenticated(request: Request): Promise<boolean> {
+async function usuarioDaRequisicao(request: Request): Promise<string | null> {
   const token = bearer(request);
-  if (!token) return false;
+  if (!token) return null;
   const { data, error } = await supabaseAdmin.auth.getUser(token);
-  return !error && !!data?.user;
+  return !error && data?.user ? data.user.id : null;
 }
 
 export async function handleNuvemshopApi(request: Request): Promise<Response | null> {
@@ -85,11 +86,18 @@ export async function handleNuvemshopApi(request: Request): Promise<Response | n
 
   // --- Sincronização manual (UI) ---
   if (pathname === "/api/nuvemshop/sync" && request.method === "POST") {
-    if (!(await isAuthenticated(request))) {
+    const userId = await usuarioDaRequisicao(request);
+    if (!userId) {
       console.warn("[nuvemshop] /sync rejeitado: usuário não autenticado");
       return json(
         { ok: false, code: "unauthenticated", error: "Sessão inválida — faça login novamente." },
         401,
+      );
+    }
+    if (!(await temPermissaoPagina(userId, ["uniformes.estoque"], "editar"))) {
+      return json(
+        { ok: false, code: "forbidden", error: "Você não tem permissão para editar Uniformes." },
+        403,
       );
     }
     try {

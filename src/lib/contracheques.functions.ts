@@ -16,6 +16,7 @@ import {
   nomeArquivoContracheque,
 } from "@/lib/contracheques";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirEscolaDoUsuario } from "@/lib/unidade-acesso.server";
 
 async function assertCanEditRh(userId: string) {
   await exigirPermissaoPagina(
@@ -105,6 +106,7 @@ export const enviarContracheque = createServerFn({ method: "POST" })
 
     const funcionario = row as unknown as FuncionarioRow | null;
     if (!funcionario) return { ok: false, error: "Funcionário não encontrado." };
+    await exigirEscolaDoUsuario(context.userId, funcionario.school_id);
 
     // O email vem do cadastro no servidor, não do payload: quem dispara escolhe
     // a página, não o destinatário.

@@ -14,6 +14,7 @@ import {
 } from "@/lib/diario-precos";
 import { ANO_LETIVO_MAX, ANO_LETIVO_MIN, anoLetivoValido } from "@/lib/rematricula";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirUnidadeDoUsuario } from "@/lib/unidade-acesso.server";
 
 type PrecoRow = {
   unidade: string;
@@ -72,6 +73,7 @@ export const listarPrecosExtras = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ unidade: z.string().min(1) }).parse(input))
   .handler(async ({ data, context }): Promise<PrecoExtra[]> => {
     await exigirPermissaoDiario(context.userId, false);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     // leitura-restrita: configuração: preços de extras por colégio
     const { data: rows, error } = await supabaseAdmin
       .from("diario_precos_extras" as never)
@@ -97,6 +99,7 @@ export const salvarPrecoExtra = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<{ ok: true }> => {
     await exigirPermissaoDiario(context.userId, true);
+    await exigirUnidadeDoUsuario(context.userId, data.unidade);
     if (!anoLetivoValido(data.anoLetivo)) {
       throw new Error(`Informe um ano entre ${ANO_LETIVO_MIN} e ${ANO_LETIVO_MAX}.`);
     }

@@ -412,10 +412,12 @@ export const salvarJanelaPortalCantina = createServerFn({ method: "POST" })
 // e o estado atual do portal público.
 export const obterJanelaPortalCantina = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<StatusPortalResult> => statusPortal());
+  .handler(
+    // escopo-unidade: configuração global, sem colégio
+    async (): Promise<StatusPortalResult> => statusPortal(),
+  );
 
 interface RecargaRow {
-  // escopo-unidade: configuração global, sem colégio
   id: string;
   unidade: string;
   aluno_id: string;

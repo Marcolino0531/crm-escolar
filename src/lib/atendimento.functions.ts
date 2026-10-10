@@ -17,6 +17,8 @@ import {
 } from "@/lib/whatsapp.server";
 import { montarPayloadMidia, previewMidia, validarArquivoEnvio } from "@/lib/whatsapp-send-media";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { selectAll } from "@/lib/supabase-paginate";
+import { exigirConversaDoUsuario } from "@/lib/unidade-acesso.server";
 
 // Bucket privado do storage, compartilhado com a mídia recebida no webhook.
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
@@ -35,6 +37,8 @@ interface ConversaEnvio {
   id: string;
   wa_phone: string;
   unidade: string | null;
+  unidades: string[] | null;
+  numero_grupo: string | null;
   phone_number_id: string | null;
 }
 
@@ -57,11 +61,12 @@ export const enviarMensagemChat = createServerFn({ method: "POST" })
 
     const { data: conv } = await supabaseAdmin
       .from("whatsapp_conversations" as never)
-      .select("id, wa_phone, unidade, phone_number_id")
+      .select("id, wa_phone, unidade, unidades, numero_grupo, phone_number_id")
       .eq("id", data.conversationId)
       .maybeSingle();
     const conversa = conv as unknown as ConversaEnvio | null;
     if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+    await exigirConversaDoUsuario(context.userId, conversa);
 
     // A resposta sai pelo MESMO número por onde a conversa chegou.
     const cfg = getWhatsAppSendConfigDaConversa(conversa);
@@ -146,11 +151,12 @@ export const enviarMidiaChat = createServerFn({ method: "POST" })
 
     const { data: conv } = await supabaseAdmin
       .from("whatsapp_conversations" as never)
-      .select("id, wa_phone, unidade, phone_number_id")
+      .select("id, wa_phone, unidade, unidades, numero_grupo, phone_number_id")
       .eq("id", data.conversationId)
       .maybeSingle();
     const conversa = conv as unknown as ConversaEnvio | null;
     if (!conversa) return { ok: false, error: "Conversa não encontrada." };
+    await exigirConversaDoUsuario(context.userId, conversa);
     if (!toMetaPhone(conversa.wa_phone)) {
       return { ok: false, error: "Telefone do responsável ausente ou inválido." };
     }
@@ -288,6 +294,18 @@ export const arquivarConversas = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ArquivarInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<ArquivarResult> => {
     await assertCanEditAtendimento(context.userId, "arquivar conversas");
+    const conversas = await selectAll<{
+      unidade: string | null;
+      unidades: string[] | null;
+      numero_grupo: string | null;
+    }>(() =>
+      supabaseAdmin
+        .from("whatsapp_conversations" as never)
+        .select("id, unidade, unidades, numero_grupo")
+        .in("id", data.conversationIds)
+        .order("id"),
+    );
+    for (const conversa of conversas) await exigirConversaDoUsuario(context.userId, conversa);
 
     const { error } = await supabaseAdmin
       .from("whatsapp_conversations" as never)

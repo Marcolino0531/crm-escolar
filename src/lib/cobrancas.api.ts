@@ -19,6 +19,8 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { PREFIXO_SLOT_LEMBRETE, PREFIXO_SLOT_REMATRICULA } from "@/lib/billing-cron-runs";
 import { agruparFalhas, type FalhaArquivada, type LogEntrega } from "@/lib/billing-falhas";
+import { temPermissaoPagina } from "@/lib/permissoes-servidor";
+import { unidadeLiberada, unidadesDoUsuario } from "@/lib/unidade-acesso.server";
 
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 100;
@@ -35,6 +37,32 @@ function bearer(request: Request): string | null {
   if (!header) return null;
   const match = /^Bearer\s+(.+)$/i.exec(header);
   return match ? match[1] : null;
+}
+
+// Página exigida + colégios do usuário; ?unidade= fora da lista: 403.
+async function autorizarEquipe(
+  request: Request,
+  url: URL,
+  paginas: readonly (
+    | "mensagens.cobrancas"
+    | "mensagens.lembretes"
+    | "mensagens.rematricula"
+    | "mensagens.falhas"
+  )[],
+): Promise<{ permitidas: string[] | null } | Response> {
+  const token = bearer(request);
+  const { data } = token ? await supabaseAdmin.auth.getUser(token) : { data: null };
+  const userId = data?.user?.id;
+  if (!userId) return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
+  if (!(await temPermissaoPagina(userId, paginas, "ver"))) {
+    return json({ ok: false, error: "Você não tem permissão para esta página." }, 403);
+  }
+  const permitidas = await unidadesDoUsuario(userId);
+  const unidade = url.searchParams.get("unidade")?.trim();
+  if (unidade && !unidadeLiberada(permitidas, unidade)) {
+    return json({ ok: false, error: "Sem permissão para esta unidade." }, 403);
+  }
+  return { permitidas };
 }
 
 async function isAuthenticated(request: Request): Promise<boolean> {
@@ -91,11 +119,14 @@ export async function handleCobrancasApi(request: Request): Promise<Response | n
   if (!pathname.startsWith("/api/cobrancas/")) return null;
 
   if (pathname === "/api/cobrancas/logs" && request.method === "GET") {
-    if (!(await isAuthenticated(request))) {
-      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
-    }
+    const acesso = await autorizarEquipe(request, url, [
+      "mensagens.cobrancas",
+      "mensagens.lembretes",
+      "mensagens.rematricula",
+    ]);
+    if (acesso instanceof Response) return acesso;
     try {
-      return await listLogs(url);
+      return await listLogs(url, acesso.permitidas);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[cobrancas] /logs falhou:", msg);
@@ -117,11 +148,10 @@ export async function handleCobrancasApi(request: Request): Promise<Response | n
   }
 
   if (pathname === "/api/cobrancas/falhas" && request.method === "GET") {
-    if (!(await isAuthenticated(request))) {
-      return json({ ok: false, error: "Sessão inválida — faça login novamente." }, 401);
-    }
+    const acesso = await autorizarEquipe(request, url, ["mensagens.falhas"]);
+    if (acesso instanceof Response) return acesso;
     try {
-      return await listFalhas(url);
+      return await listFalhas(url, acesso.permitidas);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[cobrancas] /falhas falhou:", msg);
@@ -140,7 +170,7 @@ const PAGINA_LEITURA = 1000;
 // fora: não tem valor cobrado). Lê TODOS os disparos da janela — sucessos
 // inclusive — porque só assim dá para saber se o responsável voltou a receber
 // depois da falha; o agrupamento é feito em `agruparFalhas`.
-async function listFalhas(url: URL): Promise<Response> {
+async function listFalhas(url: URL, permitidas: string[] | null): Promise<Response> {
   const diasRaw = Number.parseInt(url.searchParams.get("dias") ?? String(FALHAS_DIAS_PADRAO), 10);
   const dias = Math.min(FALHAS_DIAS_MAX, Math.max(1, diasRaw || FALHAS_DIAS_PADRAO));
   const inicio = new Date();
@@ -173,7 +203,7 @@ async function listFalhas(url: URL): Promise<Response> {
       .range(from, from + PAGINA_LEITURA - 1);
     if (error) throw new Error(error.message);
     const pagina = (data ?? []) as unknown as LogEntrega[];
-    logs.push(...pagina);
+    logs.push(...pagina.filter((l) => permitidas === null || permitidas.includes(l.unidade ?? "")));
     if (pagina.length < PAGINA_LEITURA) break;
   }
 
@@ -227,7 +257,7 @@ function startOfMonthISO(): string {
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
 }
 
-async function listLogs(url: URL): Promise<Response> {
+async function listLogs(url: URL, permitidas: string[] | null): Promise<Response> {
   const params = url.searchParams;
   const unidade = params.get("unidade")?.trim() || null;
   const status = params.get("status")?.trim() || null;
@@ -256,6 +286,7 @@ async function listLogs(url: URL): Promise<Response> {
     if (comTipo) q0 = q0.eq("tipo", tipo);
 
     if (unidade) q0 = q0.eq("unidade", unidade);
+    else if (permitidas !== null) q0 = q0.in("unidade", permitidas);
     if (status && STATUS_VALIDOS.includes(status as BillingStatus)) {
       q0 = q0.eq("status", status);
     }
@@ -291,7 +322,7 @@ async function listLogs(url: URL): Promise<Response> {
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as unknown as BillingLog[];
 
-  const summary = await buildSummary(tipo);
+  const summary = await buildSummary(tipo, permitidas);
 
   return json({
     ok: true,
@@ -305,13 +336,15 @@ async function listLogs(url: URL): Promise<Response> {
 
 async function buildSummary(
   tipo: TipoDisparo,
+  permitidas: string[] | null,
 ): Promise<{ hoje: number; falhas: number; mes: number }> {
   const base = (comTipo: boolean) => {
     const q0 = supabaseAdmin.from("whatsapp_billing_logs" as never).select("id", {
       count: "exact",
       head: true,
     });
-    return comTipo ? q0.eq("tipo", tipo) : q0;
+    const q1 = permitidas !== null ? q0.in("unidade", permitidas) : q0;
+    return comTipo ? q1.eq("tipo", tipo) : q1;
   };
 
   const contar = async (comTipo: boolean) =>

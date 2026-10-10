@@ -11,6 +11,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { selectAllResult } from "@/lib/supabase-paginate";
 import { exigirPermissaoPagina } from "@/lib/permissoes-servidor";
+import { exigirEscolaDoUsuario } from "@/lib/unidade-acesso.server";
 
 async function assertCanEditRh(userId: string) {
   await exigirPermissaoPagina(
@@ -136,6 +137,10 @@ export const salvarFolhaPonto = createServerFn({ method: "POST" })
     const desconhecidos = ids.filter((id) => !porId.has(id));
     if (desconhecidos.length > 0) {
       return { ok: false, error: "Há funcionários no arquivo que não existem mais no cadastro." };
+    }
+
+    for (const sid of new Set(funcionarios.map((f) => f.school_id))) {
+      await exigirEscolaDoUsuario(context.userId, sid);
     }
 
     const schoolId = schoolPredominante(funcionarios);
